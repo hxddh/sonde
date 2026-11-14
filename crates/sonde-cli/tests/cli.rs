@@ -155,7 +155,7 @@ fn damaged_baselines_are_said_and_neither_written_over_nor_read_as_none() {
     for args in [
         &["check", "--set-baseline", "--max-requests", "100"][..],
         &["check", "--baseline", "auto"],
-        &["sessions", "prune", "--keep", "0", "--yes"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
     ] {
         let o = sonde(t.path(), args);
         let err = String::from_utf8_lossy(&o.stderr);
@@ -268,7 +268,11 @@ fn check_holds_a_run_to_its_programs_baseline() {
         Some(1)
     );
     // the baseline survives pruning
-    sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
+    let pruned = sonde(
+        t.path(),
+        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+    );
+    assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
     assert_eq!(
         stdout(&sonde(t.path(), &["sessions", "-f", "csv"]))
             .lines()
@@ -710,19 +714,49 @@ fn every_command_refuses_a_format_it_does_not_write() {
     for args in [
         &["bucket", "size", "-b", "b", "-f", "markdown"][..],
         &["bucket", "uploads", "-b", "b", "-f", "github"],
-        &["bucket", "abort-uploads", "-b", "b", "-f", "json"],
         &["probe", "list", "-f", "csv"],
         &["probe", "-b", "scratch", "-f", "github"],
         &["layout", "inspect", "-b", "b", "-f", "csv"],
         &["endpoints", "list", "-f", "csv"],
         &["sessions", "-f", "github"],
-        &["sessions", "prune", "--keep", "5", "-f", "json"],
+        &["probe", "diff", "a:e", "b:e", "-f", "markdown"],
     ] {
         let o = sonde(t.path(), args);
         let err = String::from_utf8_lossy(&o.stderr).into_owned();
         assert_eq!(o.status.code(), Some(64), "{args:?}: {err}");
         assert!(err.contains("does not write -f"), "{args:?}: {err}");
         assert!(o.stdout.is_empty(), "{args:?}: {}", stdout(&o));
+    }
+    // a command that writes only what a person reads has no -f at all, and
+    // help lists for each only what it writes
+    for args in [
+        &["bucket", "abort-uploads", "-b", "b", "-f", "json"][..],
+        &["bucket", "lifecycle", "-b", "b", "-f", "table"],
+        &["sessions", "prune", "--keep", "5", "-f", "json"],
+        &["endpoints", "add", "x", "http://x", "-f", "json"],
+    ] {
+        let o = sonde(t.path(), args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+        assert!(stderr(&o).contains("unexpected argument"), "{args:?}");
+    }
+    for (args, says) in [
+        (&["sessions", "prune", "--help"][..], None),
+        (&["endpoints", "add", "--help"], None),
+        (&["probe", "list", "--help"], Some("written: table or json [")),
+        (
+            &["sessions", "list", "--help"],
+            Some("written: table, json, markdown or csv ["),
+        ),
+        (
+            &["bucket", "uploads", "--help"],
+            Some("written: table, json or csv ["),
+        ),
+    ] {
+        let help = stdout(&sonde(t.path(), args));
+        match says {
+            None => assert!(!help.contains("--format"), "{args:?}: {help}"),
+            Some(s) => assert!(help.contains(s), "{args:?}: {help}"),
+        }
     }
     // what each does write is still written
     let list = sonde(t.path(), &["endpoints", "list", "-f", "json"]);
@@ -1175,7 +1209,10 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde demo"));
     assert!(counted());
     // nothing past the newest five: said, not silence
-    let kept = sonde(t.path(), &["sessions", "prune", "--keep", "5", "--yes"]);
+    let kept = sonde(
+        t.path(),
+        &["sessions", "prune", "--keep", "5", "--confirm", "0"],
+    );
     assert!(
         stdout(&kept).contains("nothing to remove: 1 session here"),
         "{}",
@@ -1185,10 +1222,21 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // a dry run that would delete: 4, and nothing deleted
     let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
     assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
+    assert!(stderr(&dry).contains("--confirm 1"), "{}", stderr(&dry));
+    assert!(file.is_file());
+    // a count that is not the dry run's deletes nothing: refused, 77
+    let wrong = sonde(
+        t.path(),
+        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
+    );
+    assert_eq!(wrong.status.code(), Some(77), "{}", stderr(&wrong));
     assert!(file.is_file());
     assert_eq!(kept.status.code(), Some(0));
     // removed, and what was counted of it with it
-    let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
+    let gone = sonde(
+        t.path(),
+        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+    );
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
     assert!(!file.exists() && !counted());
 }

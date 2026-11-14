@@ -32,8 +32,8 @@ pub struct ReplayOpts {
     /// The key prefix the replay writes under (default: replay-<time>/).
     #[arg(long)]
     pub(super) prefix: Option<String>,
-    /// Do not ask for confirmation.
-    #[arg(long, short = 'y')]
+    /// Replay without asking first (what it writes, under its prefix, it removes).
+    #[arg(long)]
     pub(super) yes: bool,
     /// The replay's session file (default: in the data directory's sessions/).
     #[arg(long, short = 'o')]

@@ -11,28 +11,34 @@ use crate::output::{self, Format};
 
 #[derive(Args, Clone)]
 pub(super) struct Target {
+    /// The endpoint (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
+    /// The bucket.
     #[arg(long, short = 'b')]
     bucket: String,
-    #[arg(long, short = 'p', default_value = "")]
+    /// Only uploads under this key prefix (default: the whole bucket).
+    #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
     prefix: String,
-    /// The format written: table, json or csv (scan).
-    #[arg(
-        long,
-        short = 'f',
-        value_enum,
-        default_value_t,
-        hide_possible_values = true
-    )]
-    format: Format,
 }
 
 #[derive(Subcommand)]
 pub(super) enum MpuAction {
     /// Incomplete multipart uploads: their parts' bytes, age and cost, and the lifecycle rule.
     #[command(name = "uploads")]
-    Scan(Target),
+    Scan {
+        #[command(flatten)]
+        target: Target,
+        /// The format written: table, json or csv.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
     /// Aborts uploads older than a week: a dry run, unless --confirm repeats the count it prints.
     #[command(name = "abort-uploads")]
     Abort {
@@ -41,18 +47,20 @@ pub(super) enum MpuAction {
         /// Only uploads older than this many days (default: 7).
         #[arg(long)]
         older_than_days: Option<f64>,
-        /// The number of uploads the dry run listed.
-        #[arg(long)]
+        /// The number of uploads the dry run listed: aborts them.
+        #[arg(long, value_name = "COUNT")]
         confirm: Option<String>,
     },
-    /// Adds an AbortIncompleteMultipartUpload rule: a dry run, unless --confirm gives the bucket name.
+    /// Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run, unless --yes.
     Lifecycle {
         #[command(flatten)]
         target: Target,
+        /// Abort an upload this many days after it began.
         #[arg(long, default_value_t = 7)]
         days: u32,
+        /// Add the rule the dry run shows.
         #[arg(long)]
-        confirm: Option<String>,
+        yes: bool,
     },
 }
 
@@ -62,30 +70,24 @@ fn human(b: u64) -> String {
 
 pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i32> {
     // the scan is data; a dry run and its confirmation are read by a person
-    let (format, command, writes): (_, _, &[Format]) = match action {
-        MpuAction::Scan(t) => (
-            t.format,
+    // (they have no -f)
+    if let MpuAction::Scan { format, .. } = action
+        && let Some(why) = output::unsupported(
+            *format,
             "bucket uploads",
             &[Format::Table, Format::Json, Format::Csv],
-        ),
-        MpuAction::Abort { target, .. } => {
-            (target.format, "bucket abort-uploads", &[Format::Table])
-        }
-        MpuAction::Lifecycle { target, .. } => {
-            (target.format, "bucket lifecycle", &[Format::Table])
-        }
-    };
-    if let Some(why) = output::unsupported(format, command, writes) {
+        )
+    {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
     match action {
-        MpuAction::Scan(t) => {
+        MpuAction::Scan { target: t, format } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
             let r: mpu::MpuReport = serde_json::from_value(
                 super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), false).await?,
             )?;
-            match t.format {
+            match format {
                 Format::Json => println!("{}", output::json(&r)),
                 Format::Csv => {
                     println!("key,upload_id,initiated,age_days,parts,bytes,cost_per_month,stale");
@@ -201,7 +203,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
         MpuAction::Lifecycle {
             target: t,
             days,
-            confirm,
+            yes,
         } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
             let plan = mpu::plan_lifecycle_rule(s, &ep, &t.bucket, &t.prefix, *days).await?;
@@ -212,14 +214,11 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                     .unwrap_or_else(|| "(none)".into()),
                 plan.document.clone().unwrap_or_default()
             );
-            let Some(c) = confirm else {
-                println!(
-                    "\ndry run: to apply, run again with --confirm {}",
-                    plan.confirm
-                );
+            if !yes {
+                println!("\ndry run: to add the rule, run again with --yes");
                 return Ok(4);
-            };
-            let o = exec::execute(s, &plan.id, c).await?;
+            }
+            let o = exec::execute(s, &plan.id, &plan.confirm).await?;
             if let Some(e) = o.errors.first() {
                 eprintln!("{e}");
                 return Ok(70);
