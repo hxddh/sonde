@@ -2457,7 +2457,8 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
         "{}",
         stderr(&o)
     );
-    assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
+    // (not killed: no exit 137 said; the session's name holds the time, its digits any)
+    assert!(!stderr(&o).contains("exit 137"), "{}", stderr(&o));
 }
 
 /// A CloudTrail file cut short is bad data (65), said where it broke.
