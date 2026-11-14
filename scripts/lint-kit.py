@@ -105,10 +105,6 @@ EXEMPT = {
     ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
     # a terminal's toast is Native Shell's: its one action is a word in its line, pressed or reached by its key
     ("ui/toast.tsx", "press"),
-    # the chart system's own labels (axes, chips, legends): its text classes are its constants (lint-charts)
-    ("ui/plots/system.tsx", "type"), ("ui/plots/traffic.tsx", "type"), ("ui/plots/latency.tsx", "type"),
-    ("ui/plots/runs.tsx", "type"), ("ui/plots/operation.tsx", "type"), ("ui/plots/errors.tsx", "type"),
-    ("ui/plots/where.tsx", "type"), ("ui/charts.tsx", "type"),
 }
 # spacing the chart system names once (its gutter), on the lines that define it
 GUTTER_LINE = re.compile(r"^(?:export )?const GUTTER\w* = ")

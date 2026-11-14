@@ -7,7 +7,7 @@ import { Grid, PlotAxis } from "nsh/base/plot";
 import { duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, POPUP, terminal, IconButton } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, IconButton, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TRANSITION, TYPE } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
@@ -44,10 +44,16 @@ export const GUTTER = "ml-44";
 export const GUTTER_PAD = "pl-44";
 /** The same room either side: a chart with names at both edges (flows). */
 export const GUTTER_BOTH = "mx-44";
+/** The room left of a plot whose scale has several ticks (a log scale of
+ * latency, a band of them): its labels stand there, outside the plot, never
+ * on a dot or a cell. One width, for "≤ 100 ms" whole. */
+export const GUTTER_SCALE = "ml-14";
+/** The same at the far edge: a second scale's ticks (the share done by then). */
+export const GUTTER_SCALE_END = "mr-10";
 /** A row's name in that room: right-aligned; `axisName` cuts what does not fit, in its middle. */
-export const AXIS_LABEL = "w-44 pr-3 text-right text-small text-foreground line-clamp-1";
+export const AXIS_LABEL = `w-44 pr-3 text-right line-clamp-1 ${TEXT.small}`;
 /** The same name beside a plot that has no axis of names (small charts in rows). */
-export const ROW_LABEL = "w-44 shrink-0 pr-3 text-right text-small text-foreground line-clamp-1";
+export const ROW_LABEL = `w-44 shrink-0 pr-3 text-right line-clamp-1 ${TEXT.small}`;
 /** What the gutter holds of a name, in characters: a longer one is cut in its
  * middle (both ends tell kinds apart), never at its end by the cell. */
 export const GUTTER_CHARS = 25;
@@ -99,12 +105,12 @@ export const TIP = {
 } as const;
 /** A chart's grid lines: hairlines. */
 export const GRID = "stroke-border";
-/** The outcomes a request may have, each with its name and swatch: for a legend of dots or cells. */
+/** The outcomes a request may have, each with its name and swatch (its tone's `fill`): for a legend of dots or cells. */
 export const OUTCOMES = [
-  { tone: "ok", key: "flows.ok", swatch: "bg-bar" },
-  { tone: "miss", key: "flows.notfound", swatch: "bg-status-miss" },
-  { tone: "client", key: "flows.clienterror", swatch: "bg-status-client" },
-  { tone: "server", key: "lanes.failed", swatch: "bg-status-server" },
+  { tone: "ok", key: "flows.ok", swatch: TONE.ok.fill },
+  { tone: "miss", key: "flows.notfound", swatch: TONE.miss.fill },
+  { tone: "client", key: "flows.clienterror", swatch: TONE.client.fill },
+  { tone: "fail", key: "lanes.failed", swatch: TONE.fail.fill },
 ] as const;
 /** The flows' height: three columns of nodes need the room. */
 export const FLOWS = "h-80";
@@ -113,30 +119,103 @@ export const TICK_ROOM = "mb-6";
 /** What the pointer rests on: a band over a row or a slice, a line at a moment. */
 export const CROSS_BAND = "w-full h-full rounded-(--radius-sm) bg-foreground/5";
 export const CROSS_LINE = "w-px h-full bg-foreground/25";
+/** The moment another chart's pointer rests on, marked in this one. */
+export const FOCUS_RULE = "stroke-foreground/40 stroke-1";
 /** What the pointer does not rest on fades to this, in every chart. */
 export const INACTIVE = 0.4;
 /** The one outline of the cell, the area or the node under the pointer. */
 export const HOVER = "rounded-(--radius-sm) outline-2 outline-foreground";
-/** A time axis's ticks: three, tabular, quiet (TimeAxis's alone: lint-charts fails it anywhere else). */
-export const TIME_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
-/** A bottom axis of buckets or measures (sizes, latencies, a count's two ends): time's look, by its own name. */
-export const BUCKET_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
-/** A value axis's ticks, inside the plot on a chip (an edge of its own: it reads as one on the card). */
-export const VALUE_TICK = "ml-1 rounded-(--radius-sm) border border-border bg-card px-1 tabular-nums text-caption text-muted-foreground";
-/** Zero of a value scale, outside the plot beside its baseline. */
-export const ZERO_TICK = "pr-1 tabular-nums text-caption text-muted-foreground";
-export const ZERO_TICK_END = "pl-1 tabular-nums text-caption text-muted-foreground";
-/** The same at the plot's far edge (a second scale). */
-export const VALUE_TICK_END = "mr-1 rounded-(--radius-sm) border border-border bg-card px-1 tabular-nums text-caption text-muted-foreground";
-/** A budget's line (sonde.toml's limit) and its chip: in the warning's tone, dashed, at the far edge. */
+/** A budget's line (sonde.toml's limit): in the warning's tone, dashed, its words at the far edge. */
 export const BUDGET_LINE = "stroke-warn/70";
-export const BUDGET_TICK = "mr-1 rounded-(--radius-sm) border border-warn/60 bg-card px-1 tabular-nums text-caption text-warn";
-/** A figure at a bar's end, a note in the plot. */
-export const BAR_LABEL = "pl-2 tabular-nums text-caption text-muted-foreground";
+/** The words of a chart, each a text role of the kit's (`TEXT`): read where
+ * they are drawn (getters), so Chinese takes its 12 pt caption and a change
+ * of language reaches them. A label's place (its padding, a shift off its
+ * line) stands beside its role. */
+export const LABEL = {
+  /** a time axis's ticks: TimeAxis's alone (lint-charts fails it anywhere else) */
+  get time() {
+    return `pt-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** a bottom axis of buckets or measures (sizes, latencies, a count's two ends): time's look, by its own name */
+  get bucket() {
+    return `pt-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** a value scale's peak, inside the plot at its edge and over its own line, in the headroom the
+   * plot leaves above its marks: never on one. On the card's colour, so a rule that crosses it (a
+   * finding's, the pointer's) passes under it. */
+  get peak() {
+    return `ml-1 -translate-y-1/2 rounded-(--radius-sm) bg-card px-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** the same at the far edge (a second scale's peak) */
+  get peakEnd() {
+    return `mr-1 -translate-y-1/2 rounded-(--radius-sm) bg-card px-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** the peak of what hangs under the baseline (bytes received): under its own line */
+  get low() {
+    return `ml-1 translate-y-1/2 rounded-(--radius-sm) bg-card px-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** zero, outside the plot beside its baseline (inside it stood on the first bar) */
+  get zero() {
+    return `pr-1 tabular-nums ${TEXT.meta}`;
+  },
+  get zeroEnd() {
+    return `pl-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** a scale of several ticks, outside the plot in its room (`GUTTER_SCALE`, `GUTTER_SCALE_END`) */
+  get scale() {
+    return `pr-2 tabular-nums ${TEXT.meta}`;
+  },
+  get scaleEnd() {
+    return `pl-2 tabular-nums ${TEXT.meta}`;
+  },
+  /** a budget's words, over its line at the far edge */
+  get budget() {
+    return `mr-1 -translate-y-1/2 rounded-(--radius-sm) bg-card px-1 tabular-nums ${TEXT.captionSize} text-warn`;
+  },
+  /** a figure at a bar's end */
+  get bar() {
+    return `pl-2 tabular-nums ${TEXT.meta}`;
+  },
+  /** a figure over an upright bar */
+  get top() {
+    return `pb-1 tabular-nums ${TEXT.meta}`;
+  },
+  /** a row's figures past its last mark, a line's own figure (a run's, a p95's) */
+  get figure() {
+    return `tabular-nums ${TEXT.meta}`;
+  },
+  /** the same, in the text's colour: what the row is about (a dumbbell's two figures) */
+  get figureStrong() {
+    return `tabular-nums ${TEXT.caption}`;
+  },
+  /** emphasis: a finding's number over its slice */
+  get mark() {
+    return `tabular-nums ${TEXT.captionSize} ${EMPHASIS} text-warn`;
+  },
+  /** a legend's names, a note under a chart, a tooltip's figures */
+  get note() {
+    return `tabular-nums ${TEXT.meta}`;
+  },
+  /** emphasis: a group's name over the areas in it (a map of areas) */
+  get group() {
+    return `px-2 ${TEXT.captionSize} ${EMPHASIS} text-foreground`;
+  },
+  /** an area's name, and its figure under it on the same edge */
+  get area() {
+    return `p-2 font-mono ${TEXT.caption}`;
+  },
+  get areaValue() {
+    return `self-start font-sans tabular-nums ${TEXT.caption}`;
+  },
+  /** a flow's node: its name and count beside it (on the card's colour where it stands over ribbons) */
+  get node() {
+    return `m-2 max-w-44 rounded-(--radius-sm) bg-card px-1 tabular-nums ${TEXT.small}`;
+  },
+};
 /** A row's figures on the row's own line, past its last mark: the label's middle on the line. */
 export const ROW_FIGURE = "-translate-y-1/2 pl-2";
-/** A figure over an upright bar. */
-export const TOP_LABEL = "pb-1 tabular-nums text-caption text-muted-foreground";
+/** The same before its first mark, where the row's marks reach the plot's far edge. */
+export const ROW_FIGURE_BEFORE = "-translate-y-1/2 pr-2";
 /** Two charts abreast where the board is wide, one under another where it is not. */
 export const HALF = "min-w-[420px] flex-1";
 
@@ -179,66 +258,92 @@ export function TimeAxis(props: { domain: [number, number]; slices?: number; len
   // a slice's index for each moment (the last slice for the stretch's end)
   const places = () => ticks().map((ms) => Math.min((props.slices ?? 1) - 1, Math.max(0, Math.floor((ms - props.domain[0]) / width() + 1e-9))));
   return (
-    <If when={props.slices !== undefined} else={<PlotAxis tickValues={ticks()} format={(v) => (v < props.domain[0] - 1e-9 ? "" : say(v))} labelClass={TIME_TICK} />}>
-      <PlotAxis tickValues={[...new Set(places())]} format={(i) => say(ticks()[places().indexOf(i)] ?? 0)} labelClass={TIME_TICK} />
+    <If when={props.slices !== undefined} else={<PlotAxis tickValues={ticks()} format={(v) => (v < props.domain[0] - 1e-9 ? "" : say(v))} labelClass={LABEL.time} />}>
+      <PlotAxis tickValues={[...new Set(places())]} format={(i) => say(ticks()[places().indexOf(i)] ?? 0)} labelClass={LABEL.time} />
     </If>
   );
 }
 
 /** The one value scale of a chart of counts: zero and the peak with its unit
- * (`say`). The peak is on a chip inside the plot, over its own line: a chart
- * leaves headroom above its peak (its domain a fifth higher), so the chip
- * stands clear of every mark. Zero is outside the plot, in the frame's own
- * padding beside the baseline: inside it stood on the first bar. `end` for a
- * second scale at the plot's far edge. */
-export function ValueAxis(props: { peak: number; say: (v: number) => string; /** a second quantity under the line (bytes received) */ low?: number; scale?: "y" | "y2"; end?: boolean; /** every mark says its own value over itself (the histogram's bars): the scale writes zero alone, its chip would stand on the tallest one's */ marked?: boolean }) {
+ * (`say`). The peak stands over its own line, inside the plot at its edge,
+ * in the headroom a chart leaves above its marks (`HEADROOM`): no mark
+ * reaches it. Zero is outside the plot, in the frame's own padding beside the
+ * baseline: inside it stood on the first bar. `end` for a second scale at the
+ * plot's far edge; `outside` for a plot with the room for a scale
+ * (`GUTTER_SCALE`): both there, each on its line. */
+export function ValueAxis(props: { peak: number; say: (v: number) => string; /** a second quantity under the line (bytes received) */ low?: number; scale?: "y" | "y2"; end?: boolean; /** in the plot's room for a scale (`GUTTER_SCALE`), outside it */ outside?: boolean; /** every mark says its own value over itself (the histogram's bars): the scale writes zero alone, its peak would stand on the tallest one's */ marked?: boolean }) {
+  const side = () => (props.end ? "right" : "left") as "right" | "left";
   return (
     <>
       <If when={!props.marked}>
-      {/* the peak's own line, under its chip (a second scale's peak has the chip alone) */}
-      <If when={props.scale !== "y2"}>
-        <Grid y={[...(props.low !== undefined ? [props.low] : []), props.peak]} class={GRID} />
+        {/* the peak's own line, under its words (a second scale's peak has its words alone) */}
+        <If when={props.scale !== "y2"}>
+          <Grid y={[...(props.low !== undefined ? [props.low] : []), props.peak]} class={GRID} />
+        </If>
+        <If when={!props.outside} else={<PlotAxis placement={side()} scale={props.scale} tickValues={[...(props.low !== undefined ? [props.low] : []), props.peak]} format={(v) => props.say(Math.abs(v))} labelClass={props.end ? LABEL.scaleEnd : LABEL.scale} />}>
+          <PlotAxis placement={side()} scale={props.scale} labelPlacement="inside" tickValues={[props.peak]} format={(v) => props.say(Math.abs(v))} labelClass={props.end ? LABEL.peakEnd : LABEL.peak} />
+          <If when={props.low !== undefined}>
+            <PlotAxis placement={side()} scale={props.scale} labelPlacement="inside" tickValues={[props.low!]} format={(v) => props.say(Math.abs(v))} labelClass={LABEL.low} />
+          </If>
+        </If>
       </If>
-      <PlotAxis
-        placement={props.end ? "right" : "left"}
-        scale={props.scale}
-        labelPlacement="inside"
-        tickValues={[...(props.low !== undefined ? [props.low] : []), props.peak]}
-        format={(v) => props.say(Math.abs(v))}
-        labelClass={props.end ? VALUE_TICK_END : VALUE_TICK}
-      />
-      </If>
-      <PlotAxis placement={props.end ? "right" : "left"} scale={props.scale} tickValues={[0]} format={() => "0"} labelClass={props.end ? ZERO_TICK_END : ZERO_TICK} />
+      <PlotAxis placement={side()} scale={props.scale} tickValues={[0]} format={() => "0"} labelClass={props.outside ? (props.end ? LABEL.scaleEnd : LABEL.scale) : props.end ? LABEL.zeroEnd : LABEL.zero} />
     </>
   );
 }
 
+/** How far a chart's scale reaches over its peak: room for the peak's words
+ * over its line, clear of every mark. A plot of `PLOT`'s height; a strip
+ * (`STRIP`) needs more of its height for the same words. */
+export const HEADROOM = { plot: 1.25, strip: 1.45 } as const;
+
 /** A budget drawn on its chart: sonde.toml's limit (`max-p95`, `max-errors`,
- * `max-waiting`) as a dashed line in the warning's tone, its chip at the far
- * edge ("budget 50 ms"). Nothing where the session's program has no budget
- * for it. The chart's domain must reach it (`budgetTop`). */
+ * `max-waiting`) as a dashed line in the warning's tone, its words over it at
+ * the far edge ("budget 50 ms"). Nothing where the session's program has no
+ * budget for it. The chart's domain must reach it (`budgetTop`). */
 export function Budget(props: { value: number | null | undefined; say: (v: number) => string }) {
   return (
     <If when={props.value != null && props.value > 0}>
-      <Grid y={[props.value!]} class={BUDGET_LINE} style={{ strokeDasharray: "4 3" }} />
-      <PlotAxis placement="right" labelPlacement="inside" tickValues={[props.value!]} format={(v) => t("budget.line", { v: props.say(v) })} labelClass={BUDGET_TICK} />
+      <Grid y={[props.value!]} class={BUDGET_LINE} style={{ strokeDasharray: DASH.reference }} />
+      <PlotAxis placement="right" labelPlacement="inside" tickValues={[props.value!]} format={(v) => t("budget.line", { v: props.say(v) })} labelClass={LABEL.budget} />
     </If>
   );
 }
 /** A domain's top that leaves the budget's line (and its chip) in view: a fifth above the higher of the two. */
-export const budgetTop = (top: number, budget: number | null | undefined) => (budget != null && budget > 0 ? Math.max(top, budget * 1.2) : top);
+export const budgetTop = (top: number, budget: number | null | undefined) => (budget != null && budget > 0 ? Math.max(top, budget * HEADROOM.plot) : top);
 
-// the keys and screen readers step the hover with a spring; the pointer's own moves follow at once
-export const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, update: { duration: 260, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 }, pointer: { stiffness: 420, damping: 36 } };
+/** The one ease of the kit's motion (nsh.json's `ease-standard`), for Plot's own timings. */
+const STANDARD: [number, number, number, number] = [0.22, 1, 0.36, 1];
+/** Every chart's motion, on the kit's lengths (`TIMING`) and its one ease: the marks draw in as a
+ * reveal (`slow`) and glide to new values as a thing moving into place (`base`); the hover's wash
+ * comes in a step slower than it goes. The keys and screen readers step the hover with a spring; the
+ * pointer's own moves follow at once. Nothing moves under reduced motion (Native Shell's own rule). */
+export const MOTION = {
+  appear: { duration: TIMING.slow, easing: STANDARD },
+  update: { duration: TIMING.base, easing: STANDARD },
+  enter: { duration: TIMING.fast, easing: STANDARD },
+  exit: { duration: TIMING.instant, easing: STANDARD },
+  pointer: { stiffness: 420, damping: 36 },
+};
 
-export const TONES = ["ok", "miss", "client", "server", "injected"] as const;
-export type Tone = (typeof TONES)[number];
-export const TONE_TOKEN: Record<Tone, string> = { ok: "bar", miss: "status-miss", client: "status-client", server: "status-server", injected: "status-injected" };
-/** A request's tone in a chart: its status's, or (a fault scenario answered it, not the store) the injected one. */
-export const toneOf = (x: { id?: number; status?: number | null }, injected?: Set<number>): Tone => (x.id !== undefined && injected?.has(x.id) ? "injected" : statusTone(x.status ?? null));
+/** How thick a chart's lines are, by what they draw, and no other: a rule or
+ * a grid (the moment the pointer rests on, a finding's place), a line of
+ * data, a run's trend (the one line of its chart), a dumbbell's bar between
+ * two dots. */
+export const STROKE = { hair: "stroke-1", line: "stroke-[1.5]", trend: "stroke-2", link: "stroke-[2.5]" } as const;
+/** The dashes of a line that is not data: a reference (a p95, a baseline, a budget, a share done), a mark (a finding's place). */
+export const DASH = { reference: "3 3", mark: "2 2" } as const;
+
+/** The outcomes a request may have in a chart: the kit's tones (`TONE`) of a request. */
+export const OUTCOME_TONES = ["ok", "miss", "client", "fail", "injected"] as const;
+export type Outcome = (typeof OUTCOME_TONES)[number];
+/** Each outcome's colour token (its `TONE[t].fill` without the `bg-`): for a colour scale. */
+export const OUTCOME_TOKEN: Record<Outcome, string> = { ok: "bar", miss: "status-miss", client: "status-client", fail: "status-server", injected: "status-injected" };
+/** A request's outcome in a chart: its status's, or (a fault scenario answered it, not the store) the injected one. */
+export const toneOf = (x: { id?: number; status?: number | null }, injected?: Set<number>): Outcome => (x.id !== undefined && injected?.has(x.id) ? "injected" : statusTone(x.status ?? null));
 /** The legend's entry for requests a scenario answered, when a session has any. */
-export const injectedLegend = (ids?: number[]): LegendItem[] => (ids?.length ? [{ label: t("plots.injected"), swatch: "bg-status-injected" }] : []);
-export const tones = () => ({ type: "ordinal" as const, domain: [...TONES, "dim"], range: [...TONES.map((x) => token(TONE_TOKEN[x] as never) as unknown as string), token("bar-track" as never) as unknown as string] });
+export const injectedLegend = (ids?: number[]): LegendItem[] => (ids?.length ? [{ label: t("plots.injected"), swatch: TONE.injected.fill }] : []);
+export const tones = () => ({ type: "ordinal" as const, domain: [...OUTCOME_TONES, "dim"], range: [...OUTCOME_TONES.map((x) => token(OUTCOME_TOKEN[x] as never) as unknown as string), token("bar-track" as never) as unknown as string] });
 
 export type ChartTipText = { title: string; lines: string[] };
 
@@ -252,7 +357,7 @@ export function ChartTip(props: { tip: ChartTipText | null | undefined }) {
       {(x) => (
         <View class={`max-w-[280px] gap-1 ${POPUP} px-2 py-1`}>
           <Text class="text-small text-popover-foreground line-clamp-2">{x().title}</Text>
-          <Each of={x().lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
+          <Each of={x().lines}>{(l) => <Text class={LABEL.note}>{l()}</Text>}</Each>
         </View>
       )}
     </If>
@@ -261,21 +366,23 @@ export function ChartTip(props: { tip: ChartTipText | null | undefined }) {
 /** What a screen reader hears of the row under the pointer: the tooltip's words. */
 export const tipValue = (tip: ChartTipText | null | undefined) => ({ text: tip ? `${tip.title}: ${tip.lines.join(", ")}` : "" });
 
-/** `line`: a line the chart draws (dashed: a p95, a share done), its swatch a short dash in that colour (`border-*`), never a dot. */
-export type LegendItem = { label: string; swatch: string; line?: boolean };
+/** `line`: a line the chart draws, its swatch a short stroke in that colour (`border-*`), never a
+ * dot: `"dashed"` for a reference (a p95, a share done), `"solid"` for a line of data. */
+export type LegendItem = { label: string; swatch: string; line?: "solid" | "dashed" };
 
 /** What a chart's colors stand for: a round swatch (its `bg-*` class) and a
  * name each, in a row that wraps, and after them what else is to be said
  * under the chart (`children`). `gutter` starts it at the plot's left edge
- * under a chart of rows. The one legend. */
+ * under a chart of rows. The one legend: a short name for each mark drawn,
+ * and none for a mark that is not. */
 export function Legend(props: { items: LegendItem[]; gutter?: boolean; children?: JSX.Element }) {
   return (
     <View testID="chart-legend" class={`flex-row flex-wrap items-center gap-x-4 gap-y-1 ${props.gutter ? GUTTER_PAD : ""}`}>
       <Each of={props.items} key={(it) => it.label}>
         {(it) => (
           <View class="flex-row items-center gap-1">
-            <View class={it().line ? `w-3 border-t-2 border-dashed ${it().swatch}` : `size-2 rounded-full ${it().swatch}`} />
-            <Text class="text-caption text-muted-foreground">{it().label}</Text>
+            <View class={it().line ? `w-3 border-t-2 ${it().line === "dashed" ? "border-dashed" : ""} ${it().swatch}` : `size-2 rounded-full ${it().swatch}`} />
+            <Text class={LABEL.note}>{it().label}</Text>
           </View>
         )}
       </Each>
@@ -287,19 +394,26 @@ export function Legend(props: { items: LegendItem[]; gutter?: boolean; children?
 /** A line under a chart or beside its legend: what the picture leaves out or stands for. */
 export function ChartNote(props: { children: JSX.Element; gutter?: boolean; testID?: string }) {
   return (
-    <Text testID={props.testID} class={`tabular-nums text-caption text-muted-foreground ${props.gutter ? GUTTER_PAD : ""}`}>
+    <Text testID={props.testID} class={`${LABEL.note} ${props.gutter ? GUTTER_PAD : ""}`}>
       {props.children}
     </Text>
   );
 }
 
-/** A chart in its frame, the same for every chart: what it asks (`title`), a
- * sentence that answers it (`text`, computed from what it draws; it wraps:
- * never cut), how it is cut (`action`, at the title's end), how to read it
- * (`how`: an info mark there, the words its tooltip), the plot, its `legend`
- * at the plot's left edge (`gutter` for a chart of rows), and `empty` said in
- * the plot's room when there is nothing to draw. A terminal gets the title
- * and what the chart says in words. */
+/** A frame's own controls (how to read it, its rows out as CSV): quiet until
+ * the pointer is over the chart or the keys are on one of them, the same on
+ * every chart. */
+const CHROME = `flex-row opacity-0 group-hover:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
+
+/** A chart in its frame, the same for every chart: what it asks (`title`,
+ * the card's whole width), a sentence that answers it (`text`, computed from
+ * what it draws; it wraps: never cut), how it is cut (`action`, a row of its
+ * own under the sentence), how to read it (`how`: an info mark at the
+ * title's end, the words its tooltip) and its rows out (`onExport`), both
+ * shown under the pointer; the plot, its `legend` at the plot's left edge
+ * (`gutter` for a chart of rows), and `empty` said in the plot's room when
+ * there is nothing to draw. A terminal gets the title and what the chart
+ * says in words. */
 export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** its rows out as CSV (where the page can write a file): a button at the title's end */ onExport?: () => void }) {
   if (terminal()) {
     return (
@@ -312,23 +426,31 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
     );
   }
   return (
-    <Card testID={props.testID} class={props.class}>
-      <View class="min-h-7 flex-row items-start gap-3">
-        <View class="min-w-0 flex-1 gap-1">
-          <Heading>{props.title}</Heading>
-          <If when={props.text}>
-            <Text testID="chart-text" class="tabular-nums text-small text-muted-foreground">{props.text}</Text>
+    <Card testID={props.testID} class={`group ${props.class ?? ""}`}>
+      <View class="gap-1">
+        <View class="min-h-7 flex-row items-center gap-2">
+          <View class="min-w-0 flex-1">
+            <Heading>{props.title}</Heading>
+          </View>
+          <If when={props.how || (props.onExport && !props.empty)}>
+            <View class={CHROME}>
+              {/* how to read it, in its tooltip: the sentence under the title says what it shows */}
+              <If when={props.how}>
+                <IconButton icon="info" label={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
+              </If>
+              <If when={props.onExport && !props.empty}>
+                <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
+              </If>
+            </View>
           </If>
         </View>
-        {props.action}
-        {/* how to read it, in its tooltip: the sentence under the title says what it shows */}
-        <If when={props.how}>
-          <IconButton icon="info" label={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
-        </If>
-        <If when={props.onExport && !props.empty}>
-          <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
+        <If when={props.text}>
+          <Text testID="chart-text" class={`tabular-nums ${TEXT.note}`}>{props.text}</Text>
         </If>
       </View>
+      <If when={props.action}>
+        <View class="flex-row items-center">{props.action}</View>
+      </If>
       <If when={!props.empty} else={<Empty compact class={PLOT} text={props.empty || ""} />}>
         {props.children}
         <If when={props.legend?.length}>
@@ -362,14 +484,105 @@ export function nearest(rows: { tMs: number }[], at: number | null): number | nu
   return best;
 }
 
-export const statusTone = (s: number | null): Tone => (s === null || s >= 500 ? "server" : s === 404 ? "miss" : s >= 400 ? "client" : "ok");
+export const statusTone = (s: number | null): Outcome => (s === null || s >= 500 ? "fail" : s === 404 ? "miss" : s >= 400 ? "client" : "ok");
 
-/** A map of areas' words, the same in every one: a group's name, an area's, its figure. */
-// emphasis: a group's name over the areas in it
-export const GROUP_LABEL = `px-2 text-caption ${EMPHASIS} text-foreground`;
-export const AREA_LABEL = "p-2 font-mono text-caption text-foreground";
-/** (on a chip of the card's colour: a figure reads on a saturated tile, light or dark) */
-export const AREA_VALUE = "ml-2 self-start rounded-(--radius-sm) bg-card/85 px-1 font-sans tabular-nums text-caption text-foreground";
+// --- a map of areas: which areas have room for their words ---------------------------
+
+type Box = { x0: number; y0: number; x1: number; y1: number };
+type Area = Box & { i: number; value: number; children: Area[] };
+const GOLDEN = (1 + Math.sqrt(5)) / 2;
+
+/** d3's squarified tiling (`treemapSquarify`, at the golden ratio, Native Shell's default) of `node`'s children in a box. */
+function squarify(node: Area, x0: number, y0: number, x1: number, y1: number) {
+  const nodes = node.children;
+  let value = node.value;
+  let i0 = 0;
+  let i1 = 0;
+  while (i0 < nodes.length) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    let sum = nodes[i1++].value;
+    let min = sum;
+    let max = sum;
+    const alpha = Math.max(dy / dx, dx / dy) / (value * GOLDEN);
+    let beta = sum * sum * alpha;
+    let best = Math.max(max / beta, beta / min);
+    for (; i1 < nodes.length; ++i1) {
+      const v = nodes[i1].value;
+      sum += v;
+      min = Math.min(min, v);
+      max = Math.max(max, v);
+      beta = sum * sum * alpha;
+      const ratio = Math.max(max / beta, beta / min);
+      if (ratio > best) {
+        sum -= v;
+        break;
+      }
+      best = ratio;
+    }
+    const row = nodes.slice(i0, i1);
+    if (dx < dy) {
+      // a row across the top, its nodes side by side
+      const y = dy ? y0 + (dy * sum) / value : y1;
+      let x = x0;
+      for (const n of row) Object.assign(n, { x0: x, x1: (x += (n.value * (x1 - x0)) / sum), y0, y1: y });
+      y0 = y;
+    } else {
+      // a column down the left, its nodes one under another
+      const x = dx ? x0 + (dx * sum) / value : x1;
+      let y = y0;
+      for (const n of row) Object.assign(n, { y0: y, y1: (y += (n.value * (y1 - y0)) / sum), x0, x1: x });
+      x0 = x;
+    }
+    value -= sum;
+    i0 = i1;
+  }
+}
+
+/** Which leaves of a map of areas (`rows` in a Treemap's `id`/`parent`/`value`
+ * form) have room for their words in a plot `width` by `height`: its name
+ * whole (`name`), and its figure under it too (`both`). Laid out as Native
+ * Shell lays a treemap out (d3's squarified tiling, siblings largest first,
+ * `gap` between them and a band of `top` over a group's children). An area
+ * without room says nothing: a name cut to "slat…" names nothing, and the
+ * tooltip has it whole. `chars` is how wide a leaf's name is, in characters. */
+export function areasWithRoom(rows: { id: string; parent: string; value: number }[], width: number, height: number, gap: number, top: number, chars: (i: number) => number): ("both" | "name" | "none")[] {
+  const out: ("both" | "name" | "none")[] = rows.map(() => "none");
+  if (!(width > 0 && height > 0)) return out;
+  const ids = new Map(rows.map((r, i) => [r.id, i]));
+  const made = rows.map((r, i): Area => ({ i, value: 0, children: [], x0: 0, y0: 0, x1: 0, y1: 0 }));
+  const root: Area = { i: -1, value: 0, children: [], x0: 0, y0: 0, x1: width, y1: height };
+  rows.forEach((r, i) => (ids.has(r.parent) && r.parent !== r.id ? made[ids.get(r.parent)!] : root).children.push(made[i]));
+  const sum = (n: Area): number => (n.value = n.children.length ? n.children.reduce((s, c) => s + sum(c), 0) : Math.max(0, rows[n.i]?.value ?? 0));
+  sum(root);
+  const place = (n: Area, depth: number) => {
+    n.children = n.children.filter((c) => c.value > 0).sort((a, b) => b.value - a.value);
+    if (!n.children.length) return;
+    // d3's padding: half the gap round each child, the parent's box widened by as much (no gap on its outer edge)
+    const p = gap / 2;
+    const band = depth > 0 ? top : 0;
+    squarify(n, n.x0 - p, n.y0 + band - p, n.x1 + p, n.y1 + p);
+    for (const c of n.children) {
+      Object.assign(c, { x0: c.x0 + p, y0: c.y0 + p, x1: c.x1 - p, y1: c.y1 - p });
+      place(c, depth + 1);
+    }
+  };
+  place(root, 0);
+  // a name's line and a figure's, each a caption's line, in the label's padding (p-2)
+  const em = TYPE.caption * 0.62;
+  const line = LEADING.caption;
+  const pad = 8;
+  const walk = (n: Area) => {
+    if (n.i >= 0 && !n.children.length) {
+      const w = n.x1 - n.x0 - 2 * pad;
+      const h = n.y1 - n.y0 - 2 * pad;
+      out[n.i] = w >= chars(n.i) * em && h >= line ? (h >= 2 * line ? "both" : "name") : "none";
+    }
+    n.children.forEach(walk);
+  };
+  walk(root);
+  return out;
+}
 
 export const log10 = (v: number) => Math.log10(Math.max(v, 1e-3));
 /** Powers of ten across `[lo, hi]` (as logs): the ticks of a log scale. */
@@ -386,6 +599,30 @@ export const ZERO_SLIVER = 0.006;
 /** A heat map's ramp, from a cell of one request to the busiest: its own two tones, so a few
  * requests read on the card in dark too (bar-track to chart-1 was navy on near-black there). */
 export const HEAT_RAMP = (): [string, string] => [token("heat-low" as never) as unknown as string, token("heat-high" as never) as unknown as string];
+
+/** The fewest slices a chart fitted to its marks shows (`fitted`). */
+const FIT_LEAST = 12;
+
+/** The slices a chart of a few marks over time shows when no stretch is
+ * chosen: from a slice before its first mark to one after its last, never
+ * fewer than `FIT_LEAST` (nor a fifth of the session). Two failures in a
+ * run's last moment are two bars of a dozen slices, not two slivers at the
+ * edge of a chart nine tenths empty. Null where that is (nearly) the whole
+ * session: it shows the whole session, as every other chart does. */
+export function fitted(n: number, has: (i: number) => boolean): [number, number] | null {
+  let a = -1;
+  let b = -1;
+  for (let i = 0; i < n; i++) if (has(i)) (a = a < 0 ? i : a), (b = i);
+  const least = Math.max(FIT_LEAST, Math.ceil(n / 5));
+  if (a < 0 || n <= least) return null;
+  let lo = a - 1;
+  let hi = b + 1;
+  const short = least - (hi - lo + 1);
+  if (short > 0) (lo -= Math.ceil(short / 2)), (hi += Math.floor(short / 2));
+  if (lo < 0) (hi -= lo), (lo = 0);
+  if (hi > n - 1) (lo = Math.max(0, lo - (hi - (n - 1)))), (hi = n - 1);
+  return hi - lo + 1 >= n * 0.8 ? null : [lo, hi];
+}
 
 /** A stretch of the session's slices (a zoom), or all of them. */
 export const stretch = <T,>(rows: T[], range?: [number, number] | null): T[] => (range ? rows.slice(range[0], range[1] + 1) : rows);

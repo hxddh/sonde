@@ -7,8 +7,8 @@ import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GROUP_LABEL, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, TICK_ROOM, TREEMAP, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP } from "./system";
-import { Options, terminal, textual, SimpleTable } from "../kit";
+import { areasWithRoom, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, TREEMAP, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP } from "./system";
+import { Options, terminal, textual, SimpleTable, TONE } from "../kit";
 
 // --- prefixes, named ---------------------------------------------------------------
 
@@ -62,8 +62,11 @@ const prefixTitle = (x: { prefix: string; folders?: number }) => (x.folders ? `$
 
 // --- where requests went -----------------------------------------------------------
 
+/** The flows' colours are roles, as every chart's: the requests in the bar's colour from the kind of
+ * request through its prefix, and each answer in its outcome's tone (`TONE`), the ribbons into it
+ * turning to that tone. */
 const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fill-status-miss", "client error": "fill-status-client", "server error": "fill-status-server" };
-const OUTCOME_FROM: Record<string, string> = { ok: "to-bar/45", "not found": "to-status-miss/45", "client error": "to-status-client/45", "server error": "to-status-server/45" };
+const OUTCOME_TO: Record<string, string> = { ok: "to-bar/40", "not found": "to-status-miss/40", "client error": "to-status-client/40", "server error": "to-status-server/40" };
 
 /**
  * Where a session's requests went: from each kind of request to the
@@ -84,9 +87,8 @@ export function Flows(props: { profile: Profile }) {
   const named = () => prefixNames(props.profile.prefixes, GUTTER_CHARS - 6);
   const short = (n: string) => named().name(n);
   const name = (n: { name: string }) => (n.name === "other operations" ? t("flows.otherOps") : n.name === "other prefixes" ? t("flows.otherPrefixes") : OUTCOME_FILL[n.name] ? t(`flows.${n.name.replace(" ", "")}` as never) : short(n.name));
-  const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-4");
-  const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-4/35");
-  const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FROM[n.name] : "to-chart-4/35");
+  const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : "fill-bar");
+  const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_TO[n.name] : "to-bar/25");
   // a node's requests: what came in, or (the first column) what went out
   const through = (n: { name: string }) => {
     const sum = (side: "source" | "target") => props.profile.flows.reduce((s, f) => (f[side] === n.name ? s + f.value : s), 0);
@@ -120,25 +122,25 @@ export function Flows(props: { profile: Profile }) {
         tooltipContent={<ChartTip tip={tip()} />}
         onHoverChange={({ index }) => hovered.set(index)}
         appearGeneration={1}
-        motion={{ ...MOTION, appear: { duration: 700, easing: "easeOut" } }}
+        motion={MOTION}
         // not rows: names stand at both edges, in the one gutter either side
         class={`${GUTTER_BOTH} mt-2 ${FLOWS}`}
       >
         <Sankey
           links={links()}
           nodeWidth={7}
-          nodePadding={26}
+          nodePadding={30}
           nodeCornerRadius={TIP.cell}
           valueScale="linear"
           minLinkWidth={1.5}
           nodeClass={(n) => fill(n)}
-          linkBackgroundClass={(l) => `bg-linear-to-r ${from(nodes()[l.source])} ${to(nodes()[l.target])}`}
+          linkBackgroundClass={(l) => `bg-linear-to-r from-bar/25 ${to(nodes()[l.target])}`}
           hoverDim={1 - INACTIVE}
           // one line, name then count: two lines over a middle node reached the bar of the node above it
           nodeLabel={(n) => `${axisName(name(n))} · ${count(through(n))}`}
-          // (on a chip: a name over the middle column stands on its ribbons, and reads off them; the gap
-          // to its node is the chip's margin, not its padding, so the chip never lies over its own bar)
-          nodeLabelClass="m-2 max-w-44 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-small text-foreground"
+          // beside the first and last columns' nodes, in the gutters; over a middle node, in the gap
+          // above it, on the card's colour (the margin, not the padding, is the gap to its node)
+          nodeLabelClass={LABEL.node}
         />
       </Plot>
       <PrefixNote prefixes={props.profile.prefixes} common={named().common} gutter />
@@ -212,6 +214,9 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   );
 }
 
+/** The band over a group's areas, its name in it (a map of several buckets' prefixes). */
+const GROUP_BAND = 18;
+
 /** S3's documented rates per prefix: reads and writes a second. */
 const READS_PER_S = 5500;
 const WRITES_PER_S = 3500;
@@ -261,6 +266,9 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
     return [...groups, ...leaves];
   };
   const total = () => rows().reduce((n, r) => n + r.value, 0);
+  // the areas with room for their name whole (and their figure under it): the others say nothing, their tooltip does
+  const size = signal<[number, number]>([0, 0]);
+  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length);
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
@@ -295,6 +303,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
             tooltipOffset={10}
             tooltipContent={<ChartTip tip={tip()} />}
             onHoverChange={({ index }) => hovered.set(index)}
+            onLayout={({ bounds }) => size.set([bounds.size.width, bounds.size.height])}
             class={TREEMAP}
           >
             <Treemap
@@ -302,23 +311,23 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
               parent="parent"
               value="value"
               paddingInner={TIP.areaGap}
-              paddingTop={nested() ? 18 : 0}
+              paddingTop={nested() ? GROUP_BAND : 0}
               cornerRadii={TIP.area}
               leafClass={(_, i) => (rows()[i]?.hot ? "fill-warn/60" : "fill-bar/55")}
               groupClass="fill-muted"
               groupLabel="label"
               // emphasis: a bucket's name over the prefixes in it
-              groupLabelClass={GROUP_LABEL}
+              groupLabelClass={LABEL.group}
               inactiveOpacity={INACTIVE}
-              label="label"
-              valueLabel={(_, v) => shown(v)}
-              labelClass={AREA_LABEL}
-              valueLabelClass={AREA_VALUE}
+              label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
+              valueLabel={(_, v, i) => (room()[i] === "both" ? shown(v) : "")}
+              labelClass={LABEL.area}
+              valueLabelClass={LABEL.areaValue}
               hoverClass={HOVER}
             />
           </Plot>
           <If when={items().some((x) => share(x) >= 0.5)}>
-            <Legend items={[{ label: t("prefixUse.hot"), swatch: "bg-warn/60" }]} />
+            <Legend items={[{ label: t("prefixUse.hot"), swatch: `${TONE.warn.fill}/60` }]} />
           </If>
           {/* how near the busiest second came to what S3 serves one prefix */}
           <If when={nearest() && share(nearest()!) > 0}>
@@ -367,7 +376,7 @@ export function CostBy(props: { signals: Signals; max?: number }) {
         style={{ height: rowsHeight(rows().length) }}
       >
         {/* what each cost, in money, then its share: the bar is of the money (the unit is said once, under the chart) */}
-        <Bar value="cost" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => `${money(rows()[i].cost)} · ${percent(rows()[i].share)}`} labelClass={BAR_LABEL} />
+        <Bar value="cost" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => `${money(rows()[i].cost)} · ${percent(rows()[i].share)}`} labelClass={LABEL.bar} />
         <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.kind ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
       <If when={unit()}>{(u) => <ChartNote gutter testID="cost-unit">{t("costBy.unit", { unit: u() })}</ChartNote>}</If>

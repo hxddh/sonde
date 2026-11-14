@@ -12,7 +12,9 @@ a chart bypasses the system:
   frame or a chart descriptor's `body:` (the Time pane's list), unless it
   is named in `FRAMED` and draws its own;
 - pitch: a chart of rows is `rowsHeight(n)` high — no `length * N`;
-- edge: `ml-/pl-/mx-` gutters only in the `GUTTER*` constants, one width;
+- edge: `ml-/pl-/mx-` gutters only in the `GUTTER*` constants: one width for
+  the names of rows (`GUTTER`, `GUTTER_PAD`, `GUTTER_BOTH`), one for a scale's
+  words outside its plot (`GUTTER_SCALE`);
 - treemap: every `<Treemap` plot is `TREEMAP` high;
 - legend: swatches only in `Legend`; tooltip: every interactive `<Plot` has
   `<ChartTip`, placed by the pointer at one offset; fade: `INACTIVE` only;
@@ -25,8 +27,12 @@ a chart bypasses the system:
   has a `label=`) the scale is `marked` (zero alone), and a `marked` scale
   stands only under bars that all say theirs (16.0's lint demanded a peak
   where DESIGN says there is none);
-- time's ticks: `TIME_TICK` only in `TimeAxis`; a bottom axis of buckets or
-  measures is `BUCKET_TICK`;
+- time's ticks: `LABEL.time` only in `TimeAxis`; a bottom axis of buckets or
+  measures is `LABEL.bucket`;
+- words: a chart's text is a `LABEL` role (the kit's `TEXT` underneath, so
+  Chinese is set at 12 pt): no `text-caption` in a chart file;
+- strokes: a line's width is a `STROKE` name and a dash a `DASH` one: no
+  `stroke-[…]`, `stroke-N` or dash pattern of its own outside system.tsx;
 - bars: thickness only from `BARS`/`CELLS`, tips only from `TIP`, heights
   only the named ones (`PLOT`, `SHAPE`, `STRIP`, `STACK`, `SHAPE_STRIP`, `MARK`,
   `TREEMAP`, `FLOWS`): a literal `paddingInner:`, `cornerRadii={…}` or `h-N`
@@ -149,8 +155,12 @@ for p in files:
                 if n not in framed and "body:" not in line and not strip and not re.search(r"body: \(\) =>", "\n".join(lines[max(0, n - 4) : n])):
                     say(p, n, f"<{name}> outside the frame: put it in a <Chart> (or a chart descriptor's body)")
         # time's ticks are TimeAxis's: another bottom axis has its own name
-        if re.search(r"labelClass=\{TIME_TICK\}", line) and inside(n) != "TimeAxis":
-            say(p, n, "time's ticks on an axis that is not time: BUCKET_TICK")
+        if re.search(r"labelClass=\{LABEL\.time\}", line) and inside(n) != "TimeAxis":
+            say(p, n, "time's ticks on an axis that is not time: LABEL.bucket")
+        if p in SYSTEM and re.search(r"(?<![\w-])text-caption(?![\w-])", line):
+            say(p, n, "the caption by hand in a chart: a LABEL role (Chinese takes 12 pt there)")
+        if p in SYSTEM and p != plots and re.search(r"(?<![\w-])stroke-(?:\[[\d.]+\]|\d+\b)|strokeDasharray: \"", line):
+            say(p, n, "a stroke width or dash of its own: STROKE or DASH")
         # one time axis: a moment is written on an axis by TimeAxis only
         if "<PlotAxis" in line and re.search(r"sinceTick|tMs\b", line) and inside(n) != "TimeAxis":
             say(p, n, "a time axis of its own: <TimeAxis domain={…} /> (slices={n} on a band scale)")
@@ -170,8 +180,10 @@ for p in files:
                     say(p, n, f"a row pitch of its own ({m.group(1)}): rowsHeight(n)")
         if p in SYSTEM:
             for m in re.finditer(r"(?<![\w-])(?:ml|pl|mx)-(\d\d)\b", line):
-                if re.match(r"^(?:export )?const GUTTER\w* = ", line):
+                if re.match(r"^(?:export )?const GUTTER(?:_PAD|_BOTH)? = ", line):
                     edges.add(m.group(1))
+                elif re.match(r"^(?:export )?const GUTTER_SCALE(?:_END)? = ", line):
+                    pass
                 else:
                     say(p, n, f"a left edge of its own ({m.group(0)}): GUTTER")
             if re.search(r"inactiveOpacity=\{(?!INACTIVE\})|hoverDim=\{(?!1 - INACTIVE\})", line):

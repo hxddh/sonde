@@ -132,7 +132,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
         </If>
         {/* both runs' latency: where the curves part says for which requests it changed */}
         <If when={c().latency && c().latency![0].length > 1 && c().latency![1].length > 1}>
-          <Chart title={t("cdf.title")} text={t("cdf.hint")} legend={[{ label: t("profile.before"), swatch: "bg-muted-foreground/70" }, { label: t("profile.after"), swatch: "bg-chart-1" }]}>
+          <Chart title={t("cdf.title")} text={t("cdf.hint")} legend={[{ label: t("profile.before"), swatch: "border-muted-foreground/70", line: "dashed" }, { label: t("profile.after"), swatch: "border-chart-1", line: "solid" }]}>
             <DistributionCompare latency={c().latency!} names={[t("profile.before"), t("profile.after")]} />
           </Chart>
         </If>

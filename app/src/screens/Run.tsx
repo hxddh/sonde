@@ -333,7 +333,7 @@ function LivePanel(props: { profile: Profile }) {
           {/* the last 30 seconds, sliding as the run goes */}
           <SessionShape profile={props.profile} range={liveRange(props.profile)} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="run-shape" />
           <View class="min-w-0 flex-1">
-            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} focus={focus} class={`${STRIP} w-full`} testID="run-band" />
+            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} focus={focus} class={STRIP} testID="run-band" />
           </View>
         </View>
       </If>

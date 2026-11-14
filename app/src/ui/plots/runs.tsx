@@ -7,9 +7,9 @@ import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from 
 import { count, day, duration, factor, percent } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
-import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, BUCKET_TICK, CROSS_BAND, CROSS_LINE, Chart, ChartTip, GUTTER, HOVER, INACTIVE, Legend, MOTION, PLOT, TICK_ROOM, TIME_TICK, TREEMAP, VALUE_TICK, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
+import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
 import { prefixNames } from "./where";
-import { Figure, terminal, textual, SimpleTable, SURFACE } from "../kit";
+import { Figure, terminal, textual, SimpleTable, SURFACE, TONE } from "../kit";
 
 // --- a trial over its clean run ------------------------------------------------------
 
@@ -57,7 +57,7 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
       data={faults()}
       x="tMs"
       xScale={{ type: "linear", domain: span() }}
-      yScale={{ type: "linear", domain: [0, top() * 1.2] }}
+      yScale={{ type: "linear", domain: [0, top() * HEADROOM.strip] }}
       accessibilityLabel={label()}
       accessibilityValue={tipValue(tip())}
       motion={MOTION}
@@ -69,10 +69,10 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
       class={`${axis ? TICK_ROOM : ""} ${STRIP} w-full`}
     >
       {/* where sonde answered in the store's place */}
-      <Rule value={() => top() * 1.2} class="stroke-status-injected stroke-[1.5]" />
+      <Rule value={() => top() * HEADROOM.strip} class={`stroke-status-injected ${STROKE.line}`} />
       {/* the clean run under, dashed and quiet; the trial over it */}
-      <Line data={of(clean(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class="stroke-muted-foreground stroke-[1.25]" style={{ strokeDasharray: "3 3" }} hoverDotClass="hidden" />
-      <Line data={of(trial(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class="stroke-chart-1 stroke-[1.5]" hoverDotClass="hidden" />
+      <Line data={of(clean(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class={`stroke-muted-foreground ${STROKE.line}`} style={{ strokeDasharray: DASH.reference }} hoverDotClass="hidden" />
+      <Line data={of(trial(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class={`stroke-chart-1 ${STROKE.line}`} hoverDotClass="hidden" />
       <ValueAxis peak={top()} say={say} />
       <If when={axis}>
         <TimeAxis domain={span()} />
@@ -87,6 +87,15 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
       </View>
     </If>
   );
+}
+
+/** What the trial's chart draws: its line, the clean run's dashed under it, and a rule where sonde answered. */
+export function trialLegend(faults: boolean): LegendItem[] {
+  return [
+    { label: t("trialOver.trial"), swatch: "border-chart-1", line: "solid" },
+    { label: t("trialOver.clean"), swatch: "border-muted-foreground", line: "dashed" },
+    ...(faults ? [{ label: t("trialOver.faults"), swatch: TONE.injected.fill }] : []),
+  ];
 }
 
 // --- one workload on two stores ---------------------------------------------------
@@ -130,13 +139,13 @@ export function StoreLatency(props: { changes: LatencyChange[]; names: [string, 
           style={{ height: rowsHeight(rows().length) }}
         >
           {/* each kind's p95 on the first store (hollow) joined to the second's */}
-          <Rule base="a95" value="b95" class="stroke-chart-1/60 stroke-[2.5]" inactiveOpacity={INACTIVE} />
-          <Dot value="a95" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={INACTIVE} />
-          <Dot value="b95" r={4.5} class="fill-chart-1 stroke-card stroke-[1.5]" inactiveOpacity={INACTIVE} />
-          <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: `${duration(r.a95)} → ${duration(r.b95)} · ${factor(ratio(r))}×`, x: Math.max(r.a95, r.b95), y: i, align: "left" as const, class: ROW_FIGURE }))} />
+          <Rule base="a95" value="b95" class={`stroke-chart-1/60 ${STROKE.link}`} inactiveOpacity={INACTIVE} />
+          <Dot value="a95" r={4} class={`fill-card stroke-muted-foreground ${STROKE.line}`} inactiveOpacity={INACTIVE} />
+          <Dot value="b95" r={4.5} class={`fill-chart-1 stroke-card ${STROKE.line}`} inactiveOpacity={INACTIVE} />
+          <PlotLabel class={LABEL.figureStrong} texts={rows().map((r, i) => ({ text: `${duration(r.a95)} → ${duration(r.b95)} · ${factor(ratio(r))}×`, x: Math.max(r.a95, r.b95), y: i, align: "left" as const, class: ROW_FIGURE }))} />
           <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
         </Plot>
-        <Legend gutter items={[{ label: `p95 · ${props.names[0]}`, swatch: "bg-muted-foreground/45" }, { label: `p95 · ${props.names[1]}`, swatch: "bg-chart-1" }]} />
+        <Legend gutter items={[{ label: `p95 · ${props.names[0]}`, swatch: "border border-muted-foreground bg-card" }, { label: `p95 · ${props.names[1]}`, swatch: "bg-chart-1" }]} />
       </View>
     </If>
   );
@@ -183,21 +192,24 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           style={{ height: rowsHeight(rows().length) }}
         >
           {/* a dumbbell: before (hollow) joined to after (in color); a drop to none still has its dot */}
-          <Rule base="before" value="after" color="tone" class="stroke-[2.5]" inactiveOpacity={INACTIVE} />
-          <Dot value="before" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={INACTIVE} />
-          <Dot value="after" color="tone" r={4.5} class="stroke-card stroke-[1.5]" inactiveOpacity={INACTIVE} />
+          <Rule base="before" value="after" color="tone" class={STROKE.link} inactiveOpacity={INACTIVE} />
+          <Dot value="before" r={4} class={`fill-card stroke-muted-foreground ${STROKE.line}`} inactiveOpacity={INACTIVE} />
+          <Dot value="after" color="tone" r={4.5} class={`stroke-card ${STROKE.line}`} inactiveOpacity={INACTIVE} />
           {/* its figures on its own line (the label's middle on the row's), past the further dot */}
-          <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: r.before === r.after ? count(r.after) : `${count(r.before)} → ${count(r.after)}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: ROW_FIGURE }))} />
+          <PlotLabel class={LABEL.figureStrong} texts={rows().map((r, i) => ({ text: r.before === r.after ? count(r.after) : `${count(r.before)} → ${count(r.after)}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: ROW_FIGURE }))} />
           <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
           {/* how many: none, and the most of either run */}
-          <PlotAxis placement="bottom" tickValues={[0, peak()]} format={(v) => (v === 0 ? "0" : t("run.bandRequests", { n: v }))} labelClass={BUCKET_TICK} />
+          <PlotAxis placement="bottom" tickValues={[0, peak()]} format={(v) => (v === 0 ? "0" : t("run.bandRequests", { n: v }))} labelClass={LABEL.bucket} />
         </Plot>
         {/* which dot is which run: the earlier hollow, the later in the colour of its change */}
         <Legend
           gutter
+          // the dots drawn, and no other: "more" under a run that only fell is a colour nothing has
           items={[
             { label: t("runBars.before"), swatch: "border border-muted-foreground bg-card" },
-            ...(props.neutral ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }] : [{ label: t("runBars.fewer"), swatch: "bg-status-ok" }, { label: t("runBars.more"), swatch: "bg-status-server" }]),
+            ...(props.neutral
+              ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }]
+              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-status-ok" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-status-server" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
           ]}
         />
       </If>
@@ -216,6 +228,9 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
     props.prefixes
       .filter((x) => x.requests[0] + x.requests[1] > 0)
       .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
+  // the areas with room for their name whole (and their figures under it): the others say nothing, their tooltip does
+  const size = signal<[number, number]>([0, 0]);
+  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, 0, (i) => rows()[i].label.length);
   const hovered = signal<number | null>(null);
   // (the same in both runs: one figure)
   const line = (x: { requests: [number, number] }) => (x.requests[0] === x.requests[1] ? count(x.requests[1]) : t("prefixChange.line", { a: count(x.requests[0]), b: count(x.requests[1]) }));
@@ -241,6 +256,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
             tooltipOffset={10}
             tooltipContent={<ChartTip tip={tip()} />}
             onHoverChange={({ index }) => hovered.set(index)}
+            onLayout={({ bounds }) => size.set([bounds.size.width, bounds.size.height])}
             class={TREEMAP}
           >
             <Treemap
@@ -251,14 +267,16 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
               paddingInner={TIP.areaGap}
               cornerRadii={TIP.area}
               inactiveOpacity={INACTIVE}
-              label="label"
-              valueLabel={(_, __, i) => line(rows()[i]!.x)}
-              labelClass={AREA_LABEL}
-              valueLabelClass={AREA_VALUE}
+              label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
+              valueLabel={(_, __, i) => (room()[i] === "both" ? line(rows()[i]!.x) : "")}
+              // on a tile its change made dark, the words turn light (Native Shell marks it `data-dark`)
+              labelClass={`${LABEL.area} data-dark:text-white`}
+              valueLabelClass={`${LABEL.areaValue} data-dark:text-white/80`}
               hoverClass={HOVER}
             />
           </Plot>
-          <Legend items={[{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-chart-4" : "bg-status-ok" }, { label: t("prefixChange.same"), swatch: "bg-muted" }, { label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-status-server" }]} />
+          {/* the changes there are, and no other */}
+          <Legend items={[...(rows().some((r) => r.change < 0) ? [{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-chart-4" : "bg-status-ok" }] : []), ...(rows().some((r) => r.change === 0) ? [{ label: t("prefixChange.same"), swatch: "bg-muted" }] : []), ...(rows().some((r) => r.change > 0) ? [{ label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-status-server" }] : [])]} />
         </View>
       </If>
     </If>
@@ -325,11 +343,10 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
             <If when={limit() !== null}>
               <Area y0={() => base()!} y1={() => limit()!} curve="linear" class="fill-muted-foreground/12" />
             </If>
-            <Grid y={[base()!]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
+            <Grid y={[base()!]} class={`stroke-muted-foreground/60 ${STROKE.hair}`} style={{ strokeDasharray: DASH.reference }} />
           </If>
           <Budget value={props.budget} say={props.format} />
-          <Line curve="linear" class="stroke-chart-1 stroke-2" dot dotClass="size-1.5 rounded-full bg-chart-1" hoverDotClass="size-2.5 rounded-full border-2 border-card bg-chart-1" />
-          <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={last() > 0 ? [{ text: props.format(values()[last()]), x: last(), y: values()[last()], align: "right", class: "-translate-y-full pb-1" }] : []} />
+          <Line curve="linear" class={`stroke-chart-1 ${STROKE.trend}`} dot dotClass="size-1.5 rounded-full bg-chart-1" hoverDotClass="size-2.5 rounded-full border-2 border-card bg-chart-1" />
         </Plot>
       </BaseButton>
     </Chart>
@@ -373,15 +390,16 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
         tooltipOffset={10}
         tooltipContent={<ChartTip tip={tip()} />}
         onHoverChange={({ index }) => hovered.set(index)}
-        class={`${TICK_ROOM} ${PLOT} w-full`}
+        // its scale outside, in the room for one: "95%" never on a curve
+        class={`${TICK_ROOM} ${GUTTER_SCALE} ${PLOT}`}
       >
-        {/* the median and p95: 99 sits on the top edge, its label over 95's */}
+        {/* the median and p95 */}
         <Grid y={[50, 95]} class={GRID} />
-        <Line y="a" curve="stepAfter" class="stroke-muted-foreground/70 stroke-[1.25]" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
-        <Line y="b" curve="stepAfter" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
-        <PlotAxis placement="left" labelPlacement="inside" tickValues={[50, 95]} format={(v) => percent(v / 100)} labelClass={VALUE_TICK} />
+        <Line y="a" curve="stepAfter" class={`stroke-muted-foreground/70 ${STROKE.line}`} style={{ strokeDasharray: DASH.reference }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
+        <Line y="b" curve="stepAfter" class={`stroke-chart-1 ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-chart-1" />
+        <PlotAxis placement="left" tickValues={[50, 95]} format={(v) => percent(v / 100)} labelClass={LABEL.scale} />
         {/* a log scale ticks at its decades: 1 ms, 10 ms, 100 ms, never 3.16 ms */}
-        <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => duration(10 ** v)} labelClass={BUCKET_TICK} />
+        <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => duration(10 ** v)} labelClass={LABEL.bucket} />
       </Plot>
     </If>
   );

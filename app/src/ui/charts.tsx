@@ -8,9 +8,11 @@ import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
 import { SimpleTable, terminal, textual, TEXT } from "./kit";
-import { AREA_VALUE, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GROUP_LABEL, GUTTER, HOVER, INACTIVE, Legend, MOTION, rowsHeight, TREEMAP, BARS, TIP, STACK } from "./plots";
+import { areasWithRoom, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, rowsHeight, TREEMAP, BARS, TIP, STACK } from "./plots";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
+/** The band over a folder's areas, its name in it. */
+const GROUP_BAND = 18;
 
 /** Bars across of `items`, the value and its share at each bar's end. */
 export function BarChart(props: { items: { label: string; value: number; sub?: string }[]; testID?: string; unit?: "bytes" | "count" }) {
@@ -50,7 +52,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         class={GUTTER}
         style={{ height: rowsHeight(props.items.length) }}
       >
-        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass={`pl-2 tabular-nums ${TEXT.meta}`} />
+        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass={LABEL.bar} />
         <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
@@ -88,7 +90,8 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
         </Plot>
       </If>
-      <Legend items={props.parts.map((p, i) => ({ label: part(p), swatch: `bg-${PALETTE[i % PALETTE.length]}` }))}>
+      {/* the parts there are: a part of none is not drawn, nor named */}
+      <Legend items={props.parts.flatMap((p, i) => (p.value > 0 ? [{ label: part(p), swatch: `bg-${PALETTE[i % PALETTE.length]}` }] : []))}>
         <If when={props.note}>
           <ChartNote testID="stack-note">{props.note}</ChartNote>
         </If>
@@ -121,6 +124,9 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: r.id.startsWith("g:") && nested() ? r.label : r.id, lines: [`${bytes(sizeOf(r))} · ${pct(sizeOf(r), total())}`] } : null;
   };
+  // the areas with room for their name whole (and their size under it): the others say nothing, their tooltip does
+  const size = signal<[number, number]>([0, 0]);
+  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length);
   return (
     <If when={!textual()} else={<BarChart items={props.items} />}>
       <Plot
@@ -134,6 +140,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
         tooltipOffset={10}
         tooltipContent={<ChartTip tip={tip()} />}
         onHoverChange={({ index }) => hovered.set(index)}
+        onLayout={({ bounds }) => size.set([bounds.size.width, bounds.size.height])}
         class={TREEMAP}
       >
         <Treemap
@@ -141,17 +148,17 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           parent="parent"
           value="value"
           paddingInner={TIP.areaGap}
-          paddingTop={nested() ? 18 : 0}
+          paddingTop={nested() ? GROUP_BAND : 0}
           cornerRadii={TIP.area}
           leafClass={(_, i) => `fill-${color(rows()[i].group)}/70`}
           groupClass={(_, i) => `fill-${color(rows()[i].group)}/15`}
           groupLabel="label"
-          groupLabelClass={GROUP_LABEL}
+          groupLabelClass={LABEL.group}
           inactiveOpacity={INACTIVE}
-          label="label"
-          valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
-          labelClass={`p-2 ${TEXT.small}`}
-          valueLabelClass={AREA_VALUE}
+          label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
+          valueLabel={(_, v, i) => (room()[i] === "both" ? `${bytes(v)} · ${pct(v, total())}` : "")}
+          labelClass={LABEL.area}
+          valueLabelClass={LABEL.areaValue}
           hoverClass={HOVER}
         />
       </Plot>
