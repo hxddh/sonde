@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show-by.schema.json",
   "title": "sonde show --by DIMENSION -f json",
-  "description": "A session's requests split by one dimension: the operations table's figures for each group, and where the slow and the costly requests concentrate.",
+  "description": "A session's requests split by one dimension: each group's figures (as `summary.kinds` has them), and where the slow and the costly requests concentrate.",
   "type": "object",
   "properties": {
     "session": {
@@ -13,7 +13,7 @@
       "type": "object",
       "properties": {
         "by": {
-          "enum": ["operation", "prefix", "size", "caller", "sdk", "status"]
+          "enum": ["kind", "prefix", "size", "caller", "sdk", "status"]
         },
         "sdk": {
           "type": ["string", "null"],
@@ -71,7 +71,7 @@
       "properties": {
         "key": {
           "type": "string",
-          "description": "The operation, prefix, size band (`0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+`), caller, SDK or status."
+          "description": "The kind, prefix, size band (`0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+`), caller, SDK or status."
         },
         "other": {
           "type": "boolean",

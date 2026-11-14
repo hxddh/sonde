@@ -93,7 +93,7 @@ committer settings; empty `…/` directory markers are reported with their delet
 ## How a request is handled
 
 1. Bucket and key from the path (`/bucket/key`) or a `<bucket>.localhost` Host; the query decoded as is (`+` stays).
-2. The operation named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
+2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
    SignatureDoesNotMatch`, recorded as refused, never forwarded.

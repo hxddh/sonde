@@ -71,7 +71,7 @@ repeatable; duplicates run once.
   session is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs, and `--again`
   runs each that stands broke. No other built-in takes a number (project scenarios set `times`); the app offers the
   same count.
-- **One request** = method, operation, bucket, key, part number (not upload id: a restarted upload retries the same
+- **One request** = method, kind, bucket, key, part number (not upload id: a restarted upload retries the same
   parts). Key-less requests add `prefix`, `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`,
   `upload-id-marker`, `version-id-marker`, `versions`, `uploads` and the body's hash. Attempts are counted per
   request, so concurrency does not change which fail.
@@ -177,7 +177,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | | |
 |---|---|
 | Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the session says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
-| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`kind`, `key`, `caller`) and `advice` (`key`, `args`). |
 | `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |
@@ -196,7 +196,7 @@ Injected requests are marked "Injected by sonde"; the sessions list marks runs w
 [[scenario]]
 name = "flaky-wal"
 fault = "503 SlowDown"     # or "500", "404 NoSuchKey", "lost-answer", "cut-body", "lost-race", "stale-list", "delay 200ms"
-on = ["PutObject"]         # S3 operation names; "Put*" matches a prefix; all when omitted
+on = ["PutObject"]         # kinds of request; "Put*" matches a prefix; all when omitted
 prefix = "db/wal/"         # keys under it; all when omitted
 times = 2                  # attempts per request that fail (default 1; 0 = every attempt)
 ```

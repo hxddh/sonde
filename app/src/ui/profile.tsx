@@ -11,7 +11,7 @@
 import { batch, effect, type JSX, resource, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { t } from "../i18n";
 import { costColumn, count, duration, percent } from "../format";
-import { FEW, operationStats, type SignalId, signalsOf } from "../signals";
+import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
@@ -166,10 +166,10 @@ function ByKind(props: { view: Pick<SessionView, "summary" | "profile">; selecte
   const rows = (): GroupRow[] => {
     const groups = props.view.profile.groups;
     const timed = props.view.profile.timed !== false;
-    return operationStats(props.view).map((o) => {
-      const mine = groups.filter((g) => g.operation === o.operation);
+    return kindStats(props.view).map((o) => {
+      const mine = groups.filter((g) => g.kind === o.kind);
       return {
-        name: o.operation,
+        name: o.kind,
         requests: o.count,
         errorShare: o.errorShare,
         p50Ms: o.p50Ms,
@@ -246,7 +246,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
   };
   const noneHeld = () => (sel() && sel()!.summary.requests === 0 ? t("plots.noneInStretch") : null);
   // Group by, as the Operations pane has it: the table of groups follows it (by kind of request, the default)
-  const grouped = () => (props.groupBy && props.groupBy !== "operation" && props.splitOf ? props.groupBy : null);
+  const grouped = () => (props.groupBy && props.groupBy !== "kind" && props.splitOf ? props.groupBy : null);
   const split = resource(
     () => grouped(),
     (by) => props.splitOf!(by),
@@ -365,7 +365,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       group: "latency",
       wide: true,
       stretched: true,
-      when: () => operationStats(props.view).length > 0,
+      when: () => kindStats(props.view).length > 0,
       title: () => t("byOp.title"),
       text: () => t("byOp.hint"),
       body: () => <ByKind view={va()} selected={props.kind} onSelect={props.onKind} />,
@@ -480,7 +480,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       action: () => <PrefixMeasure profile={pa()} value={measure()} onChange={(m) => measure.set(m)} />,
       body: () => <PrefixUse profile={pa()} measure={measure()} rates={sa().prefixes} />,
     },
-    { id: "cost", group: "where", stretched: true, when: () => sig().cost.operations.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
+    { id: "cost", group: "where", stretched: true, when: () => sig().cost.kinds.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
     { id: "heat", group: "where", when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => t("heat.hint"), body: () => <Heat profile={p()} range={zoom()} /> },
     { id: "flows", group: "where", wide: true, stretched: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => t("flows.hint"), body: () => <Flows profile={pa()} /> },
   ];

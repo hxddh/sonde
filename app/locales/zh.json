@@ -1027,7 +1027,7 @@
  "session.sdk": "来自 %{sdk}",
  "split.groupBy": "分组",
  "split.by.none": "逐个操作",
- "split.by.operation": "请求类型",
+ "split.by.kind": "请求类型",
  "split.by.prefix": "前缀",
  "split.by.size": "大小",
  "split.by.caller": "代码行",

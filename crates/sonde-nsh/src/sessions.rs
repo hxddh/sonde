@@ -3006,10 +3006,8 @@ mod tests {
         let path = dir.path().join("many.sonde");
         many(&path, 300);
         let p = path.to_string_lossy().into_owned();
-        let v = Sessions::split(p.clone(), "operation".into())
-            .await
-            .unwrap();
-        assert_eq!(v["by"], "operation");
+        let v = Sessions::split(p.clone(), "kind".into()).await.unwrap();
+        assert_eq!(v["by"], "kind");
         assert_eq!(v["sdk"], "aws-sdk-java 2.25");
         let rows = v["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
@@ -3022,7 +3020,7 @@ mod tests {
         let h = h.as_array().unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0]["operationIndex"].as_u64(), Some(7));
-        assert_eq!(h[0]["operation"], "PutObject");
+        assert_eq!(h[0]["kind"], "PutObject");
         assert_eq!(h[0]["target"], "b/data/k00007");
         let none = Sessions::key_history(p, "b".into(), "nope".into())
             .await
@@ -3075,7 +3073,7 @@ mod tests {
             v["operations"][2].get("title").is_none(),
             "said by its phrases"
         );
-        assert!(v["summary"]["operations"][0]["p99Ms"].is_number());
+        assert!(v["summary"]["kinds"][0]["p99Ms"].is_number());
         // the calls a table makes: a range in its order, one operation, where
         // a request and a moment are, the row an operation stands at
         let (_, a) = analysis_of(&p).unwrap();

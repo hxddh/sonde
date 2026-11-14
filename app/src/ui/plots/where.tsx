@@ -66,7 +66,7 @@ const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fil
 const OUTCOME_FROM: Record<string, string> = { ok: "to-bar/45", "not found": "to-status-miss/45", "client error": "to-status-client/45", "server error": "to-status-server/45" };
 
 /**
- * Where a session's requests went: from each kind of operation to the
+ * Where a session's requests went: from each kind of request to the
  * prefixes it touched, and from each prefix to how it was answered. The
  * widths are requests; the pointer over a node keeps its flows and fades the rest.
  */
@@ -74,7 +74,7 @@ export function Flows(props: { profile: Profile }) {
   const nodes = () => {
     const names: string[] = [];
     for (const f of props.profile.flows) for (const n of [f.source, f.target]) if (!names.includes(n)) names.push(n);
-    return names.map((name) => ({ name, stage: OUTCOME_FILL[name] ? 2 : props.profile.groups.some((g) => g.operation === name) || name === "other operations" ? 0 : 1 }));
+    return names.map((name) => ({ name, stage: OUTCOME_FILL[name] ? 2 : props.profile.groups.some((g) => g.kind === name) || name === "other operations" ? 0 : 1 }));
   };
   const links = () => {
     const at = new Map(nodes().map((n, i) => [n.name, i]));
@@ -331,23 +331,23 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
   );
 }
 
-/** What the session's requests cost, by operation: a bar each, dearest
+/** What the session's requests cost, by kind: a bar each, dearest
  * first, with its share of the whole. */
 export function CostBy(props: { signals: Signals; max?: number }) {
   const c = () => props.signals.cost;
-  const rows = () => c().operations.filter((x) => x.cost > 0).slice(0, props.max ?? 8);
+  const rows = () => c().kinds.filter((x) => x.cost > 0).slice(0, props.max ?? 8);
   const hovered = signal<number | null>(null);
-  const label = () => (rows()[0] ? t("costBy.text", { op: rows()[0].operation, pct: percent(rows()[0].share), total: cost(c().amount, c().currency) }) : "");
+  const label = () => (rows()[0] ? t("costBy.text", { op: rows()[0].kind, pct: percent(rows()[0].share), total: cost(c().amount, c().currency) }) : "");
   // every row's cost in one unit (all of them thousandths of a cent, or none): the figure at the bar, the unit once under the chart
   const parts = () => rows().map((r) => costParts(r.cost, c().currency));
   const unit = () => (parts().length && parts().every((x) => x.per1000 === parts()[0].per1000) ? parts()[0].unit : null);
   const money = (v: number) => (unit() ? costParts(v, c().currency).figure : cost(v, c().currency));
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.operation, lines: [`${cost(r.cost, c().currency)} · ${percent(r.share)}`, t("costBy.line", { n: count(r.billed), class: t(`costBy.${r.class}`) })] } : null;
+    return r ? { title: r.kind, lines: [`${cost(r.cost, c().currency)} · ${percent(r.share)}`, t("costBy.line", { n: count(r.billed), class: t(`costBy.${r.class}`) })] } : null;
   };
   return (
-    <If when={!textual()} else={<SimpleTable columns={[t("column.operation"), t("figure.requests"), t("profile.cost"), t("profile.share")]} rows={rows().map((r) => [r.operation, count(r.requests), cost(r.cost, c().currency), percent(r.share)])} />}>
+    <If when={!textual()} else={<SimpleTable columns={[t("column.kind"), t("figure.requests"), t("profile.cost"), t("profile.share")]} rows={rows().map((r) => [r.kind, count(r.requests), cost(r.cost, c().currency), percent(r.share)])} />}>
       <View class="gap-1">
       <Plot
         testID="profile-cost"
@@ -368,7 +368,7 @@ export function CostBy(props: { signals: Signals; max?: number }) {
       >
         {/* what each cost, in money, then its share: the bar is of the money (the unit is said once, under the chart) */}
         <Bar value="cost" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => `${money(rows()[i].cost)} · ${percent(rows()[i].share)}`} labelClass={BAR_LABEL} />
-        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.operation ?? "")} labelClass={AXIS_LABEL} />
+        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.kind ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
       <If when={unit()}>{(u) => <ChartNote gutter testID="cost-unit">{t("costBy.unit", { unit: u() })}</ChartNote>}</If>
       </View>

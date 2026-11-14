@@ -125,9 +125,9 @@ export function signalTiles(s: Signals): SignalTile[] {
   ];
 }
 
-/** One operation of a run: how many, what share failed, how long. */
-export interface OpStats {
-  operation: string;
+/** One kind of request in a run: how many, what share failed, how long. */
+export interface KindStats {
+  kind: string;
   count: number;
   errorShare: number;
   p50Ms: number | null;
@@ -137,9 +137,9 @@ export interface OpStats {
   few: boolean;
 }
 
-/** A run by operation: Rust's own table (`summary.operations`). */
-export function operationStats(v: Pick<SessionView, "summary">): OpStats[] {
-  return v.summary.operations.map((o) => ({ operation: o.operation, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
+/** A run by kind of request: Rust's own table (`summary.kinds`). */
+export function kindStats(v: Pick<SessionView, "summary">): KindStats[] {
+  return v.summary.kinds.map((o) => ({ kind: o.kind, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
 }
 
 /** A size bucket by its upper bound, short enough for an axis: "empty", "≤ 1.0 KiB". */

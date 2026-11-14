@@ -1027,7 +1027,7 @@
  "session.sdk": "from %{sdk}",
  "split.groupBy": "Group by",
  "split.by.none": "Each operation",
- "split.by.operation": "Kind of request",
+ "split.by.kind": "Kind of request",
  "split.by.prefix": "Prefix",
  "split.by.size": "Size",
  "split.by.caller": "Code line",

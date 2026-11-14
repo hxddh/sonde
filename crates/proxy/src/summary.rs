@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpStats {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub count: u64,
     pub errors: u64,
@@ -45,7 +46,8 @@ pub struct Summary {
     pub seconds: f64,
     pub bytes_up: u64,
     pub bytes_down: u64,
-    /// Busiest first.
+    /// Each kind of request, busiest first.
+    #[serde(rename = "kinds")]
     pub operations: Vec<OpStats>,
     /// Error responses by status and S3 code, most frequent first.
     pub error_codes: Vec<(String, u64)>,
@@ -235,7 +237,9 @@ struct CountedLine<'a> {
     id: u64,
     time: DateTime<Utc>,
     endpoint: serde::de::IgnoredAny,
-    operation: serde::de::IgnoredAny,
+    // (`operation` in format 1)
+    #[serde(alias = "operation")]
+    kind: serde::de::IgnoredAny,
     url: serde::de::IgnoredAny,
     query: serde::de::IgnoredAny,
     retries: serde::de::IgnoredAny,
@@ -580,10 +584,10 @@ mod tests {
         let put = &s.operations[1];
         assert!(put.few, "one request has no percentiles to speak of");
         let json = serde_json::to_value(&s).unwrap();
-        assert_eq!(json["operations"][0]["errorShare"], 0.05);
-        assert_eq!(json["operations"][0]["p99Ms"], 99.0);
-        assert!(json["operations"][0].get("few").is_none());
-        assert_eq!(json["operations"][1]["few"], true);
+        assert_eq!(json["kinds"][0]["errorShare"], 0.05);
+        assert_eq!(json["kinds"][0]["p99Ms"], 99.0);
+        assert!(json["kinds"][0].get("few").is_none());
+        assert_eq!(json["kinds"][1]["few"], true);
     }
 
     /// A fixture copied into a sessions folder, compressed or not.

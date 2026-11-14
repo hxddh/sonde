@@ -342,7 +342,7 @@ function bigSession(n: number) {
     latency: { value: 4, series: [4, 4], p50Ms: 4, p95Ms: 4, p99Ms: 4, p95: [4, 4], p99: [4, 4] },
     bytes: { value: 12800, series: [12800, 12800], upPerSec: 0, downPerSec: 12800, up: zeros, down: [12800, 12800], upBytes: 0, downBytes: n * 128 },
     inFlight: { value: 1, series: [1, 1], peak: 1, peakAtMs: 0 },
-    firstByte: null, sizes: { request: [], response: [], throughput: [], mibPerSec: null }, statuses: [], cost: { amount: 0, currency: "USD", operations: [] }, prefixes: [],
+    firstByte: null, sizes: { request: [], response: [], throughput: [], mibPerSec: null }, statuses: [], cost: { amount: 0, currency: "USD", kinds: [] }, prefixes: [],
   };
   const profile = { wallMs: n * 10, waitingMs: n * 4, peakInFlight: 1, peakAtMs: 0, meanInFlight: 0.4, groups: [], binMs: n * 5, rate: [], inFlight: [], samples: [], cost: { writes: 0, reads: n, free: 0, amount: 0, currency: "USD" }, prices: { per1000Writes: 0, per1000Reads: 0, currency: "USD" }, prefixes: [], heat: [], flows: [] };
   const asked: { offset: number; limit: number; sort?: string; descending?: boolean; finding?: number }[] = [];
@@ -356,7 +356,7 @@ function bigSession(n: number) {
   const modules = {
     "Sessions.view": async (path: string) => ({
       path, header: { endpoint: "demo", url: "http://127.0.0.1:9000", region: "us-east-1", created: new Date(t0).toISOString(), command: "etl --all" },
-      summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, operations: [{ operation: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
+      summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, kinds: [{ kind: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
       profile, signals, whatIf: null, injected: [], sharedNotes: [],
       operations: Array.from({ length: 500 }, (_, i) => row(i)), operationsTotal: n,
       span: { start: new Date(t0).toISOString(), end: new Date(t0 + n * 10).toISOString() }, families: { formats: {}, kinds: { request: n } },

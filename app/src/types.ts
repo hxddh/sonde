@@ -156,7 +156,8 @@ export interface RecordSummary {
   id: number;
   time: string;
   endpoint: string;
-  operation: string;
+  /** The S3 call (`GetObject`, `Unknown`). */
+  kind: string;
   method: string;
   target: string;
   status: number | null;
@@ -192,7 +193,7 @@ export interface RequestRecord extends RecordSummary {
 
 export interface RequestFilter {
   status?: { kind: "exact" | "class"; value: number } | { kind: "errors" } | { kind: "transport" } | null;
-  operation?: string | null;
+  kind?: string | null;
   endpoint?: string | null;
   text?: string | null;
   retried?: boolean;
@@ -490,7 +491,7 @@ export interface Phrase {
 }
 
 /** What Group by splits the operations table by (crates/proxy/src/split.rs). */
-export type SplitBy = "operation" | "prefix" | "size" | "caller" | "sdk" | "status";
+export type SplitBy = "kind" | "prefix" | "size" | "caller" | "sdk" | "status";
 
 /** One group of a split: the operations table's figures for it. */
 export interface SplitRow {
@@ -626,8 +627,8 @@ export interface WhatIf {
 }
 
 export interface SessionSummary {
-  /** The run by operation, busiest first. */
-  operations: { operation: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
+  /** The run by kind of request, busiest first. */
+  kinds: { kind: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
   requests: number;
   errors: number;
   misses: number;
@@ -637,9 +638,9 @@ export interface SessionSummary {
   bytesDown: number;
 }
 
-/** One kind of request: an operation, its lookups that found nothing apart (crates/proxy/src/profile.rs). */
+/** One kind of request: an S3 call, its lookups that found nothing apart (crates/proxy/src/profile.rs). */
 export interface ProfileGroup {
-  operation: string;
+  kind: string;
   missed: boolean;
   requests: number;
   waitingMs: number;
@@ -690,7 +691,7 @@ export interface Profile {
 
 /** A kind of request on two stores: the same workload's latency on each. */
 export interface LatencyChange {
-  operation: string;
+  kind: string;
   missed: boolean;
   requests: [number, number];
   p50Ms: [number, number];
@@ -793,8 +794,8 @@ export interface Trial {
   reasons: string[];
   /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); empty when there are none. */
   reasonsText?: { key: string; args?: Record<string, string> }[][];
-  /** The request the verdict turns on, when it is not "survived": its operation, `bucket/key`, and the program's line when the run named callers. */
-  where?: { operation: string; key: string; caller?: string } | null;
+  /** The request the verdict turns on, when it is not "survived": its kind, `bucket/key`, and the program's line when the run named callers. */
+  where?: { kind: string; key: string; caller?: string } | null;
   /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
   advice?: { key: string; args?: Record<string, string> } | null;
   /** The trial's own session (an absolute path), when it is still there. */
@@ -828,7 +829,7 @@ export interface RunChange {
   cost: [number, number];
   currency: string;
   peakInFlight: [number, number];
-  groups: { operation: string; missed: boolean; requests: [number, number]; waitingMs: [number, number] }[];
+  groups: { kind: string; missed: boolean; requests: [number, number]; waitingMs: [number, number] }[];
   /** Findings gone at any threshold (fixed). */
   resolved: { text: string; phrases: Phrase[] }[];
   appeared: { text: string; phrases: Phrase[] }[];
@@ -910,10 +911,10 @@ export interface Signals {
   bytes: { value: number | null; series: number[]; upPerSec: number | null; downPerSec: number | null; up: number[]; down: number[]; upBytes: number; downBytes: number };
   inFlight: { value: number | null; series: number[]; peak: number; peakAtMs: number };
   /** Null when no request's first byte was timed. */
-  firstByte: { share: number; count: number; kinds: { operation: string; count: number; firstByteMs: number; restMs: number }[] } | null;
-  sizes: { request: SizeBucket[]; response: SizeBucket[]; throughput: { operation: string; bucket: number; count: number; mibPerSec: number }[]; mibPerSec: number | null };
+  firstByte: { share: number; count: number; kinds: { kind: string; count: number; firstByteMs: number; restMs: number }[] } | null;
+  sizes: { request: SizeBucket[]; response: SizeBucket[]; throughput: { kind: string; bucket: number; count: number; mibPerSec: number }[]; mibPerSec: number | null };
   statuses: { status: number | null; code: string | null; count: number; injected: number; firstMs: number; lastMs: number }[];
-  cost: { amount: number; currency: string; operations: { operation: string; class: "write" | "list" | "read" | "free"; requests: number; billed: number; cost: number; share: number }[] };
+  cost: { amount: number; currency: string; kinds: { kind: string; class: "write" | "list" | "read" | "free"; requests: number; billed: number; cost: number; share: number }[] };
   prefixes: { prefix: string; folders: number; requests: number; peakReads: number; peakWrites: number; readShare: number; writeShare: number }[];
 }
 

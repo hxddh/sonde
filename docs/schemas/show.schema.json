@@ -255,10 +255,10 @@
         "impact"
       ]
     },
-    "operationSummary": {
+    "kindSummary": {
       "type": "object",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "count": {
@@ -298,7 +298,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "count",
         "errors",
         "misses",
@@ -367,9 +367,9 @@
         "endpoint": {
           "type": "string"
         },
-        "operation": {
+        "kind": {
           "type": "string",
-          "description": "The S3 operation (`GetObject`, `Unknown`)."
+          "description": "The request's kind: the S3 call (`GetObject`, `Unknown`)."
         },
         "method": {
           "type": "string"
@@ -502,7 +502,7 @@
         "id",
         "time",
         "endpoint",
-        "operation",
+        "kind",
         "method",
         "url",
         "bucket",
@@ -619,11 +619,11 @@
         "bytesDown": {
           "type": "integer"
         },
-        "operations": {
+        "kinds": {
           "type": "array",
           "description": "Each kind of request.",
           "items": {
-            "$ref": "#/$defs/operationSummary"
+            "$ref": "#/$defs/kindSummary"
           }
         },
         "errorCodes": {
@@ -657,7 +657,7 @@
         "seconds",
         "bytesUp",
         "bytesDown",
-        "operations",
+        "kinds",
         "errorCodes"
       ]
     },

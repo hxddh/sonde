@@ -86,7 +86,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "operation": {
+          "kind": {
             "type": "string"
           },
           "missed": {
@@ -118,7 +118,7 @@
           }
         },
         "required": [
-          "operation",
+          "kind",
           "missed",
           "requests",
           "waitingMs"

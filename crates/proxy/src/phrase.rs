@@ -207,7 +207,7 @@ fn template(key: &str) -> &'static str {
         "split.cost" => "; {pct}% of the cost is ",
         "split.and" => ", ",
         "split.end" => ".",
-        "split.operation" => "{v}",
+        "split.kind" => "{v}",
         "split.prefix" => "under {v}",
         "split.caller" => "from {v}",
         "split.sdk" => "from {v}",

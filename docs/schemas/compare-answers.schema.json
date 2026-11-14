@@ -59,7 +59,7 @@
     "difference": {
       "type": "object",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "original": {
@@ -84,7 +84,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "original",
         "replay",
         "count",
@@ -96,7 +96,7 @@
       "type": "object",
       "description": "A kind of request in two runs: each figure a pair (first, second).",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "missed": {
@@ -152,7 +152,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "missed",
         "requests",
         "p50Ms",

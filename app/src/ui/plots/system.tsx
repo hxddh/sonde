@@ -10,7 +10,7 @@ import type { ProfileGroup } from "../../types";
 import { Card, EMPHASIS, Empty, Heading, POPUP, terminal, IconButton } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
-export const groupName = (g: Pick<ProfileGroup, "operation" | "missed">) => (g.missed ? t("profile.notFound", { op: g.operation }) : g.operation);
+export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
 
 export const pct = percent;
 

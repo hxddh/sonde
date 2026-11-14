@@ -118,6 +118,7 @@ pub struct InFlight {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FirstByteRow {
+    #[serde(rename = "kind")]
     pub operation: String,
     /// The requests whose first byte was timed.
     pub count: usize,
@@ -150,6 +151,7 @@ pub struct SizeBucket {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Throughput {
+    #[serde(rename = "kind")]
     pub operation: String,
     /// The size bucket, by its upper bound in bytes.
     pub bucket: u64,
@@ -191,6 +193,7 @@ pub struct StatusRow {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostRow {
+    #[serde(rename = "kind")]
     pub operation: String,
     /// Its price class: "write", "list", "read" or "free".
     pub class: &'static str,
@@ -208,7 +211,8 @@ pub struct CostBy {
     /// The profile's `cost.amount`.
     pub amount: f64,
     pub currency: String,
-    /// Dearest first.
+    /// Each kind of request, dearest first.
+    #[serde(rename = "kinds")]
     pub operations: Vec<CostRow>,
 }
 
@@ -1130,7 +1134,7 @@ pub fn text(s: &Signals, color: bool) -> String {
             .map(|n| n.chars().count())
             .max()
             .unwrap_or(0)
-            .clamp("operation".len(), 40)
+            .clamp("kind".len(), 40)
     };
     let more = |left: usize| {
         if left == 0 {
@@ -1150,7 +1154,7 @@ pub fn text(s: &Signals, color: bool) -> String {
         out.push_str(&paint(
             &format!(
                 "  {:<w$}  {:>9}  {:>10}  {}\n",
-                "operation", "requests", "first byte", "then the rest"
+                "kind", "requests", "first byte", "then the rest"
             ),
             "2",
             color,
@@ -1184,7 +1188,7 @@ pub fn text(s: &Signals, color: bool) -> String {
         out.push_str(&paint(
             &format!(
                 "  {:<w$}  {:>9}  {:>5}  {}\n",
-                "operation", "requests", "share", "cost"
+                "kind", "requests", "share", "cost"
             ),
             "2",
             color,
@@ -1445,7 +1449,7 @@ mod tests {
             .collect();
         let said = text(&signals(&records, &RequestPrices::default()), false);
         assert!(
-            said.contains("  operation      requests  first byte  then the rest\n"),
+            said.contains("  kind           requests  first byte  then the rest\n"),
             "{said}"
         );
         assert!(said.contains("  … and 2 more\n"), "{said}");

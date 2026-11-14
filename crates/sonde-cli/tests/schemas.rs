@@ -317,7 +317,7 @@ async fn every_json_output_is_as_its_schema_says() {
     let summary = b.json(&["show", s, "--summary", "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
     holds("show-summary", &summary);
-    for by in ["operation", "prefix", "size", "caller", "sdk", "status"] {
+    for by in ["kind", "prefix", "size", "caller", "sdk", "status"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,

@@ -21,7 +21,7 @@ interface Comparison {
   compared: number;
   same: number;
   environment: number;
-  differences: { operation: string; original: string; replay: string; count: number; example: string; conditions: string[] }[];
+  differences: { kind: string; original: string; replay: string; count: number; example: string; conditions: string[] }[];
   unmatched: Record<string, number>;
 }
 
@@ -244,8 +244,8 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   const notes = (d: { comparison: Comparison; b: string }) => {
     const lines = d.b.split("\n");
     return d.comparison.differences.flatMap((x, i) => {
-      const line = lines.findIndex((l) => l.includes(x.operation) && l.includes(x.example));
-      return line < 0 ? [] : [{ id: `d${i}`, line, text: t("compare.note", { op: x.operation, a: x.original, b: x.replay, n: x.count }) }];
+      const line = lines.findIndex((l) => l.includes(x.kind) && l.includes(x.example));
+      return line < 0 ? [] : [{ id: `d${i}`, line, text: t("compare.note", { op: x.kind, a: x.original, b: x.replay, n: x.count }) }];
     });
   };
   // one view: a replay's answers first, then before and after; the transcripts, request by request, on demand
@@ -268,7 +268,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
                 <View class="shrink-0">
                   <Badge label={t("compare.times", { n: x().count })} tone="fail" />
                 </View>
-                <Text class="text-body text-foreground">{x().operation}</Text>
+                <Text class="text-body text-foreground">{x().kind}</Text>
                 <Text class="font-mono text-small text-foreground">{`${x().original} → ${x().replay}`}</Text>
                 <Muted class="min-w-0 flex-1 text-small line-clamp-1">{[x().example, x().conditions.join(", ")].filter(Boolean).join(" · ")}</Muted>
               </Row>
@@ -338,10 +338,10 @@ interface StoreRun {
 function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }) {
   const kinds = () => {
     const seen = new Map<string, LatencyChange>();
-    for (const r of props.runs) for (const l of r.latency) seen.set(`${l.operation}\u0000${l.missed}`, l);
+    for (const r of props.runs) for (const l of r.latency) seen.set(`${l.kind}\u0000${l.missed}`, l);
     return [...seen.values()];
   };
-  const p95 = (r: StoreRun, k: LatencyChange) => r.latency.find((l) => l.operation === k.operation && l.missed === k.missed)?.p95Ms[1];
+  const p95 = (r: StoreRun, k: LatencyChange) => r.latency.find((l) => l.kind === k.kind && l.missed === k.missed)?.p95Ms[1];
   const columns = () => [
     { key: "what", title: "", width: COLUMN.matrixWhat, fixed: true },
     { key: "recorded", title: t("matrix.recorded"), width: COLUMN.matrixRecorded, align: "end" as const },

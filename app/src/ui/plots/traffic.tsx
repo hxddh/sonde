@@ -492,10 +492,10 @@ export function Sizes(props: { signals: Signals }) {
   );
 }
 
-/** Time against size: how fast bodies of each size moved, by operation (the
+/** Time against size: how fast bodies of each size moved, by kind (the
  * median of each, in MiB a second) — a row an operation and a size. */
 export function Throughput(props: { signals: Signals; max?: number }) {
-  const rows = () => props.signals.sizes.throughput.slice(0, props.max ?? 10).map((x) => ({ ...x, name: `${x.operation} · ${sizeLabel(x.bucket)}` }));
+  const rows = () => props.signals.sizes.throughput.slice(0, props.max ?? 10).map((x) => ({ ...x, name: `${x.kind} · ${sizeLabel(x.bucket)}` }));
   const hovered = signal<number | null>(null);
   const speed = (v: number) => t("throughput.speed", { n: rate(v) });
   const label = () => (props.signals.sizes.mibPerSec == null ? "" : t("throughput.text", { speed: speed(props.signals.sizes.mibPerSec) }));
@@ -504,7 +504,7 @@ export function Throughput(props: { signals: Signals; max?: number }) {
     return r ? { title: r.name, lines: [speed(r.mibPerSec), t("run.bandRequests", { n: r.count })] } : null;
   };
   return (
-    <If when={!textual()} else={<SimpleTable columns={[t("column.operation"), t("requests.size"), t("throughput.column"), t("figure.requests")]} rows={rows().map((r) => [r.operation, sizeLabel(r.bucket), speed(r.mibPerSec), count(r.count)])} />}>
+    <If when={!textual()} else={<SimpleTable columns={[t("column.kind"), t("requests.size"), t("throughput.column"), t("figure.requests")]} rows={rows().map((r) => [r.kind, sizeLabel(r.bucket), speed(r.mibPerSec), count(r.count)])} />}>
       <Plot
         testID="throughput"
         data={rows()}

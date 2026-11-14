@@ -121,7 +121,7 @@ export function TrialWhere(props: { trial: Trial; /** its advice was said under 
               </View>
               {/* the request, then (after a dot) the program's line when the run named its callers */}
               <Text class="min-w-0 flex-1 text-small leading-5 text-foreground">
-                {`${x().operation} `}
+                {`${x().kind} `}
                 <Text class="font-mono text-caption text-foreground">{x().key}</Text>
                 <If when={x().caller}>{(c) => <Text class="font-mono text-caption text-muted-foreground">{` · ${c()}`}</Text>}</If>
               </Text>

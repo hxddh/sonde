@@ -486,10 +486,10 @@ export function FirstByte(props: { signals: Signals; max?: number }) {
   const line = (r: ReturnType<typeof rows>[number]) => t("firstByte.line", { first: duration(r.firstByteMs), rest: duration(r.restMs) });
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.operation, lines: [line(r), t("run.bandRequests", { n: r.count })] } : null;
+    return r ? { title: r.kind, lines: [line(r), t("run.bandRequests", { n: r.count })] } : null;
   };
   return (
-    <If when={!textual()} else={<SimpleTable columns={[t("profile.kind"), t("firstByte.first"), t("firstByte.rest"), t("figure.requests")]} rows={rows().map((r) => [r.operation, duration(r.firstByteMs), duration(r.restMs), count(r.count)])} />}>
+    <If when={!textual()} else={<SimpleTable columns={[t("profile.kind"), t("firstByte.first"), t("firstByte.rest"), t("figure.requests")]} rows={rows().map((r) => [r.kind, duration(r.firstByteMs), duration(r.restMs), count(r.count)])} />}>
       <Plot
         testID="first-byte"
         data={rows()}
@@ -509,7 +509,7 @@ export function FirstByte(props: { signals: Signals; max?: number }) {
       >
         <Bar value="firstByteMs" stack="t" class="fill-chart-1" inactiveOpacity={INACTIVE} />
         <Bar value="restMs" stack="t" class="fill-chart-4" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => duration(rows()[i].firstByteMs + rows()[i].restMs)} labelClass={BAR_LABEL} />
-        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.operation ?? "")} labelClass={AXIS_LABEL} />
+        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.kind ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
   );

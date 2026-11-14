@@ -36,8 +36,8 @@ pub struct ShowArgs {
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     pub(super) app: bool,
-    /// The operations table split by prefix, size, caller, sdk, status or
-    /// operation, and where the slow and the costly requests are.
+    /// The requests split by kind, prefix, size, caller, sdk or status,
+    /// and where the slow and the costly requests are.
     #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
           conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
     pub(super) by: Option<Dimension>,

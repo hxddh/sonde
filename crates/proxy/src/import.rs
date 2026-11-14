@@ -766,8 +766,11 @@ fn har(
             .filter(|(n, _)| !n.starts_with(':'))
             .map(|(n, v)| reqlog::Header::new(n, reqlog::redact::redact_header(n, v)))
             .collect();
-        // sonde's own HAR names the operation
-        if let Some(op) = e["_sonde"]["operation"].as_str() {
+        // sonde's own HAR names the kind (`operation` before 20.0)
+        if let Some(op) = e["_sonde"]["kind"]
+            .as_str()
+            .or_else(|| e["_sonde"]["operation"].as_str())
+        {
             r.operation = op.into();
         }
         // a presigned URL's signature, key and token never reach the session

@@ -281,14 +281,14 @@ fn check_holds_a_run_to_its_programs_baseline() {
 fn show_by_splits_the_operations_table_and_names_the_sdk() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
-    let o = sonde(t.path(), &["show", "--by", "operation"]);
+    let o = sonde(t.path(), &["show", "--by", "kind"]);
     assert_eq!(o.status.code(), Some(0));
     let out = stdout(&o);
     let lines: Vec<&str> = out.lines().collect();
     // the head line names the SDK; then one table, split
     assert!(lines[1].contains(" from sonde "), "{out}");
     assert!(
-        lines[2].starts_with("operation") && lines[2].contains("p99") && lines[2].contains("cost"),
+        lines[2].starts_with("kind") && lines[2].contains("p99") && lines[2].contains("cost"),
         "{out}"
     );
     assert!(lines.iter().any(|l| l.starts_with("HeadObject")), "{out}");
@@ -1270,7 +1270,7 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
     for g in json["groups"].as_array().unwrap() {
         let s = kinds
             .iter()
-            .find(|k| k["operation"] == g["operation"] && k["missed"] == g["missed"])
+            .find(|k| k["kind"] == g["kind"] && k["missed"] == g["missed"])
             .unwrap();
         assert_eq!(g["waitingMs"][0], s["waitedMs"], "{g} {s}");
     }

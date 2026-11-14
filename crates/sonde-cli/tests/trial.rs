@@ -1449,7 +1449,7 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
     let t = trial(&trials(&b.path("lists.sonde")), "stale-list").clone();
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!((&t["stale"], &t["missed"]), (&2.into(), &2.into()), "{t:#}");
-    assert_eq!(t["where"]["operation"], "ListObjectsV2", "{t:#}");
+    assert_eq!(t["where"]["kind"], "ListObjectsV2", "{t:#}");
     // its session says which keys were left out
     let shown = b
         .run(
@@ -1749,7 +1749,7 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
     let t = trial(&all, "cut-body");
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!((&t["retried"], &t["cut"]), (&0.into(), &1.into()));
-    assert_eq!(t["where"]["operation"], "GetObject");
+    assert_eq!(t["where"]["kind"], "GetObject");
     assert_eq!(t["where"]["key"], "data/big");
     assert_eq!(t["advice"]["key"], "trial.advice.cut");
     assert!(
@@ -1921,7 +1921,7 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
     let all = trials(&b.path("never.sonde"));
     let t = trial(&all, "lost-race");
     assert_eq!(t["standing"], "broke", "{t:#}");
-    assert_eq!(t["where"]["operation"], "PutObject");
+    assert_eq!(t["where"]["kind"], "PutObject");
     assert_eq!(
         t["where"]["key"],
         format!("data/n-lost-race/_delta_log/{:020}.json", 1)
