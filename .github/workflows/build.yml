@@ -51,8 +51,8 @@ jobs:
               # static: runs on any Linux, Alpine and distroless included
               (0, "ubuntu-22.04", "x86_64-unknown-linux-musl", "linux-x86_64-musl"),
               (1, "ubuntu-22.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"),
-              (1, "macos-15", "aarch64-apple-darwin", "macos-aarch64"),
-              (1, "macos-15-intel", "x86_64-apple-darwin", "macos-x86_64"),
+              (1, "macos-26", "aarch64-apple-darwin", "macos-aarch64"),
+              (1, "macos-26-intel", "x86_64-apple-darwin", "macos-x86_64"),
               # sonde.exe in a .zip: CI on Windows, and the terminal there
               (1, "windows-latest", "x86_64-pc-windows-msvc", "windows-x86_64"),
           ]
@@ -274,7 +274,7 @@ jobs:
   macos-app:
     needs: [plan, viewer]
     if: needs.plan.outputs.macos-app == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

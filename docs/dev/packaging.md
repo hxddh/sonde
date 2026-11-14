@@ -4,10 +4,10 @@
 |---|---|---|
 | `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release`, then `cargo build --release -p sonde-cli --features tui`: CLI and terminal UI in one binary, bundle and web viewer embedded. |
 | `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same, statically linked: runs on Alpine, distroless, old distributions (checked in `alpine`). `install.sh` takes it on musl systems or with `SONDE_STATIC=1`. |
-| `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 15 (arm64) and macOS 15 Intel | The same. |
+| `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 26 (arm64) and macOS 26 Intel | The same. |
 | `sonde-windows-x86_64.zip` | `build.yml` on Windows (`x86_64-pc-windows-msvc`) | The same, `sonde.exe` (signed) in a `.zip`. |
-| `sonde-macos.dmg` | `build.yml` on macOS 15 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), then signed and notarized (below), and `scripts/macos-dmg.sh`. |
-| `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 15 | The signed, stapled `.app` archived for the updater. |
+| `sonde-macos.dmg` | `build.yml` on macOS 26 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), then signed and notarized (below), and `scripts/macos-dmg.sh`. |
+| `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 26 | The signed, stapled `.app` archived for the updater. |
 | `sonde-<version>-linux-x86_64.tar.gz` | `build.yml` on Ubuntu 24.04 | `nsh package app/App.tsx --target linux`: the desktop app on GTK 4 and WebKitGTK 6 (needs `libgtk-4-1`, `libwebkitgtk-6.0-4`, GStreamer). |
 | `sonde-<version>-windows-x86_64.zip` | `build.yml` on Windows | `nsh package app/App.tsx --target windows`, its `sonde.exe` signed, zipped again. |
 | `latest.json` | `release.yml` | `nsh update-manifest`: what the updater reads (version, notes, URL and SHA-256 per platform). |
