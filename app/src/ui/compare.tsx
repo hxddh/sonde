@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH } from "./kit";
 import { changedFindings, savedText } from "./fixloop";
 import { StateBadge } from "./sessionview";
 import { fileName, sessionName } from "./manage";
@@ -59,7 +59,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
       { id: "cost", label: t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (oneUnit() ? costParts(c().cost[1], c().currency).unit : "") },
     ];
   };
-  const tile = (f: () => Fact) => {
+  const tile = (f: () => Fact, look: () => TileLook) => {
     const known = () => f().a != null && f().b != null;
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
     const side = (i: 0 | 1, v: number) => (f().few?.[i] ? `~${f().text(v)}` : f().text(v));
@@ -74,6 +74,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     return (
       <Stat
         testID={`compare-${f().id}`}
+        look={look()}
         label={f().label}
         value={value()}
         detail={detail()}
@@ -90,7 +91,8 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
       />
     );
   };
-  return <Tiles min={SIZES.compareTile} testID="compare-figures" items={facts().map((_, i) => tile(() => facts()[i]))} />;
+  // (each tile whole at every width: a change is what it says, and its detail is the change's size; given its look, it is as high as its row)
+  return <Tiles min={SIZES.compareTile} testID="compare-figures" items={facts().map((_, i) => () => tile(() => facts()[i], () => "full"))} />;
 }
 
 /** Two runs of a program, before and after a change: the figures, by kind of request, and the findings gone and new. */

@@ -255,7 +255,9 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
     <View testID="fix" class="gap-2">
       <View class="flex-row flex-wrap items-center gap-2">
         <Icon name="sparkles" size={ICON.small} />
-        <Heading class="flex-1">{t("fix.title")}</Heading>
+        {/* the heading keeps its words: what does not fit beside it goes to the next line, never into it */}
+        <Heading class="shrink-0">{t("fix.title")}</Heading>
+        <View class="flex-1" />
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: sdkTitle(f.sdk) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
         <If when={shown() && !terminal()}>
           <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />

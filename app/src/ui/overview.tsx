@@ -173,8 +173,9 @@ export function Overview() {
         testID="overview-capacity"
         icon="chart-pie"
         label={t("overview.size")}
-        // measured on request only: until then the tile is the way to ask
-        value={size() ? bytes(size()!.totalBytes) : t("overview.measureAction")}
+        // measured on request only: until then it says so (a figure's place holds no verb), and the tile is the way to ask
+        tone={size() ? "plain" : "quiet"}
+        value={size() ? bytes(size()!.totalBytes) : t("overview.notMeasured")}
         detail={size() ? `${month(size()!.costPerMonth, size()!.currency)} · ${day(size()!.scannedAt)}` : t("overview.measureHint")}
         onPress={() => go("capacity")}
       />,

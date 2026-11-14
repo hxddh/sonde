@@ -563,7 +563,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   // a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile
   const figure = () => <Text class={`text-heading font-bold tabular-nums ${look() === "line" ? "shrink-0 line-clamp-1" : "min-w-0 flex-1 line-clamp-2"} ${tint()}`}>{props.value}</Text>;
   return (
-    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
+    // (in a row of tiles, as high as the row: `Tiles` gives it its look)
+    <Card pad="tile" class={`${props.look ? "grow" : ""} ${props.class ?? ""}`} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
       <If
         when={look() !== "line"}
         else={
@@ -775,11 +776,15 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
   const per = () => (props.ranked ? tilesFit(width(), props.items.length, min(), GAP) : tilesPerRow(width(), props.items.length, min(), GAP));
   const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
   const column = () => !props.ranked && per() === 1 && props.items.length > 1;
-  const look = (): TileLook => (props.short || column() ? "line" : (each() ?? min()) < min() ? "tight" : "full");
+  // the one-line tile only where tiles stand one per row: abreast, a short pane keeps what each counts over
+  // its figure (a name squeezed beside a figure broke inside its words: "Request / s")
+  const alone = () => per() === 1 && props.items.length > 1;
+  const look = (): TileLook => (alone() ? "line" : props.short || (each() ?? min()) < min() ? "tight" : "full");
   return (
     <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row ${column() ? "gap-2" : "gap-3"} ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       {props.items.map((tile, i) => (
-        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
+        // (a tile fills its place in the row: tiles abreast are of one height)
+        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "flex-col" : "min-w-36 flex-1 flex-col"}>
           {typeof tile === "function" ? tile(look) : tile}
         </View>
       ))}
