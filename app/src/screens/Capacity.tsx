@@ -18,12 +18,19 @@ import { BarChart, PrefixMap, StackBar } from "../ui/charts";
 /** How many months the growth chart names, the latest; the rest are one row before them. */
 const MONTHS = 12;
 
-/** The growth chart's rows: the last `MONTHS` months with bytes, and every earlier one as one row. */
+/** The months with bytes in the last `MONTHS` calendar months (to the latest month written), and those before. */
+function recentMonths(r: DuReport): { recent: DuReport["byMonth"]; earlier: DuReport["byMonth"] } {
+  const index = (m: string) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
+  const last = r.byMonth.length ? index(r.byMonth[r.byMonth.length - 1].month) : 0;
+  const within = (m: string) => last - index(m) < MONTHS;
+  return { recent: r.byMonth.filter((m) => within(m.month)), earlier: r.byMonth.filter((m) => !within(m.month)) };
+}
+
+/** The growth chart's rows: the months with bytes in the last `MONTHS`, the latest first, and every earlier one as one row. */
 function monthRows(r: DuReport): { label: string; value: number }[] {
-  const all = r.byMonth;
-  const recent = all.slice(-MONTHS).map((m) => ({ label: m.month, value: m.bytes }));
-  const earlier = all.slice(0, -MONTHS).reduce((n, m) => n + m.bytes, 0);
-  return [...recent.reverse(), ...(earlier > 0 ? [{ label: t("du.before", { month: all[all.length - MONTHS].month }), value: earlier }] : [])];
+  const { recent, earlier } = recentMonths(r);
+  const before = earlier.reduce((n, m) => n + m.bytes, 0);
+  return [...recent.map((m) => ({ label: m.month, value: m.bytes })).reverse(), ...(before > 0 && recent.length ? [{ label: t("du.before", { month: recent[0].month }), value: before }] : [])];
 }
 
 /** What each of the bucket's charts answers, in a sentence of its figures. */
@@ -46,8 +53,11 @@ function monthSaid(r: DuReport) {
   const all = r.byMonth.reduce((n, m) => n + m.bytes, 0);
   const top = biggest(r.byMonth, (m) => m.bytes);
   if (!top || all === 0) return "";
-  const recent = r.byMonth.slice(-MONTHS).reduce((n, m) => n + m.bytes, 0);
-  return t("du.byMonthText", { pct: share(recent, all), n: MONTHS, month: top.month, size: bytes(top.bytes) });
+  // one month: said once; all within the window: since when, not "100%"
+  if (r.byMonth.length === 1) return t("du.byMonthOne", { month: top.month });
+  const { recent, earlier } = recentMonths(r);
+  if (earlier.length === 0) return t("du.byMonthSince", { first: r.byMonth[0].month, month: top.month, size: bytes(top.bytes) });
+  return t("du.byMonthText", { pct: share(recent.reduce((n, m) => n + m.bytes, 0), all), n: MONTHS, month: top.month, size: bytes(top.bytes) });
 }
 
 export function Capacity() {

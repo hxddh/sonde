@@ -1064,6 +1064,8 @@
  "du.byMonth": "When were these bytes written?",
  "du.byMonthHint": "Every version's bytes by the month it was last written (LastModified), the latest first; earlier months are one row",
  "du.byMonthText": "%{pct} written in the last %{n} months; the most in %{month} (%{size})",
+ "du.byMonthOne": "All written in %{month}",
+ "du.byMonthSince": "All written since %{first}; the most in %{month} (%{size})",
  "du.before": "Before %{month}",
  "du.partsText": "Current versions hold %{pct} of the bytes (%{size})",
  "du.byClassText": "Most in %{name}: %{pct}",

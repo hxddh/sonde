@@ -1064,6 +1064,8 @@
  "du.byMonth": "这些字节是什么时候写入的？",
  "du.byMonthHint": "按最后写入的月份（LastModified）统计每个版本的字节，最近的在前；更早的月份合为一行",
  "du.byMonthText": "%{pct} 写于最近 %{n} 个月；最多在 %{month}（%{size}）",
+ "du.byMonthOne": "全部写于 %{month}",
+ "du.byMonthSince": "均自 %{first} 起写入；最多在 %{month}（%{size}）",
  "du.before": "%{month} 之前",
  "du.partsText": "当前版本占字节的 %{pct}（%{size}）",
  "du.byClassText": "大多在 %{name}：%{pct}",
