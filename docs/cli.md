@@ -11,7 +11,7 @@
 | `-f`, `--format` | `table` (default), `json`, `markdown`, `csv`, `github` where a command writes them (help lists which). Another is a usage error (64). |
 | Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. |
 | A session argument | A path or a name, resolved in order: a file; `sessions/<name>[.sonde]`; `sessions/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
-| The newest session | The default for `show`, `check`, `share`: newest from `run` or `proxy` (never a replay, import or trial). |
+| The newest session | The default for `show`, `share`: newest from `run` or `proxy` (never a replay, import or trial). `check`'s: the newest run of `[program] name`, else of the newest program recorded in this folder (the session's `cwd`); never another program's (it says which it took, or why none). |
 | A program | `[program] name` in `sonde.toml`, or `--name`; else the whole command line. Runs are grouped and baselines kept by it. |
 | Size | Sessions are streamed and analysed once. A million requests: under 15 s and 1.5 GB; `compare` reads one session at a time, so two cost what one does ([performance](performance.md)). |
 | `.index.jsonl` | One per sessions folder: each session's counts (requests, time, errors, program, figures once checked), its trials' verdicts and its exit code. Read by `sessions`, the app and `check`'s history. Counted again when missing, when the session's length or mtime (ns) changed, or the analysis changed; forgotten with the session. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
@@ -49,9 +49,9 @@
 | ↳ `--by operation\|prefix\|size\|caller\|sdk\|status` | The operations table split instead: requests, errors and share, p50, p95, p99, waiting share, cost per group (most waiting first; past 12, `other`). Size bands: `0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+` (the larger of sent and received). Then one sentence: where the slow requests (the slowest tenth, at or over p90; 3 at least) concentrate, narrowed by prefix, size or operation when one holds most of them, and where the cost does (`80% of the slow requests (over 120 ms) are under b/wal/, over 8 MiB.`). A group is named when it holds half of them and 1.5× its share of the requests. `-f json`: [show-by](schemas/show-by.schema.json). |
 | ↳ "Acting on N findings" | The session recomputed without the requests those findings name (findings naming none are left out, and the line says so). |
 | ↳ `-f json` | Streamed: `operations`, `findings`, `requests`, `session`, `summary`, `whatIf`, `trials`. Each finding's fixes by SDK; `summary.operations[]` has `errorShare`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `few`. `--summary -f json`: `summary`, `waiting` (`waitingMs`, `byKind`, `p95Ms`, `peakInFlight`), `cost`, `whatIf`, `findings`, `trials`, no requests. A trial's run says first that its faults were sonde's. |
-| `sonde compare [RUN [RUN]] [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; each finding fixed, less, back or new ([fix loop](#the-fix-loop)). One run: it and its program's run before; none: the newest run and the one before. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). A session and its replay (either order): every answer compared, with each kind's p50 and p95 on both stores. |
+| `sonde compare [RUN [RUN]] [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; each finding fixed, less, more, back or new, and each kind of failure whose count moved ([fix loop](#the-fix-loop)). One run: it and its program's run before; none: the newest run and the one before. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). A session and its replay (either order): every answer compared, with each kind's p50 and p95 on both stores. |
 | `sonde compare FILE --replay E [--replay E2 …] [--bucket A=B] [--prefix P] [--yes] [-o FILE]` | Re-enacts a session on another endpoint under a prefix of its own (never on the recorded keys), compares every answer, then removes what it wrote under its prefix (objects, and on a versioned bucket every version and delete marker; exit 70 if anything remains). Several: replayed on each at once, side by side (differing answers, each kind's p95 against the recording; `-f markdown\|csv` too); exit 70 for a store it could not replay on. [Recording](recording.md#replay-on-another-endpoint). |
-| `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when over budget, past the baseline, or a trial broke. [Details](#sonde-check). |
+| `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when its program failed, over budget, past the baseline, or a trial broke. [Details](#sonde-check). |
 | `sonde share [[BEFORE] FILE] [-o DIR] [--serve [--port N]] [--html [--baseline FILE\|auto\|URL]] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. Two runs, or `--baseline` (as `check` takes it): the comparison first (requests, waiting, cost, errors before and after; kinds that changed; findings gone), then the run, its new findings first and marked; two runs without `--html` is a usage error. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
 | `sonde share --otlp [FILE] [-o FILE \| --to URL]` | OTLP/JSON traces: a span per operation, its requests under it; `service.name` is the program. `--to` posts to a collector (e.g. `http://localhost:4318/v1/traces`) in parts of about 3 MiB, an operation's spans kept together. |
 
@@ -61,16 +61,16 @@
 |---|---|
 | `--max-requests N`, `--max-waiting T`, `--max-cost X`, `--max-errors N`, `--max-p95 T` | Budget. Times as `2s`, `250ms` or ms. |
 | `--baseline FILE\|auto\|https://…` | `auto`: the baseline set for the run's program (`sessions/baselines.json`, shared with the app). A URL is fetched (CI artifact, presigned). |
-| `--set-baseline` | Make this run its program's baseline. |
+| `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10). |
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
-| `--program-exit CODE` | The program's exit status: one not 0 heads the comment (`programExit` in JSON), with the request the policy refused. |
-| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`); the baseline, trial verdicts and findings kept under the command move to that name. No trials. |
+| `--program-exit CODE` | The program's exit status (else the one the run kept): one not 0 fails the check in every format, heads the comment (`programExit` and `reason` in JSON), with the request the policy refused. |
+| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`); the baseline, trial verdicts and findings kept under the command move to that name. No trials. Refused for a run that failed (64). Prints the workflow step, `uses: hxddh/sonde@vN` at this sonde's major version. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.
-- Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`.
+- Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`. A program that failed comes first: `the program failed (exit 3); within budget`.
 - No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. It names a baseline of the same program under other arguments if there is one. A baseline of another program is named on stderr.
 - Past a baseline over several runs: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once (`past the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6`; this run the first past: `the run before, at 9f8e7d6, was within it`).
 - `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
@@ -170,23 +170,35 @@ never load half of one.
 
 ## The fix loop
 
-A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts. What
-changes from run to run in a key is said as what it is, so `jobs/1794558464595/state.json` is
-`obs.hot|b/jobs/{n}/state.json`: `{uuid}`, `{date}`, `{time}`, `{n}` (a number of 9 digits or more, a metadata
-version `v{n}.metadata.json`, a Hadoop `_temporary/` attempt's numbers), `{id}` (long hex or mixed ids). Between a
-run and the program's run before it that did not fail:
+A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts, and
+never what changes from run to run in a key: the value of a `name=value` folder is `{v}`, a UUID `{uuid}`, a date
+`{date}` (with a time `{time}`), a word of 6 or more hex letters and digits or a long mixed id `{id}`, every other run
+of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot|b/in/year={v}/month={v}/day={v}/hour={v}/conf.json`,
+`part-00000-<uuid>-c000.snappy.parquet` is `part-{n}-{uuid}-c{n}.snappy.parquet`, `job-3fa2b1c9` is `job-{id}`.
+Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
+HEAD-then-GET is about the folder its objects are in.
+
+These rules have a version (2 in 20.0; 19.0's was 1), kept in `findings.json`: findings kept under older rules are
+made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
+
+Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):
 
 | State | When | Says |
 |---|---|---|
 | fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
-| less | still there, under its threshold | what it saved so far |
-| back | not in the run before; fixed by it or an earlier run | |
+| less | fewer, or under its threshold now | what it saved so far, `· 92 → 41` |
+| more | more of it (`92 → 216`), over its threshold or not | `↑ more … · 92 → 216` |
+| back | under its threshold in the run before, or fixed by it or an earlier run; over it now | |
 | new | in neither run before, at any threshold | |
-| open | in both (under its threshold in the run before, too) | counted: `2 still open` |
+| open | as much in both | named under `N still open:` |
+
+Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
+moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
 A finding of time alone (requests one after another) is judged by its requests: as many of them one after another,
 under its threshold, is open. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
-not compared`, and nothing kept changes; the next run is compared with the last that did not.
+not compared`, and nothing kept changes; the next run is compared with the last that did not. Runs that end out of
+order (several at once) each add their findings; an older run changes nothing a newer one said.
 
 Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding
 of time, the fall in its own waiting, at most the fall in the run's. Each program's findings (open, less, fixed with
