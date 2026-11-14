@@ -66,21 +66,14 @@ Windows; the app as `.dmg`, a Linux tarball (GTK 4) and a Windows zip. Checksums
 ## Use
 
 ```sh
-sonde run --demo                        # a tour on a built-in store, no account needed
-sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
-sonde endpoints import                  # your ~/.aws/config profiles
-sonde run -- python etl.py              # record
-sonde show                              # read the newest run of this folder's program
+sonde run --demo                        # the tour: a finding, its line of code, its fix, the fix measured
+sonde run -- python etl.py              # your program's requests, sent on with your AWS credentials
 sonde run -- python etl.py              # after a change: what is fixed, and what it saved
-sonde show --by prefix                  # where the slow requests are
 sonde run --trial -- python etl.py 's3://scratch/{trial}/'   # the same under faults
-sonde run --again -- python etl.py 's3://scratch/{trial}/'   # after a fix: only what broke
 sonde check --init && sonde check       # a budget for CI
-sonde compare before.sonde after.sonde
-sonde import access.log
-sonde share --html --redact -o run.html # one page, names replaced, safe to send
-sonde tui                               # the terminal UI
 ```
+
+Another store: `sonde endpoints add ID URL`, or `--url URL` for one run. The built-in one: `sonde run --demo -- …`.
 
 Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 
