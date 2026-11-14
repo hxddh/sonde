@@ -359,7 +359,7 @@ async fn put_get_list_are_resigned_and_recorded() {
     assert!(up.calls.lock().len() == 3);
     // a body read to its end: logged with its first byte inside its whole time
     let get = records.iter().find(|r| r.kind == "GetObject").unwrap();
-    let first = get.first_byte_ms.expect("first byte measured");
+    let first = get.first_byte_ms.get().expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
 }
@@ -1003,7 +1003,7 @@ async fn a_body_that_stops_moving_is_cut_after_the_timeout() {
         records = log.snapshot();
     }
     let r = records.first().expect("the request is recorded");
-    assert_eq!((r.status, r.response_bytes), (Some(200), Some(1)));
+    assert_eq!((r.status, r.response_bytes.get()), (Some(200), Some(1)));
     let why = r
         .rare()
         .transport_error

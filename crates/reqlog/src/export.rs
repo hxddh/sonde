@@ -27,7 +27,7 @@ pub fn to_har(records: &[Record]) -> Value {
             let mime = r.header("content-type").unwrap_or("application/octet-stream");
             let content = match &r.rare().error_body {
                 Some(body) => json!({"size": body.len(), "mimeType": mime, "text": body}),
-                None => json!({"size": r.response_bytes.unwrap_or(0), "mimeType": mime}),
+                None => json!({"size": r.response_bytes.get().unwrap_or(0), "mimeType": mime}),
             };
             json!({
                 "startedDateTime": r.time.to_rfc3339(),
@@ -40,7 +40,7 @@ pub fn to_har(records: &[Record]) -> Value {
                     "queryString": query,
                     "cookies": [],
                     "headersSize": -1,
-                    "bodySize": r.request_bytes.map(|b| b as i64).unwrap_or(-1),
+                    "bodySize": r.request_bytes.get().map(|b| b as i64).unwrap_or(-1),
                 },
                 "response": {
                     "status": r.status.unwrap_or(0),
@@ -51,7 +51,7 @@ pub fn to_har(records: &[Record]) -> Value {
                     "content": content,
                     "redirectURL": "",
                     "headersSize": -1,
-                    "bodySize": r.response_bytes.map(|b| b as i64).unwrap_or(-1),
+                    "bodySize": r.response_bytes.get().map(|b| b as i64).unwrap_or(-1),
                 },
                 "cache": {},
                 "timings": {"send": 0, "wait": r.latency_ms, "receive": 0},

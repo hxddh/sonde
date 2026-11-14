@@ -173,7 +173,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if reqlog::is_control_operation(&r.kind)
         && r.kind != "CompleteMultipartUpload"
         && r.kind != "CreateBucket"
-        && r.request_bytes.unwrap_or(0) > 0
+        && r.request_bytes.get().unwrap_or(0) > 0
         && r.rare().request_body.is_none()
     {
         return Some("its body was not recorded".into());
@@ -410,7 +410,7 @@ impl State {
                 b.clone()
             };
             req = req.body(Body::from(body));
-        } else if let Some(n) = r.request_bytes.filter(|n| *n > 0) {
+        } else if let Some(n) = r.request_bytes.get().filter(|n| *n > 0) {
             if n > 1 << 30 {
                 return Err("a body over 1 GiB".into());
             }
@@ -597,7 +597,7 @@ pub fn carried(r: &Record) -> Option<String> {
         return Some(format!("{n} key{}", if n == "1" { "" } else { "s" }));
     }
     (r.method == "GET" && r.key.is_some())
-        .then_some(r.response_bytes)
+        .then_some(r.response_bytes.get())
         .flatten()
         .map(|n| format!("{n} B"))
 }
@@ -1133,7 +1133,7 @@ mod tests {
                 bucket: Some("b".into()),
                 key: (method == "GET" && keys.is_none()).then(|| "k".into()),
                 status: Some(200),
-                response_bytes: Some(bytes),
+                response_bytes: Some(bytes).into(),
                 ..Default::default()
             };
             if let Some(n) = keys {

@@ -525,17 +525,17 @@ fn access_log(
         }
         // who sent it, how long S3 took to its first byte, and with what
         r.rare_mut().requester = f.get(4).filter(|v| *v != "-").cloned();
-        r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok());
+        r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok()).into();
         if let Some(ua) = f.get(16).filter(|v| *v != "-" && !v.is_empty()) {
             r.lists_mut()
                 .request_headers
                 .push(reqlog::Header::new("user-agent", ua));
         }
-        r.response_bytes = num(&f[11]);
+        r.response_bytes = num(&f[11]).into();
         // the object's size is what was sent only where the object is the
         // body: a CompleteMultipartUpload's is its parts', sent already
         if matches!(f[6].as_str(), "REST.PUT.OBJECT" | "REST.PUT.PART") {
-            r.request_bytes = num(&f[12]);
+            r.request_bytes = num(&f[12]).into();
         }
         if f[10] != "-" {
             r.rare_mut().error_body = Some(format!("<Error><Code>{}</Code></Error>", f[10]));
@@ -695,8 +695,14 @@ fn cloudtrail(
                 .push(reqlog::Header::new("user-agent", ua));
         }
         let extra = &e["additionalEventData"];
-        r.request_bytes = extra["bytesTransferredIn"].as_f64().map(|v| v as u64);
-        r.response_bytes = extra["bytesTransferredOut"].as_f64().map(|v| v as u64);
+        r.request_bytes = extra["bytesTransferredIn"]
+            .as_f64()
+            .map(|v| v as u64)
+            .into();
+        r.response_bytes = extra["bytesTransferredOut"]
+            .as_f64()
+            .map(|v| v as u64)
+            .into();
         if !code.is_empty() {
             r.rare_mut().error_body = Some(format!("<Error><Code>{code}</Code></Error>"));
         }
@@ -835,10 +841,10 @@ fn har(
         }
         r.rare_mut().url = shown.to_string();
         let size = |v: &Value| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64);
-        r.request_bytes = size(&req["bodySize"]);
-        r.response_bytes = size(&e["response"]["bodySize"]);
+        r.request_bytes = size(&req["bodySize"]).into();
+        r.response_bytes = size(&e["response"]["bodySize"]).into();
         // the wait for the answer's first byte, as HAR times it
-        r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0);
+        r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0).into();
         if let Some(t) = e["response"]["content"]["text"].as_str()
             && status >= 300
         {

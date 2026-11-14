@@ -149,9 +149,9 @@ fn record(
         status: Some(status),
         latency_ms: (ms * 1000.0).round() / 1000.0,
         retries: 0,
-        request_bytes: Some(up),
-        response_bytes: Some(down),
-        first_byte_ms: Some((ms * (0.3 + 0.6 * rng.unit()) * 1000.0).round() / 1000.0),
+        request_bytes: Some(up).into(),
+        response_bytes: Some(down).into(),
+        first_byte_ms: Some((ms * (0.3 + 0.6 * rng.unit()) * 1000.0).round() / 1000.0).into(),
         rare: reqlog::Rare {
             endpoint: "prod".into(),
             url,
@@ -548,9 +548,9 @@ fn plain(
         key: Some(key.into()),
         status: Some(status),
         latency_ms: ms,
-        request_bytes: Some(up),
-        response_bytes: Some(down),
-        first_byte_ms: Some(ms * 0.8),
+        request_bytes: Some(up).into(),
+        response_bytes: Some(down).into(),
+        first_byte_ms: Some(ms * 0.8).into(),
         rare: reqlog::Rare {
             endpoint: "prod".into(),
             url: format!(

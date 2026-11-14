@@ -1234,9 +1234,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         status: None,
         latency_ms: 0.0,
         retries: 0,
-        request_bytes: None,
-        response_bytes: None,
-        first_byte_ms: None,
+        request_bytes: None.into(),
+        response_bytes: None.into(),
+        first_byte_ms: None.into(),
         rare: reqlog::Rare {
             endpoint: cfg.endpoint_id.as_str().into(),
             url: url.clone(),
@@ -1645,7 +1645,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
         };
-    record.request_bytes = payload_len.or(sent_len);
+    record.request_bytes = payload_len.or(sent_len).into();
 
     out.push(("host".into(), upstream_host));
     // as sent before it is signed: signed again for another region
@@ -1892,8 +1892,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             if record.rare().injected.is_some() {
                 builder = builder.header("x-sonde-fault", name.as_str());
             }
-            record.response_bytes = Some(sent.len() as u64);
-            record.first_byte_ms = Some(record.latency_ms);
+            record.response_bytes = Some(sent.len() as u64).into();
+            record.first_byte_ms = Some(record.latency_ms).into();
             record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
             shared.log.push(record);
             return Ok(builder
@@ -1992,8 +1992,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         {
             shared.cfg.made.upload(b, k, &started.upload_id);
         }
-        record.response_bytes = Some(body.len() as u64);
-        record.first_byte_ms = Some(record.latency_ms);
+        record.response_bytes = Some(body.len() as u64).into();
+        record.first_byte_ms = Some(record.latency_ms).into();
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         shared.log.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
@@ -2004,18 +2004,18 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        record.response_bytes = Some(body.len() as u64);
+        record.response_bytes = Some(body.len() as u64).into();
         if !body.is_empty() {
             record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
         }
         shared.log.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
-    record.response_bytes = resp.content_length();
+    record.response_bytes = resp.content_length().into();
     // the headers are the first byte; the record is logged once the body has
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
-    record.first_byte_ms = Some(record.latency_ms);
+    record.first_byte_ms = Some(record.latency_ms).into();
     let keys =
         (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
     let mut pending = Pending {
@@ -2459,8 +2459,8 @@ impl Drop for Pending {
                 .saturating_sub(self.fetched)
                 .as_secs_f64()
                 * 1000.0;
-            if r.response_bytes.is_none() || self.read > 0 || self.cut.is_some() {
-                r.response_bytes = Some(self.read);
+            if r.response_bytes.get().is_none() || self.read > 0 || self.cut.is_some() {
+                r.response_bytes = Some(self.read).into();
             }
             // a 200 with fewer bytes is not a clean 200
             if let Some(c) = self.cutting.take() {

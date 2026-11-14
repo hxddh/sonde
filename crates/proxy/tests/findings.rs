@@ -19,8 +19,8 @@ fn rec(id: u64, at_ms: i64, op: &str, key: Option<&str>, status: u16, latency: f
         key: key.map(Into::into),
         status: Some(status),
         latency_ms: latency,
-        request_bytes: Some(0),
-        response_bytes: Some(10),
+        request_bytes: Some(0).into(),
+        response_bytes: Some(10).into(),
         ..Default::default()
     }
 }

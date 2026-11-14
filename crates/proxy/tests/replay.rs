@@ -362,7 +362,7 @@ fn one_put() -> sonde_proxy::session::Session {
         bucket: Some("data".into()),
         key: Some("k".into()),
         status: Some(200),
-        request_bytes: Some(1),
+        request_bytes: Some(1).into(),
         ..Default::default()
     };
     sonde_proxy::session::Session {
@@ -437,7 +437,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         bucket: Some("data".into()),
         key: Some(key.into()),
         status: Some(200),
-        request_bytes: Some(4),
+        request_bytes: Some(4).into(),
         ..Default::default()
     };
     let session = sonde_proxy::session::Session {
@@ -486,7 +486,7 @@ fn put_record(id: u64, key: &str) -> reqlog::Record {
         bucket: Some("data".into()),
         key: Some(key.into()),
         status: Some(200),
-        request_bytes: Some(4),
+        request_bytes: Some(4).into(),
         ..Default::default()
     }
 }
@@ -564,7 +564,7 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
     create.kind = "CreateMultipartUpload".into();
     create.method = "POST".into();
     create.lists_mut().query = vec![("uploads".into(), "".into())].into();
-    create.request_bytes = None;
+    create.request_bytes = None.into();
     let run = replayed(
         &store,
         vec![

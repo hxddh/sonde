@@ -249,7 +249,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         None => paint("ERR", "31", color),
     };
     let upload = matches!(r.method.as_str(), "PUT" | "POST");
-    let bytes = match (r.request_bytes, r.response_bytes) {
+    let bytes = match (r.request_bytes.get(), r.response_bytes.get()) {
         (Some(up), _) if up > 0 || (upload && !r.is_error()) => format!("↑{}", human_bytes(up)),
         (_, Some(down)) if down > 0 && !r.is_error() => format!("↓{}", human_bytes(down)),
         _ => String::new(),

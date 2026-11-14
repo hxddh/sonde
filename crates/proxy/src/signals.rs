@@ -621,15 +621,18 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         took[filled[i]] = latency_ms;
         filled[i] += 1;
 
-        let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
+        let (u, d) = (
+            r.request_bytes.get().unwrap_or(0),
+            r.response_bytes.get().unwrap_or(0),
+        );
         up[i] += u as f64;
         down[i] += d as f64;
         up_bytes += u;
         down_bytes += d;
-        if let Some(b) = r.request_bytes {
+        if let Some(b) = r.request_bytes.get() {
             sent.add(b);
         }
-        if let Some(b) = r.response_bytes {
+        if let Some(b) = r.response_bytes.get() {
             received.add(b);
         }
 
@@ -672,7 +675,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         op.requests += 1;
         op.billed += usize::from(reached_store(r));
         op.cost += cost;
-        if let Some(fb) = r.first_byte_ms.filter(|_| timed) {
+        if let Some(fb) = r.first_byte_ms.get().filter(|_| timed) {
             let fb = if fb.is_finite() {
                 fb.clamp(0.0, reqlog::MAX_LATENCY_MS)
             } else {
@@ -689,9 +692,9 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         let body = match r.kind.as_str() {
             "GetObject" => r.response_bytes,
             "PutObject" | "UploadPart" => r.request_bytes,
-            _ => None,
+            _ => None.into(),
         };
-        if let Some(b) = body.filter(|b| *b >= TRANSFER_MIN)
+        if let Some(b) = body.get().filter(|b| *b >= TRANSFER_MIN)
             && latency_ms > 0.0
             && !r.is_error()
         {
@@ -1434,7 +1437,7 @@ mod tests {
     fn a_run_under_a_second_has_totals_and_no_rate() {
         let mut one = get(1, 0, "k", 200);
         one.latency_ms = 2.0;
-        one.response_bytes = Some(10);
+        one.response_bytes = Some(10).into();
         let s = signals(std::slice::from_ref(&one), &RequestPrices::default());
         assert!(s.short);
         assert_eq!(
@@ -1529,7 +1532,7 @@ mod tests {
                 let mut r = get(i as u64, i as i64 * 400, "k", 200);
                 r.kind = (*op).into();
                 r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
-                r.first_byte_ms = Some(2.0);
+                r.first_byte_ms = Some(2.0).into();
                 r
             })
             .collect();

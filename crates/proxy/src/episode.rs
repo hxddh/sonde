@@ -754,7 +754,7 @@ pub(crate) fn human_bytes(b: u64) -> String {
 /// Payload bytes a request uploads (not the XML of Create / Complete).
 fn data_bytes(r: &Record) -> u64 {
     match r.kind.as_str() {
-        "PutObject" | "UploadPart" => r.request_bytes.unwrap_or(0),
+        "PutObject" | "UploadPart" => r.request_bytes.get().unwrap_or(0),
         _ => 0,
     }
 }
@@ -809,11 +809,11 @@ fn built(shape: Shape, format: Option<Format>, title: Title, mut rs: Vec<&Record
         start,
         end,
         records: rs.iter().map(|r| r.id).collect::<Vec<u64>>().into(),
-        bytes_up: rs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum(),
+        bytes_up: rs.iter().map(|r| r.request_bytes.get().unwrap_or(0)).sum(),
         bytes_down: rs
             .iter()
             .filter(|r| !r.is_error())
-            .map(|r| r.response_bytes.unwrap_or(0))
+            .map(|r| r.response_bytes.get().unwrap_or(0))
             .sum(),
         outcome,
         notes_text: Box::default(),
@@ -967,7 +967,8 @@ fn request_phrase(op: reqlog::Name, bucket: Option<reqlog::Name>, key: Option<&s
 /// session, so its title is held as the request's own words
 /// ([`Title::Request`]) when they are all it says.
 fn single(r: &Record) -> Episode {
-    let sized = matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0;
+    let sized =
+        matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.get().unwrap_or(0) > 0;
     let mut title = Title::Request {
         op: r.kind,
         bucket: r.bucket,
@@ -980,7 +981,10 @@ fn single(r: &Record) -> Episode {
             p("request.prefix", &[("prefix", x.to_string())]),
         ];
         if sized {
-            said.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
+            said.push(p(
+                "size",
+                &[("size", human(r.request_bytes.get().unwrap_or(0)))],
+            ));
         }
         title = Title::Phrases(said.into());
     }
@@ -1150,7 +1154,7 @@ fn multipart<'a>(
         let bytes: u64 = rs
             .iter()
             .filter(|r| r.kind == "UploadPart")
-            .map(|r| r.request_bytes.unwrap_or(0))
+            .map(|r| r.request_bytes.get().unwrap_or(0))
             .sum();
         let completed = rs.iter().any(completes);
         let aborted = rs.iter().any(|r| r.kind == "AbortMultipartUpload");
@@ -1636,7 +1640,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         files.dedup();
         let bytes: u64 = lance_reads
             .iter()
-            .map(|r| r.response_bytes.unwrap_or(0))
+            .map(|r| r.response_bytes.get().unwrap_or(0))
             .sum();
         let version = rs
             .iter()
@@ -2001,7 +2005,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             let u = uploads.entry(id).or_default();
             if r.kind == "UploadPart" {
                 u.0 += 1;
-                u.1 += r.request_bytes.unwrap_or(0);
+                u.1 += r.request_bytes.get().unwrap_or(0);
             }
             u.2 |= r.kind == "CompleteMultipartUpload" && !r.is_error();
             u.3.push(r.id);
@@ -2257,7 +2261,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         .iter()
         .filter(|r| r.kind == "PutObject" && !r.is_error())
         .filter(|r| r.key.as_deref().is_some_and(|k| k.ends_with('/')))
-        .filter(|r| r.request_bytes.unwrap_or(0) == 0)
+        .filter(|r| r.request_bytes.get().unwrap_or(0) == 0)
         .map(|r| r.id)
         .collect();
     if markers.len() >= at(3, 1) {
@@ -2721,7 +2725,7 @@ mod tests {
             method: "PUT".into(),
             bucket: Some("b".into()),
             key: Some("k".into()),
-            request_bytes: Some(2048),
+            request_bytes: Some(2048).into(),
             ..Default::default()
         };
         let e = single(&r);
@@ -2774,7 +2778,7 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("big".into()),
             status: Some(status),
-            request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
+            request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }).into(),
             latency_ms: 5.0,
             lists: reqlog::Lists {
                 query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
@@ -2829,8 +2833,8 @@ mod tests {
             key: key.map(Into::into),
             status: Some(status),
             latency_ms: 5.0,
-            request_bytes: Some(if method == "PUT" { 100 } else { 0 }),
-            response_bytes: Some(10),
+            request_bytes: Some(if method == "PUT" { 100 } else { 0 }).into(),
+            response_bytes: Some(10).into(),
             ..Default::default()
         }
     }
@@ -3364,7 +3368,7 @@ mod tests {
             key: Some(key.into()),
             status: Some(if method == "DELETE" { 204 } else { 200 }),
             latency_ms: 5.0,
-            request_bytes: Some(bytes),
+            request_bytes: Some(bytes).into(),
             ..Default::default()
         }
     }

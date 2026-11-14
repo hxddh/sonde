@@ -126,7 +126,7 @@ pub fn as_aws_cli(r: &Record) -> String {
     }
     let mut out = parts.join(" ");
     out.push_str(&region_arg(r));
-    if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
+    if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.get().unwrap_or(0) > 0 {
         out.push_str("  # request body not reproduced: add --body <file>");
     }
     out

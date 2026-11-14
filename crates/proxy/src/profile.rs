@@ -1037,8 +1037,8 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
                 p95_ms: percentile(&lat, 0.95),
                 max_ms: lat.last().copied().unwrap_or(0.0),
                 errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
-                bytes_up: rs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum(),
-                bytes_down: rs.iter().map(|r| r.response_bytes.unwrap_or(0)).sum(),
+                bytes_up: rs.iter().map(|r| r.request_bytes.get().unwrap_or(0)).sum(),
+                bytes_down: rs.iter().map(|r| r.response_bytes.get().unwrap_or(0)).sum(),
                 cost: rs.iter().map(|r| price(r)).sum(),
             };
             (g, rs)
@@ -1089,8 +1089,8 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             .or_default() += 1;
         let b = &mut rate[i];
         b.throttled += usize::from(throttled(r));
-        b.bytes_up += r.request_bytes.unwrap_or(0);
-        b.bytes_down += r.response_bytes.unwrap_or(0);
+        b.bytes_up += r.request_bytes.get().unwrap_or(0);
+        b.bytes_down += r.response_bytes.get().unwrap_or(0);
         match tone(r) {
             0 => b.ok += 1,
             1 => b.miss += 1,
@@ -1185,7 +1185,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         ms: r.latency_ms.max(0.0),
         t_ms: at_ms(start_us(r)),
         status: r.status,
-        bytes: r.request_bytes.unwrap_or(0) + r.response_bytes.unwrap_or(0),
+        bytes: r.request_bytes.get().unwrap_or(0) + r.response_bytes.get().unwrap_or(0),
     };
     let mut samples: Vec<Sample> = if records.len() <= MAX_SAMPLES {
         records.iter().map(sample).collect()

@@ -604,7 +604,7 @@ fn carried(r: &Record) -> Option<(u64, u64)> {
     }
     let len: u64 = response_header(r, "content-length")
         .and_then(|v| v.parse().ok())
-        .or(r.response_bytes)?;
+        .or(r.response_bytes.get())?;
     (len > 0).then(|| (0, len - 1))
 }
 
@@ -628,6 +628,7 @@ fn cut_outcome(cut: &Record, later: &[&Record]) -> Cut {
     };
     let sent = cut
         .response_bytes
+        .get()
         .or_else(|| response_header(cut, crate::CUT_HEADER)?.parse().ok())
         .unwrap_or(0);
     let from = first + sent;
@@ -2057,6 +2058,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
         r.kind == "GetObject"
             && done(r)
             && r.response_bytes
+                .get()
                 .is_some_and(|n| crate::fault::cut_at(n).is_some())
     }) {
         names.push("cut-body");
@@ -2638,9 +2640,9 @@ mod tests {
         );
         // a download large enough to cut, and a write on a condition
         let mut big = get(1, 0, "a", 200);
-        big.response_bytes = Some(4096);
+        big.response_bytes = Some(4096).into();
         let mut small = get(2, 5, "b", 200);
-        small.response_bytes = Some(10);
+        small.response_bytes = Some(10).into();
         assert_eq!(
             names(&[small.clone()]),
             ["slowdown", "error", "skew", "slow-first-byte"]
@@ -2726,7 +2728,7 @@ mod tests {
             if last + 1 - first == whole { 200 } else { 206 },
         );
         let n = last + 1 - first;
-        r.response_bytes = Some(n);
+        r.response_bytes = Some(n).into();
         r.lists_mut()
             .response_headers
             .push(Header::new("content-length", n.to_string()));
@@ -2742,7 +2744,7 @@ mod tests {
     /// The same, cut by sonde after `sent` bytes.
     fn cut(r: Record, sent: u64) -> Record {
         let mut r = fault(r, "cut-body");
-        r.response_bytes = Some(sent);
+        r.response_bytes = Some(sent).into();
         r.rare_mut().transport_error = Some("sonde cut the response body".into());
         r.lists_mut()
             .response_headers

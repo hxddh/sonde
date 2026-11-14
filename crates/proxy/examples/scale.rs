@@ -46,7 +46,7 @@ fn main() {
                 key: Some(format!("t/part={}/f-{:06}.parquet", i % 97, i / 7).into()),
                 status: Some(if i % 501 == 0 { 404 } else { 200 }),
                 latency_ms: 2.0 + (i % 13) as f64,
-                response_bytes: Some(4096),
+                response_bytes: Some(4096).into(),
                 ..Default::default()
             });
         }

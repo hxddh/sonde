@@ -14,6 +14,7 @@ pub mod private;
 mod record;
 pub mod redact;
 mod ring;
+mod size;
 
 pub use list::Lists;
 pub use name::Name;
@@ -22,3 +23,4 @@ pub use record::{
     Text, is_control_operation, is_listing,
 };
 pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, Sink, StatusFilter};
+pub use size::{Millis, Size};

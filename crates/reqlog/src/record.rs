@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use std::borrow::Cow;
 
-use crate::{Lists, Name};
+use crate::{Lists, Millis, Name, Size};
 
 /// A header's name or value: text that the records repeating it share. A
 /// session of a million requests says `user-agent` and its value a million
@@ -196,7 +196,7 @@ impl Header {
 /// One HTTP exchange with an object store. Every field is redacted when the
 /// record is built ([`Record::redacted`]), never later.
 ///
-/// What every request has is held here, in 120 bytes. Its query and
+/// What every request has is held here, in 96 bytes. Its query and
 /// headers are behind one pointer ([`Record::lists`]) that the records
 /// holding the same share. What few have (an error's body, a transport
 /// error, a fault's mark) and what no analysis reads (the URL, the store's
@@ -219,11 +219,11 @@ pub struct Record {
     pub latency_ms: f64,
     /// How long until the response's first byte: the proxy's measure, or the
     /// turnaround an access log gives (S3's time to its first byte).
-    pub first_byte_ms: Option<f64>,
+    pub first_byte_ms: Millis,
     /// Bytes of the request body, when known.
-    pub request_bytes: Option<u64>,
+    pub request_bytes: Size,
     /// Bytes of the response body read, when known.
-    pub response_bytes: Option<u64>,
+    pub response_bytes: Size,
     pub key: Option<Text>,
     /// Its query and headers ([`Lists`]): `None` when they would be empty.
     pub lists: Option<std::sync::Arc<Lists>>,
@@ -311,8 +311,8 @@ struct Written<'a> {
     host_id: &'a Option<String>,
     request_headers: &'a [Header],
     response_headers: &'a [Header],
-    request_bytes: Option<u64>,
-    response_bytes: Option<u64>,
+    request_bytes: Size,
+    response_bytes: Size,
     error_body: &'a Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     request_body: &'a Option<String>,
@@ -321,8 +321,8 @@ struct Written<'a> {
     transport_error: &'a Option<String>,
     region: &'a Option<String>,
     job: &'a Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    first_byte_ms: Option<f64>,
+    #[serde(skip_serializing_if = "is_none")]
+    first_byte_ms: Millis,
     #[serde(skip_serializing_if = "Option::is_none")]
     requester: &'a Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,8 +358,10 @@ struct Read<'a> {
     request_headers: Vec<ReadHeader<'a>>,
     #[serde(default, borrow)]
     response_headers: Vec<ReadHeader<'a>>,
-    request_bytes: Option<u64>,
-    response_bytes: Option<u64>,
+    #[serde(default)]
+    request_bytes: Size,
+    #[serde(default)]
+    response_bytes: Size,
     error_body: Option<String>,
     request_body: Option<String>,
     #[serde(default)]
@@ -368,9 +370,14 @@ struct Read<'a> {
     #[serde(borrow)]
     region: Option<Cow<'a, str>>,
     job: Option<String>,
-    first_byte_ms: Option<f64>,
+    #[serde(default)]
+    first_byte_ms: Millis,
     requester: Option<String>,
     injected: Option<String>,
+}
+
+fn is_none(ms: &Millis) -> bool {
+    ms.get().is_none()
 }
 
 #[derive(Deserialize)]
@@ -699,7 +706,7 @@ impl Record {
             latency_ms: self.latency_ms,
             retries: self.retries,
             request_id: x.request_id.clone(),
-            first_byte_ms: self.first_byte_ms,
+            first_byte_ms: self.first_byte_ms.get(),
             injected: x.injected.clone(),
         }
     }
@@ -722,7 +729,7 @@ mod tests {
 
     #[test]
     fn a_record_is_small_and_written_flat() {
-        assert_eq!(std::mem::size_of::<Record>(), 120);
+        assert_eq!(std::mem::size_of::<Record>(), 96);
         let r = Record {
             id: 3,
             kind: "GetObject".into(),

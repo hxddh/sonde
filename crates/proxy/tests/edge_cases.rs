@@ -16,8 +16,8 @@ fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u
         key: key.map(Into::into),
         status: Some(status),
         latency_ms: 5.0,
-        request_bytes: Some(if method == "PUT" { 100 } else { 0 }),
-        response_bytes: Some(10),
+        request_bytes: Some(if method == "PUT" { 100 } else { 0 }).into(),
+        response_bytes: Some(10).into(),
         ..Default::default()
     }
 }

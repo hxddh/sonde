@@ -38,8 +38,8 @@ pub fn busy(n: u64) -> Vec<Record> {
                 key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if i % 97 == 0 { 503 } else { 200 }),
                 latency_ms: 3.0 + (i % 50) as f64,
-                request_bytes: Some(if method == "PUT" { 4096 } else { 0 }),
-                response_bytes: Some(if method == "GET" { 65536 } else { 0 }),
+                request_bytes: Some(if method == "PUT" { 4096 } else { 0 }).into(),
+                response_bytes: Some(if method == "GET" { 65536 } else { 0 }).into(),
                 ..Default::default()
             }
         })

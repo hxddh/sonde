@@ -100,11 +100,11 @@ pub fn summarize(records: &[Record]) -> Summary {
     let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
     for r in records {
         s.requests += 1;
-        let up = r.request_bytes.unwrap_or(0);
+        let up = r.request_bytes.get().unwrap_or(0);
         let down = if r.is_error() {
             0
         } else {
-            r.response_bytes.unwrap_or(0)
+            r.response_bytes.get().unwrap_or(0)
         };
         s.bytes_up += up;
         s.bytes_down += down;
@@ -355,8 +355,8 @@ impl Counter {
             r.latency_us(),
             r.is_error(),
             is_miss(r),
-            r.request_bytes.unwrap_or(0),
-            r.response_bytes.unwrap_or(0),
+            r.request_bytes.get().unwrap_or(0),
+            r.response_bytes.get().unwrap_or(0),
         );
     }
 
@@ -538,8 +538,8 @@ mod tests {
             status: Some(status),
             latency_ms: ms,
             time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
-            request_bytes: Some(10),
-            response_bytes: Some(100),
+            request_bytes: Some(10).into(),
+            response_bytes: Some(100).into(),
             ..Default::default()
         }
     }

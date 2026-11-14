@@ -514,7 +514,7 @@ impl S3Client {
                 let headers = header_pairs(resp.headers());
                 let body = resp.bytes().await.unwrap_or_default();
                 record.status = Some(status);
-                record.response_bytes = Some(body.len() as u64);
+                record.response_bytes = Some(body.len() as u64).into();
                 fill_ids(&mut record, &headers);
                 record.lists_mut().response_headers =
                     headers.iter().map(|(k, v)| Header::new(k, v)).collect();
@@ -697,7 +697,7 @@ impl S3Client {
                 let headers = header_pairs(resp.headers());
                 let mut record = self.record(&req, &prepared.url, &prepared.headers, 0, latency);
                 record.status = Some(status);
-                record.response_bytes = resp.content_length();
+                record.response_bytes = resp.content_length().into();
                 fill_ids(&mut record, &headers);
                 record.lists_mut().response_headers =
                     headers.iter().map(|(k, v)| Header::new(k, v)).collect();
@@ -752,7 +752,7 @@ impl S3Client {
                 let mut record =
                     self.record(req, &prepared.url, &prepared.headers, attempt, latency);
                 record.status = Some(status);
-                record.response_bytes = Some(body.len() as u64);
+                record.response_bytes = Some(body.len() as u64).into();
                 fill_ids(&mut record, &headers);
                 record.lists_mut().response_headers =
                     headers.iter().map(|(k, v)| Header::new(k, v)).collect();
@@ -819,9 +819,9 @@ impl S3Client {
             status: None,
             latency_ms: latency.as_secs_f64() * 1000.0,
             retries: u16::try_from(attempt).unwrap_or(u16::MAX),
-            request_bytes: Some(req.body.len()),
-            response_bytes: None,
-            first_byte_ms: None,
+            request_bytes: Some(req.body.len()).into(),
+            response_bytes: None.into(),
+            first_byte_ms: None.into(),
             rare: reqlog::Rare {
                 endpoint: self.cfg.endpoint_id.as_str().into(),
                 url: url.to_string(),
