@@ -37,6 +37,19 @@ test("run a command: its requests become operations; once it ends, its own view 
   expect(app.shows("text:/GetObject/")).toBe(true);
 });
 
+test("a program that runs a while is read as it goes: its requests and the live panel before it ends", async () => {
+  const app = await demo();
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md";
+  await app.type("id:run-command", `for i in $(seq 30); do ${get}; sleep 0.2; done`);
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+  await app.press("id:run-start");
+  // still running: the live panel over its operations, read again as they arrive
+  await app.waitFor("id:live", { timeout: 15000 });
+  expect(app.shows("id:run-status")).toBe(true);
+  expect(app.shows("id:run-ended")).toBe(false);
+  await runView(app);
+});
+
 test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo nothing to store");

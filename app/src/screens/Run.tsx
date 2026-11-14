@@ -224,7 +224,8 @@ function LiveOperations() {
   cleanup(() => clearInterval(timer));
   const path = () => running()?.path ?? lastRun()?.path ?? null;
   // read again as the program's requests arrive, and once more as it ends
-  const view = analysis(path, () => (tick(), lastRun())).view;
+  // (by its value: each tick, and the run ending, read it again)
+  const view = analysis(path, () => `${tick()} ${lastRun()?.path ?? ""}`).view;
   // the live panel's half minute, read with each tick while the program runs (the last reading kept meanwhile)
   const lastHalf = resource(
     () => (running() ? `${path()}\n${tick()}` : null),
