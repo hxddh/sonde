@@ -180,7 +180,8 @@ for (const v of variants) {
     await app.press("id:record");
     await app.waitFor("id:record-start");
     // (the demo's toast, shown in 02-run, closed: whether it was still up here was a race, run to run)
-    while (app.shows("id:toast-close")) await app.press("id:toast-close");
+    // (pressed if it is still up: it may close itself between the look and the press)
+    for (let n = 0; n < 5 && app.shows("id:toast-close"); n++) await app.press("id:toast-close").catch(() => {});
     await app.waitUntil(() => !app.shows("id:toast"), { timeout: 3000 }).catch(() => {});
     await shot("02a-record");
     await app.press("id:record-cancel");
