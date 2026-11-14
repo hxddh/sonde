@@ -27,7 +27,7 @@ pub fn program_key(command: Option<&str>) -> Option<String> {
         .map(|w| without_trial(&unquote(w)))
         .collect();
     let words: Vec<&str> = words.iter().flat_map(|w| w.split_whitespace()).collect();
-    Some(crate::profile::stable(&words.join(" ")))
+    Some(crate::profile::stable_words(&words.join(" ")))
 }
 
 /// A word without the trial's place in it (`{trial}`, `$SONDE_TRIAL`,
@@ -1546,8 +1546,12 @@ mod tests {
     #[test]
     fn programs_are_their_commands_and_replays_are_none() {
         assert_eq!(
-            program_key(Some("  python  etl.py  --day 1 ")).as_deref(),
-            Some("python etl.py --day 1")
+            program_key(Some("  python3  etl.py  --day 1 ")).as_deref(),
+            Some("python3 etl.py --day {n}")
+        );
+        assert_eq!(
+            program_key(Some("sh -c 'aws s3 cp job1.py s3://b/x'")).as_deref(),
+            Some("sh -c aws s3 cp job1.py s3://b/x")
         );
         assert_eq!(program_key(Some("replay of etl")), None);
         assert_eq!(program_key(Some("imported from CloudTrail")), None);

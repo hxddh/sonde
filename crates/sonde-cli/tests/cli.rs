@@ -1481,7 +1481,7 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
 }
 
 #[test]
-fn a_missing_baseline_names_the_program_and_the_one_its_other_arguments_have() {
+fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
     let t = tempfile::tempdir().unwrap();
     let monday = session_of(
         t.path(),
@@ -1500,8 +1500,8 @@ fn a_missing_baseline_names_the_program_and_the_one_its_other_arguments_have() {
         &["check", monday.to_str().unwrap(), "--set-baseline"],
     );
     assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
-    // the next day's run is another command: no baseline of its own, and the
-    // budget is what decides
+    // the next day's run is the same program: its argument is a value that
+    // changes between runs, so Monday's baseline holds it
     let c = sonde(
         t.path(),
         &[
@@ -1517,25 +1517,10 @@ fn a_missing_baseline_names_the_program_and_the_one_its_other_arguments_have() {
     );
     let err = stderr(&c);
     assert_eq!(c.status.code(), Some(0), "{err}");
-    assert!(
-        err.contains("no baseline yet for program `python etl.py --day 2`"),
-        "{err}"
-    );
-    assert!(
-        err.contains("there is one for `python etl.py --day 1`")
-            && err.contains("name = \"etl\"")
-            && err.contains("sonde run --name etl"),
-        "{err}"
-    );
+    assert!(!err.contains("no baseline yet"), "{err}");
     let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
-    assert_eq!(doc["passed"], true);
-    assert_eq!(doc["verdict"], "within budget (no baseline yet)");
-    assert!(
-        doc["noBaseline"]
-            .as_str()
-            .unwrap()
-            .contains("no baseline yet")
-    );
+    assert_eq!(doc["passed"], true, "{doc}");
+    assert!(doc["noBaseline"].is_null(), "{doc}");
     // held to it by name: past it is "past its baseline", not "over budget"
     let c = sonde(
         t.path(),

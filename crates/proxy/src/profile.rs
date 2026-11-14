@@ -1496,6 +1496,17 @@ pub const IDENTITY_RULES: u32 = 2;
 /// `v{n}`). Two findings of one run that read the same once so are told
 /// apart by their keys as they were ([`Run::with`]).
 pub fn stable(s: &str) -> String {
+    stable_with(s, true)
+}
+
+/// [`stable`] for a command line: a word is replaced only when the whole of it
+/// is a value (a number, a date, a UUID, an id), so `python3`, `s3://` and
+/// `job1.py` stay what they say.
+pub fn stable_words(s: &str) -> String {
+    stable_with(s, false)
+}
+
+fn stable_with(s: &str, digits_in_words: bool) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -1543,6 +1554,8 @@ pub fn stable(s: &str) -> String {
             || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
         {
             out.push_str("{id}");
+        } else if !digits_in_words && has(u8::is_ascii_alphabetic) {
+            out.push_str(w);
         } else {
             // each run of digits
             let mut digits = false;
