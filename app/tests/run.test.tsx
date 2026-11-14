@@ -208,7 +208,8 @@ test("a session's time: where it went, and two runs before and after", async () 
   for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
   expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
-  expect(app.shows("label:/^Errors: 0%, No request failed/")).toBe(true);
+  // what found nothing is no failure, and is said beside them
+  expect(app.shows("label:/^Errors: 0%, None failed · 67% found nothing/")).toBe(true);
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
   await app.waitFor("id:latency-over-time");
@@ -235,6 +236,8 @@ test("a session's time: where it went, and two runs before and after", async () 
   // the operations sort by how long they took
   await app.press("id:session-pane-mode-operations");
   // compared with another run: before and after
+  // (the header, folded while the Time pane was scrolled, opens again with the Operations pane: pressed once laid out)
+  await app.wait(500);
   await app.press("id:compare-open");
   // another program's runs are under their own heading, and say so once compared
   const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("Other programs > curl"))!;
@@ -279,7 +282,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
   // how long every request took, and where they went, on demand
-  expect(app.shows("text:/^median .* · p95 .* · p99 /")).toBe(true);
+  expect(app.shows("text:/^Half took .* or less, 95% took .* or less/")).toBe(true);
   await app.waitFor("id:flows");
   expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
 });

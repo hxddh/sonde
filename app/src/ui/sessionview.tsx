@@ -126,7 +126,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
+export function SessionHeader(props: { view: SessionView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
@@ -136,6 +136,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
+  const acts = () => props.actions?.();
   if (terminal()) {
     return (
       <View class="gap-0">
@@ -191,7 +192,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           )}
         </Each>
       </View>
-      {props.actions}
+      {acts()}
     </View>
   );
   return (
@@ -204,7 +205,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           </Title>
           <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
         </View>
-        {props.actions}
+        {acts()}
       </View>
       {/* the session in a sentence: where its time went, and the first thing to do. Across the pane
           (not held to the title's column beside the commands); it wraps to two lines as the pane

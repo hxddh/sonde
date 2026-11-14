@@ -370,7 +370,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} source={source} onScrolled={(away) => folded() !== away && folded.set(away)} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
+    <OperationsTable view={v()} source={source} onScrolled={scrolled} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -434,7 +434,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane onScrolled={(away) => folded() !== away && folded.set(away)} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -553,7 +553,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     >
       <View class="min-h-0 flex-1">
         <View class="shrink-0 px-4 pt-4">
-          <SessionHeader view={v()} actions={actions()} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
+          <SessionHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
             {/* what changed since the program's run before: what was fixed, with what it saved */}
             <If when={!v().trial}>
@@ -582,11 +582,13 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const bodyHeight = signal(0);
   // the pane under the tabs scrolled from its top: the header folds to one line and gives it the room
   // (another pane, or the same back at its top, opens it again)
-  const folded = signal(false);
-  effect(() => {
-    pane();
-    untracked(() => folded.set(false));
-  });
+  // (kept by pane: another pane opens unfolded in the same moment it is shown)
+  const foldedOn = signal<Pane | null>(null);
+  const folded = () => foldedOn() === pane();
+  const scrolled = (away: boolean) => {
+    const want = away ? untracked(pane) : null;
+    if (untracked(foldedOn) !== want) foldedOn.set(want);
+  };
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;
   const inspecting = () => !!(episode() || record());
