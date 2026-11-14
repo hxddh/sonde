@@ -84,9 +84,9 @@ if (isAvailable && platform.idiom !== "terminal") {
 }
 
 export const cwd = signal("");
-/** What the program may do to the store: Run's choice, no-delete unless
+/** What the program may do to the store: Run's choice, allow unless
  * changed (a project's `[record] policy` in sonde.toml narrows it). */
-export const policy = signal<Policy>("no-delete");
+export const policy = signal<Policy>("allow");
 
 const MAX = 2 * 1024 * 1024;
 let buffer = "";

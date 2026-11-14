@@ -10,7 +10,7 @@ import { announce, batch, cleanup, resource, signal, Text, View } from "nsh";
 import { asError, api } from "../native";
 import { duration } from "../format";
 import { t } from "../i18n";
-import { policy, running } from "../run";
+import { running } from "../run";
 import type { Policy } from "./session";
 import { report, sessionsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
@@ -71,8 +71,9 @@ export function TrialDialog(props: {
   const most = () => Math.max(1, ...(the()?.scenarios ?? []).map((s) => s.maxTimes ?? 1));
   const pressed = (s: { name: string; maxTimes?: number | null }) => (s.maxTimes && times() > 1 ? Math.min(times(), s.maxTimes) : 1);
   const asked = (s: { name: string; maxTimes?: number | null }) => (pressed(s) > 1 ? `${s.name}:${pressed(s)}` : s.name);
-  // what the program may do while tried: as the last run was limited, until changed here
-  const limit = signal<Policy>(policy());
+  // what the program may do while tried: no deletes unless changed here (a trial's own
+  // faults could push a program down a path it would not take)
+  const limit = signal<Policy>("no-delete");
   const steps = signal<TrialStep[] | null>(null);
   const ended = signal<{ cancelled: boolean; /** tried again: the fresh run's exit, when it failed (no trial then) */ cleanFailed?: number | null } | null>(null);
   // trying again what did not survive: those verdicts (from the Runs pane, or this dialog's own once it ended)

@@ -19,7 +19,7 @@ export type Policy = "allow" | "no-delete" | "read-only";
  * endpoint and keys to point an application at. `policy`: the caller's
  * choice (no switch of its own then). */
 export function RecordPanel(props: { recording: RecordingView | null; onChange: () => void; policy?: () => Policy }) {
-  const own = signal<Policy>("no-delete");
+  const own = signal<Policy>("allow");
   const policy = () => props.policy?.() ?? own();
   const open = signal(false);
   const start = async () => {
