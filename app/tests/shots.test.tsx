@@ -96,16 +96,20 @@ for (const v of variants) {
       await app.waitUntil(() => (app.menu()?.length ?? 0) > 0, { timeout: 5000 }).catch(() => {});
       return app.menu()?.map((m) => m.label) ?? [];
     };
+    // a menu closed, if one is still up (a native menu may have closed itself in between)
+    const closeAnyMenu = async () => {
+      if (app.menu()) await app.closeMenu().catch(() => {});
+    };
     // The item `label` of the menu `open` shows: asked again once if the menu was gone before it was chosen
     const chooseFrom = async (open: () => Promise<unknown>, label: string) => {
       for (let n = 0; ; n++) {
-        if (app.menu()) await app.closeMenu();
+        await closeAnyMenu();
         await open();
-        await menuItems();
+        const items = await menuItems();
         try {
           return await app.chooseMenuItem(label);
         } catch (e) {
-          if (n > 0) throw e;
+          if (n > 0) throw new Error(`choosing ${JSON.stringify(label)} from [${items.join(", ")}]: ${e}`);
           await app.wait(500);
         }
       }
@@ -380,13 +384,13 @@ for (const v of variants) {
     await act("compare-open", "Compare…", "对比…");
     const run = (await menuItems()).find((l) => l.includes("nightly-report"));
     if (run) {
-      await app.chooseMenuItem(run);
+      await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
       await app.waitFor("id:run-change", { timeout: 10000 });
       // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
       await app.wait(1500);
       await charts("03h-runs");
       await app.press("id:compare-back");
-    } else if (app.menu()) await app.closeMenu();
+    } else await closeAnyMenu();
 
     // what a replay on another store would send, said before it runs
     await app.waitFor("id:session-more", { timeout: 10000 });
