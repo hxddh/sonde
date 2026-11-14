@@ -1,4 +1,4 @@
-//! `sonde compare --replay`: a session's requests sent again, to one store or several.
+//! `sonde compare --replay`: a run's requests sent again, to one store or several.
 
 use sonde_proxy::program::ms_text;
 use std::io::IsTerminal;
@@ -22,7 +22,7 @@ fn bucket_pair(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("{s:?}: expected original=target"))
 }
 
-/// How a session is replayed: where its writes go. It writes under a prefix
+/// How a run is replayed: where its writes go. It writes under a prefix
 /// of its own and removes what it wrote there, always.
 #[derive(Args, Clone, Default, PartialEq)]
 pub struct ReplayOpts {
@@ -35,12 +35,12 @@ pub struct ReplayOpts {
     /// Replay what the dry run says (what it writes, under its prefix, it removes).
     #[arg(long)]
     pub(super) yes: bool,
-    /// The replay's session file (default: in the data directory's sessions/).
+    /// The replay's file (default: in the data directory's runs/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
 }
 
-/// A session to replay, where, and how.
+/// A run to replay, where, and how.
 struct ReplayArgs {
     file: PathBuf,
     endpoint: Vec<String>,
@@ -71,7 +71,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
     }
-    let (asked, original) = super::sessions::open(s, &a.file)?;
+    let (asked, original) = super::runs::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
     let prefix = match &a.how.prefix {
@@ -114,7 +114,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let path = match &a.how.out {
         Some(p) => p.clone(),
         None => {
-            let dir = s.paths().sessions();
+            let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
             sonde_proxy::session::fresh_path(
                 &dir,
@@ -181,7 +181,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             "{}",
             output::json(&serde_json::json!({
                 "plan": plan,
-                "session": path,
+                "run": path,
                 "comparison": c,
                 "removed": run.removed,
                 "removedVersions": run.removed_versions,
@@ -204,7 +204,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             }
             eprintln!(
                 "{}",
-                paint(&format!("session: {}", path.display()), "2", color)
+                paint(&format!("run: {}", path.display()), "2", color)
             );
         }
     }
@@ -218,12 +218,12 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     })
 }
 
-/// One session replayed on several stores at once: each answers under its
+/// One run replayed on several stores at once: each answers under its
 /// own prefix (cleaned up after), and the stores are compared side by side:
 /// how many answers differ from the recording, and each kind's p95.
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_proxy::replay::{self as rp, ReplayOptions};
-    let (asked, original) = super::sessions::open(s, &a.file)?;
+    let (asked, original) = super::runs::open(s, &a.file)?;
     let prefix = match &a.how.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
         None => rp::default_prefix(),
@@ -250,7 +250,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         eprintln!("\ndry run: to replay, run again with --yes");
         return Ok(4);
     }
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     std::fs::create_dir_all(&dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let runs = futures::future::join_all(targets.iter().map(|(id, client)| {
@@ -313,7 +313,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             "plan": plan,
             "stores": stores.iter().map(|(id, path, c, p)| serde_json::json!({
                 "endpoint": id,
-                "session": path,
+                "run": path,
                 "comparison": c,
                 "latency": sonde_proxy::profile::latency_changes(&before, p),
             })).collect::<Vec<_>>(),

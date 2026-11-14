@@ -243,10 +243,10 @@ pub struct Trial {
     /// What to change, where the requests say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advice: Option<Said>,
-    /// The trial run's session: its file's name in the run's `trials/`
+    /// The trial's own run: its file's name in the clean run's `trials/`
     /// folder ([`session_path`] gives the path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<String>,
+    pub run: Option<String>,
     /// The scenario's verdicts for the program, oldest first, up to this
     /// one ([`with_history`]): given when shown, not kept with the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1562,7 +1562,7 @@ pub fn judge(
         reasons_text: why,
         at: turned_on.map(where_of),
         advice,
-        session: None,
+        run: None,
         history: Vec::new(),
     }
 }
@@ -1606,7 +1606,7 @@ fn is_trial_of(session: &std::path::Path, name: &str) -> bool {
 /// name the verdict keeps. Only a name of that run's is taken: what the
 /// file says (it may have come with a shared session) is never a path.
 pub fn session_path(session: &std::path::Path, t: &Trial) -> Option<std::path::PathBuf> {
-    let kept = t.session.as_deref()?;
+    let kept = t.run.as_deref()?;
     let name = kept.rsplit(['/', '\\']).next()?;
     is_trial_of(session, name).then(|| folder_for(session).join(name))
 }
@@ -1701,19 +1701,14 @@ pub type Verdicts = BTreeMap<String, BTreeMap<String, Vec<Seen>>>;
 /// The most verdicts kept per scenario of a program.
 pub const HISTORY_KEPT: usize = 50;
 
-/// The file beside a program's runs that keeps each program's verdicts:
-/// kept when a run is recorded again or deleted.
-pub fn verdicts_file(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.join("verdicts.json")
-}
-
-/// Every program's verdicts kept in `dir`: none when there is no file (or
-/// it is damaged).
+/// Every program's verdicts, as the folder's index keeps them ([`crate::index`]).
 pub fn read_verdicts(dir: &std::path::Path) -> Verdicts {
-    std::fs::read(verdicts_file(dir))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    crate::index::of(dir)
+        .folder
+        .verdicts
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), serde_json::from_value(v.clone()).ok()?)))
+        .collect()
 }
 
 /// Adds a trial's verdicts to its program's, in `dir`.
@@ -1727,20 +1722,28 @@ pub fn record(
     if trials.is_empty() {
         return Ok(());
     }
-    let _held = crate::index::hold(dir, "verdicts");
-    let mut all = read_verdicts(dir);
-    let mine = all.entry(program.to_string()).or_default();
-    for t in trials {
-        let seen = mine.entry(t.asked()).or_default();
-        seen.push(Seen {
-            at,
-            standing: t.standing,
-            run: run.to_string(),
-        });
-        let over = seen.len().saturating_sub(HISTORY_KEPT);
-        seen.drain(..over);
-    }
-    reqlog::private::replace(&verdicts_file(dir), serde_json::to_vec_pretty(&all)?)
+    crate::index::update(dir, |ix| {
+        let mut mine: BTreeMap<String, Vec<Seen>> = ix
+            .folder
+            .verdicts
+            .get(program)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        for t in trials {
+            let seen = mine.entry(t.asked()).or_default();
+            seen.push(Seen {
+                at,
+                standing: t.standing,
+                run: run.to_string(),
+            });
+            let over = seen.len().saturating_sub(HISTORY_KEPT);
+            seen.drain(..over);
+        }
+        let changes = serde_json::to_value(&mine)
+            .map(|v| vec![(program.to_string(), crate::index::Change::Verdicts(Some(v)))])
+            .unwrap_or_default();
+        (changes, ())
+    })
 }
 
 /// Gives each of a run's trials its scenario's history, up to this run's
@@ -2545,15 +2548,15 @@ mod tests {
         }
         // the verdicts name a file elsewhere: a shared session may say anything
         let mut t = judge(&slowdown(), &[], 0, &[], 0);
-        t.session = Some(outside.to_string_lossy().into_owned());
+        t.run = Some(outside.to_string_lossy().into_owned());
         save(&session, &[t.clone()]).unwrap();
         assert_eq!(session_path(&session, &t), None, "no path of the file's");
-        t.session = Some("run.slowdown.sonde".into());
+        t.run = Some("run.slowdown.sonde".into());
         assert_eq!(
             session_path(&session, &t),
             Some(trials.join("run.slowdown.sonde"))
         );
-        t.session = Some("../../etc/run.slowdown.sonde".into());
+        t.run = Some("../../etc/run.slowdown.sonde".into());
         assert_eq!(
             session_path(&session, &t),
             Some(trials.join("run.slowdown.sonde")),
@@ -2570,7 +2573,7 @@ mod tests {
         );
         assert!(
             trials.join("run.notes.txt").exists(),
-            "not a trial's session"
+            "not a trial's run"
         );
         remove(&other);
         assert!(!trials.join("run-2.slowdown.sonde").exists());

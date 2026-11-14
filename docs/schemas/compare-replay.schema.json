@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare-replay.schema.json",
   "title": "sonde compare FILE --replay ENDPOINT -f json",
-  "description": "A session replayed on one endpoint, cleaned up and compared. Exit 2 when answers differ.",
+  "description": "A run replayed on one endpoint, cleaned up and compared. Exit 2 when answers differ.",
   "type": "object",
   "properties": {
     "plan": {
       "$ref": "#/$defs/plan"
     },
-    "session": {
+    "run": {
       "type": "string",
-      "description": "The replay's own session."
+      "description": "The replay's own run."
     },
     "comparison": {
       "$ref": "#/$defs/comparison"
@@ -41,7 +41,7 @@
   },
   "required": [
     "plan",
-    "session",
+    "run",
     "comparison",
     "removed",
     "removedVersions",

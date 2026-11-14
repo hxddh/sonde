@@ -1,5 +1,5 @@
-//! `sonde compare`: two runs of a program, a session and its replay, or a
-//! session replayed on another endpoint (`--replay`).
+//! `sonde compare`: two runs of a program, a run and its replay, or a
+//! run replayed on another endpoint (`--replay`).
 
 use sonde_proxy::program::ms_text;
 use std::io::IsTerminal;
@@ -18,9 +18,9 @@ use super::record::*;
 #[derive(Args)]
 pub struct CompareArgs {
     /// The runs: before and after a change. One run: it and its program's
-    /// run before it. None: the newest run and the one before it. A session
+    /// run before it. None: the newest run and the one before it. A run
     /// and its replay, in either order: their answers compared. With
-    /// --replay: the one session to replay.
+    /// --replay: the one run to replay.
     #[arg(value_name = "RUN", num_args = 0..=2)]
     pub(super) runs: Vec<PathBuf>,
     /// Replay RUN on this endpoint and compare the answers. Several
@@ -137,7 +137,7 @@ fn print_latency_of(changes: &[sonde_proxy::profile::LatencyChange], names: (&st
     );
 }
 
-/// A session and its replay: the answers that differ, and each kind's latency on the two stores.
+/// A run and its replay: the answers that differ, and each kind's latency on the two stores.
 async fn diff(
     s: &Arc<Sonde>,
     original: &PathBuf,
@@ -146,12 +146,12 @@ async fn diff(
 ) -> anyhow::Result<i32> {
     // read one after the other, each for what it amounts to: the replay
     // kept as its answers and its profile, then the session read against them
-    let original_file = super::sessions::resolve(s, original);
+    let original_file = super::runs::resolve(s, original);
     let prices = sonde_proxy::session::read_header(&original_file)
         .map(|h| request_prices_for(s, &h.endpoint))
         .unwrap_or_default();
     let (replay_header, answers, is_replay, replay_profile) = {
-        let (_, replay) = super::sessions::open_lean(s, replay)?;
+        let (_, replay) = super::runs::open_lean(s, replay)?;
         (
             replay.header,
             sonde_proxy::replay::answers(&replay.records),
@@ -159,7 +159,7 @@ async fn diff(
             profile(&replay.records, &prices),
         )
     };
-    let (_, original) = super::sessions::open_lean(s, original)?;
+    let (_, original) = super::runs::open_lean(s, original)?;
     // a replay that sent nothing is still one: its header says what it is
     if !named_replay(&replay_header) && !is_replay {
         return Err(super::usage(format!(
@@ -218,12 +218,12 @@ fn more_kinds(cut: usize, same: usize) -> Option<String> {
 }
 
 /// `sonde compare`: two runs of a program, before and after a change; a
-/// session and its replay; or a session replayed on another endpoint now.
+/// run and its replay; or a run replayed on another endpoint now.
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if !a.replay.is_empty() {
         let [one] = a.runs.as_slice() else {
             return Err(super::usage(
-                "--replay ENDPOINT replays one session: name it",
+                "--replay ENDPOINT replays one run: name it",
             ));
         };
         return super::replay::replay(s, one, &a.replay, &a.how, a.format).await;
@@ -236,7 +236,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     // a session and its replay, in either order: their answers compared
     if let [x, y] = a.runs.as_slice() {
         let header =
-            |f: &PathBuf| sonde_proxy::session::read_header(&super::sessions::resolve(s, f));
+            |f: &PathBuf| sonde_proxy::session::read_header(&super::runs::resolve(s, f));
         match (header(x), header(y)) {
             (_, Some(h)) if named_replay(&h) => return diff(s, x, y, a.format).await,
             (Some(h), _) if named_replay(&h) => return diff(s, y, x, a.format).await,
@@ -255,7 +255,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     // cost what the larger does, not both at once (the later counted
     // against what the earlier's findings would save)
     let run = |f: &PathBuf, against: Option<&sonde_proxy::profile::Run>| -> anyhow::Result<_> {
-        let (_, session) = super::sessions::open_lean(s, f)?;
+        let (_, session) = super::runs::open_lean(s, f)?;
         let prices = request_prices_for(s, &session.header.endpoint);
         let mut run =
             sonde_proxy::profile::Run::analysed(&session.header, &session.records, &prices);
@@ -276,11 +276,8 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if c.same_program {
         c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
         // a finding fixed by the earlier run or one before it is back, not new
-        if let (Some(k), Ok(kept)) = (
-            &ka,
-            sonde_proxy::fixloop::read(&sonde_proxy::fixloop::folder_of(&after)),
-        ) && let Some(program) = kept.get(k)
-        {
+        let kept = sonde_proxy::fixloop::read(&sonde_proxy::fixloop::folder_of(&after));
+        if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
             program.mark_back(&mut c.findings, &ha.created.to_rfc3339());
             use sonde_proxy::fixloop::{State, said};
             c.appeared = said(&c.findings, &[State::New, State::Back]);
@@ -451,10 +448,10 @@ fn runs_compared(
 ) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
     match runs {
         [before, after] => Ok(Ok((
-            super::sessions::resolve(s, before),
-            super::sessions::resolve(s, after),
+            super::runs::resolve(s, before),
+            super::runs::resolve(s, after),
         ))),
-        [one] => before_of(&super::sessions::resolve(s, one)),
+        [one] => before_of(&super::runs::resolve(s, one)),
         _ => before_of(&which_run(s, project_name().as_deref())?.0),
     }
 }
@@ -462,7 +459,7 @@ fn runs_compared(
 /// A run and its program's run before it, or why it has none (its first).
 fn before_of(after: &std::path::Path) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
     let h = sonde_proxy::session::read_header(after)
-        .ok_or_else(|| super::usage(format!("{} is not a sonde session", after.display())))?;
+        .ok_or_else(|| super::usage(format!("{} is not a sonde run", after.display())))?;
     let key = sonde_proxy::program::key_of(&h).ok_or_else(|| {
         super::usage(format!(
             "{} is no run of a program (a replay or an import): name the two runs to compare",

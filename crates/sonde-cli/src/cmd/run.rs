@@ -328,7 +328,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             .unwrap_or_default();
         let dir = match &a.rec.out {
             Some(out) => runs_dir(out),
-            None => s.paths().sessions(),
+            None => s.paths().runs(),
         };
         let names = sonde_proxy::trial::to_try_again(&dir, &program);
         if names.is_empty() {
@@ -458,7 +458,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         // the command's own time: what a delay costs is not all in requests
         (t.wall_ms, t.clean_wall_ms) = (ran.wall_ms, clean.wall_ms);
-        t.session = ran
+        t.run = ran
             .file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
@@ -498,7 +498,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .count();
     let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
     eprintln!("\n{}", trials_summary(&standings));
-    eprintln!("Each trial is a session:");
+    eprintln!("Each trial is a run:");
     for t in &trials {
         if let Some(path) = sonde_proxy::trial::session_path(&file, t) {
             eprintln!("  sonde show {}", path.display());
@@ -652,7 +652,7 @@ fn named_scenario(
     })
 }
 
-/// One run of the command, recorded: the session's file and the program's
+/// One run of the command, recorded: the run's file and the program's
 /// exit code. Under a scenario, the proxy answers with its faults.
 async fn run_once(
     s: &Arc<Sonde>,
@@ -953,7 +953,7 @@ async fn run_once(
 }
 
 /// Where `-o FILE` is recorded until the run ends: beside it, a name of
-/// this run's own that no listing takes for a session.
+/// this run's own that no listing takes for a run.
 fn recording_path(target: &std::path::Path) -> PathBuf {
     let name = target
         .file_name()
@@ -992,7 +992,7 @@ fn place(
             let fresh = sonde_proxy::session::fresh_path(&runs_dir(target), &stem);
             std::fs::rename(recorded, &fresh)?;
             eprintln!(
-                "sonde: {} was written by another run meanwhile: this run's session is {}",
+                "sonde: {} was written by another run meanwhile: this run is {}",
                 target.display(),
                 fresh.display()
             );

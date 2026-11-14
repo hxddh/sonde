@@ -408,57 +408,23 @@ pub fn shell_join(args: &[String]) -> String {
         .join(" ")
 }
 
-/// A map beside the sessions that is there and does not read.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Unreadable {
-    pub path: std::path::PathBuf,
-    pub why: String,
+/// Each program's baseline run, by its file name, as the folder's index
+/// keeps it ([`crate::index`]).
+pub fn baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    crate::index::of(dir).folder.baselines.clone()
 }
 
-impl std::fmt::Display for Unreadable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} cannot be read ({}): fix or remove the file",
-            self.path.display(),
-            self.why
+/// Makes `run` (a file name in `dir`) the baseline of `program`; none: no baseline.
+pub fn set_baseline(dir: &std::path::Path, program: &str, run: Option<&str>) -> std::io::Result<()> {
+    crate::index::update(dir, |_| {
+        (
+            vec![(
+                program.to_string(),
+                crate::index::Change::Baseline(run.map(String::from)),
+            )],
+            (),
         )
-    }
-}
-
-impl std::error::Error for Unreadable {}
-
-/// A JSON map beside the sessions (`titles.json`, `baselines.json`,
-/// `imports.json`): empty when there is none, an error when it is there and
-/// does not read. Read as empty, a file that is only damaged would say
-/// nothing is set, and the next write would drop every entry in it.
-pub fn read_map(
-    path: &std::path::Path,
-) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
-    let unreadable = |why: String| Unreadable {
-        path: path.to_path_buf(),
-        why,
-    };
-    match std::fs::read(path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| unreadable(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(e) => Err(unreadable(e.to_string())),
-    }
-}
-
-/// Each program's baseline run, by file name: `baselines.json` beside the
-/// sessions. None set when there is no file; a damaged one is an error.
-pub fn read_baselines(
-    dir: &std::path::Path,
-) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
-    read_map(&dir.join("baselines.json"))
-}
-
-pub fn write_baselines(
-    dir: &std::path::Path,
-    all: &std::collections::BTreeMap<String, String>,
-) -> std::io::Result<()> {
-    reqlog::private::replace(&dir.join("baselines.json"), serde_json::to_vec_pretty(all)?)
+    })
 }
 
 /// A run, by the figures that move when the program changes.
@@ -1469,19 +1435,13 @@ mod tests {
     }
 
     #[test]
-    fn damaged_baselines_are_an_error_and_missing_ones_are_none() {
+    fn a_programs_baseline_is_kept_in_the_folders_index() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(read_baselines(dir.path()).unwrap().is_empty(), "none set");
-        let mut all = std::collections::BTreeMap::new();
-        all.insert("python etl.py".to_string(), "a.sonde".to_string());
-        write_baselines(dir.path(), &all).unwrap();
-        assert_eq!(read_baselines(dir.path()).unwrap(), all);
-        // cut short: read as empty, the next write would drop every baseline
-        let f = dir.path().join("baselines.json");
-        std::fs::write(&f, "{\"python etl.py\": \"a.so").unwrap();
-        let e = read_baselines(dir.path()).unwrap_err();
-        assert_eq!(e.path, f);
-        assert!(e.to_string().contains("fix or remove the file"), "{e}");
+        assert!(baselines(dir.path()).is_empty(), "none set");
+        set_baseline(dir.path(), "etl", Some("a.sonde")).unwrap();
+        assert_eq!(baselines(dir.path())["etl"], "a.sonde");
+        set_baseline(dir.path(), "etl", None).unwrap();
+        assert!(baselines(dir.path()).is_empty());
     }
 
     fn rec(id: u64, key: &str) -> Record {

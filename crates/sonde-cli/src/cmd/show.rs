@@ -1,4 +1,4 @@
-//! `sonde show <session>`: a session's operations, requests and findings.
+//! `sonde show <run>`: a run's operations, requests and findings.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// A session file (default: the newest in the data directory's sessions/).
+    /// A run's file (default: the newest in the data directory's runs/).
     pub(super) file: Option<PathBuf>,
     /// Only the summary: what a table shows by default; with `-f json`,
     /// the summary without the operations and requests.
@@ -140,8 +140,8 @@ fn print_split(
 }
 
 /// One operation on one line: time, format, what happened, size of it, notes.
-/// `width` pads the title; `hide` lists notes said once for the session.
-/// `formats`: whether the session has format steps (else no format column).
+/// `width` pads the title; `hide` lists notes said once for the run.
+/// `formats`: whether the run has format steps (else no format column).
 pub fn episode_line(
     e: &Episode,
     width: usize,
@@ -224,12 +224,12 @@ fn print_lines(n: usize, all: bool, what: &str, line: &dyn Fn(usize) -> String) 
 
 pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     let file = match &a.file {
-        Some(f) => super::sessions::resolve(s, f),
+        Some(f) => super::runs::resolve(s, f),
         None => which_run(s, project_name().as_deref())?.0,
     };
     // read for what it amounts to: a request in full (`-f json`) is written
     // from the file, never held with the rest
-    let (file, session) = super::sessions::open_lean(s, &file)?;
+    let (file, session) = super::runs::open_lean(s, &file)?;
     if a.app {
         return open_in_app(&file);
     }
@@ -244,7 +244,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             Format::Json => println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "session": session.header,
+                    "run": session.header,
                     "split": split,
                 }))
             ),
@@ -272,7 +272,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "session": session.header,
+                    "run": session.header,
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
@@ -313,7 +313,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 Ok(())
             })?;
             w.end_array()?;
-            w.field("session", &session.header)?;
+            w.field("run", &session.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
             w.field("trials", &trials)?;
@@ -387,7 +387,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Hands `sonde://open?path=…` to the system, which opens the app on the session.
+/// Hands `sonde://open?path=…` to the system, which opens the app on the run.
 fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     let abs = std::fs::canonicalize(file)?;
     // Windows' canonical form starts \\?\ (a verbatim path): the app reads C:/…
@@ -425,7 +425,7 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     }
 }
 
-/// A session's summary and findings on stdout, as `sonde show --summary`.
+/// A run's summary and findings on stdout, as `sonde show --summary`.
 pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
     show(
         s,

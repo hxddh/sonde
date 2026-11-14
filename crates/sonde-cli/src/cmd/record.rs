@@ -1,5 +1,5 @@
 //! Recording: what `sonde run`, `proxy` and the tour share (the
-//! recording's arguments, the proxy started, a session's summary). Each
+//! recording's arguments, the proxy started, a run's summary). Each
 //! command is a module of its own, named here as it was.
 
 use sonde_proxy::program::money_text;
@@ -39,7 +39,7 @@ pub struct Recording {
     /// for --trial and --again.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
-    /// The session file (default: a new file in the data directory's sessions/).
+    /// The run's file (default: a new file in the data directory's runs/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
     /// Serve TLS too, for SDKs that require it: AWS_ENDPOINT_URL is https,
@@ -122,7 +122,7 @@ pub(super) async fn start_under(
         (Some(u), _) => u.path.clone(),
         (None, Some(p)) => p.clone(),
         (None, None) => {
-            let dir = s.paths().sessions();
+            let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
             let name = sonde_proxy::program::file_stem(of.name.as_deref(), command.as_deref())
                 .unwrap_or_else(|| "proxy".into());
@@ -183,7 +183,7 @@ pub(super) async fn start_under(
     })
 }
 
-/// The folder a session is in, where its program's runs are kept.
+/// The folder a run is in, where its program's runs are kept.
 pub(super) fn runs_dir(session: &std::path::Path) -> PathBuf {
     match session.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
@@ -316,7 +316,7 @@ fn visible_len(r: &Record, refused: bool) -> usize {
     }
 }
 
-/// The request prices of a session on `endpoint`: the ones the app shows.
+/// The request prices of a run on `endpoint`: the ones the app shows.
 pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
     let (w, r, l, currency) = s.request_prices_for(endpoint);
     RequestPrices {
@@ -424,7 +424,7 @@ pub(super) fn print_summary(
     print_summary_of(&analysis, &header, path, color, stdout, false, None);
 }
 
-/// What a session amounts to, in one fixed shape for `run`, `show` and
+/// What a run amounts to, in one fixed shape for `run`, `show` and
 /// the tour: the head line (requests, operations, the SDK, the store, the
 /// time, the waiting and the cost), the findings first (each with its
 /// saving, its line of code and its fix), what acting on them would leave,
@@ -538,7 +538,7 @@ pub(super) fn print_summary_of(
             say(line);
         }
     }
-    say(paint(&format!("session: {}", path.display()), "2", color).to_string());
+    say(paint(&format!("run: {}", path.display()), "2", color).to_string());
 }
 
 /// `-o FILE` and a file there: refused (64) unless `--force`. One rule for
@@ -623,7 +623,7 @@ pub(super) fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project
 pub(super) const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Stops the proxy and waits `grace` for what is in flight. When requests
-/// were still open after it, says so once: the session is short of them, and
+/// were still open after it, says so once: the run is short of them, and
 /// nothing else would tell.
 pub(super) async fn shut_down(proxy: &mut Proxy, grace: std::time::Duration) -> bool {
     let drained = proxy.shutdown(grace).await;
@@ -635,7 +635,7 @@ pub(super) async fn shut_down(proxy: &mut Proxy, grace: std::time::Duration) -> 
 
 pub(super) fn not_drained(grace: std::time::Duration) -> String {
     format!(
-        "requests were still in flight {} s after the proxy stopped: the session does not have them",
+        "requests were still in flight {} s after the proxy stopped: the run does not have them",
         grace.as_secs_f64()
     )
 }
@@ -643,11 +643,11 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 /// The run a command is about when none is named: one rule for `show`,
 /// `compare`, `share` and `check`. The newest run of the project's program
 /// (`[program] name` in sonde.toml), else of the program recorded in this
-/// folder (the session's `cwd`), else the newest run of
+/// folder (the run's `cwd`), else the newest run of
 /// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
 /// named to be read. The run, and which it is in words.
 pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let here = std::env::current_dir().ok();
     let here = here.as_ref().map(|h| h.canonicalize().unwrap_or(h.clone()));
     // the newest of the program named, of this folder, and of all
@@ -685,7 +685,7 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
             format!("the newest run of program \"{n}\" ([program] name in sonde.toml)"),
         )),
         (Some(n), None, ..) => Err(super::usage(format!(
-            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the session",
+            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the run",
             dir.display()
         ))),
         (None, _, Some((_, p, key)), _) => Ok((
@@ -697,7 +697,7 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
             format!("the newest run (program `{key}`; none was recorded in this folder)"),
         )),
         (None, _, None, None) => Err(super::usage(format!(
-            "no recorded sessions in {} yet: record one with `sonde run -- <command>`",
+            "no recorded runs in {} yet: record one with `sonde run -- <command>`",
             dir.display()
         ))),
     }

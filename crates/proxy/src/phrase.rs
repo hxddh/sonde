@@ -197,7 +197,7 @@ fn template(key: &str) -> &'static str {
             "{n} requests ran one after another for {time}, each waiting for the one before: {k} at once would take about {fast}"
         }
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
-        "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
+        "obs.saves" => "{n} fewer request{s} ({pct}% of the run)",
         "obs.errors" => "{n} request{s} failed with {class}",
         "split.slow" => "{pct}% of the slow requests (over {ms}) are ",
         "split.slow.most" => {

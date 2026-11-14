@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare-replay-stores.schema.json",
   "title": "sonde compare FILE --replay A --replay B … -f json",
-  "description": "A session replayed on several endpoints at once, side by side.",
+  "description": "A run replayed on several endpoints at once, side by side.",
   "type": "object",
   "properties": {
     "plan": {
@@ -16,7 +16,7 @@
           "endpoint": {
             "type": "string"
           },
-          "session": {
+          "run": {
             "type": "string"
           },
           "comparison": {
@@ -32,7 +32,7 @@
         },
         "required": [
           "endpoint",
-          "session",
+          "run",
           "comparison",
           "latency"
         ]

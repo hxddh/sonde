@@ -13,7 +13,7 @@ pub mod proxy;
 pub mod record;
 pub mod replay;
 pub mod run;
-pub mod sessions;
+pub mod runs;
 pub mod share;
 pub mod show;
 #[cfg(feature = "tui")]
@@ -42,7 +42,7 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(Usage(msg.into()))
 }
 
-/// A file given to read that is not what it should be (a session with a
+/// A file given to read that is not what it should be (a run with a
 /// line no record could be, no header, a newer format): exit 65, the data's
 /// fault, not the 70 of an operation that failed.
 #[derive(Debug)]

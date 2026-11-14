@@ -17,7 +17,7 @@ use super::record::{paint, request_prices_for};
 use crate::output;
 
 /// A finding: what it is, what acting on it saves, where in the program,
-/// and the fix for the SDK that sent its requests (`sdk`: the session's,
+/// and the fix for the SDK that sent its requests (`sdk`: the run's,
 /// when the finding's own requests do not say).
 pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> Vec<String> {
     let mark = if o.level == "warn" {

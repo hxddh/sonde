@@ -8,7 +8,7 @@
 //! requests are compared by what failed them, as findings of their own.
 //! Identities are made by rules of a version ([`crate::profile::IDENTITY_RULES`]), kept
 //! with the findings: ones kept under older rules are made again.
-//! Each program's findings are kept beside its runs (`findings.json`).
+//! Each program's findings are kept in its runs folder's index ([`crate::index`]).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -644,34 +644,21 @@ pub fn folder_of(run: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// Every program's findings: `findings.json` beside its runs, those kept
-/// under older rules of identity made again ([`Program::rekey`]). None
-/// kept when there is no file; a damaged one is an error.
-pub fn read(dir: &Path) -> Result<BTreeMap<String, Program>, crate::program::Unreadable> {
-    let path = dir.join("findings.json");
-    match std::fs::read(&path) {
-        Ok(b) => {
-            let mut all: BTreeMap<String, Program> =
-                serde_json::from_slice(&b).map_err(|e| crate::program::Unreadable {
-                    path,
-                    why: e.to_string(),
-                })?;
-            // kept under older rules of identity: made again by these
-            for program in all.values_mut() {
-                program.rekey();
-            }
-            Ok(all)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(e) => Err(crate::program::Unreadable {
-            path,
-            why: e.to_string(),
-        }),
-    }
+/// Every program's findings, as the folder's index keeps them, those kept
+/// under older rules of identity made again ([`Program::rekey`]). One that
+/// does not read is no program's.
+pub fn read(dir: &Path) -> BTreeMap<String, Program> {
+    programs_of(&crate::index::of(dir).folder.findings)
 }
 
-pub fn write(dir: &Path, all: &BTreeMap<String, Program>) -> std::io::Result<()> {
-    reqlog::private::replace(&dir.join("findings.json"), serde_json::to_vec_pretty(all)?)
+fn programs_of(kept: &BTreeMap<String, serde_json::Value>) -> BTreeMap<String, Program> {
+    kept.iter()
+        .filter_map(|(k, v)| {
+            let mut p: Program = serde_json::from_value(v.clone()).ok()?;
+            p.rekey();
+            Some((k.clone(), p))
+        })
+        .collect()
 }
 
 /// The exit code a run failed with, as its folder's index keeps it (`sonde
@@ -806,27 +793,40 @@ pub fn since_last(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let _held = dir.is_dir().then(|| crate::index::hold(dir, "findings"));
     // back is judged by what was fixed by the earlier run compared (by the
     // run itself, when it is the program's first): never by a later one
     let upto = before
         .as_ref()
         .map_or(header.created, |(at, _, _)| *at)
         .to_rfc3339();
-    let unsaved = match read(dir) {
-        // nothing recorded here yet (a run written elsewhere with -o)
-        _ if !dir.is_dir() => None,
-        Err(e) => Some(e.to_string()),
-        Ok(mut all) => {
-            let kept = all.entry(key.clone()).or_default();
+    let created = header.created.to_rfc3339();
+    // read, changed and kept under the index's lock: the app and the CLI
+    // may record at once (nothing recorded here yet: a run written
+    // elsewhere with -o)
+    let unsaved = if dir.is_dir() {
+        crate::index::update(dir, |ix| {
+            let mut kept = ix
+                .folder
+                .findings
+                .get(&key)
+                .and_then(|v| serde_json::from_value::<Program>(v.clone()).ok())
+                .map(|mut p| {
+                    p.rekey();
+                    p
+                })
+                .unwrap_or_default();
             kept.mark_back(&mut findings, &upto);
-            let created = header.created.to_rfc3339();
-            if kept.take(&name, &created, &run.observations, &findings) {
-                write(dir, &all).err().map(|e| e.to_string())
-            } else {
-                None
-            }
-        }
+            let changed = kept.take(&name, &created, &run.observations, &findings);
+            let changes = match serde_json::to_value(&kept) {
+                Ok(v) if changed => vec![(key.clone(), crate::index::Change::Findings(Some(v)))],
+                _ => Vec::new(),
+            };
+            (changes, ())
+        })
+        .err()
+        .map(|e| e.to_string())
+    } else {
+        None
     };
     // a first run's findings are open unless back
     if before.is_none() {

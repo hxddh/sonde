@@ -1,4 +1,4 @@
-//! `sonde sessions`: the recorded sessions, newest first, and pruning old ones.
+//! `sonde runs`: the recorded runs, newest first, and pruning old ones.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use crate::output::{self, Format};
 
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
-pub struct SessionsArgs {
+pub struct RunsArgs {
     #[command(subcommand)]
     action: Option<Action>,
     #[command(flatten)]
@@ -72,16 +72,16 @@ struct Row {
     #[serde(skip_serializing_if = "Option::is_none")]
     exit: Option<i32>,
     /// Its first line in the middle that is no record: `show` refuses the
-    /// file, so it is not listed as a session that reads.
+    /// file, so it is not listed as a run that reads.
     #[serde(skip_serializing_if = "Option::is_none")]
     unreadable: Option<String>,
 }
 
-/// The sessions in the data directory, newest first: each from the counts
+/// The runs in the data directory, newest first: each from the counts
 /// kept in the folder's index (made the first time it is listed and when it
-/// is recorded), never from the session read whole.
+/// is recorded), never from the run read whole.
 fn rows(s: &Sonde) -> Vec<Row> {
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let mut out: Vec<Row> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
@@ -153,14 +153,14 @@ fn middle(text: &str, room: usize) -> String {
     format!("{start}…{end}")
 }
 
-/// A session named on the command line: a path, or a name in the sessions directory.
+/// A run named on the command line: a path, or a name in the runs directory.
 pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     if f.exists() {
         return f.clone();
     }
     // by name: a session of the sessions folder, with `.sonde` or without;
     // then a trial's session, which is kept in `trials/` there
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let named = format!("{}.sonde", f.display());
     for cand in [
         dir.join(f),
@@ -175,23 +175,23 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     f.clone()
 }
 
-/// A session named on the command line, opened: every command that takes a
-/// session takes it by path or by name, and one that is not there is said
+/// A run named on the command line, opened: every command that takes a
+/// run takes it by path or by name, and one that is not there is said
 /// with where it was looked for.
 pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             f.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let session = read(&file, sonde_proxy::session::Keep::All)?;
     Ok((file, session))
 }
 
-/// A session file read: one that is not a session is bad data (65), one
+/// A run's file read: one that is not a run is bad data (65), one
 /// that could not be read an operation that failed (70), and one cut short
 /// is read up to its cut and said on stderr.
 pub fn read(
@@ -211,7 +211,7 @@ pub fn read(
     }
 }
 
-/// [`open`] for what a session amounts to (its operations, findings,
+/// [`open`] for what a run amounts to (its operations, findings,
 /// figures): its records without what no analysis reads.
 pub fn open_lean(
     s: &Sonde,
@@ -220,16 +220,16 @@ pub fn open_lean(
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             f.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let session = read(&file, sonde_proxy::session::Keep::Analysis)?;
     Ok((file, session))
 }
 
-pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
+pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
     let format = match &a.action {
         Some(Action::List(l)) => l.format,
         _ => a.list.format,
@@ -243,7 +243,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             if all.is_empty() {
                 eprintln!(
-                    "no sessions yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
+                    "no runs yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
                 );
                 return Ok(0);
             }
@@ -283,7 +283,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 })
                 .collect();
             let mut heads = vec![
-                "session", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
+                "run", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
                 "trials", "size",
             ];
             // a table has no column with nothing in it (no run's exit is
@@ -320,7 +320,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             output::print(&heads, &rows);
             for r in all.iter().filter(|r| r.unreadable.is_some()) {
                 eprintln!(
-                    "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",
+                    "sonde: {} is not a run: {} (`sonde show` refuses it; its other lines are counted)",
                     r.name,
                     r.unreadable.as_deref().unwrap_or_default()
                 );
@@ -328,16 +328,9 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             Ok(0)
         }
         Some(Action::Prune { keep, yes }) => {
-            let dir = s.paths().sessions();
-            // which sessions are baselines is unknown: none is deleted
+            let dir = s.paths().runs();
             let baselines: std::collections::HashSet<String> =
-                match sonde_proxy::program::read_baselines(&dir) {
-                    Ok(all) => all.into_values().collect(),
-                    Err(e) => {
-                        eprintln!("sonde: {e} (nothing was deleted)");
-                        return Ok(64);
-                    }
-                };
+                sonde_proxy::program::baselines(&dir).into_values().collect();
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)
@@ -347,7 +340,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 // said, not silence: nothing was past the newest N
                 println!(
                     "nothing to remove: {} here, {} kept{}",
-                    output::count(all.len(), "session"),
+                    output::count(all.len(), "run"),
                     keep,
                     if all.len() > *keep {
                         " and the rest baselines"
@@ -388,13 +381,13 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
 pub struct ImportArgs {
     /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one
     /// event a line), or a HAR; or a folder of them (gzip or plain, folders
-    /// within too), read in the order of their names into one session. Or
+    /// within too), read in the order of their names into one run. Or
     /// `s3://bucket/prefix` where a store writes its access logs or
     /// CloudTrail files: what arrived since the last import of it (the
     /// first, the last day's), read through the endpoint (GET and LIST only).
     #[arg(value_name = "FILE|FOLDER|S3_URL")]
     file: PathBuf,
-    /// The session file (default: a new one in the data directory's sessions/).
+    /// The run's file (default: a new one in the data directory's runs/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
     /// With -o: write over the file if it is there (else it is refused).
@@ -405,7 +398,7 @@ pub struct ImportArgs {
     endpoint: Option<String>,
 }
 
-/// Production traffic as a session: the same operations, findings and
+/// Production traffic as a run: the same operations, findings and
 /// figures as a recording, with no proxy in front of the program.
 pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let given = a.file.to_string_lossy();
@@ -468,7 +461,7 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let path = match &a.out {
         Some(p) => p.clone(),
         None => {
-            let dir = s.paths().sessions();
+            let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
             sonde_proxy::session::fresh_path(&dir, &name)
         }

@@ -135,7 +135,7 @@ project's `[record] policy` when Run is not asked for one), which `[record] poli
 
 ## Session files
 
-- JSON lines: a header, then a record per completed request ([session-format](dev/session-format.md)), redacted. A crash
+- JSON lines: a header, then a record per completed request ([session-format](dev/run-format.md)), redacted. A crash
   loses at most a torn last line, which is skipped.
 - In `<data>/sessions/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
   stays plain (the app reads only what was appended).

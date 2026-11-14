@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show-by.schema.json",
   "title": "sonde show --by DIMENSION -f json",
-  "description": "A session's requests split by one dimension: each group's figures (as `summary.kinds` has them), and where the slow and the costly requests concentrate.",
+  "description": "A run's requests split by one dimension: each group's figures (as `summary.kinds` has them), and where the slow and the costly requests concentrate.",
   "type": "object",
   "properties": {
-    "session": {
+    "run": {
       "type": "object",
-      "description": "The session's header."
+      "description": "The run's header."
     },
     "split": {
       "type": "object",
@@ -21,7 +21,7 @@
         },
         "slowMs": {
           "type": "number",
-          "description": "A request this slow or slower is slow: the session's p90 (0 with fewer than 3 such requests)."
+          "description": "A request this slow or slower is slow: the run's p90 (0 with fewer than 3 such requests)."
         },
         "slow": {
           "type": "integer",
@@ -64,7 +64,7 @@
       "required": ["by", "sdk", "slowMs", "slow", "cost", "currency", "rows", "text", "phrases"]
     }
   },
-  "required": ["session", "split"],
+  "required": ["run", "split"],
   "$defs": {
     "row": {
       "type": "object",
@@ -102,7 +102,7 @@
         },
         "share": {
           "type": "number",
-          "description": "Of the session's waiting; the rows add up to 1."
+          "description": "Of the run's waiting; the rows add up to 1."
         },
         "cost": {
           "type": "number"

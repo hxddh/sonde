@@ -11,7 +11,7 @@ cleanup() {
   [ -n "${wm:-}" ] && kill "$wm" 2>/dev/null || true
   [ -n "${xvfb:-}" ] && kill "$xvfb" 2>/dev/null || true
   # SONDE_SHOTS_KEEP=DIR: the tour's sessions kept (tests/fixtures/make.py makes the fixtures of them)
-  if [ -n "${SONDE_SHOTS_KEEP:-}" ]; then mkdir -p "$SONDE_SHOTS_KEEP" && cp -R "$tmp/data/sessions/." "$SONDE_SHOTS_KEEP/" || true; fi
+  if [ -n "${SONDE_SHOTS_KEEP:-}" ]; then mkdir -p "$SONDE_SHOTS_KEEP" && cp -R "$tmp/data/runs/." "$SONDE_SHOTS_KEEP/" || true; fi
   rm -rf "$tmp"
   # (the file the tour was told this machine by goes back to its committed form)
   printf '{ "max": "" }\n' > tests/shots.env.json
@@ -21,8 +21,8 @@ export SONDE_CONFIG_DIR="$tmp/config" SONDE_DATA_DIR="$tmp/data"
 # committed sessions, for the screens that draw measured figures (times,
 # latencies, a trial's run over its clean run, two runs compared): the same
 # picture each time, where the tour's own runs would measure anew
-mkdir -p "$SONDE_DATA_DIR/sessions"
-cp -R tests/fixtures/sessions/. "$SONDE_DATA_DIR/sessions/"
+mkdir -p "$SONDE_DATA_DIR/runs"
+cp -R tests/fixtures/sessions/. "$SONDE_DATA_DIR/runs/"
 unset AWS_PROFILE AWS_SESSION_TOKEN AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
 export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-secret \
   AWS_CONFIG_FILE="$tmp/aws-config" AWS_SHARED_CREDENTIALS_FILE="$tmp/aws-credentials" \

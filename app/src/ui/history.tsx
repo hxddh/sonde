@@ -126,7 +126,7 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
     if (!v) return "";
     return (v.standing === "survived" ? trialText(v) : (trialReasons(v)[0] ?? trialText(v))) || "";
   };
-  const gone = () => !!x() && !x()!.session;
+  const gone = () => !!x() && !x()!.run;
   return (
     <ListRow
       divided
@@ -192,7 +192,7 @@ export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID
 /** The run under faults, on the Runs pane: its verdicts grouped by what to change; a press opens a trial's own
  * run (a row whose run is gone only says what it found). */
 function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
-  const rows = (): VerdictRow[] => props.trials.map((x) => ({ scenario: x.scenario, trial: x, state: "done", onOpen: props.onOpen && x.session ? () => props.onOpen!(x.session!) : undefined }));
+  const rows = (): VerdictRow[] => props.trials.map((x) => ({ scenario: x.scenario, trial: x, state: "done", onOpen: props.onOpen && x.run ? () => props.onOpen!(x.run!) : undefined }));
   return (
     <Section testID="history-trials" title={t("trial.title")} action={props.action} plain>
       <TrialVerdicts rows={rows()} id="trial" historyID="trial-history" />

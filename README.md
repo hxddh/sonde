@@ -100,7 +100,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 [Probes](docs/probes.md) · [Decoders](docs/decoders.md) · [Changelog](CHANGELOG.md)
 
 To build, test or release sonde: [CONTRIBUTING.md](CONTRIBUTING.md), and for contributors [docs/dev](docs/dev)
-([session format](docs/dev/session-format.md), [architecture](docs/dev/architecture.md),
+([session format](docs/dev/run-format.md), [architecture](docs/dev/architecture.md),
 [performance](docs/dev/performance.md), [packaging](docs/dev/packaging.md), [decisions](docs/dev/decisions.md)).
 
 Apache-2.0.

@@ -18,7 +18,7 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct CheckArgs {
-    /// The run to check (default: the newest session).
+    /// The run to check (default: the newest run).
     file: Option<PathBuf>,
     /// A run to hold it to: its requests, waiting, cost and errors with
     /// --tolerance of room, and no warning it did not have. `auto` is the
@@ -207,7 +207,7 @@ fn program_runs(
     sonde_proxy::program::RunPoint,
     Option<sonde_proxy::session::GitStamp>,
 )> {
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let (upto, upto_header, upto_point) = upto;
     let upto_created = upto_header.created;
     let mut found: Vec<(chrono::DateTime<chrono::Utc>, PathBuf)> = std::fs::read_dir(&dir)
@@ -382,7 +382,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         .clone()
         .filter(|n| !n.trim().is_empty());
     let file = match &a.file {
-        Some(f) => super::sessions::resolve(s, f),
+        Some(f) => super::runs::resolve(s, f),
         None => {
             let (file, why) = super::record::which_run(s, project_name.as_deref())?;
             eprintln!("checking {why}: {}", file.display());
@@ -439,7 +439,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<Checked> {
-        let session = super::sessions::read(p, sonde_proxy::session::Keep::Analysis)?;
+        let session = super::runs::read(p, sonde_proxy::session::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
@@ -467,15 +467,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     };
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             file.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let run = read(&file)?;
     let header = run.3.clone();
     let program = sonde_proxy::program::key_of(&header);
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     // the program failed: as the run's folder kept it when the program ended
     let failed = sonde_proxy::fixloop::failed(&file);
     // a run that failed holds nothing to: what it did not get to is not there
@@ -509,7 +509,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     if a.set_baseline {
         let Some(key) = &program else {
-            eprintln!("this session ran no command, so it is no program's baseline");
+            eprintln!("this run has no command, so it is no program's baseline");
             return Ok(64);
         };
         // compared whole: `x.sonde` given from inside the directory has an empty parent
@@ -518,26 +518,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             .and_then(|f| f.parent().and_then(|p| p.canonicalize().ok()));
         if parent.is_none() || parent != dir.canonicalize().ok() {
             eprintln!(
-                "a baseline is a session in {}: record it there (no -o), or pass --baseline FILE",
+                "a baseline is a run in {}: record it there (no -o), or pass --baseline FILE",
                 dir.display()
             );
             return Ok(64);
         }
-        // a damaged file is not written over: every other baseline would go
-        let _held = sonde_proxy::index::hold(&dir, "baselines");
-        let mut all = match sonde_proxy::program::read_baselines(&dir) {
-            Ok(all) => all,
-            Err(e) => {
-                eprintln!("sonde: {e} (no baseline was set)");
-                return Ok(64);
-            }
-        };
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        all.insert(key.clone(), name);
-        sonde_proxy::program::write_baselines(&dir, &all)?;
+        sonde_proxy::program::set_baseline(&dir, key, Some(&name))?;
         eprintln!("baseline for `{key}`: {}", file.display());
     }
     let mut no_baseline: Option<String> = None;
@@ -548,14 +538,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         None => None,
         Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
         Some("auto") => {
-            // damaged is not "none set": the run would go unchecked
-            let all = match sonde_proxy::program::read_baselines(&dir) {
-                Ok(all) => all,
-                Err(e) => {
-                    eprintln!("sonde: {e}");
-                    return Ok(64);
-                }
-            };
+            let all = sonde_proxy::program::baselines(&dir);
             let found = program
                 .as_ref()
                 .and_then(|k| all.get(k).map(|n| dir.join(n)).filter(|p| p.is_file()));
@@ -566,7 +549,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             }
             found
         }
-        Some(p) => Some(super::sessions::resolve(s, &PathBuf::from(p))),
+        Some(p) => Some(super::runs::resolve(s, &PathBuf::from(p))),
     };
     // the baseline: its figures and its findings
     let base = base_path.as_ref().map(read).transpose()?;
@@ -668,7 +651,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let named = match (&program, header.name.as_deref().map(str::trim)) {
         (Some(p), Some(n)) if !n.is_empty() => format!("program {p} (its name)"),
         (Some(p), _) => format!("program `{p}` (what its command runs)"),
-        (None, _) => "no program (the session ran no command)".to_string(),
+        (None, _) => "no program (the run has no command)".to_string(),
     };
     // past the baseline: since which run, and the commits around it
     let since = match (&base, &program) {
@@ -920,13 +903,13 @@ fn no_baseline_text(program: Option<&str>) -> String {
         Some(key) => format!(
             "no baseline yet for program `{key}`: set one with `sonde check FILE --set-baseline` or in the app"
         ),
-        None => "no baseline yet: this session ran no command, so it is no program's run".into(),
+        None => "no baseline yet: this run has no command, so it is no program's run".into(),
     }
 }
 
-/// A session by name and time, as `sonde check` says which run it judged:
-/// `session 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
-/// as `sonde sessions` lists it.
+/// A run by name and time, as `sonde check` says which run it judged:
+/// `run 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
+/// as `sonde runs` lists it.
 pub(super) fn session_line(
     file: &Path,
     header: Option<&sonde_proxy::session::SessionHeader>,
@@ -945,12 +928,12 @@ pub(super) fn session_line(
     };
     match header {
         Some(h) => format!(
-            "session {name} · recorded {}",
+            "run {name} · recorded {}",
             h.created
                 .with_timezone(&chrono::Local)
                 .format("%Y-%m-%d %H:%M")
         ),
-        None => format!("session {name}"),
+        None => format!("run {name}"),
     }
 }
 

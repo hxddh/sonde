@@ -111,22 +111,18 @@ pub(super) async fn import_logs(
     };
     let ep = super::endpoint(s, endpoint)?;
     let client = s.client(&ep)?;
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     std::fs::create_dir_all(&dir)?;
     let key = format!("{}s3://{bucket}/{prefix}", sonde_proxy::program::LOGS_OF);
-    // where the last import got to, per source
-    let mark_file = dir.join(format!(
-        "logs-{:016x}.mark",
-        key.bytes()
-            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64)
-                .wrapping_mul(0x100_0000_01b3))
-    ));
-    // the newest file's time read, and the files read near it (logs arrive
-    // late, and prefixes of regions or days list in any order, so a time and
-    // the files seen, not the last key listed)
-    let mut mark: LogsMark = std::fs::read(&mark_file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
+    // where the last import of the source got to, as the folder's index
+    // keeps it: the newest file's time read, and the files read near it
+    // (logs arrive late, and prefixes of regions or days list in any order,
+    // so a time and the files seen, not the last key listed)
+    let mut mark: LogsMark = sonde_proxy::index::of(&dir)
+        .folder
+        .marks
+        .get(&key)
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_else(|| LogsMark {
             watermark: chrono::Utc::now() - FIRST_IMPORT,
             seen: Default::default(),
@@ -239,8 +235,13 @@ pub(super) async fn import_logs(
     }
     // the seen files old enough to be past the grace are forgotten
     mark.forget_old();
-    if let Ok(b) = serde_json::to_vec(&mark) {
-        let _ = reqlog::private::replace(&mark_file, b);
+    if let Ok(v) = serde_json::to_value(&mark) {
+        let _ = sonde_proxy::index::update(&dir, |_| {
+            (
+                vec![(key.clone(), sonde_proxy::index::Change::Mark(Some(v)))],
+                (),
+            )
+        });
     }
     let code = exit_of(listing_failed, none_read);
     if records.is_empty() {
@@ -306,7 +307,7 @@ mod tests {
             import(&s, "demo", "s3://demo/logs/").await,
             0
         );
-        let sessions: Vec<_> = std::fs::read_dir(s.paths().sessions())
+        let sessions: Vec<_> = std::fs::read_dir(s.paths().runs())
             .unwrap()
             .flatten()
             .map(|e| e.path())
@@ -325,7 +326,7 @@ mod tests {
             0
         );
         let count = || {
-            std::fs::read_dir(s.paths().sessions())
+            std::fs::read_dir(s.paths().runs())
                 .unwrap()
                 .flatten()
                 .filter(|e| e.path().extension().is_some_and(|x| x == "sonde"))
@@ -388,7 +389,7 @@ mod tests {
             0
         );
         let sessions = || {
-            let mut all: Vec<_> = std::fs::read_dir(s.paths().sessions())
+            let mut all: Vec<_> = std::fs::read_dir(s.paths().runs())
                 .unwrap()
                 .flatten()
                 .map(|e| e.path())

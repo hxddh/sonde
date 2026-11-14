@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/sessions.schema.json",
-  "title": "sonde sessions -f json",
-  "description": "The sessions recorded, newest first.",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/runs.schema.json",
+  "title": "sonde runs -f json",
+  "description": "The runs recorded, newest first.",
   "type": "array",
   "items": {
     "type": "object",

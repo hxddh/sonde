@@ -274,7 +274,7 @@
               },
               "run": {
                 "type": "string",
-                "description": "The run's session file name."
+                "description": "The run's file name."
               }
             },
             "required": [

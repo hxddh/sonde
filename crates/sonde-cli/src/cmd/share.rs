@@ -36,7 +36,7 @@ async fn baseline_of(
     file: &std::path::Path,
 ) -> anyhow::Result<Option<(PathBuf, Option<tempfile::TempPath>)>> {
     let asked = match (a.files.as_slice(), &a.baseline) {
-        ([before, _], _) => return Ok(Some((super::sessions::resolve(s, before), None))),
+        ([before, _], _) => return Ok(Some((super::runs::resolve(s, before), None))),
         (_, Some(b)) => b.as_str(),
         _ => return Ok(None),
     };
@@ -46,19 +46,20 @@ async fn baseline_of(
     }
     if asked != "auto" {
         return Ok(Some((
-            super::sessions::resolve(s, &PathBuf::from(asked)),
+            super::runs::resolve(s, &PathBuf::from(asked)),
             None,
         )));
     }
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let key = sonde_proxy::session::read_header(file)
         .as_ref()
         .and_then(sonde_proxy::program::key_of);
-    let found = match (key, sonde_proxy::program::read_baselines(&dir)) {
-        (_, Err(e)) => anyhow::bail!("{e}"),
-        (Some(k), Ok(all)) => all.get(&k).map(|n| dir.join(n)).filter(|p| p.is_file()),
-        (None, Ok(_)) => None,
-    };
+    let found = key.and_then(|k| {
+        sonde_proxy::program::baselines(&dir)
+            .get(&k)
+            .map(|n| dir.join(n))
+            .filter(|p| p.is_file())
+    });
     if found.is_none() {
         eprintln!("no baseline yet for this run's program: the page shows the run alone");
     }
@@ -73,14 +74,14 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         super::record::refuse_existing(out, a.force)?;
     }
     let file = match a.files.last() {
-        Some(f) => super::sessions::resolve(s, f),
+        Some(f) => super::runs::resolve(s, f),
         None => super::record::which_run(s, super::record::project_name().as_deref())?.0,
     };
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             file.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     // redacting changes every record, so all are read in full; otherwise
@@ -90,7 +91,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     } else {
         sonde_proxy::session::Keep::Analysis
     };
-    let mut session = super::sessions::read(&file, keep)?;
+    let mut session = super::runs::read(&file, keep)?;
     // priced before redaction hides the endpoint
     let prices = super::record::request_prices_for(s, &session.header.endpoint);
     if a.redact {
@@ -101,11 +102,11 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         None => sonde_proxy::report::html(&session, &prices),
         Some((path, _)) => {
             // both read whole when redacted: their names become the same tokens
-            let mut before = super::sessions::read(path, keep)?;
+            let mut before = super::runs::read(path, keep)?;
             let name = super::check::session_line(path, Some(&before.header));
             if a.redact {
                 // (the run was redacted alone above: read it again, for one salt)
-                session = super::sessions::read(&file, keep)?;
+                session = super::runs::read(&file, keep)?;
                 sonde_proxy::report::redact_all(&mut [&mut before, &mut session]);
             }
             let run_of = |x: &sonde_proxy::session::Session| {

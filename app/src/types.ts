@@ -795,8 +795,8 @@ export interface Trial {
   where?: { kind: string; key: string; caller?: string } | null;
   /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
   advice?: { key: string; args?: Record<string, string> } | null;
-  /** The trial's own session (an absolute path), when it is still there. */
-  session?: string | null;
+  /** The trial's own run (an absolute path), when it is still there. */
+  run?: string | null;
   /** The scenario's verdicts for the program, oldest first, up to this one (`at` RFC 3339; `run` a session's file name). */
   history?: { at: string; standing: Trial["standing"]; run: string }[];
 }
