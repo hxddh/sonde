@@ -43,7 +43,8 @@ From here a break comes only in a major, and is announced one version ahead.
 ## Not stable
 
 - Text for people: tables, sentences, `-f markdown`, `-f csv`, `-f github`, all of stderr. Use `-f json`.
-- The desktop app, the terminal UI, the shared HTML page, the app–Rust bridge.
+- The desktop app, the terminal UI (its developer flags `--bundle`, `--fps`, `--log-file` too, left out of help), the
+  shared HTML page, the app–Rust bridge.
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.

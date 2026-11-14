@@ -29,20 +29,22 @@ mod embedded {
 
 #[derive(Args)]
 pub struct TuiArgs {
-    /// Run this bundle (`nsh build`'s bundle.js) instead of the embedded one.
-    #[arg(long)]
+    /// Run this bundle (`nsh build`'s bundle.js) instead of the embedded
+    /// one. For sonde's own development: not in help, not in the contract.
+    #[arg(long, hide = true)]
     bundle: Option<PathBuf>,
     /// Start with the built-in demo endpoint.
     #[arg(long)]
     demo: bool,
-    /// Show the frame-rate line (C-h p toggles it).
-    #[arg(long)]
+    /// Show the frame-rate line (C-h p toggles it). For development.
+    #[arg(long, hide = true)]
     fps: bool,
     /// Leave the mouse to the terminal.
     #[arg(long)]
     no_mouse: bool,
     /// Diagnostics go here (default: the system's temporary directory).
-    #[arg(long)]
+    /// For development.
+    #[arg(long, hide = true)]
     log_file: Option<PathBuf>,
 }
 

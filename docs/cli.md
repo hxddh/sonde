@@ -94,7 +94,7 @@
 
 | Command | Does |
 |---|---|
-| `sonde tui [--demo] [--fps] [--no-mouse] [--bundle FILE] [--log-file FILE]` | The terminal UI. `--fps`: frame-rate line (C-h p). `--bundle`: run another `bundle.js`. |
+| `sonde tui [--demo] [--no-mouse]` | The terminal UI: `--demo` starts on the built-in store; `--no-mouse` leaves the mouse to the terminal. (Its developer flags are not listed and not in the [contract](contract.md).) |
 
 ## Exit codes
 
