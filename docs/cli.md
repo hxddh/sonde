@@ -152,7 +152,7 @@ baseline = "auto"         # or a session's path, or an https URL
 # findings kept on purpose, never a new warning: a finding's `identity`
 # (as `show -f json` and the app's "Expected" give it) or a kind for all of
 # it. Anything else is an error (exit 64)
-expect = ["obs.hot|slate/db/gc/manifest.boundary", "obs.listed"]
+expect = ["obs.hot|data/conf.json", "obs.listed"]
 ```
 
 

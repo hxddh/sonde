@@ -63,7 +63,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         )],
         "obs.markers" => vec![f(
             "config",
-            "# keep markers: no delete after each file written beneath one (Hadoop 3.3.1+)\nspark.hadoop.fs.s3a.directory.marker.retention=keep",
+            "# keep markers: no delete after each file written beneath one\n# (every client of the bucket marker-aware: Hadoop 3.2.2+ or 3.3.1+)\nspark.hadoop.fs.s3a.directory.marker.retention=keep",
         )],
         "obs.hot" => vec![
             f(
@@ -140,7 +140,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.throttled" | "obs.throttled.rate" => vec![
             f(
                 "python",
-                "# fewer at once, and the SDK's adaptive retry\nfrom botocore.config import Config\ns3 = boto3.client(\"s3\", config=Config(retries={\"mode\": \"adaptive\", \"max_attempts\": 10}, max_pool_connections=16))",
+                "# adaptive retries back off on 503 SlowDown\nfrom botocore.config import Config\ns3 = boto3.client(\"s3\", config=Config(retries={\"mode\": \"adaptive\", \"max_attempts\": 10}))",
             ),
             f(
                 "java",
@@ -158,24 +158,24 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.prefixrate.reads" | "obs.prefixrate.writes" => vec![
             f(
                 "python",
-                "# spread keys over prefixes: a hash before the name\nimport hashlib\nkey = f\"{hashlib.md5(name.encode()).hexdigest()[:2]}/{name}\"",
+                "# spread keys over prefixes: a hash before the name (every reader names keys so)\nimport hashlib\nkey = f\"{hashlib.md5(name.encode()).hexdigest()[:2]}/{name}\"",
             ),
             f(
                 "java",
-                "// spread keys over prefixes: a hash before the name\nString key = String.format(\"%02x/%s\", name.hashCode() & 0xff, name);",
+                "// spread keys over prefixes: a hash before the name (every reader names keys so)\nString key = String.format(\"%02x/%s\", name.hashCode() & 0xff, name);",
             ),
             f(
                 "go",
-                "// spread keys over prefixes: a hash before the name\nkey := fmt.Sprintf(\"%02x/%s\", crc32.ChecksumIEEE([]byte(name))&0xff, name)",
+                "// spread keys over prefixes: a hash before the name (every reader names keys so)\nkey := fmt.Sprintf(\"%02x/%s\", crc32.ChecksumIEEE([]byte(name))&0xff, name)",
             ),
             f(
                 "js",
-                "// spread keys over prefixes: a hash before the name\nconst key = `${createHash(\"md5\").update(name).digest(\"hex\").slice(0, 2)}/${name}`;",
+                "// spread keys over prefixes: a hash before the name (every reader names keys so)\nconst key = `${createHash(\"md5\").update(name).digest(\"hex\").slice(0, 2)}/${name}`;",
             ),
         ],
         "obs.unfinished" => vec![f(
             "config",
-            "<LifecycleConfiguration><Rule><ID>abort-incomplete-mpu</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status>\n  <AbortIncompleteMultipartUpload><DaysAfterInitiation>7</DaysAfterInitiation></AbortIncompleteMultipartUpload>\n</Rule></LifecycleConfiguration>",
+            "# a lifecycle rule that aborts them, added to the bucket's own rules (a put of\n# the rules replaces them all; this keeps them): a dry run, then --yes\nsonde bucket lifecycle --bucket BUCKET --days 7",
         )],
         "obs.orphans" => vec![
             f(
@@ -385,6 +385,41 @@ mod tests {
             for_sdk(&for_key("obs.rename"), Some("hadoop 3.3")).map(|f| f.sdk),
             Some("config")
         );
+    }
+
+    #[test]
+    fn no_fix_undoes_what_the_program_relies_on() {
+        // throttled: the advice is to send fewer, never a larger pool than
+        // the SDK's own (boto3's is 10)
+        for key in ["obs.throttled", "obs.throttled.rate"] {
+            assert!(
+                for_key(key)
+                    .iter()
+                    .all(|f| !f.code.contains("max_pool_connections")),
+                "{key}"
+            );
+        }
+        // an upload rule goes beside the bucket's own rules: a put of a
+        // lifecycle configuration replaces them all, `bucket lifecycle` keeps
+        // them (services::mpu's tests)
+        let rule = &for_key("obs.unfinished")[0];
+        assert!(
+            rule.code.contains("sonde bucket lifecycle"),
+            "{}",
+            rule.code
+        );
+        assert!(!rule.code.contains("<LifecycleConfiguration>"));
+        // keys named another way, markers kept: what every other reader of
+        // the bucket must do the same, said with the change
+        assert!(
+            for_key("obs.prefixrate.reads")
+                .iter()
+                .all(|f| f.code.contains("every reader"))
+        );
+        assert!(for_key("obs.markers")[0].code.contains("every client"));
+        // what a cache, a listing kept or requests at once would change is
+        // never found: episode's and profile's tests (a key rewritten or
+        // missing, a prefix written between listings, a read of a write)
     }
 
     #[test]

@@ -101,9 +101,11 @@ fn slatedb_run_reads_as_slatedb_steps() {
         "{shared:?}"
     );
 
+    // its GC boundary is looked up again and again and is never there: a
+    // miss no cache keeps, and one the writer may create, so no hot key
     let obs = observations(&s.records, &eps);
     assert!(
-        obs.iter()
+        !obs.iter()
             .any(|o| o.text.contains("gc/manifest.boundary was read")),
         "{obs:?}"
     );
@@ -188,9 +190,11 @@ fn delta_rs_run_reads_as_commits() {
             .any(|(n, note)| *n == 4 && note.starts_with("conditional create (If-None-Match: *)")),
         "{shared:?}"
     );
+    // the log is listed after each commit to find the newest: a commit is
+    // written between the listings, so listing once would miss it
     let obs = observations(&s.records, &eps);
     assert!(
-        obs.iter()
+        !obs.iter()
             .any(|o| o.text.ends_with("_delta_log/ was listed 15 times"))
     );
 }

@@ -276,6 +276,65 @@ pub const CHAIN_MIN: usize = 10;
 /// The longest wait between two requests of a chain (the program's own time).
 const CHAIN_GAP_US: i64 = 10_000;
 
+/// What the requests of a chain touched: whether the next one depends on
+/// one of them (a read or a write of a key one of them wrote, a write of a
+/// key one read, a listing of a prefix one wrote under, a write under a
+/// prefix one listed). Requests that depend on each other cannot be sent at
+/// once without changing what the program does.
+#[derive(Default)]
+struct Depends<'a> {
+    keys: std::collections::HashMap<(&'a str, &'a str), bool>,
+    written: Vec<(&'a str, &'a str)>,
+    listed: Vec<(&'a str, &'a str)>,
+}
+
+impl<'a> Depends<'a> {
+    fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
+        r.operation.starts_with("ListObjects").then(|| {
+            let prefix = r
+                .query
+                .iter()
+                .find(|(k, _)| k == "prefix")
+                .map_or("", |(_, v)| v.as_str());
+            (r.bucket.as_deref().unwrap_or(""), prefix)
+        })
+    }
+
+    fn on(&self, r: &'a Record) -> bool {
+        let write = !is_read(r);
+        if let Some((b, prefix)) = Self::listing(r) {
+            return self
+                .written
+                .iter()
+                .any(|(wb, k)| *wb == b && k.starts_with(prefix));
+        }
+        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+            return false;
+        };
+        let touched = self.keys.get(&(b, k)).is_some_and(|w| *w || write);
+        let under_listed = write
+            && self
+                .listed
+                .iter()
+                .any(|(lb, prefix)| *lb == b && k.starts_with(prefix));
+        touched || under_listed
+    }
+
+    fn add(&mut self, r: &'a Record) {
+        if let Some(listed) = Self::listing(r) {
+            self.listed.push(listed);
+            return;
+        }
+        if let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) {
+            let write = !is_read(r);
+            *self.keys.entry((b, k)).or_default() |= write;
+            if write {
+                self.written.push((b, k));
+            }
+        }
+    }
+}
+
 /// The chains of `records`: see [`Chain`].
 pub fn chains(records: &[Record]) -> Vec<Chain> {
     let mut sorted: Vec<&Record> = records.iter().collect();
@@ -308,8 +367,15 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
         }
         cur.clear();
     };
+    let mut deps = Depends::default();
     for r in sorted {
         let s = start_us(r);
+        if !cur.is_empty() && !(s < end || s - end > CHAIN_GAP_US) && deps.on(r) {
+            // it needs what one before it did (reads what it wrote, lists
+            // where it wrote): those two cannot be sent at once, so the
+            // chain ends there and another begins with it
+            close(&mut cur, &mut out);
+        }
         if !cur.is_empty() && (s < end || s - end > CHAIN_GAP_US) {
             // an overlap (requests at once already) or the program's own pause
             let overlapped = s < end;
@@ -323,6 +389,10 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
             end = end.max(end_us(r));
             continue;
         }
+        if cur.is_empty() {
+            deps = Depends::default();
+        }
+        deps.add(r);
         cur.push(r);
         end = end_us(r);
     }
@@ -2580,5 +2650,65 @@ mod injected {
         assert_eq!(price(&lost, &prices), price(&put, &prices));
         let p = profile(&[put, fault, lost], &prices);
         assert_eq!(p.cost.writes, 2);
+    }
+
+    #[test]
+    fn requests_that_need_the_one_before_are_no_chain_to_send_at_once() {
+        let at = |id: u64, op: &str, key: &str| {
+            let mut r = Record {
+                id,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 3)
+                    .unwrap(),
+                method: if op == "PutObject" {
+                    "PUT".into()
+                } else {
+                    "GET".into()
+                },
+                operation: op.into(),
+                status: Some(200),
+                latency_ms: 2.0,
+                ..Default::default()
+            };
+            r.bucket = Some("b".into());
+            r.key = Some(key.into());
+            r
+        };
+        // twelve reads of twelve keys, one after another: eight at once would do
+        let reads: Vec<Record> = (1..=12)
+            .map(|i| at(i, "GetObject", &format!("k{i}")))
+            .collect();
+        assert_eq!(chains(&reads).iter().map(|c| c.requests).sum::<usize>(), 12);
+        // each key written and then read back: the read needs its write, so
+        // sending them at once would change what the program reads
+        let back: Vec<Record> = (0..12u64)
+            .flat_map(|i| {
+                let k = format!("k{i}");
+                [
+                    at(2 * i + 1, "PutObject", &k),
+                    at(2 * i + 2, "GetObject", &k),
+                ]
+            })
+            .collect();
+        assert!(chains(&back).is_empty(), "{:?}", chains(&back));
+        // a listing of where the program wrote needs those writes too
+        let mut listed: Vec<Record> = (1..=11)
+            .map(|i| at(i, "PutObject", &format!("out/{i}")))
+            .collect();
+        let mut l = Record {
+            id: 12,
+            time: chrono::DateTime::from_timestamp_millis(1_700_000_000_036).unwrap(),
+            method: "GET".into(),
+            operation: "ListObjectsV2".into(),
+            status: Some(200),
+            latency_ms: 2.0,
+            ..Default::default()
+        };
+        l.bucket = Some("b".into());
+        l.query = vec![("prefix".into(), "out/".into())];
+        listed.push(l);
+        assert_eq!(
+            chains(&listed).iter().map(|c| c.requests).sum::<usize>(),
+            11
+        );
     }
 }
