@@ -8,7 +8,7 @@ import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
 import type { SessionInfo } from "../types";
-import { Dot, Heading, InWindowMenu, ListRow, terminal } from "./kit";
+import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
@@ -115,21 +115,21 @@ export function SessionList(props: {
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class="min-w-0 shrink text-body text-foreground line-clamp-1">{name(x().s)}</Text>
-        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told().get(x().s.path)?.args ?? args(x().s)}</Text>
+        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
         {/* the same command run again: its time at the row's end, to the second */}
         <If when={told().get(x().s.path)?.twin}>
-          <Text testID="session-time" class="shrink-0 tabular-nums text-caption text-foreground">{clock(x().s.created, "s")}</Text>
+          <Text testID="session-time" class={`shrink-0 tabular-nums ${TEXT.caption}`}>{clock(x().s.created, "s")}</Text>
         </If>
       </View>
       <View class="flex-row items-center gap-2">
         {/* (a twin's time is at its row's end, to the second: not said twice) */}
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
           {(n) => (
-            <Text testID="session-broke" class="shrink-0 text-caption text-muted-foreground" accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
+            <Text testID="session-broke" class={`shrink-0 ${TEXT.meta}`} accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
               {t("trial.ofBroke", { n: n(), of: x().s.trials!.length })}
             </Text>
           )}

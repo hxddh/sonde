@@ -10,7 +10,7 @@ import { api } from "../native";
 import { command } from "../run";
 import { endpointsMode, go, notify, openSession, openSessionFile, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
 import type { EndpointView } from "../types";
-import { Actions, Button, Card, Check, Heading, READING, terminal, Title } from "../ui/kit";
+import { Actions, Button, Card, Check, Heading, READING, terminal, Title, TEXT } from "../ui/kit";
 
 /** A first command for the demo: two reads, one of a key that is not there,
  * signed with the keys sonde gives the program (cmd.exe on Windows). */
@@ -75,14 +75,14 @@ export function Welcome() {
           <Heading>{t("welcome.demo")}</Heading>
           <Text class="text-small leading-5 text-muted-foreground">{t("welcome.demoText")}</Text>
           <View class="flex-row">
-            <Button variant="primary" icon="play" label={busy() ? t("common.loading") : t("welcome.demoStart")} onPress={demo} disabled={busy()} testID="welcome-demo" />
+            <Button variant="primary" icon="play" label={t("welcome.demoStart")} onPress={demo} loading={busy()} testID="welcome-demo" />
           </View>
         </Card>
         {/* the other ways in, for those who know what they want */}
         <View class="gap-3">
           <View class="flex-row items-center gap-3">
             <View class="h-px flex-1 bg-border" />
-            <Text class="text-caption text-muted-foreground">{t("welcome.or")}</Text>
+            <Text class={TEXT.meta}>{t("welcome.or")}</Text>
             <View class="h-px flex-1 bg-border" />
           </View>
           {/* one column, aligned with the card above: never a ragged wrap */}

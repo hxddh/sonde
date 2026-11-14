@@ -11,7 +11,7 @@ import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Await, Badge, Bar, Button, Card, Disclosure, Empty, Field, Heading, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN } from "../ui/kit";
+import { Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -95,7 +95,7 @@ export function Multipart() {
     }
   };
   // no rule is a caution (uploads may be kept and billed), not an error: nothing failed
-  const tone = (s: string) => (s === "covered" ? "pass" : s === "unknown" ? "neutral" : "warn");
+  const tone = (s: string) => (s === "covered" ? "ok" : s === "unknown" ? "quiet" : "warn");
   const age = (r: MpuReport) => t("common.days", { n: r.thresholdDays });
   if (!terminal() && !report_()) void scan();
   return (
@@ -112,7 +112,7 @@ export function Multipart() {
         </If>
       </ToolBar>
       {/* scanning again over what the last scan found */}
-      <If when={report_() && progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+      <If when={report_() && progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
       <Await loading={!report_() && progress() !== null} error={failure()} retry={scan} waiting={progress() ?? undefined} testID="mpu">
         <If when={report_()} else={<Empty icon="layers" text={bucket() ? t("mpu.notScanned") : t("common.chooseBucket")} />}>
           {(r) => (
@@ -139,13 +139,13 @@ export function Multipart() {
                   </View>
                   <If when={r().lifecycle.status !== "covered"}>
                     <View class="flex-1" />
-                    <Text class="text-small text-muted-foreground">{t("mpu.days")}</Text>
+                    <Text class={TEXT.note}>{t("mpu.days")}</Text>
                     <NumberField bare class={WIDTH.number} label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
                     {/* the fix: a rule that aborts what is left, the section's one primary */}
                     <Button variant="primary" label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </If>
                 </View>
-                <Text class="text-body text-foreground">{core(r().lifecycle.messageText, r().lifecycle.message)}</Text>
+                <Text class={TEXT.body}>{core(r().lifecycle.messageText, r().lifecycle.message)}</Text>
                 <If when={r().lifecycle.status !== "covered"}>
                   <Disclosure title={t("mpu.suggestedRule")}>
                     <Document text={r().lifecycle.suggestedRule} testID="lifecycle-rule" />
@@ -188,16 +188,16 @@ export function Multipart() {
                         : (c) =>
                             c.key === "flag" ? (
                               c.text ? (
-                                <Icon name="triangle-alert" size={12} tint="warn" />
+                                <Icon name="triangle-alert" size={ICON.small} tint="warn" />
                               ) : (
                                 <View />
                               )
                             ) : c.key === "key" ? (
                               // a key is cut in its middle, never at its end: both ends tell two apart
-                              <Text class="text-body text-foreground line-clamp-1" style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
+                              <Text class={`${TEXT.body} line-clamp-1`} style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
                             ) : (
                               <View class="flex-1 items-end justify-center">
-                                <Text class="text-small text-foreground">{c.text}</Text>
+                                <Text class={TEXT.small}>{c.text}</Text>
                               </View>
                             )
                     }
@@ -205,7 +205,7 @@ export function Multipart() {
                     onSortChange={({ sort }) => uploadSort.set(sort)}
                   />
                 </Card>
-                <Text class="text-caption text-muted-foreground">{`${t("mpu.scanned")} ${date(r().scannedAt)} · ${r().endpoint}`}</Text>
+                <Text class={TEXT.meta}>{`${t("mpu.scanned")} ${date(r().scannedAt)} · ${r().endpoint}`}</Text>
               </If>
             </View>
           )}

@@ -7,7 +7,7 @@ import { vendorName } from "../labels";
 import { api, asError } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
+import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
 type Draft = {
@@ -264,12 +264,12 @@ export function Endpoints() {
               <Heading class="min-w-0 shrink line-clamp-1">{e.name}</Heading>
               <Badge label={vendorName(e)} />
               <If when={endpoint() === e.id}>
-                <Badge label={t("endpoints.current")} tone="primary" />
+                <Badge label={t("endpoints.current")} tone="live" />
               </If>
             </View>
-            <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
+            <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
-          <Button small variant="outline" icon="activity" label={r() === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e.id)} disabled={r() === "running"} testID={`test-${e.id}`} />
+          <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
           <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
           <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
         </View>

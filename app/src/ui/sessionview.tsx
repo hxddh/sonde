@@ -14,7 +14,7 @@ import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signa
 import type { Operations } from "../operations";
 import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -28,7 +28,7 @@ const time = (iso: string) => new Date(iso).getTime();
 
 /** Where a finding stands against its program's run before (crates/proxy/src/fixloop.rs). */
 export type FindingState = FindingChange["state"];
-const STATE_TONE: Record<FindingState, "pass" | "info" | "warn" | "neutral"> = { fixed: "pass", less: "info", more: "warn", back: "warn", new: "info", open: "neutral" };
+const STATE_TONE: Record<FindingState, Tone> = { fixed: "ok", less: "info", more: "warn", back: "warn", new: "info", open: "quiet" };
 /** A state as the reader's language says it ("Fixed", "又出现"). */
 export const stateLabel = (s: FindingState): string => {
   const w = say([{ key: "fix." + s, args: {} }], s);
@@ -39,15 +39,16 @@ export function StateBadge(props: { state: FindingState; testID?: string }) {
   return <Badge testID={props.testID} label={stateLabel(props.state)} tone={STATE_TONE[props.state]} />;
 }
 
-export type Tone = "ok" | "miss" | "client" | "server" | "refused" | "injected";
+/** The tones a request's outcome takes: the status tones of the kit's one table (`TONE`). */
+type StatusTone = Extract<Tone, "ok" | "miss" | "client" | "fail" | "refused" | "injected">;
 
 /** How an operation ended, as a status color: lookups that found nothing are not errors; one that
  * failed on an answer sonde gave in the store's place (`injected`, the session's ids) is in sonde's
  * own tone, never the store's failure. */
-export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests"> & { records?: number[] }, injected?: Set<number>): Tone {
+export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests"> & { records?: number[] }, injected?: Set<number>): StatusTone {
   if (e.outcome.kind === "refused") return "refused";
   if (e.outcome.kind === "failed" && injected?.size && e.records?.some((id) => injected.has(id))) return "injected";
-  if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "server";
+  if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "fail";
   if (e.miss) return "miss";
   // every request a lookup that found nothing
   if (e.notFound && e.notFound === e.requests) return "miss";
@@ -55,30 +56,14 @@ export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" 
 }
 
 /** A request's status as a status color. */
-export function statusTone(s: number | null): Tone {
-  if (s === null) return "server";
+export function statusTone(s: number | null): StatusTone {
+  if (s === null) return "fail";
   if (s === 404) return "miss";
-  if (s >= 500) return "server";
+  if (s >= 500) return "fail";
   if (s >= 400) return "client";
   return "ok";
 }
 
-const TONE_TEXT: Record<Tone, string> = {
-  ok: "text-status-ok",
-  miss: "text-muted-foreground",
-  client: "text-status-client",
-  server: "text-status-server",
-  refused: "text-status-refused",
-  injected: "text-status-injected",
-};
-const TONE_BAR: Record<Tone, string> = {
-  ok: "bg-bar",
-  miss: "bg-status-miss",
-  client: "bg-status-client",
-  server: "bg-status-server",
-  refused: "bg-status-refused",
-  injected: "bg-status-injected",
-};
 
 /** An HTTP status, the same everywhere: a dot in its tone and the code, a
  * success quiet, anything else in its tone (none: the request never got
@@ -93,7 +78,7 @@ export function StatusMark(props: { status: number | null; text?: string; inject
     <View class="flex-row items-center gap-2" accessibilityLabel={props.injected ? `${code()}, ${t("plots.injected")}` : undefined}>
       <Dot tone={props.injected ? "injected" : tone()} />
       {/* emphasis: a status that is not a success stands out in its tone */}
-      <Text class={`font-mono text-caption tabular-nums ${props.injected ? `${EMPHASIS} text-status-injected` : tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE_TEXT[tone()]}`}`}>{code()}</Text>
+      <Text class={`font-mono ${TEXT.captionSize} tabular-nums ${props.injected ? `${EMPHASIS} text-status-injected` : tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE[tone()].text}`}`}>{code()}</Text>
     </View>
   );
 }
@@ -175,7 +160,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
   };
   // folded: one line, what it ran and its first figures (each still opens its chart), then the commands
   const FOLDED = 3;
-  const tint = (tone: SignalTile["tone"]) => ({ plain: "text-foreground", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[tone];
+  const tint = (tone: SignalTile["tone"]) => TONE[tone].text;
   const folded = () => (
     <View testID="session-folded" class="flex-row items-center gap-3">
       <View selectable class="min-w-0 flex-1">
@@ -204,7 +189,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
           <Title mono small lines={2}>
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
-          <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
+          <Text testID="session-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
         </View>
         {acts()}
       </View>
@@ -217,7 +202,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
       {props.children}
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}
-      <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class="tabular-nums text-small text-muted-foreground">{line()}</Text>}>
+      <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class={`tabular-nums ${TEXT.note}`}>{line()}</Text>}>
         <Tiles ranked short={props.short} min={SIZES.signalTile} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
@@ -309,7 +294,7 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
           <Each of={props.o.callers!} key={(c) => c.place}>
             {(c) => (
               // a shared page cannot open the code: the place is said, not offered (a row that does nothing on a press)
-              <ListRow label={props.onOpenCode ? t("fix.openCode", { place: c().place }) : c().place} disabled={!props.onOpenCode} onPress={() => props.onOpenCode?.(c().place)} trailing={<Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>}>
+              <ListRow label={props.onOpenCode ? t("fix.openCode", { place: c().place }) : c().place} disabled={!props.onOpenCode} onPress={() => props.onOpenCode?.(c().place)} trailing={<Text class={`tabular-nums ${TEXT.meta}`}>{t("run.bandRequests", { n: c().requests })}</Text>}>
                 <Icon name="file" size={ICON.small} />
                 <Text class={`min-w-0 flex-1 font-mono text-small line-clamp-1 ${props.onOpenCode ? "text-primary" : "text-foreground"}`}>{c().place}</Text>
               </ListRow>
@@ -467,7 +452,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           <If when={props.onFilter && about(o())}>
             <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
-                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: count(about(o())) })}</Text>
+                <Text class={`tabular-nums ${TEXT.meta} group-selected:text-foreground`}>{t("figure.operationsN", { n: count(about(o())) })}</Text>
               </If>
               <Icon name={props.filter === i() ? "x" : "chevron-right"} size={ICON.small} />
             </View>
@@ -478,7 +463,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       {/* its number, in its level's tone: where it stands on the session's shape */}
       <View class={`mt-1 size-4 shrink-0 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
         {/* emphasis: the number the shape marks this finding with */}
-        <Text class={`tabular-nums text-caption ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
+        <Text class={`tabular-nums ${TEXT.captionSize} ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
       </View>
       <View class="min-w-0 flex-1 gap-1">
         <View class="flex-row items-start gap-2">
@@ -490,7 +475,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               </View>
             )}
           </If>
-          <Text class={`min-w-0 flex-1 text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+          <Text class={`min-w-0 flex-1 ${TEXT.body} ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
         </View>
         {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
         <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
@@ -516,7 +501,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
                   when={o().fixes?.length}
                   else={
                     <View class="flex-row items-center gap-2">
-                      <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                      <Text class={`min-w-0 flex-1 ${TEXT.note}`}>{t("expect.hint")}</Text>
                       <StoreFixButton o={o()} onStore={props.onStore} />
                       <ExpectButton o={o()} onExpect={props.onExpect} />
                     </View>
@@ -548,13 +533,13 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             <>
               {/* the room shows some of them whole: the rest scroll, and that is said */}
               <If when={open() && room().shown < list().length}>
-                <Text testID="observations-scroll" class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
+                <Text testID="observations-scroll" class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
               </If>
               {/* the first few of more: said, so the count beside the heading is not read as theirs */}
               <If when={list().length < props.view.observations.length}>
-                <Text testID="observations-top" class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("obs.top", { n: count(list().length), of: count(props.view.observations.length) })}</Text>
+                <Text testID="observations-top" class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("obs.top", { n: count(list().length), of: count(props.view.observations.length) })}</Text>
               </If>
-              <If when={!props.whatIfUnder && whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
+              <If when={!props.whatIfUnder && whatIfText(props.view)}>{(w) => <Text testID="what-if" class={`min-w-0 flex-1 tabular-nums ${TEXT.note} line-clamp-1`}>{w()}</Text>}</If>
             </>
           }
         >
@@ -563,7 +548,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               <View class="gap-2">
                 {findings()}
                 {/* the one figure for acting on them: a line of its own, which wraps rather than being cut */}
-                <Text testID="what-if" class="px-1 tabular-nums text-small text-muted-foreground">{w()}</Text>
+                <Text testID="what-if" class={`px-1 tabular-nums ${TEXT.note}`}>{w()}</Text>
               </View>
             )}
           </If>
@@ -732,14 +717,14 @@ export function OperationsTable(props: {
         // what wrote it, as a tag: a mark in its color and its name, quiet
         return (
           <View class="flex-1 flex-row items-center gap-1">
-            <View class={`size-1.5 rounded-full ${family(e).class.replace("text-", "bg-")}`} />
-            <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{c.text}</Text>
+            <View class={`${DOT} ${family(e).class.replace("text-", "bg-")}`} />
+            <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{c.text}</Text>
           </View>
         );
       case "title":
         // cut in its middle, by the text itself: a name's end (a key's file, an id) is what tells two rows apart
         return (
-          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e, hurt())]}`} style={{ textOverflow: "ellipsis-middle" }}>
+          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE[episodeTone(e, hurt())].text}`} style={{ textOverflow: "ellipsis-middle" }}>
             {c.text}
           </Text>
         );
@@ -752,23 +737,23 @@ export function OperationsTable(props: {
           <View class="flex-1 flex-row items-center">
             <View class="h-1.5 flex-1 flex-row overflow-hidden rounded-full bg-bar-track">
               <View style={{ flex: left }} />
-              <View class={`rounded-full ${TONE_BAR[episodeTone(e, hurt())]}`} style={{ flex: width, minWidth: 3 }} />
+              <View class={`rounded-full ${TONE[episodeTone(e, hurt())].fill}`} style={{ flex: width, minWidth: 3 }} />
               <View style={{ flex: Math.max(0, 1 - left - width) }} />
             </View>
           </View>
         );
       }
       case "notes":
-        return <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
+        return <Text class={`${TEXT.note} line-clamp-1`}>{c.text}</Text>;
       case "time":
         // from the episode, not the cell's text: DataTable fits that to the column with its own font
-        return <Text class="font-mono text-caption text-muted-foreground">{clock(e.start)}</Text>;
+        return <Text class={TEXT.codeQuiet}>{clock(e.start)}</Text>;
       case "requests":
       case "duration":
         // figures line up at their end, under their titles
-        return <View class="flex-1 items-end justify-center"><Text class="text-small text-foreground">{c.text}</Text></View>;
+        return <View class="flex-1 items-end justify-center"><Text class={TEXT.small}>{c.text}</Text></View>;
       default:
-        return <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>;
+        return <Text class={`${TEXT.body} line-clamp-1`}>{c.text}</Text>;
     }
   };
   return (
@@ -798,7 +783,7 @@ export function OperationsTable(props: {
         if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
       }}
       classes={terminal() ? undefined : tableClasses}
-      rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? "bg-selection" : ""))}
+      rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? SELECTED : ""))}
       renderCell={terminal() ? undefined : cell}
       rowSelectable
       sort={sort()}
@@ -831,7 +816,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       fontFamily={terminal() ? undefined : token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : tableClasses}
-      rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
+      rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? SELECTED : ""))}
       rowSelectable
       onRowPress={({ row }) => props.onSelect(row)}
       empty={<Empty compact text={t("common.empty")} />}
@@ -863,10 +848,10 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
         </View>
         <View class="min-w-0 flex-1">
           <View class="flex-row items-center gap-2">
-            <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{r().kind}</Text>
+            <Text class={`min-w-0 shrink ${TEXT.small} line-clamp-1`}>{r().kind}</Text>
             {/* a fault scenario answered it, not the store */}
             <If when={r().injected}>
-              <Text testID="op-request-injected" class="shrink-0 text-caption text-status-injected">{t("plots.injected")}</Text>
+              <Text testID="op-request-injected" class={`shrink-0 ${TEXT.captionSize} text-status-injected`}>{t("plots.injected")}</Text>
             </If>
           </View>
           <Path path={r().target} max={40} class="text-muted-foreground" />
@@ -892,12 +877,12 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
             <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e(), hurt())} />
               {/* emphasis: how it failed, in its tone */}
-              <Text class={`text-small ${EMPHASIS} ${TONE_TEXT[episodeTone(e(), hurt())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              <Text class={`text-small ${EMPHASIS} ${TONE[episodeTone(e(), hurt())].text}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>
         <Title class="leading-5">{episodeTitle(e())}</Title>
-        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ${transfer(e().bytesUp, e().bytesDown)}`}</Text>
+        <Text class={`tabular-nums ${TEXT.meta}`}>{`${clock(e().start)} · ${duration(episodeMs(e()))} · ${transfer(e().bytesUp, e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
         <View class="gap-2">

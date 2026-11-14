@@ -13,7 +13,7 @@ import { checkRequested } from "./updates";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, shellHeight, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { BREAK, CONTROL, EMPHASIS, Empty, glass, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row } from "./kit";
+import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row, TEXT } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
@@ -217,11 +217,11 @@ export function Palette() {
         searchPrefix={terminal() ? undefined : <Icon name="search" />}
         // a field at the kit's height in a row with a row's padding (12 by 8): no height of its own
         searchBarClass={terminal() ? undefined : "flex-row items-center gap-2 border-b border-border px-3 py-2"}
-        searchClass={terminal() ? "text-foreground" : `${CONTROL.field} flex-1 text-body text-foreground placeholder:text-muted-foreground`}
+        searchClass={terminal() ? "text-foreground" : `${CONTROL.field} flex-1 ${TEXT.body} placeholder:text-muted-foreground`}
         listClass={terminal() ? SURFACE.paletteListTerminal : `${SURFACE.paletteList} p-1`}
         // emphasis: a terminal marks the row the keys are on by its weight
-        itemClass={terminal() ? `px-1 text-foreground focus:bg-accent checked:${EMPHASIS}` : ROWS.palette}
-        groupClass="px-2 pb-1 pt-2 text-caption text-muted-foreground terminal:px-1 terminal:pb-0 terminal:pt-0"
+        itemClass={terminal() ? `px-1 text-foreground focus:${HIGHLIGHT} checked:${EMPHASIS}` : ROWS.palette}
+        groupClass={`px-2 pb-1 pt-2 ${TEXT.meta} terminal:px-1 terminal:pb-0 terminal:pt-0`}
         separatorClass="my-1 h-px bg-border"
         renderItem={
           terminal()
@@ -233,7 +233,7 @@ export function Palette() {
                     <Icon name={a?.icon ?? "chevron-right"} tint={a?.checked ? "primary" : "muted-foreground"} />
                     <Text class={`min-w-0 shrink line-clamp-1 ${a?.command ? "font-mono text-small" : "text-body"} ${a?.checked ? "text-primary" : "text-popover-foreground"}`}>{a?.command ? `$ ${entry.label}` : entry.label}</Text>
                     <If when={a?.hint}>
-                      <Text class={`min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1 ${a?.commandHint ? "font-mono" : ""}`}>{a?.commandHint ? `$ ${a.hint}` : a!.hint!}</Text>
+                      <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1 ${a?.commandHint ? "font-mono" : ""}`}>{a?.commandHint ? `$ ${a.hint}` : a!.hint!}</Text>
                     </If>
                     <If when={!a?.hint}>
                       <View class="flex-1" />
@@ -252,9 +252,9 @@ export function Palette() {
         footer={
           terminal() ? undefined : (
             <Row>
-              <Text class="text-caption text-muted-foreground">{`↑↓ ${t("palette.move")}`}</Text>
-              <Text class="text-caption text-muted-foreground">{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>
-              <Text class="text-caption text-muted-foreground">{`${keyLabel("escape")} ${t("palette.close")}`}</Text>
+              <Text class={TEXT.meta}>{`↑↓ ${t("palette.move")}`}</Text>
+              <Text class={TEXT.meta}>{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>
+              <Text class={TEXT.meta}>{`${keyLabel("escape")} ${t("palette.close")}`}</Text>
             </Row>
           )
         }

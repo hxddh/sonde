@@ -17,7 +17,7 @@ import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, tri
 import type { Trial, TrialEvent, TrialPlan } from "../types";
 import { adviceOnce, AGAIN, STANDING, trialAsked, TrialRow } from "./history";
 import { Icon } from "./icon";
-import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title } from "./kit";
+import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title, TEXT } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 /** Whether a trial is running (one at a time, as a program is). */
@@ -179,10 +179,10 @@ export function TrialDialog(props: {
         when={s().trial}
         else={
           // before its verdict: the scenario, and how it stands so far
-          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "neutral"} /></View>}>
+          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "quiet"} /></View>}>
             <View class="min-w-0 flex-1 flex-row flex-wrap items-baseline gap-x-2">
-              <Text class="text-body text-foreground">{scenarioLabel(s().scenario)}</Text>
-              <Text class="font-mono text-caption text-muted-foreground">{s().scenario}</Text>
+              <Text class={TEXT.body}>{scenarioLabel(s().scenario)}</Text>
+              <Text class={TEXT.codeQuiet}>{s().scenario}</Text>
             </View>
           </ListRow>
         }
@@ -215,8 +215,8 @@ export function TrialDialog(props: {
                       <Each of={list()} key={(x) => x.scenario}>
                         {(x, i) => (
                           <Row first={i() === 0}>
-                            <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{scenarioLabel(x().scenario)}</Text>
-                            <Text class="shrink-0 font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
+                            <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{scenarioLabel(x().scenario)}</Text>
+                            <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{trialAsked(x())}</Text>
                             <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
                           </Row>
                         )}
@@ -235,7 +235,7 @@ export function TrialDialog(props: {
                           <View class="min-w-0 flex-1">
                             <Check testID={`trial-scenario-${s().name}`} label={scenarioLabel(s().name)} checked={!off().includes(s().name)} onChange={(on) => off.set(on ? off().filter((n) => n !== s().name) : [...off(), s().name])} />
                           </View>
-                          <Text class="shrink-0 font-mono text-caption text-muted-foreground">{asked(s())}</Text>
+                          <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{asked(s())}</Text>
                         </View>
                         <Muted class="pl-6 text-small">{scenarioAbout(s().name, s().about, p().project, pressed(s()))}</Muted>
                       </Row>
@@ -273,7 +273,7 @@ export function TrialDialog(props: {
               <ModalBody testID="trial-progress">
                 <View class="flex-row items-center gap-2">
                   <Muted class="min-w-0 flex-1 text-small">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : afresh() ? t("trial.afresh") : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
-                  <Text testID="trial-elapsed" class="shrink-0 tabular-nums text-small text-muted-foreground">{took()}</Text>
+                  <Text testID="trial-elapsed" class={`shrink-0 tabular-nums ${TEXT.note}`}>{took()}</Text>
                 </View>
                 {/* tried again, the fresh run failed: no trial of it */}
                 <If when={ended()?.cleanFailed !== undefined && ended()?.cleanFailed !== null}>

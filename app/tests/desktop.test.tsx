@@ -147,7 +147,7 @@ test("a lane's cell shows the worst of the requests it holds, and says how many"
   expect(cells[0].bin).toBe(0);
   expect(cells[0].n).toBe(3);
   // the failure wins, and is the request the cell stands for
-  expect(cells[0].tone).toBe("server");
+  expect(cells[0].tone).toBe("fail");
   expect(cells[0].sample).toBe(1);
   // a long request is a run of cells, one request each
   expect(cells[3].lane).toBe(1);
@@ -486,7 +486,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[0].detail).toBe("40 requests in 2.00 s");
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
-  expect(tiles[1].tone).toBe("bad");
+  expect(tiles[1].tone).toBe("fail");
   // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
   const clientOnly = signalTiles({ ...s, errors: { ...s.errors, counts: { ...s.errors.counts, client: s.errors.count, server: 0 } } });
   expect(clientOnly[1].tone).toBe("client");

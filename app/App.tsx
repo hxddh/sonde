@@ -16,7 +16,7 @@ import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Back, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, Title, WIDTH } from "./src/ui/kit";
+import { Back, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH } from "./src/ui/kit";
 import { count } from "./src/format";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
@@ -53,7 +53,7 @@ function screen(a: Area) {
 function Context() {
   const ep = () => endpoints().find((e) => e.id === endpoint());
   return (
-    <Text class="text-small text-muted-foreground line-clamp-1">
+    <Text class={`${TEXT.note} line-clamp-1`}>
       {ep() ? `${ep()!.name}${area() === "store" && bucket() ? ` › ${bucket()}` : ""}` : t("common.chooseEndpoint")}
     </Text>
   );
@@ -123,7 +123,7 @@ function DesktopShell() {
         {(d) => (
           <View testID="drop-hint" class={`absolute inset-3 items-center justify-center gap-1 rounded-(--radius-card) border-2 border-dashed bg-background/80 ${d().opens > 0 || d().opens + d().others === 0 ? "border-ring" : "border-border"}`}>
             <Title center>{d().opens > 0 ? t("app.dropOpens", { n: d().opens }) : d().others > 0 ? t("app.dropNothing") : t("app.dropHint")}</Title>
-            <Text class="text-small text-muted-foreground">{d().opens > 0 && d().others > 0 ? t("app.dropSkips", { n: d().others }) : t("app.dropKinds")}</Text>
+            <Text class={TEXT.note}>{d().opens > 0 && d().others > 0 ? t("app.dropSkips", { n: d().others }) : t("app.dropKinds")}</Text>
           </View>
         )}
       </If>
@@ -274,8 +274,10 @@ function App() {
       // a .sonde file opened from the system (a double click, Open With, a drop on the app's
       // icon; nsh.json's `fileTypes`): as one dropped on the window, the launch's own included
       Application.on("openFiles", ({ paths }) => openSystemFiles(paths));
-      // however the app stops, the program it is recording does not outlive it unseen, and its
-      // session is a finished file: the system waits 200 ms for this, no longer
+      // the user quits (the Quit item, its key, the Dock): the program being recorded is ended and its session
+      // written whole first, however long that takes, then the app quits (Native Shell's quit request)
+      Application.on("quitRequest", () => void endForQuit().finally(() => Application.quit()));
+      // the system ends the app (logging out, shutting down) without asking: the same, in the 200 ms it waits
       Application.on("quit", () => endForQuit());
     } catch {
       // a host that is not the app's own (a test runner)

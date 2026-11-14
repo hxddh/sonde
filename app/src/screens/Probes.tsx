@@ -13,7 +13,7 @@ import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, report } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN } from "../ui/kit";
+import { Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -28,9 +28,9 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
       <Muted>{core(props.probe.descriptionText, props.probe.description)}</Muted>
       <Card>
         <Heading>{t("probes.aws")}</Heading>
-        <Text class="text-body text-foreground">{core(props.probe.awsBehaviorText, props.probe.awsBehavior)}</Text>
+        <Text class={TEXT.body}>{core(props.probe.awsBehaviorText, props.probe.awsBehavior)}</Text>
         <Heading>{t("probes.observed")}</Heading>
-        <Text class="text-body text-foreground">{core(props.result.summaryText, props.result.summary)}</Text>
+        <Text class={TEXT.body}>{core(props.result.summaryText, props.result.summary)}</Text>
         <Each of={props.result.observations}>{(o, i) => <Mono>{core(props.result.observationsText?.[i()], o())}</Mono>}</Each>
         <Muted>{duration(props.result.durationMs)}</Muted>
       </Card>
@@ -41,9 +41,9 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
           <View selectable class={`gap-2 ${i() > 0 ? "pt-2" : ""}`}>
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
-              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().kind}</Text>
+              <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{r().kind}</Text>
             </View>
-            <Text class="font-mono text-caption text-muted-foreground">{`${r().method} ${r().url}`}</Text>
+            <Text class={TEXT.codeQuiet}>{`${r().method} ${r().url}`}</Text>
             <If when={r().errorBody}>{(b) => <Document text={b()} mark />}</If>
             <Disclosure title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
               <KeyValue boxed rows={r().requestHeaders.map((h) => [h.name, h.value])} />
@@ -88,13 +88,13 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
               if (cell.key === "probe")
                 return (
                   <View class="flex-1 justify-center">
-                    <Text class="line-clamp-1 text-small text-foreground">{core(row.probe.titleText, row.probe.title)}</Text>
-                    <Text class="line-clamp-1 font-mono text-caption text-muted-foreground">{row.probe.id}</Text>
+                    <Text class={`line-clamp-1 ${TEXT.small}`}>{core(row.probe.titleText, row.probe.title)}</Text>
+                    <Text class={`line-clamp-1 ${TEXT.codeQuiet}`}>{row.probe.id}</Text>
                   </View>
                 );
               const i = Number(cell.key.slice(1));
               const c = row.cells[i];
-              if (!c) return <Text class="text-small text-muted-foreground">—</Text>;
+              if (!c) return <Text class={TEXT.note}>—</Text>;
               return (
                 // at its cell's start: the press area is the badge's, not the cell's
                 <View class="flex-row">
@@ -234,7 +234,7 @@ export function Probes() {
               </View>
               <View class="flex-row flex-wrap items-center gap-3">
                 {/* which endpoints: said in place when none is chosen (Run stays off until one is) */}
-                <Text class="text-small text-muted-foreground">{picked().length > 0 ? t("endpoints.title") : t("probes.chooseEndpoint")}</Text>
+                <Text class={TEXT.note}>{picked().length > 0 ? t("endpoints.title") : t("probes.chooseEndpoint")}</Text>
                 <Each of={endpoints()} key={(e) => e.id}>
                   {(e) => <Check testID={`probe-ep-${e().id}`} label={e().name} checked={!!chosen()[e().id]} onChange={(v) => chosen.update((c) => ({ ...c, [e().id]: v }))} />}
                 </Each>
@@ -246,10 +246,10 @@ export function Probes() {
                 <SwitchRow label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
               </View>
               {/* what a run does to the bucket, before it runs */}
-              <Text testID="probe-writes" class="text-small text-muted-foreground">
+              <Text testID="probe-writes" class={TEXT.note}>
                 {t("probes.writes", { bucket: scratch() || "…" })}
               </Text>
-              <Each of={Object.entries(running())}>{(r) => <Bar value={null} label={`${nameOf(r()[0])}: ${r()[1]}`} />}</Each>
+              <Each of={Object.entries(running())}>{(r) => <ProgressBar value={null} label={`${nameOf(r()[0])}: ${r()[1]}`} />}</Each>
             </Card>
             {/* the page is named once, at its head: this is what the runs found */}
             <Heading>{t("probes.results")}</Heading>
@@ -262,9 +262,9 @@ export function Probes() {
             <Card>
               <Heading>{t("probes.diff")}</Heading>
               <View class="flex-row flex-wrap items-center gap-2">
-                <Text class="text-small text-muted-foreground">{t("probes.earlier")}</Text>
+                <Text class={TEXT.note}>{t("probes.earlier")}</Text>
                 <Choice class={WIDTH.wide} value={earlier()} items={runItems()} onChange={(v) => earlier.set(v)} placeholder={t("probes.runs")} testID="probe-earlier" />
-                <Text class="text-small text-muted-foreground">{t("probes.later")}</Text>
+                <Text class={TEXT.note}>{t("probes.later")}</Text>
                 <Choice class={WIDTH.wide} value={later()} items={runItems()} onChange={(v) => later.set(v)} placeholder={t("probes.runs")} testID="probe-later" />
                 <Button label={t("probes.compare")} disabled={!earlier() || !later()} onPress={compare} testID="probe-compare" />
               </View>

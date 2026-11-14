@@ -6,6 +6,7 @@ import { batch, Clipboard, computed, type JSX, lifecycle, Picker, signal } from 
 import { rangeOf, rangeOnOpen } from "./range";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
+import { bytes } from "./format";
 import { core, endpointName } from "./phrases";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
@@ -386,7 +387,9 @@ export async function openSessionFile() {
           { name: t("sessions.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
         ],
       });
-      path = picked ? api.sessions.import(picked.file.name, await picked.file.text()) : null;
+      // (a file larger than the picker reads comes without its bytes: said, not opened as an empty one)
+      if (picked && !picked.file) throw new Error(t("sessions.fileTooLarge", { name: picked.name, size: bytes(picked.size) }));
+      path = picked?.file ? api.sessions.import(picked.file.name, await picked.file.text()) : null;
     }
     if (!path) return;
     const opened = path;

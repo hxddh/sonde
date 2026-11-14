@@ -5,7 +5,7 @@ import { Bar, Dot, Plot, Rule } from "nsh/base/plot";
 import { count, duration, percent } from "../../format";
 import { t } from "../../i18n";
 import type { Signals } from "../../types";
-import { CROSS_BAND, ChartTip, type Focus, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop } from "./system";
+import { CROSS_BAND, ChartTip, type Focus, FOCUS_RULE, fitted, HEADROOM, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop } from "./system";
 import { terminal } from "../kit";
 import { errorRateSaid, failuresSaid } from "./answers";
 
@@ -13,6 +13,9 @@ import { errorRateSaid, failuresSaid } from "./answers";
 const FAILURES = ["server", "client", "transport", "injected"] as const;
 export const FAILURE_FILL: Record<(typeof FAILURES)[number], string> = { server: "fill-status-server", client: "fill-status-client", transport: "fill-status-refused", injected: "fill-status-injected" };
 const FAILURE_SWATCH: Record<(typeof FAILURES)[number], string> = { server: "bg-status-server", client: "bg-status-client", transport: "bg-status-refused", injected: "bg-status-injected" };
+
+/** The slices the failures charts show of a whole session: those around its failures and retries (`fitted`), or all. */
+export const failedSlices = (s: Signals) => fitted(s.errors.series.length, (i) => (s.errors.server[i] ?? 0) + (s.errors.client[i] ?? 0) + (s.errors.transport[i] ?? 0) + (s.errors.injected[i] ?? 0) + (s.errors.retries[i] ?? 0) > 0);
 
 /** What the failures chart's colors stand for: the classes the session had, each with its count, and its retries. */
 export function failureLegend(s: Signals): LegendItem[] {
@@ -37,7 +40,8 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
         const failed = (e().server[i] ?? 0) + (e().client[i] ?? 0) + (e().transport[i] ?? 0) + (e().injected[i] ?? 0);
         return { tMs: i * s().binMs, n: Math.max(n, failed), failed, share: failed > 0 ? failed / Math.max(n, failed) : 0 };
       }),
-      props.range,
+      // the stretch chosen, or the slices around the failures (`fitted`): a few failures fill the chart
+      props.range ?? failedSlices(s()),
     );
   const peak = () => Math.max(0.01, ...rows().map((r) => r.share));
   // one failure, one colour: in the client's tone where every failure was the program's own (4xx), as the counts beside draw it
@@ -56,7 +60,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
           testID="error-rate"
           data={rows()}
           xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [0, budgetTop(peak() * 1.25, props.budgetShare)] }}
+          yScale={{ type: "linear", domain: [0, budgetTop(peak() * HEADROOM.plot, props.budgetShare)] }}
           accessibilityLabel={label()}
           accessibilityValue={tipValue(tip())}
           appearGeneration={1}
@@ -72,7 +76,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
           class={`${TICK_ROOM} ${PLOT} w-full`}
         >
           <Bar value="share" class={tone()} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * 1.25, props.budgetShare) : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * HEADROOM.plot, props.budgetShare) : (undefined as unknown as number))} class={FOCUS_RULE} />
           <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
           <ValueAxis peak={peak()} say={(v) => t("errorRate.peak", { pct: percent(v) })} />
           <Budget value={props.budgetShare} say={percent} />
@@ -88,9 +92,10 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
 export function ErrorsOverTime(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {
   const s = () => props.signals;
   const e = () => s().errors;
-  const rows = () => stretch(e().series.map((_, i) => ({ tMs: i * s().binMs, server: e().server[i] ?? 0, client: e().client[i] ?? 0, transport: e().transport[i] ?? 0, injected: e().injected[i] ?? 0, retries: e().retries[i] ?? 0 })), props.range);
+  // the stretch chosen, or the slices around the failures (`fitted`), as the share's chart beside it
+  const rows = () => stretch(e().series.map((_, i) => ({ tMs: i * s().binMs, server: e().server[i] ?? 0, client: e().client[i] ?? 0, transport: e().transport[i] ?? 0, injected: e().injected[i] ?? 0, retries: e().retries[i] ?? 0 })), props.range ?? failedSlices(s()));
   const total = (r: ReturnType<typeof rows>[number]) => r.server + r.client + r.transport + r.injected;
-  const top = () => Math.max(1, ...rows().map((r) => Math.max(total(r), r.retries))) * 1.25;
+  const top = () => Math.max(1, ...rows().map((r) => Math.max(total(r), r.retries))) * HEADROOM.plot;
   const hovered = signal<number | null>(null);
   const label = () => failuresSaid(s(), props.range);
   const tip = () => {
@@ -128,9 +133,9 @@ export function ErrorsOverTime(props: { signals: Signals; range?: [number, numbe
           <Bar value="injected" stack="f" class={FAILURE_FILL.injected} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
           {/* a retry is a mark, not a failure of its own: a dot at how many in the slice */}
           <Dot value={(r) => (r.retries > 0 ? r.retries : (undefined as unknown as number))} r={3} class="fill-info" hoverDotClass="hidden" />
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class={FOCUS_RULE} />
           <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
-          <ValueAxis peak={top() / 1.25} say={(v) => t("failures.peak", { n: count(v) })} />
+          <ValueAxis peak={top() / HEADROOM.plot} say={(v) => t("failures.peak", { n: count(v) })} />
         </Plot>
       </If>
     </If>
