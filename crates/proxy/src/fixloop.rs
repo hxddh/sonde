@@ -780,13 +780,18 @@ pub fn since_last(
     let before = previous.as_ref().and_then(|p| {
         let s = crate::session::Session::open_lean(p).ok()?;
         let run = Run::analysed(&s.header, &s.records, &prices(&s.header.endpoint));
-        Some((s.header.created, s.header.command.clone(), run))
+        Some((
+            s.header.created,
+            (s.header.command.clone(), s.header.whole_seconds),
+            run,
+        ))
     });
     let (change, mut findings) = match &before {
-        Some((_, command, a)) => {
+        Some((_, (command, whole_seconds), a)) => {
             run.measure(records, a);
-            let c = crate::profile::compare_runs(a, &run)
+            let mut c = crate::profile::compare_runs(a, &run)
                 .of_commands(command.as_deref(), header.command.as_deref());
+            c.waiting_known = !whole_seconds && !header.whole_seconds;
             let f = c.findings.clone();
             (Some(c), f)
         }

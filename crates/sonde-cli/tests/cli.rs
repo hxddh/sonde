@@ -939,6 +939,35 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     assert!(stderr(&o).contains("nosuchdir"), "{}", stderr(&o));
 }
 
+/// 20.0 compared two imports of one log as "two different programs" and
+/// then "the same … findings", with a waiting `show` says is not known.
+#[test]
+fn two_imports_compare_without_contradicting_themselves() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("access.log");
+    std::fs::write(&log, A_LOG_LINE.repeat(3)).unwrap();
+    let (a, b) = (t.path().join("a.sonde"), t.path().join("b.sonde"));
+    for f in [&a, &b] {
+        let o = sonde(
+            t.path(),
+            &["import", log.to_str().unwrap(), "-o", f.to_str().unwrap()],
+        );
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    }
+    let (a, b) = (a.to_str().unwrap(), b.to_str().unwrap());
+    let text = stdout(&sonde(t.path(), &["compare", a, b]));
+    assert!(text.contains("neither is a run of a program"), "{text}");
+    assert!(!text.contains("two different programs"), "{text}");
+    assert!(
+        text.contains("no change: the same requests, errors and cost\n"),
+        "{text}"
+    );
+    assert!(text.contains("waiting    — (not known"), "{text}");
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["compare", a, b, "-f", "json"]))).unwrap();
+    assert_eq!(doc["waitingKnown"], false, "{doc}");
+}
+
 #[test]
 fn the_newest_session_is_the_newest_recording_not_an_import() {
     let t = tempfile::tempdir().unwrap();

@@ -152,7 +152,11 @@ fn figures_line(c: &RunChange) -> String {
     format!(
         "requests {} · waiting {} · cost ≈ {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),
-        moved(c.waiting_ms.0, c.waiting_ms.1, ms_text),
+        if c.waiting_known {
+            moved(c.waiting_ms.0, c.waiting_ms.1, ms_text)
+        } else {
+            "— (not known)".into()
+        },
         moved(c.cost.0, c.cost.1, |v| money_text(v, &c.currency)),
     )
 }

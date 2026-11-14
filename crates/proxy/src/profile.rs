@@ -1416,6 +1416,9 @@ pub struct RunChange {
     /// workload's doing, and no saving is counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_changed: Option<String>,
+    /// Whether both runs' waiting is known: not when either's times are to
+    /// the second (an imported log's), and then `waiting_ms` says nothing.
+    pub waiting_known: bool,
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
@@ -1987,6 +1990,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         same_program: true,
         failed: None,
         command_changed: None,
+        waiting_known: true,
     }
 }
 
