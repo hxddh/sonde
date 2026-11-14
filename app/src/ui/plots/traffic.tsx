@@ -408,21 +408,6 @@ export function blocks(shape: number[], columns = 16): string {
 // --- the live view ----------------------------------------------------------------
 
 
-/** What the last few seconds of a run looked like: requests a second,
- * the share that failed, in flight now and the p95, for the live view. */
-export function liveFigures(p: Profile, windowMs = 1000) {
-  // the last second (or more, when a slice is longer): a few slices of a
-  // short run are milliseconds, and 4 requests in them are not "200 a second"
-  const slices = Math.max(1, Math.ceil(windowMs / Math.max(p.binMs, 1e-3)));
-  const recent = p.rate.slice(-slices);
-  const n = recent.reduce((s, b) => s + b.ok + b.miss + b.client + b.server, 0);
-  const failed = recent.reduce((s, b) => s + b.client + b.server, 0);
-  const secs = Math.max(slices * p.binMs, windowMs) / 1000;
-  const p95 = Math.max(0, ...recent.map((b) => b.p95Ms));
-  const inFlight = p.inFlight.length ? p.inFlight[p.inFlight.length - 1].n : 0;
-  return { perSecond: n / secs, failedShare: n ? failed / n : 0, inFlight, p95 };
-}
-
 /** Bytes of bodies a second over the run: sent above the line, received
  * below it, on the timeline's slices. */
 export function BytesOverTime(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {

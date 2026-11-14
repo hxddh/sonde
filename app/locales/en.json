@@ -561,7 +561,6 @@
  "live.perSecond": "requests a second",
  "live.failed": "failed",
  "live.inFlight": "in flight",
- "live.p95": "p95 now",
  "live.title": "What is the run doing now?",
  "run.shortcutNothing": "Run a command once: then ⌘⌥R / Ctrl+Alt+R runs it again from anywhere",
  "run.shortcutStarted": "Recording %{command}",

@@ -18,7 +18,7 @@ import { Icon } from "../ui/icon";
 import { Button, Card, CARD, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/runview";
 import { type Policy, OperationsTable, RecordPanel } from "../ui/runparts";
-import { Chart, focusOf, LatencyBand, liveFigures, liveSaid, RunShape, STRIP } from "../ui/plots";
+import { Chart, focusOf, LatencyBand, liveSaid, RunShape, STRIP } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 import { RunPane } from "./Runs";
 
@@ -178,11 +178,17 @@ function StatusBand(props: { view: RunView | null; now: () => number }) {
 }
 
 /** The run as it goes, from its last half minute alone (`live`: the requests that started in it, reckoned by
- * themselves, never the whole run at each tick): requests a second, failures, in flight and the p95 now; requests
- * over time beside how long they take, in the window's own slices. */
+ * themselves, never the whole run at each tick): its sentence (how many, their p95, what failed), requests a
+ * second and the share failed over that half minute, and in flight now; requests over time beside how long they
+ * take, in the window's own slices. */
 function LivePanel(props: { live: Stretch }) {
   const p = () => props.live.profile;
-  const f = () => liveFigures(p());
+  // the half minute's figures, as its sentence counts them (the in flight: its last slice's)
+  const f = () => {
+    const s = props.live.signals;
+    const n = s.rate.requests;
+    return { perSecond: (n * 1000) / Math.max(s.wallMs, 1000), failedShare: n ? s.errors.count / n : 0, inFlight: p().inFlight.at(-1)?.n ?? 0 };
+  };
   // the first requests have no shape yet: the figures alone, the charts once there is one
   const shaped = () => p().rate.length > 1 && p().samples.length >= 12;
   // the moment the pointer rests on in one of the two, marked in the other
@@ -193,7 +199,6 @@ function LivePanel(props: { live: Stretch }) {
         <Figure small testID="live-rate" value={rate(f().perSecond)} label={t("live.perSecond")} />
         <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "fail" : "plain"} />
         <Figure small testID="live-in-flight" value={count(f().inFlight)} label={t("live.inFlight")} />
-        <Figure small testID="live-p95" value={duration(f().p95)} label={t("live.p95")} />
       </View>
       <If when={shaped()}>
         <View class="flex-row gap-4">

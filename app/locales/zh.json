@@ -561,7 +561,6 @@
  "live.perSecond": "每秒请求",
  "live.failed": "失败",
  "live.inFlight": "进行中",
- "live.p95": "当前 p95",
  "live.title": "运行现在在做什么？",
  "run.shortcutNothing": "先运行一次命令：之后在任何地方按 ⌘⌥R / Ctrl+Alt+R 即可再次运行",
  "run.shortcutStarted": "正在录制 %{command}",

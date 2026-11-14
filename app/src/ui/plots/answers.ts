@@ -345,10 +345,10 @@ export function latencyChangeSaid(c: RunChange): string {
 /** Two runs over time: how long each took, and how many requests each sent. */
 export const overTimeSaid = (a: Profile, b: Profile): string => t("compare.overTimeText", { a: duration(a.wallMs), b: duration(b.wallMs), na: count(a.rate.reduce((k, x) => k + requests(x), 0)), nb: count(b.rate.reduce((k, x) => k + requests(x), 0)) });
 
-/** The run as it goes: the requests of its last half minute, their pace, how many failed and their p95. */
+/** The run as it goes: the requests of its last half minute, their p95 and how many failed (its pace is a figure
+ * beside it). */
 export function liveSaid(s: Signals): string {
   const n = s.rate.requests;
   if (n === 0) return t("live.none");
-  const pace = s.wallMs >= 1000 ? t("signal.perSecond", { n: rate((n * 1000) / s.wallMs) }) : "";
-  return [t("live.text", { n: count(n) }), pace, s.latency.p95Ms != null ? `p95 ${duration(s.latency.p95Ms)}${few(n)}` : "", s.errors.count ? t("timeline.errors", { n: count(s.errors.count) }) : ""].filter(Boolean).join(" · ");
+  return [t("live.text", { n: count(n) }), s.latency.p95Ms != null ? `p95 ${duration(s.latency.p95Ms)}${few(n)}` : "", s.errors.count ? t("timeline.errors", { n: count(s.errors.count) }) : ""].filter(Boolean).join(" · ");
 }
