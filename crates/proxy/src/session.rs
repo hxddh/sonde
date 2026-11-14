@@ -15,9 +15,7 @@ use reqlog::{Record, Sink};
 use serde::{Deserialize, Serialize};
 
 pub const FORMAT: &str = "sonde-session";
-/// The format's version: what this sonde writes, and the newest it reads.
-/// Format 2 (20.0) names a record's S3 call `kind`; format 1 named it
-/// `operation`, and is read the same.
+/// The format's version: what this sonde writes, and the only one it reads.
 pub const VERSION: u32 = 2;
 
 /// The first line of a session file.
@@ -146,20 +144,25 @@ impl SessionHeader {
         }
     }
 
-    /// Whether this sonde reads the file: a sonde session of a version it
-    /// knows. A newer one is refused by name, never read as far as it goes:
-    /// a field whose meaning changed would be read in its old one.
+    /// Whether this sonde reads the file: its format, at this sonde's
+    /// version. Any other version is refused by name, never read as far as
+    /// it goes: a field whose meaning changed would be read in its old one.
     pub fn readable(&self) -> Result<(), String> {
         if self.format != FORMAT {
             return Err(format!("not a sonde session (format {:?})", self.format));
         }
-        if self.version > VERSION {
+        if self.version != VERSION {
             let by = self
                 .sonde
                 .as_deref()
-                .map_or("a newer sonde".to_string(), |v| format!("sonde {v}"));
+                .map_or("another sonde".to_string(), |v| format!("sonde {v}"));
+            let then = if self.version > VERSION {
+                ": update sonde to read it"
+            } else {
+                ""
+            };
             return Err(format!(
-                "written by {by}, format {}; this sonde ({}) reads up to format {VERSION}: update sonde to read it",
+                "written by {by}, format {}; this sonde ({}) reads format {VERSION}{then}",
                 self.version,
                 env!("CARGO_PKG_VERSION")
             ));
@@ -1109,41 +1112,26 @@ mod tests {
         std::fs::write(&path, &newer).unwrap();
         let e = Session::open(&path).unwrap_err();
         assert!(
-            e.contains("written by sonde 21.0.0, format 3;") && e.contains("reads up to format 2"),
+            e.contains("written by sonde 21.0.0, format 3;")
+                && e.contains("reads format 2: update sonde"),
             "{e}"
         );
         std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":4"#, 1)).unwrap();
         let e = Session::open(&path).unwrap_err();
-        assert!(e.contains("written by a newer sonde, format 4"), "{e}");
+        assert!(e.contains("written by another sonde, format 4"), "{e}");
+        // older: refused too, never read in part
+        std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":1"#, 1)).unwrap();
+        let e = Session::open(&path).unwrap_err();
+        assert!(
+            e.contains("format 1; this sonde") && e.ends_with("reads format 2"),
+            "{e}"
+        );
         std::fs::write(&path, least.replacen("sonde-session", "har", 1)).unwrap();
         assert!(
             Session::open(&path)
                 .unwrap_err()
                 .contains("not a sonde session")
         );
-    }
-
-    /// Format 1 (19.0 and before) named a record's kind `operation`: it is
-    /// read the same, in full and lean.
-    #[test]
-    fn a_format_1_session_is_read_its_operation_the_kind() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("old.sonde");
-        let v1 = concat!(
-            r#"{"format":"sonde-session","version":1,"sonde":"19.0.0","created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","command":"python etl.py"}"#,
-            "\n",
-            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","operation":"ListObjectsV2","method":"GET","url":"","bucket":"b","query":[],"status":200,"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
-            "\n",
-            r#"{"id":2,"time":"2026-11-12T10:00:00.002Z","endpoint":"e","operation":"GetObject","method":"GET","url":"","bucket":"b","key":"k","query":[],"status":404,"latencyMs":1.0,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
-            "\n",
-        );
-        std::fs::write(&path, v1).unwrap();
-        let s = Session::open(&path).unwrap();
-        assert_eq!(s.header.version, 1);
-        let kinds: Vec<&str> = s.records.iter().map(|r| r.operation.as_str()).collect();
-        assert_eq!(kinds, ["ListObjectsV2", "GetObject"]);
-        let lean = Session::open_lean(&path).unwrap();
-        assert_eq!(lean.records[1].operation, "GetObject");
     }
 
     #[test]

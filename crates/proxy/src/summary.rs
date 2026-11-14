@@ -270,8 +270,6 @@ struct CountedLine<'a> {
     id: u64,
     time: DateTime<Utc>,
     endpoint: serde::de::IgnoredAny,
-    // (`operation` in format 1)
-    #[serde(alias = "operation")]
     kind: serde::de::IgnoredAny,
     url: serde::de::IgnoredAny,
     query: serde::de::IgnoredAny,

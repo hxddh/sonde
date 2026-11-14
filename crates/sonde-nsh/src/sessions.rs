@@ -1051,10 +1051,6 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     POINTS
         .lock()
         .insert(path.to_path_buf(), (now, figures.point.clone()));
-    // (what 15.0 kept them in, all in one file)
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::remove_file(dir.join(".runpoints.json"));
-    }
     Some(figures.point)
 }
 

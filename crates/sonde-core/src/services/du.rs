@@ -88,7 +88,6 @@ pub struct DuReport {
     /// Why noncurrent versions and delete markers are not known (the
     /// credentials may not list versions): their zeros are then "not
     /// counted", not "none". `None`: they were counted.
-    #[serde(default)]
     pub versions_unknown: Option<String>,
 }
 
@@ -754,19 +753,6 @@ mod tests {
         // and the cached report says so too
         let cached = load_cache(&s, "e", "b", "").unwrap();
         assert_eq!(cached.versions_unknown, r.versions_unknown);
-    }
-
-    #[test]
-    fn a_report_cached_before_14_still_loads_with_its_versions_counted() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
-        let r = Accumulator::new("").finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
-        let mut v = serde_json::to_value(&r).unwrap();
-        v.as_object_mut().unwrap().remove("versionsUnknown");
-        v.as_object_mut().unwrap().remove("findingsText");
-        let old: DuReport = serde_json::from_value(v).unwrap();
-        assert_eq!(old.versions_unknown, None);
-        assert!(old.findings_text.is_empty());
     }
 
     #[test]

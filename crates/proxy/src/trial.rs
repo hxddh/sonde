@@ -66,7 +66,7 @@ impl Standing {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Where {
-    #[serde(rename = "kind", alias = "operation")]
+    #[serde(rename = "kind")]
     pub operation: String,
     /// `bucket/key`, or the bucket and what was listed.
     pub key: String,

@@ -24,7 +24,7 @@ it. This page is its contract ([contract.md](contract.md)); `crates/proxy/src/se
 | Field | | |
 |---|---|---|
 | `format` | required | Always `"sonde-session"`. Anything else is not a session. |
-| `version` | required | The format's version, an integer: `2` (`1` before 20.0). |
+| `version` | required | The format's version, an integer: `2`. |
 | `created` | required | When the recording began, RFC 3339 in UTC. |
 | `endpoint` | required | The endpoint's id (`adhoc` for `--url`). Never its credentials. |
 | `url` | required | The endpoint's URL. |
@@ -89,14 +89,13 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 
 ## Versions
 
-- The format is version `2`, written since 20.0: a record's S3 call is `kind` (version `1`, written by 1.0 to 19.x,
-  named it `operation`; nothing else differs). 20.0 reads both.
+- The format is version `2`, written since 20.0.
 - **Within a version**, fields may be added to the header, records or log lines. Readers skip unknown fields and
   treat a missing optional field as not known. Required fields are never removed, renamed, retyped or redefined.
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
   a line kind it cannot skip, another encoding), in a major release ([contract.md](contract.md)).
-- A sonde reads every version up to its own and refuses a newer one by name, never partially:
-  `written by sonde 21.0.0, format 3; this sonde (20.0.0) reads up to format 2: update sonde to read it`
-  (`a newer sonde` when the header has no `sonde`).
+- A sonde reads its own version only and refuses any other by name, never partially:
+  `written by sonde 23.0.0, format 3; this sonde (22.0.0) reads format 2: update sonde to read it`
+  (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).
 - A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.
