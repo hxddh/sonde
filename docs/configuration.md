@@ -22,9 +22,9 @@ Two files, each setting in one of them:
 | Its fault scenarios | `sonde.toml` | `[[scenario]]` |
 
 A flag wins over either file (`--policy`, `--no-callers`, `--tls`, `--name`, `check`'s limits). Both files are
-in the contract ([contract](contract.md)). Before 20.0, `record-policy` and `name-callers` were `config.toml`
-settings; they are no longer read there, and each run says so. An old `record-policy` stricter than the one in
-force is still kept, so the move never loosens a recording.
+in the contract ([contract](contract.md)). A `record-policy` or `name-callers` left in `config.toml` is not read
+there, and each run says so; a `record-policy` there stricter than the one in force still holds, so it never
+loosens a recording.
 
 ## config.toml
 
