@@ -517,7 +517,10 @@ pub(super) fn print_summary_of(
         say(line);
     }
     for (what, n) in &s.error_codes {
-        say(format!("  {} × {what}", output::grouped(*n)));
+        match refused_line(s, *n).filter(|_| what == "refused by sonde") {
+            Some(line) => say(paint(&line, "33", color)),
+            None => say(format!("  {} × {what}", output::grouped(*n))),
+        }
     }
     if all {
         let mut signals = a.signals.clone();
@@ -534,6 +537,33 @@ pub(super) fn print_summary_of(
         }
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
+}
+
+/// The requests the recording's policy refused, named, with the policy and
+/// the flag that lifts it: `1 × refused by sonde's no-delete policy:
+/// DeleteObject demo/old/report.csv (--policy allow lets it through)`.
+fn refused_line(s: &sonde_proxy::summary::Summary, n: u64) -> Option<String> {
+    let first = s.refusals.first()?;
+    let named: Vec<&str> = s.refusals.iter().map(|r| r.request.as_str()).collect();
+    let more = (n as usize).saturating_sub(named.len());
+    let more = if more > 0 {
+        format!(" and {} more", output::grouped(more as u64))
+    } else {
+        String::new()
+    };
+    let it = if n == 1 { "it" } else { "them" };
+    Some(match first.policy.as_str() {
+        "" => format!(
+            "  {} × refused by sonde: {}{more}",
+            output::grouped(n),
+            named.join(", ")
+        ),
+        policy => format!(
+            "  {} × refused by sonde's {policy} policy: {}{more} (--policy allow lets {it} through)",
+            output::grouped(n),
+            named.join(", ")
+        ),
+    })
 }
 
 /// A share as a percentage: `0.4%`, `12%` ([`sonde_fmt::percent`]).
@@ -669,6 +699,39 @@ pub fn project_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 20.0 said `1 × refused by sonde` and nothing of what, why or how to
+    /// let it through.
+    #[test]
+    fn a_refused_request_is_named_with_its_policy_and_the_flag_that_lifts_it() {
+        use sonde_proxy::summary::{Refusal, Summary};
+        let refusal = |request: &str| Refusal {
+            policy: "no-delete".into(),
+            request: request.into(),
+        };
+        let mut s = Summary {
+            refused: 1,
+            refusals: vec![refusal("DeleteObject demo/old/report.csv")],
+            ..Default::default()
+        };
+        assert_eq!(
+            refused_line(&s, 1).unwrap(),
+            "  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"
+        );
+        s.refusals.push(refusal("DeleteObject demo/a"));
+        s.refusals.push(refusal("DeleteObject demo/b"));
+        assert!(
+            refused_line(&s, 7)
+                .unwrap()
+                .ends_with("demo/b and 4 more (--policy allow lets them through)")
+        );
+        // refused for what no policy lifts (a path naming no bucket)
+        s.refusals = vec![Refusal {
+            policy: String::new(),
+            request: "GetObject".into(),
+        }];
+        assert_eq!(refused_line(&s, 1).unwrap(), "  1 × refused by sonde: GetObject");
+    }
 
     #[tokio::test]
     async fn a_proxy_stopped_with_a_request_in_flight_is_not_said_to_have_drained() {
