@@ -709,7 +709,8 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     assert!(
         o.stderr.contains(&format!(
             "sonde run --fault slowdown -o {} --force --url {} --path-style --policy allow -- ",
-            session.display(),
+            // quoted as the hint quotes it (a Windows path is)
+            sonde_proxy::program::shell_join(&[session.to_string_lossy().into_owned()]),
             b.store.url
         )),
         "{}",
