@@ -92,12 +92,27 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |
 
-## Elsewhere
+## GitLab CI
 
-```sh
-sonde run -o run.sonde -- python etl.py
-sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
-sonde share --html run.sonde --baseline main.sonde -o report.html
+```yaml
+s3:
+  image: python:3.14
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - sonde run -o run.sonde -- python etl.py
+    # the newest run kept by the default branch's last green pipeline, if there is one
+    - 'curl -fsSL -o main.sonde -H "JOB-TOKEN: $CI_JOB_TOKEN"
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/artifacts/$CI_DEFAULT_BRANCH/raw/run.sonde?job=$CI_JOB_NAME"
+        || rm -f main.sonde'
+    - sonde check run.sonde --max-errors 0 $([ -f main.sonde ] && echo --baseline main.sonde) -f markdown > check.md
+  after_script:
+    - cat check.md
+  artifacts:
+    when: always
+    paths: [run.sonde, check.md]
 ```
 
-Keep `run.sonde` from the main branch (an artifact, a bucket) and give it, or its https URL, as `--baseline`.
+Each run is kept as the job's artifact; the default branch's newest is the next runs' baseline. `check` fails the job
+when the run is past its budget or baseline. Jenkins and other systems: the same `run`, a baseline fetched from where
+the main branch keeps its run, and `check`.
