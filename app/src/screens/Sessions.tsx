@@ -667,7 +667,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         )}
       </If>
       <If when={tryingFaults()}>
-        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} onOpen={open} />
+        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} onOpen={open} onAgain={(fresh) => batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), open(fresh)))} />
       </If>
       <If when={tryingAgain()}>
         {(again) => (

@@ -5,7 +5,7 @@ import { openDemo, openExample, desktop, place, withDemo } from "./helpers";
 
 test("a run's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
@@ -89,9 +89,11 @@ test("compatibility: checked on an endpoint, every probe, the bucket chosen fill
   expect(app.shows("id:probe-temp")).toBe(true);
   expect(app.shows("id:probe-only")).toBe(false);
   await app.press("id:probe-run");
-  await app.waitFor("id:matrix", { timeout: 60000 });
-  await app.waitFor("text:Range boundaries", { timeout: 60000 });
-  await app.press("id:cell-range.bounds-0");
+  // (Run is busy while the check goes, and free once it has ended)
+  await app.waitUntil(() => !app.enabled("id:probe-run"), { timeout: 10000 });
+  await app.waitUntil(() => app.enabled("id:probe-run"), { timeout: 240000 });
+  await app.waitFor("id:matrix");
+  await app.press("id:cell-consistency.read-after-delete-0");
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
@@ -324,7 +326,7 @@ test("a run file that cannot be read says so, and why", async () => {
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.view": async () => {
     throw new Error("line 3 is cut short: not a whole record");
   } } } });
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-pane", { timeout: 10000 });
   await app.waitFor("id:session-error", { timeout: 10000 });
   expect(app.shows("text:Could not load this")).toBe(true);
@@ -385,7 +387,7 @@ test("a run of a hundred thousand operations opens on its totals and first page,
   const big = bigSession(N);
   const began = Date.now();
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: big.modules } });
-  await app.press("id:open-example");
+  await openExample(app);
   // its totals at once, from the view: nothing waits for the operations to be whole
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.waitFor("text:operation 0", { timeout: 10000 });

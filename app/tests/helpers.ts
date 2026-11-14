@@ -100,6 +100,8 @@ export async function openExample(app: App, zh = false) {
 /** The demo store, started from the palette (its one door after the welcome) where it is not the endpoint in use
  * yet (an earlier test in the same run may have made it so, and then the palette does not offer it). */
 export async function openDemo(app: App) {
+  // (the callers are on Endpoints: there the demo says when it is the one in use already)
+  if (await app.waitFor("id:endpoint-demo >> text:In use", { timeout: 500 }).then(() => true, () => false)) return;
   if (app.shows("id:toolbar")) await app.press("id:palette");
   else await app.keyboard.press("shift+;");
   await app.waitFor("id:palette-command");

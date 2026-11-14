@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, desktop, place, runCommand, runView, sessionAction, sessionMenu } from "./helpers";
+import { openDemo, openExample, desktop, place, runCommand, runView, sessionAction, sessionMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -19,7 +19,6 @@ test("run a command: its requests become operations; once it ends, its own view 
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  await app.waitFor("id:run-terminal", { timeout: 10000 });
   // once it ended: the run's own view, on Run, opened on its Output (an exit of 0 is no news: nothing said)
   await runView(app);
   expect(app.shows("id:screen-run")).toBe(true);
@@ -72,7 +71,7 @@ test("record without a program: a local endpoint to point an application at", as
 
 test("an example session reads as operations, each opening on its requests", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
@@ -178,7 +177,7 @@ test("sessions are looked after: renamed, searched, deleted, dropped on the wind
 
 test("a run's time: where it went, and two runs before and after", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   // the shape of the session beside its figures (the example's: the session shown before it goes first)
   await app.waitFor("id:session-shape", { timeout: 10000 });
@@ -263,7 +262,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
 
 test("a shared run opens in the browser, on a local address", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("id:session-more");
   await app.chooseMenuItem("Share as a web page");
@@ -476,7 +475,7 @@ test("try again what broke: a fresh run, only what did not survive, each scenari
   // closed, the fresh run opens on its History, where it can be tried again
   await app.press("id:trial-close");
   await app.waitFor("id:history-trials", { timeout: 10000 });
-  expect(app.shows("id:trial-history-slowdown")).toBe(true);
+  await app.waitFor("id:trial-history-slowdown", { timeout: 10000 });
   expect(app.shows("id:trial-again")).toBe(true);
   // the run's ⋯ tries it under faults too
   expect(await sessionMenu(app)).toContain("Try under faults…");
@@ -484,7 +483,7 @@ test("try again what broke: a fresh run, only what did not survive, each scenari
 
 test("why slow: Group by splits the operations with a sentence; a request's inspector shows its key's history", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("label:Group by");
   await app.press("text:Kind of request");

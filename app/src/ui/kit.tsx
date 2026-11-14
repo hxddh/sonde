@@ -1396,7 +1396,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         popupEndingClass={POPUP_MOTION.ending}
         itemClass={`${ROWS.popup} text-body text-popover-foreground selected:font-bold`}
         trigger={
-          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${TRANSITION} ${props.inline ? WIDTH.choice : ""} ${FOCUS}`}>
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${TRANSITION} ${props.inline ? "w-36" : ""} ${FOCUS}`}>
             <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>
               {title()}
             </Text>

@@ -150,11 +150,11 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
         <Text class={`shrink-0 ${TEXT.body}`}>{scenarioLabel(props.row.scenario)}</Text>
         <Text testID="trial-id" class={`shrink-0 ${TEXT.codeQuiet}`}>{x() ? trialAsked(x()!) : props.row.scenario}</Text>
         {/* why, then over the program's runs (or that its run is gone): one quiet line, cut at its end */}
-        <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>
-          {why()}
-          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID}>{`${why() ? " · " : ""}${h()}`}</Text>}</If>
-          <If when={gone()}>{`${why() ? " · " : ""}${t("trial.sessionGone")}`}</If>
-        </Text>
+        <View class="min-w-0 flex-1 flex-row items-baseline gap-2">
+          {/* how it stood over the program's runs (a few words, kept whole), then why, cut at the line's end */}
+          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`shrink-0 ${TEXT.note}`}>{h()}</Text>}</If>
+          <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{[why(), gone() ? t("trial.sessionGone") : ""].filter(Boolean).join(" · ")}</Text>
+        </View>
       </View>
     </ListRow>
   );
@@ -166,7 +166,7 @@ export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID
   const groups = () => groupByAdvice(props.rows);
   return (
     <Card pad="none" testID={`${props.id}s`}>
-      <Each of={groups()} key={(g) => g.advice ?? `-${g.rows[0]?.scenario}`}>
+      <Each of={groups()}>
         {(g, gi) => (
           <>
             <If when={g().advice}>
@@ -179,7 +179,7 @@ export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID
                 </Row>
               )}
             </If>
-            <Each of={g().rows} key={(r) => r.scenario}>
+            <Each of={g().rows}>
               {(r, i) => <VerdictLine row={r()} first={gi() === 0 && i() === 0 && !g().advice} testID={`${props.id}-${r().scenario}`} historyID={`${props.historyID}-${r().scenario}`} />}
             </Each>
           </>

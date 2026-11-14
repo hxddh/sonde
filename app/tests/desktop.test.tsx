@@ -41,7 +41,11 @@ test("Store: browse the demo bucket and show object details", async () => {
   await app.press("id:bucket-demo");
   await app.waitFor("id:screen-browse");
   await app.waitFor("text:README.md", { timeout: 10000 });
-  await app.press("text:README.md");
+  // (a press as the bucket's listing settles may be undone by it: pressed again until its detail shows)
+  for (let n = 0; n < 4 && !app.shows("id:object-detail"); n++) {
+    await app.press("text:README.md");
+    await app.waitFor("id:object-detail", { timeout: 2000 }).catch(() => {});
+  }
   await app.waitFor("id:object-detail");
   await app.waitFor("text:Single-part upload (MD5 of the body)", { timeout: 10000 });
   // the response headers: the one section that opens

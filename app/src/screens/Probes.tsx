@@ -6,7 +6,7 @@
 // dialog (its job is in Activity, where it stops), and the dialog, opened
 // again, shows how far it got.
 
-import { effect, signal, Text, untracked, View } from "nsh";
+import { computed, effect, signal, Text, untracked, View } from "nsh";
 import { DataTable } from "nsh/base";
 import { duration } from "../format";
 import { t } from "../i18n";
@@ -159,14 +159,15 @@ export function CompatDialog(props: { endpoint: EndpointView; bucket: string | n
     });
     ran.update((n) => n + 1);
   };
-  const detail = () => {
+  // read once per cell opened (a run's file is read whole)
+  const detail = computed(() => {
     const o = open();
     if (!o) return null;
     const col = matrix().columns[o.col];
     const r = api.probeRun(col.run, col.endpoint);
     const res = r?.results.find((x) => x.id === o.probe.id);
     return res ? { probe: o.probe, result: res, name: endpointName({ id: col.endpoint, name: col.name }) } : null;
-  };
+  });
   const exportAs = (f: "markdown" | "json") => {
     try {
       notify(t("common.exportedTo", { path: api.exportProbes(f) }));
