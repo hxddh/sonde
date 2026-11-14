@@ -2338,6 +2338,35 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert_ne!(std::fs::read(&out).unwrap(), b"mine");
+    // the same for every command that writes a file it is given
+    let log = t.path().join("access.log");
+    std::fs::write(&log, A_LOG_LINE).unwrap();
+    let mine = t.path().join("mine.txt");
+    let m_ = mine.to_str().unwrap();
+    for args in [
+        vec!["import", log.to_str().unwrap(), "-o", m_],
+        vec!["share", o_, "--html", "-o", m_],
+        vec!["share", o_, "--otlp", "-o", m_],
+    ] {
+        std::fs::write(&mine, "mine").unwrap();
+        let o = sonde(t.path(), &args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains("--force writes over it"),
+            "{}",
+            stderr(&o)
+        );
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine", "{args:?}");
+        let forced = [args.clone(), vec!["--force"]].concat();
+        let o = sonde(t.path(), &forced);
+        assert_eq!(o.status.code(), Some(0), "{forced:?}: {}", stderr(&o));
+        assert_ne!(std::fs::read_to_string(&mine).unwrap_or_default(), "mine");
+    }
+    // an import with nothing in it is bad data
+    let empty = t.path().join("empty.log");
+    std::fs::write(&empty, "\n").unwrap();
+    let o = sonde(t.path(), &["import", empty.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
     // two at once, one file
     let both = t.path().join("both.sonde");
     let b_ = both.to_str().unwrap().to_string();

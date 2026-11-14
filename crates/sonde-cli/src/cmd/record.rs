@@ -539,6 +539,18 @@ pub(super) fn print_summary_of(
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
+/// `-o FILE` and a file there: refused (64) unless `--force`. One rule for
+/// every command that writes a file it is given (`run`, `import`, `share`).
+pub(super) fn refuse_existing(out: &Path, force: bool) -> anyhow::Result<()> {
+    if !force && out.symlink_metadata().is_ok() {
+        return Err(super::usage(format!(
+            "-o {}: the file is there; --force writes over it",
+            out.display()
+        )));
+    }
+    Ok(())
+}
+
 /// The requests the recording's policy refused, named, with the policy and
 /// the flag that lifts it: `1 × refused by sonde's no-delete policy:
 /// DeleteObject demo/old/report.csv (--policy allow lets it through)`.

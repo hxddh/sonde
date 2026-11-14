@@ -269,14 +269,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             "run: unknown option {first} (the command goes after `--`: sonde run [OPTIONS] -- COMMAND)"
         )));
     }
-    if let Some(out) = &a.rec.out
-        && !a.force
-        && out.symlink_metadata().is_ok()
-    {
-        return Err(super::usage(format!(
-            "-o {}: the file is there; --force writes over it",
-            out.display()
-        )));
+    if let Some(out) = &a.rec.out {
+        refuse_existing(out, a.force)?;
     }
     // `--demo` alone: the tour, a program of sonde's own
     if a.demo && a.command.is_empty() {

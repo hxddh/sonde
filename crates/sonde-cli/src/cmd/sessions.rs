@@ -412,6 +412,9 @@ pub struct ImportArgs {
     /// The session file (default: a new one in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// With -o: write over the file if it is there (else it is refused).
+    #[arg(long, requires = "out")]
+    force: bool,
     /// With s3://: keep reading as new log files arrive, each pass its
     /// session, until Ctrl-C.
     #[arg(long)]
@@ -452,6 +455,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             "--follow, --endpoint and --alert are for logs read from s3://bucket/prefix",
         ));
     }
+    if let Some(out) = &a.out {
+        super::record::refuse_existing(out, a.force)?;
+    }
     // a folder is every file in it: S3 delivers logs as thousands of small ones
     let is_dir = a.file.is_dir();
     let name = if is_dir {
@@ -480,10 +486,11 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     };
     let imported = match imported {
         Ok(x) => x,
-        // a file cut short is bad data (65); the wrong file, a usage error
+        // a file cut short or with nothing in it is bad data (65); the wrong
+        // file, a usage error
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
-            return Ok(if sonde_proxy::import::is_broken(&e) {
+            return Ok(if sonde_proxy::import::is_bad_data(&e) {
                 65
             } else {
                 64
