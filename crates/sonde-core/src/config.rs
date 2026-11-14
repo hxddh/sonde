@@ -249,6 +249,12 @@ impl Default for Settings {
     }
 }
 
+/// `[settings]` keys of config.toml before 20.0, and where each is now.
+pub const MOVED: [(&str, &str); 2] = [
+    ("record-policy", "[record] policy in sonde.toml"),
+    ("name-callers", "[record] name-callers in sonde.toml"),
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct Config {
@@ -264,6 +270,29 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
+    }
+
+    /// The settings 20.0 moved to sonde.toml's `[record]` that the file at
+    /// `path` still holds, with their values: they are not read, so they
+    /// are said (see [`MOVED`]).
+    pub fn moved(path: &Path) -> Vec<(&'static str, String)> {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return vec![];
+        };
+        let Ok(table) = text.parse::<toml::Table>() else {
+            return vec![];
+        };
+        let Some(settings) = table.get("settings").and_then(|v| v.as_table()) else {
+            return vec![];
+        };
+        MOVED
+            .iter()
+            .filter_map(|(old, _)| {
+                settings
+                    .get(*old)
+                    .map(|v| (*old, v.to_string().trim_matches('"').to_string()))
+            })
+            .collect()
     }
 
     pub fn parse(text: &str) -> Result<Config, String> {
@@ -439,5 +468,26 @@ credentials = { kind = "profile", name = "prod" }
                 .endpoints
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn settings_moved_to_sonde_toml_are_found_with_their_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        std::fs::write(
+            &file,
+            "[settings]\nrecord-policy = \"read-only\"\nname-callers = false\n",
+        )
+        .unwrap();
+        assert_eq!(
+            Config::moved(&file),
+            vec![
+                ("record-policy", "read-only".to_string()),
+                ("name-callers", "false".to_string())
+            ]
+        );
+        // the file still loads: the keys are not read
+        assert!(Config::load(&file).is_ok());
+        assert!(Config::moved(&dir.path().join("none.toml")).is_empty());
     }
 }
