@@ -1091,5 +1091,7 @@
  "heat.textAt": "The busiest prefix here, %{prefix}, took %{n} requests in one slice, at +%{at}",
  "heat.textAt.one": "The busiest prefix here, %{prefix}, took 1 request in one slice, at +%{at}",
  "trial.ofBroke": "%{n} of %{of} broke",
- "trial.ofBrokeSaid": "Tried under faults: %{n} of %{of} trials broke"
+ "trial.ofBrokeSaid": "Tried under faults: %{n} of %{of} trials broke",
+ "signal.missed": "%{pct} found nothing",
+ "signal.noneFailedMissed": "None failed · %{pct} found nothing"
 }

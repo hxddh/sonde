@@ -3,7 +3,7 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, count, date, duration, percent, rate, costParts } from "../format";
+import { change, clock, count, date, day, duration, hm, percent, rate, costParts } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
@@ -48,7 +48,8 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     const mark = (i: 0 | 1, text: string) => (few?.[i] ? `~${text}` : text);
     const p95 = of((x) => (x.latency.p95Ms == null ? null : duration(x.latency.p95Ms)));
     // "p95" once, before the pair: "p95 ~5.7 ms → 69 ms"
-    const tails = () => (p95 && p95[0] && p95[1] ? `p95 ${p95[0] === p95[1] && !few?.[0] && !few?.[1] ? p95[0] : `${mark(0, p95[0])} → ${mark(1, p95[1])}`}` : "");
+    // (the same in both: one figure, marked where either run had a handful)
+    const tails = () => (p95 && p95[0] && p95[1] ? `p95 ${p95[0] === p95[1] ? (few?.[0] || few?.[1] ? `~${p95[0]}` : p95[0]) : `${mark(0, p95[0])} → ${mark(1, p95[1])}`}` : "");
     return [
       { id: "requests", label: t("compare.requests"), a: c().requests[0], b: c().requests[1], text: n, detail: () => (pace && pace[0] && pace[1] ? pair(pace[0], pace[1]) : ""), series: (x) => x.rate.series },
       { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
@@ -62,11 +63,13 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     const known = () => f().a != null && f().b != null;
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
     const side = (i: 0 | 1, v: number) => (f().few?.[i] ? `~${f().text(v)}` : f().text(v));
-    const value = () => (!known() ? t("signal.notTimed") : same() && !f().few?.[0] && !f().few?.[1] ? f().text(f().a!) : `${side(0, f().a!)} → ${side(1, f().b!)}`);
+    // the same in both runs: one figure, never "a → a" (marked `~` where either run had a handful)
+    const value = () => (!known() ? t("signal.notTimed") : same() ? (f().few?.[0] || f().few?.[1] ? `~${f().text(f().a!)}` : f().text(f().a!)) : `${side(0, f().a!)} → ${side(1, f().b!)}`);
     // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
     // (from nothing there is no share to say: the two figures say it)
     const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
-    const tone = () => (!known() || same() || !c().sameProgram ? "plain" : f().b! < f().a! ? "ok" : "bad");
+    // a figure of too few requests to tell is no better and no worse: plain
+    const tone = () => (!known() || same() || !c().sameProgram || f().few?.[0] || f().few?.[1] ? "plain" : f().b! < f().a! ? "ok" : "bad");
     const lines = () => (f().series && s() && !handful(s()![0]) && !handful(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
     return (
       <Stat
@@ -206,7 +209,11 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   const title = () => {
     const [a, b] = [info(props.a), info(props.b)];
     if (!a || !b) return `${a ? sessionName(a) : fileName(props.a)} → ${b ? sessionName(b) : fileName(props.b)}`;
-    return sessionName(a) === sessionName(b) ? `${sessionName(a)} · ${date(a.created)} → ${date(b.created)}` : `${sessionName(a)} · ${date(a.created)} → ${sessionName(b)} · ${date(b.created)}`;
+    if (sessionName(a) !== sessionName(b)) return `${sessionName(a)} · ${date(a.created)} → ${sessionName(b)} · ${date(b.created)}`;
+    // one program on one day: the day once, and the two times (to the second where they share a minute)
+    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${date(a.created)} → ${date(b.created)}`;
+    const fine = hm(a.created) === hm(b.created) ? "s" : "m";
+    return `${sessionName(a)} · ${day(a.created)} · ${clock(a.created, fine)} → ${clock(b.created, fine)}`;
   };
   const answers = resource(
     () => `${props.a}\n${props.b}`,

@@ -190,7 +190,9 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
 
 /** A column of costs in one unit, said once in its title: the largest
  * decides it ("USD", or "USD per 1,000 runs" when every one is under a
- * cent), and every figure is in it. */
+ * cent), and every figure is in it. A figure under a hundredth of its unit
+ * is written as `costParts` writes it, to two significant figures ("0.0072"):
+ * one cost is written one way on a pane, never "<0.01" beside "0.0072". */
 export function costColumn(values: number[], currency: string): { unit: string; figures: string[] } {
   const top = Math.max(0, ...values.filter(Number.isFinite));
   const per1000 = top > 0 && top < 0.01;
@@ -199,7 +201,7 @@ export function costColumn(values: number[], currency: string): { unit: string; 
     if (!Number.isFinite(v) || v < 0) return "—";
     if (v === 0) return "0";
     const x = per1000 ? v * 1000 : v;
-    return x < 0.01 ? "<0.01" : x.toFixed(2);
+    return x < 0.01 ? x.toPrecision(2) : x.toFixed(2);
   };
   return { unit, figures: values.map(figure) };
 }

@@ -1091,5 +1091,7 @@
  "heat.textAt": "这里最忙的前缀 %{prefix} 在一个时间片内有 %{n} 个请求，在 +%{at}",
  "heat.textAt.one": "这里最忙的前缀 %{prefix} 在一个时间片内有 %{n} 个请求，在 +%{at}",
  "trial.ofBroke": "%{of} 次试验 %{n} 次未通过",
- "trial.ofBrokeSaid": "故障试验：%{of} 次中 %{n} 次未通过"
+ "trial.ofBrokeSaid": "故障试验：%{of} 次中 %{n} 次未通过",
+ "signal.missed": "%{pct} 未找到",
+ "signal.noneFailedMissed": "无失败 · %{pct} 未找到"
 }

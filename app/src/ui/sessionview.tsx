@@ -152,7 +152,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
   // the four signals, then in flight: by rank, so a narrow pane drops the last first
   const tiles = () => {
     const x = signalsOf(props.view);
-    return x ? signalTiles(x) : [];
+    return x ? signalTiles(x, props.view.summary.misses) : [];
   };
   const tile = (i: number) => (look: () => TileLook) => {
     const x = () => tiles()[i];

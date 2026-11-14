@@ -41,9 +41,11 @@ function changeLine(s: SinceLast): string | null {
   const c = s.change;
   if (!c) return null;
   // a figure's "before → after" is never broken across lines (the line wraps between its words)
-  const part = (label: string, a: string, b: string) => `${label}\u00a0${`${a} → ${b}`.replace(/ /g, "\u00a0")}`;
+  // (the same in both runs: one figure, never "a → a")
+  const part = (label: string, a: string, b: string) => `${label}\u00a0${(a === b ? a : `${a} → ${b}`).replace(/ /g, "\u00a0")}`;
   const parts = [part(t("compare.requests"), count(c.requests[0]), count(c.requests[1])), part(t("compare.waiting"), duration(c.waitingMs[0]), duration(c.waitingMs[1]))];
-  if (c.errors[0] || c.errors[1]) parts.push(part(t("signal.errors"), count(c.errors[0]), count(c.errors[1])));
+  // errors only where they changed: "Errors 2 → 2" says nothing
+  if (c.errors[0] !== c.errors[1]) parts.push(part(t("signal.errors"), count(c.errors[0]), count(c.errors[1])));
   return parts.join(" · ");
 }
 
@@ -58,11 +60,11 @@ export const changedFindings = (findings: FindingChange[]): FindingChange[] => {
  * Nothing for a program's first run. */
 export function SinceRun(props: { since: SinceLast | null | undefined; max?: number; onCompare?: () => void }) {
   const s = () => props.since;
-  // fixed and back say what the reader did (or undid); less, new and open stand on the findings themselves
-  const told = () => (s()?.findings ?? []).filter((f) => f.state === "fixed" || f.state === "back");
+  // what the tally counts, listed: fixed, less, back, new (open ones say nothing new)
+  const told = () => changedFindings(s()?.findings ?? []);
   const shown = () => told().slice(0, props.max ?? told().length);
   const tally = () =>
-    (["fixed", "back", "less", "new"] as const)
+    (["fixed", "less", "back", "new"] as const)
       .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st).length] as const)
       .filter(([, n]) => n > 0)
       .map(([st, n]) => `${count(n)} ${say([{ key: "fix." + st, args: {} }], st)}`)
