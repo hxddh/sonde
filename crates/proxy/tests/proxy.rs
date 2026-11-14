@@ -155,6 +155,15 @@ async fn serve(
             }
             None => Response::builder().status(404),
         },
+        // a multipart upload started: its id
+        "POST" if parts.uri.query().is_some_and(|q| q.starts_with("uploads")) => {
+            return Ok(Response::builder()
+                .status(200)
+                .body(Full::new(Bytes::from(
+                    "<InitiateMultipartUploadResult><Bucket>data</Bucket><Key>big</Key><UploadId>UP-1</UploadId></InitiateMultipartUploadResult>",
+                )))
+                .unwrap());
+        }
         _ => Response::builder().status(204),
     };
     Ok(resp
@@ -379,6 +388,77 @@ async fn no_delete_refuses_without_calling_upstream() {
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.operation, "DeleteObject");
     assert_eq!(rec.status, Some(403));
+}
+
+/// No-delete lets a program remove what it made in the same recording: an
+/// upload it started, an object it wrote, a bucket it created. Not what it
+/// did not make.
+#[tokio::test]
+async fn no_delete_lets_a_program_remove_what_it_made_and_nothing_else() {
+    let (_proxy, app, _log, up) = setup(Policy::NoDelete).await;
+    let send = |r: S3Request| {
+        let app = app.clone();
+        async move { app.send_raw(r.no_retry()).await.unwrap().status }
+    };
+    let abort = |id: &str| {
+        S3Request::new("AbortMultipartUpload", http::Method::DELETE)
+            .bucket("data")
+            .key("big")
+            .query("uploadId", id)
+    };
+    // another's upload, then its own
+    assert_eq!(send(abort("UP-1")).await, 403, "not started here yet");
+    let started = S3Request::new("CreateMultipartUpload", http::Method::POST)
+        .bucket("data")
+        .key("big")
+        .query("uploads", "");
+    let r = app.send_raw(started.no_retry()).await.unwrap();
+    assert_eq!(r.status, 200);
+    assert!(
+        r.text().contains("<UploadId>UP-1</UploadId>"),
+        "the answer goes on whole"
+    );
+    assert_eq!(send(abort("UP-2")).await, 403, "an upload it did not start");
+    assert_eq!(send(abort("UP-1")).await, 204);
+    // an object: refused until it writes it
+    let delete = |k: &str| {
+        S3Request::new("DeleteObject", http::Method::DELETE)
+            .bucket("data")
+            .key(k)
+    };
+    assert_eq!(send(delete("tmp/a")).await, 403);
+    for k in ["tmp/a", "tmp/b"] {
+        let put = S3Request::new("PutObject", http::Method::PUT)
+            .bucket("data")
+            .key(k)
+            .body(s3raw::Body::from("x".to_string()));
+        assert_eq!(send(put).await, 200);
+    }
+    assert_eq!(send(delete("tmp/a")).await, 204);
+    // a version it did not write is not its own
+    assert_eq!(send(delete("tmp/b").query("versionId", "v0")).await, 403);
+    // a batch goes by each of its objects
+    let batch = |keys: &[&str]| {
+        let objects: String = keys
+            .iter()
+            .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+            .collect();
+        S3Request::new("DeleteObjects", http::Method::POST)
+            .bucket("data")
+            .query("delete", "")
+            .body(s3raw::Body::from(format!("<Delete>{objects}</Delete>")))
+    };
+    assert_eq!(send(batch(&["tmp/b", "theirs"])).await, 403);
+    assert_eq!(send(batch(&["tmp/a", "tmp/b"])).await, 204);
+    // a bucket: only one it created
+    let drop_bucket = |b: &str| S3Request::new("DeleteBucket", http::Method::DELETE).bucket(b);
+    assert_eq!(send(drop_bucket("scratch")).await, 403);
+    let create = S3Request::new("CreateBucket", http::Method::PUT).bucket("scratch");
+    assert!((200..300).contains(&send(create).await));
+    assert_eq!(send(drop_bucket("scratch")).await, 204);
+    let calls = up.calls.lock().clone();
+    assert!(!calls.iter().any(|c| c.contains("UP-2")), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("versionId")), "{calls:?}");
 }
 
 #[tokio::test]

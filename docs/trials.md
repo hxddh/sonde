@@ -31,7 +31,8 @@ Trial: the command runs 3 more times, each under one scenario.
   the terminal's group, to read the keyboard.)
 - Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions. The
   program's verdict history is kept.
-- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places
+- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places,
+  and remove what it made in that run, its own uploads included
   ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
 
 **Matching a trial's requests to the clean run's**: they match when they differ only by the scenario's name in place
@@ -147,7 +148,7 @@ repeatable; duplicates run once.
 | **degraded** | finished, but gave up a read, left an upload unfinished, waited out a stall, re-uploaded a completed upload, rewrote a hidden key, or after a lost race left extra objects or resent the same `If-Match` |
 | **broke** | another exit; a failed write never resent with exit 0; half a body taken as whole; a lost race never run again with the clean exit; the contested key overwritten unconditionally; a hidden key never read |
 | **untested** | no request met the fault, or hidden keys mattered to nothing. Only untested: exit 0, *Nothing was tried* |
-| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place or `--allow-writes`. Not judged; never broke |
+| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place (or, when the refused key has it already, `--allow-writes`). Not judged; never broke |
 
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the

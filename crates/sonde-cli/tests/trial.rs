@@ -2251,7 +2251,8 @@ async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
     let all = trials(&b.path("run.sonde"));
     let t = trial(&all, "slowdown");
     assert_eq!(t["standing"], "refused", "{t:#}");
-    assert_eq!(t["advice"]["key"], "trial.advice.policy");
+    // its keys carry the trial's name already: not told to add it
+    assert_eq!(t["advice"]["key"], "trial.advice.policy.placed");
     assert!(o.stderr.contains("refused   slowdown"), "{}", o.stderr);
     assert!(
         o.stderr

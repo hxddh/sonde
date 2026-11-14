@@ -297,6 +297,9 @@ fn template(key: &str) -> &'static str {
         "trial.advice.policy" => {
             "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)"
         }
+        "trial.advice.policy.placed" => {
+            "the run has a place of its own already: let the program delete or write over what it finds there (--allow-writes)"
+        }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"
         }
@@ -419,6 +422,7 @@ mod tests {
             "why.refused.made",
             "why.policy",
             "advice.policy",
+            "advice.policy.placed",
         ] {
             let key = format!("trial.{key}");
             let en = template(&key);

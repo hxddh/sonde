@@ -116,6 +116,7 @@ const zh: Record<string, string> = {
   "trial.why.refused.made": "重试的 {op} 得到 {answer}：存储已经完成了第一次尝试",
   "trial.why.policy": "被录制策略（{policy}）拒绝：比正常运行多 {n} 个请求，因此看不出程序在故障下会怎样",
   "trial.advice.policy": "让每次运行有自己的位置（把试验名 SONDE_TRIAL 放进键里），或者允许程序覆盖已有的对象（--allow-writes）",
+  "trial.advice.policy.placed": "这次运行已经有自己的位置：允许程序删除或覆盖它在那里找到的对象（--allow-writes）",
   "obs.prefixrate.reads": "{prefix} 每秒最多读取 {n} 次，达到 S3 单个前缀上限 {limit} 的 {pct}%：在被限流前把键分散到更多前缀",
   "obs.prefixrate.writes": "{prefix} 每秒最多写入 {n} 次，达到 S3 单个前缀上限 {limit} 的 {pct}%：在被限流前把键分散到更多前缀",
   "obs.serial": "{n} 个请求一个接一个地运行了 {time}，每个都在等上一个：同时发 {k} 个大约只需 {fast}",
@@ -271,6 +272,7 @@ const en: Record<string, string> = {
   "trial.why.refused.made": "the retried {op} was answered {answer}: the store had made the first attempt",
   "trial.why.policy": "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told",
   "trial.advice.policy": "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)",
+  "trial.advice.policy.placed": "the run has a place of its own already: let the program delete or write over what it finds there (--allow-writes)",
 };
 
 const TEMPLATES: Record<string, Record<string, string>> = { en, zh };
