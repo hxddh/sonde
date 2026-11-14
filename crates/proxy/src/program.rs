@@ -713,6 +713,9 @@ impl Verdict {
 #[serde(rename_all = "camelCase")]
 pub struct Check {
     pub passed: bool,
+    /// The run recorded no request: nothing reached sonde (the program's
+    /// client went elsewhere). It fails, whatever it is held to.
+    pub empty: bool,
     pub verdicts: Vec<Verdict>,
     /// Warnings the baseline did not have, as they read.
     pub new_warnings: Vec<String>,
@@ -957,8 +960,10 @@ pub fn check(
             });
         }
     }
+    let empty = r.requests == 0;
     Check {
-        passed: v.iter().all(|x| x.ok),
+        passed: !empty && v.iter().all(|x| x.ok),
+        empty,
         verdicts: v,
         new_warnings,
         expected: run
@@ -1056,6 +1061,9 @@ pub fn check_markdown(
 /// broke under a trial failed whatever its figures.
 pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     use crate::trial::Standing;
+    if c.empty {
+        return NOTHING_REACHED.into();
+    }
     let broke = trials.iter().any(|t| t.standing == Standing::Broke);
     let tried = trials
         .iter()
@@ -1088,6 +1096,9 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     }
 }
 
+/// The verdict on a run that recorded no request.
+pub const NOTHING_REACHED: &str = "nothing reached sonde";
+
 /// [`check_closing`] of a run whose program may have failed (`exit`, not
 /// 0): a failed run is said to have failed first, whatever its figures.
 pub fn run_closing(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> String {
@@ -1105,10 +1116,10 @@ pub fn run_passed(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) 
     exit.is_none() && check_passed(c, trials)
 }
 
-/// Whether a check, with the run's trials, passed: every row of the budget
-/// and the baseline, and no trial that broke.
+/// Whether a check, with the run's trials, passed: a run that reached
+/// sonde, every row of the budget and the baseline, and no trial that broke.
 pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
-    c.verdicts.iter().all(|v| v.ok)
+    c.passed
         && !trials
             .iter()
             .any(|t| t.standing == crate::trial::Standing::Broke)

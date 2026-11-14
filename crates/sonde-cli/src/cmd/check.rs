@@ -132,12 +132,6 @@ fn init_project(
         );
         return Ok(64);
     }
-    // a budget of nothing is a program whose requests went elsewhere
-    if run.requests == 0 {
-        eprintln!(
-            "warning: the run sent sonde no requests, so max-requests = 0: its SDK probably did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` lists how each SDK is pointed at it). Record a run that sends its requests, then `check --init` again"
-        );
-    }
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
@@ -560,6 +554,20 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
         return Ok(64);
     }
+    // a run that sent nothing is no program's figures to hold another to
+    if run.0.requests == 0 && (a.init || a.set_baseline) {
+        eprintln!(
+            "{}: the run recorded no request, so it is no {}. {}",
+            sonde_proxy::program::NOTHING_REACHED,
+            if a.init {
+                "budget's source"
+            } else {
+                "baseline"
+            },
+            NOT_THROUGH_SONDE
+        );
+        return Ok(64);
+    }
     if a.init {
         // the run's folder, and the data directory's when it is another
         let mut dirs = vec![sonde_proxy::fixloop::folder_of(&file)];
@@ -705,13 +713,21 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         _ => run_closing(&c, &trials, failed),
     };
+    // nothing reached sonde: said on stderr in every format, the verdict says it too
+    if c.empty {
+        eprintln!(
+            "{}: the run recorded no request. {}",
+            sonde_proxy::program::NOTHING_REACHED,
+            NOT_THROUGH_SONDE
+        );
+    }
     // setting a baseline alone is a whole command
     if c.verdicts.is_empty() && trials.is_empty() && a.set_baseline {
         return Ok(0);
     }
     // nothing to hold the run to is a mistake in the command, in every
     // format; a program that failed is held to its exit
-    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() {
+    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() && !c.empty {
         // with `baseline = "auto"` and no baseline yet there is nothing to
         // hold the run to, and nothing wrong with it: the first run passes
         // (the other formats say it below, as they say any verdict: a
@@ -799,6 +815,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // pass in silence
         if let Some(why) = &no_baseline {
             println!("::warning title=sonde check::{}", gh_escape(why));
+        }
+        if c.empty {
+            println!(
+                "::error title=sonde check::{}",
+                gh_escape(&format!(
+                    "{}: the run recorded no request. {NOT_THROUGH_SONDE}",
+                    sonde_proxy::program::NOTHING_REACHED
+                ))
+            );
         }
         if let Some(x) = failed {
             println!(
@@ -973,6 +998,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     );
     Ok(if passed { 0 } else { 1 })
 }
+
+/// Why a run records nothing, and where to look.
+const NOT_THROUGH_SONDE: &str = "The program's S3 client did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` says how each SDK is pointed at it), or it sent nothing.";
 
 /// Why `baseline = "auto"` found none: which program this is and, when a
 /// baseline is set for the same program run with other arguments, that one

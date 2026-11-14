@@ -1040,7 +1040,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 /// What to try when a program sent sonde nothing: most SDKs read
 /// AWS_ENDPOINT_URL, some need the endpoint said their own way.
-const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
+const NO_REQUESTS: &str = "\nNothing reached sonde: the program sent it no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
   boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
   AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
   Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
