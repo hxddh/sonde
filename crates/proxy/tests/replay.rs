@@ -196,17 +196,23 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
         buckets: vec![],
     };
     let p = plan(&records, &opts);
-    assert_eq!(p.requests, 14);
-    assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+    assert_eq!(p.requests, 13);
+    // the bucket is not created again: it is outside the prefix
+    assert_eq!(
+        p.skipped,
+        [("creates or deletes a bucket, outside the prefix".to_string(), 1)].into()
+    );
 
     // replay on another faithful store: nothing differs
     let twin = MiniS3::start(true).await;
     let log = RequestLog::new(1000);
     let done = replay(&client(&twin.url, log.clone()), &records, &opts, |_, _| {}).await;
-    assert!(done.iter().all(|d| d.skipped.is_none()), "{done:?}");
+    let skipped: Vec<_> = done.iter().filter_map(|d| d.skipped.as_deref()).collect();
+    assert_eq!(skipped, ["creates or deletes a bucket, outside the prefix"]);
     let replayed = log.list(&Filter::default(), 1000);
+    assert!(replayed.iter().all(|r| r.operation != "CreateBucket"));
     let c = compare(&records, &replayed, &done);
-    assert_eq!(c.compared, 14);
+    assert_eq!(c.compared, 13);
     assert_eq!(c.differ(), 0, "{c:#?}");
     // everything landed under the prefix; the batch delete removed its key there
     assert_eq!(

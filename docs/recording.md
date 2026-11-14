@@ -231,15 +231,15 @@ Re-enacted (a session holds no object data):
   keys moved under the prefix.
 - Upload ids, part ETags, ETags in `If-Match`/`If-None-Match` and continuation tokens map to the replay endpoint's;
   `CompleteMultipartUpload` is rebuilt from the replayed parts.
-- Every key and listing prefix under `replay-<time>/` (or `--prefix`). Bucket-level changes (lifecycle, policy,
-  deleting the bucket) and requests naming a version id are left out.
+- Every key and listing prefix under `replay-<time>/` (or `--prefix`). Creating or deleting a bucket, bucket-level
+  changes (lifecycle, policy) and requests naming a version id are left out, and the plan says so: the replay's
+  buckets must exist.
 - One request at a time, in order, no retries.
 - Asks first (`--yes` in scripts); deletes what it wrote afterwards, always.
 - The prefix must be empty and listable (or its bucket absent), else nothing is sent.
 - Never on the recorded keys: an empty prefix is refused.
 - Compared by status and S3 error code, and for an answer that succeeded, what it carried: a listing's keys
-  (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same; `CreateBucket` "already owned by you" is
-  counted apart. Exit 2 when anything differs.
+  (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same. Exit 2 when anything differs.
 
 ```
 ✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)
