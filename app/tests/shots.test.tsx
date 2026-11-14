@@ -92,10 +92,11 @@ for (const v of variants) {
       await app.waitFor(shown, { timeout: 4000 });
     };
     // a session's command: its button where the pane has room, else behind its ⋯ by its words
-    const act = async (id: string, label: string) => {
+    // an act on the session header, or in its ⋯ menu where the header has no room for it (its label in the tour's language)
+    const act = async (id: string, label: string, zh: string) => {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
       await app.press("id:session-more");
-      await app.chooseMenuItem(label);
+      await app.chooseMenuItem(v.lang ? zh : label);
     };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
@@ -355,7 +356,7 @@ for (const v of variants) {
     await charts("03o-errors");
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
-    await act("compare-open", "Compare…");
+    await act("compare-open", "Compare…", "对比…");
     const labels = app.menu()?.map((m) => m.label) ?? [];
     const run = labels.find((l) => l.includes("nightly-report"));
     if (run) {
@@ -369,7 +370,7 @@ for (const v of variants) {
 
     // what a replay on another store would send, said before it runs
     await app.waitFor("id:session-more", { timeout: 10000 });
-    await act("replay-open", "Replay on…");
+    await act("replay-open", "Replay on…", "重放到…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");
