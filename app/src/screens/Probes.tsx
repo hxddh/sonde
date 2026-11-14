@@ -41,7 +41,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
           <View selectable class={`gap-2 ${i() > 0 ? "pt-2" : ""}`}>
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
-              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().operation}</Text>
+              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().kind}</Text>
             </View>
             <Text class="font-mono text-caption text-muted-foreground">{`${r().method} ${r().url}`}</Text>
             <If when={r().errorBody}>{(b) => <Document text={b()} mark />}</If>

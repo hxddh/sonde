@@ -7,6 +7,7 @@ import { t } from "../../i18n";
 import type { Signals } from "../../types";
 import { CROSS_BAND, ChartTip, type Focus, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop } from "./system";
 import { terminal } from "../kit";
+import { errorRateSaid, failuresSaid } from "./answers";
 
 /** The classes a failure is of, in the order they stack: the store's own first, a scenario's last. */
 const FAILURES = ["server", "client", "transport", "injected"] as const;
@@ -40,9 +41,9 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
     );
   const peak = () => Math.max(0.01, ...rows().map((r) => r.share));
   // one failure, one colour: in the client's tone where every failure was the program's own (4xx), as the counts beside draw it
-  const tone = () => (e().counts.client > 0 && e().counts.server + e().counts.transport + e().counts.injected === 0 ? FAILURE_FILL.client : FAILURE_FILL.server);
+  const tone = () => { const c = e().counts; return c.server + c.client + c.transport === 0 && c.injected > 0 ? FAILURE_FILL.injected : c.client > 0 && c.server + c.transport === 0 ? FAILURE_FILL.client : FAILURE_FILL.server; };
   const hovered = signal<number | null>(null);
-  const label = () => t("errorRate.text", { pct: percent(e().value ?? 0), peak: percent(peak()) });
+  const label = () => errorRateSaid(s(), props.range);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: sinceTick(r.tMs), lines: [t("errorRate.line", { pct: percent(r.share), failed: count(r.failed), n: count(r.n) })] } : null;
@@ -91,7 +92,7 @@ export function ErrorsOverTime(props: { signals: Signals; range?: [number, numbe
   const total = (r: ReturnType<typeof rows>[number]) => r.server + r.client + r.transport + r.injected;
   const top = () => Math.max(1, ...rows().map((r) => Math.max(total(r), r.retries))) * 1.25;
   const hovered = signal<number | null>(null);
-  const label = () => t("failures.text", { n: count(e().count), retries: count(e().retriesTotal) });
+  const label = () => failuresSaid(s(), props.range);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     if (!r) return null;

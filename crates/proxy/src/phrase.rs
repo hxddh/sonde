@@ -179,7 +179,7 @@ fn template(key: &str) -> &'static str {
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",
         "obs.listed" => "{prefix} was listed {n} times",
         "obs.headget" => {
-            "{n} objects were checked with HEAD and then read with GET: the GET alone answers both"
+            "{n} objects under {prefix} were checked with HEAD and then read with GET: the GET alone answers both"
         }
         "obs.throttled" => {
             "{n} request{s} throttled (503 SlowDown or 429), each with {min} or more in flight: under {safe} at once would likely avoid it"
@@ -198,6 +198,7 @@ fn template(key: &str) -> &'static str {
         }
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
+        "obs.errors" => "{n} request{s} failed with {class}",
         "split.slow" => "{pct}% of the slow requests (over {ms}) are ",
         "split.slow.most" => {
             "{pct}% of the slow requests (over {ms}), and {all}% of all requests, are "
@@ -207,7 +208,7 @@ fn template(key: &str) -> &'static str {
         "split.cost" => "; {pct}% of the cost is ",
         "split.and" => ", ",
         "split.end" => ".",
-        "split.operation" => "{v}",
+        "split.kind" => "{v}",
         "split.prefix" => "under {v}",
         "split.caller" => "from {v}",
         "split.sdk" => "from {v}",
@@ -219,6 +220,7 @@ fn template(key: &str) -> &'static str {
         "split.size.over" => "over {lo}",
         "fix.fixed" => "fixed",
         "fix.less" => "less",
+        "fix.more" => "more",
         "fix.back" => "back",
         "fix.new" => "new",
         "fix.open" => "open",
@@ -295,7 +297,10 @@ fn template(key: &str) -> &'static str {
             "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told"
         }
         "trial.advice.policy" => {
-            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)"
+            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--policy allow)"
+        }
+        "trial.advice.policy.placed" => {
+            "the run has a place of its own already: let the program delete or write over what it finds there (--policy allow)"
         }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"
@@ -419,6 +424,7 @@ mod tests {
             "why.refused.made",
             "why.policy",
             "advice.policy",
+            "advice.policy.placed",
         ] {
             let key = format!("trial.{key}");
             let en = template(&key);
@@ -468,6 +474,7 @@ mod tests {
         for state in [
             crate::fixloop::State::Fixed,
             crate::fixloop::State::Less,
+            crate::fixloop::State::More,
             crate::fixloop::State::Back,
             crate::fixloop::State::New,
             crate::fixloop::State::Open,
@@ -477,11 +484,14 @@ mod tests {
         for key in [
             "fix.fixed",
             "fix.less",
+            "fix.more",
             "fix.back",
             "fix.new",
             "fix.open",
             "fix.saved",
             "fix.savedTime",
+            "obs.errors",
+            "obs.headget",
         ] {
             let quoted = serde_json::to_string(template(key)).unwrap();
             let lines: Vec<&str> = ts

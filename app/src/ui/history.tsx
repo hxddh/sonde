@@ -121,7 +121,7 @@ export function TrialWhere(props: { trial: Trial; /** its advice was said under 
               </View>
               {/* the request, then (after a dot) the program's line when the run named its callers */}
               <Text class="min-w-0 flex-1 text-small leading-5 text-foreground">
-                {`${x().operation} `}
+                {`${x().kind} `}
                 <Text class="font-mono text-caption text-foreground">{x().key}</Text>
                 <If when={x().caller}>{(c) => <Text class="font-mono text-caption text-muted-foreground">{` · ${c()}`}</Text>}</If>
               </Text>
@@ -502,9 +502,11 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
                 label={`${programOf(p().program) ?? scrubCommand(p().program)}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
                 onPress={() => p().latest && props.onOpen(p().latest!)}
                 lines={2}
+                class="mb-1"
               >
+                {/* (as a run's row: the same insets, the name and what tells it apart on its first line) */}
                 <View class="flex-row items-center gap-2">
-                  <Text class="shrink-0 text-body text-foreground line-clamp-1">{nameOf(p())}</Text>
+                  <Text class="min-w-0 shrink text-body text-foreground line-clamp-1">{nameOf(p())}</Text>
                   <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told(list()).get(p().program) ?? ""}</Text>
                   <If when={p().regressed}>
                     <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>

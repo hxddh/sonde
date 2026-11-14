@@ -155,6 +155,15 @@ async fn serve(
             }
             None => Response::builder().status(404),
         },
+        // a multipart upload started: its id
+        "POST" if parts.uri.query().is_some_and(|q| q.starts_with("uploads")) => {
+            return Ok(Response::builder()
+                .status(200)
+                .body(Full::new(Bytes::from(
+                    "<InitiateMultipartUploadResult><Bucket>data</Bucket><Key>big</Key><UploadId>UP-1</UploadId></InitiateMultipartUploadResult>",
+                )))
+                .unwrap());
+        }
         _ => Response::builder().status(204),
     };
     Ok(resp
@@ -379,6 +388,77 @@ async fn no_delete_refuses_without_calling_upstream() {
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.operation, "DeleteObject");
     assert_eq!(rec.status, Some(403));
+}
+
+/// No-delete lets a program remove what it made in the same recording: an
+/// upload it started, an object it wrote, a bucket it created. Not what it
+/// did not make.
+#[tokio::test]
+async fn no_delete_lets_a_program_remove_what_it_made_and_nothing_else() {
+    let (_proxy, app, _log, up) = setup(Policy::NoDelete).await;
+    let send = |r: S3Request| {
+        let app = app.clone();
+        async move { app.send_raw(r.no_retry()).await.unwrap().status }
+    };
+    let abort = |id: &str| {
+        S3Request::new("AbortMultipartUpload", http::Method::DELETE)
+            .bucket("data")
+            .key("big")
+            .query("uploadId", id)
+    };
+    // another's upload, then its own
+    assert_eq!(send(abort("UP-1")).await, 403, "not started here yet");
+    let started = S3Request::new("CreateMultipartUpload", http::Method::POST)
+        .bucket("data")
+        .key("big")
+        .query("uploads", "");
+    let r = app.send_raw(started.no_retry()).await.unwrap();
+    assert_eq!(r.status, 200);
+    assert!(
+        r.text().contains("<UploadId>UP-1</UploadId>"),
+        "the answer goes on whole"
+    );
+    assert_eq!(send(abort("UP-2")).await, 403, "an upload it did not start");
+    assert_eq!(send(abort("UP-1")).await, 204);
+    // an object: refused until it writes it
+    let delete = |k: &str| {
+        S3Request::new("DeleteObject", http::Method::DELETE)
+            .bucket("data")
+            .key(k)
+    };
+    assert_eq!(send(delete("tmp/a")).await, 403);
+    for k in ["tmp/a", "tmp/b"] {
+        let put = S3Request::new("PutObject", http::Method::PUT)
+            .bucket("data")
+            .key(k)
+            .body(s3raw::Body::from("x".to_string()));
+        assert_eq!(send(put).await, 200);
+    }
+    assert_eq!(send(delete("tmp/a")).await, 204);
+    // a version it did not write is not its own
+    assert_eq!(send(delete("tmp/b").query("versionId", "v0")).await, 403);
+    // a batch goes by each of its objects
+    let batch = |keys: &[&str]| {
+        let objects: String = keys
+            .iter()
+            .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+            .collect();
+        S3Request::new("DeleteObjects", http::Method::POST)
+            .bucket("data")
+            .query("delete", "")
+            .body(s3raw::Body::from(format!("<Delete>{objects}</Delete>")))
+    };
+    assert_eq!(send(batch(&["tmp/b", "theirs"])).await, 403);
+    assert_eq!(send(batch(&["tmp/a", "tmp/b"])).await, 204);
+    // a bucket: only one it created
+    let drop_bucket = |b: &str| S3Request::new("DeleteBucket", http::Method::DELETE).bucket(b);
+    assert_eq!(send(drop_bucket("scratch")).await, 403);
+    let create = S3Request::new("CreateBucket", http::Method::PUT).bucket("scratch");
+    assert!((200..300).contains(&send(create).await));
+    assert_eq!(send(drop_bucket("scratch")).await, 204);
+    let calls = up.calls.lock().clone();
+    assert!(!calls.iter().any(|c| c.contains("UP-2")), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("versionId")), "{calls:?}");
 }
 
 #[tokio::test]
@@ -1025,31 +1105,48 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     assert_eq!(app.send_raw(get).await.unwrap().status, 200);
 }
 
+/// S3 keeps `a/../g1` as a key of its own: the proxy sends it as written,
+/// never as `g1`, which the HTTP client's URL library would make of it.
 #[tokio::test]
-async fn a_key_with_a_dot_segment_is_refused_and_never_reaches_another_key() {
+async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another_key() {
     let (proxy, _app, log, up) = setup(Policy::Allow).await;
-    for path in [
-        "/data/a/../g1",
-        "/data/a/./g1",
-        "/data/a/%2e%2e/g1",
-        "/data/..",
+    for (path, sent) in [
+        ("/data/a/../g1", "/data/a/%2E%2E/g1"),
+        ("/data/a/./g1", "/data/a/%2E/g1"),
+        ("/data/a/%2e%2e/g1", "/data/a/%2E%2E/g1"),
+        ("/data/..", "/data/%2E%2E"),
     ] {
-        for method in ["GET", "DELETE"] {
+        for method in ["PUT", "GET", "DELETE"] {
             let answer = raw(&proxy, method, path).await;
-            assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
-            assert!(answer.contains(". or .. segment"), "{answer}");
+            assert!(
+                !answer.starts_with("HTTP/1.1 4"),
+                "{method} {path}: {answer}"
+            );
+            let calls = up.calls.lock().clone();
+            assert_eq!(
+                calls.last().unwrap(),
+                &format!("{method} {sent}"),
+                "{calls:?}"
+            );
         }
     }
-    assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
-    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.status, Some(400));
+    // nothing reached another key
+    let calls = up.calls.lock().clone();
     assert!(
-        rec.response_headers
+        !calls
             .iter()
-            .any(|h| h.name == "x-sonde-proxy" && h.value == "refused"),
-        "recorded as refused"
+            .any(|c| c.ends_with(" /data/g1") || c.ends_with(" /data")),
+        "{calls:?}"
     );
-    // a dot in a name is a name
+    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(rec.key.as_deref(), Some(".."));
+    assert!(
+        !rec.response_headers
+            .iter()
+            .any(|h| h.name == "x-sonde-proxy"),
+        "not refused"
+    );
+    // a dot in a name is a name, and goes the usual way
     let answer = raw(&proxy, "GET", "/data/a/..b/.c").await;
     assert!(!answer.starts_with("HTTP/1.1 400"), "{answer}");
 }
@@ -1206,7 +1303,7 @@ async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
     ] {
         let answer = raw(&proxy, "GET", path).await;
         assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
-        assert!(answer.contains(". or .. segment"), "{answer}");
+        assert!(answer.contains("its bucket is . or .."), "{answer}");
     }
     assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
     for rec in log.list(&reqlog::Filter::default(), 10) {

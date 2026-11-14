@@ -61,7 +61,15 @@
       "$ref": "#/$defs/cost"
     },
     "whatIf": {
-      "$ref": "#/$defs/whatIf"
+      "description": "The run with every finding's fix; null when no finding names what its fix saves (none, or none that can be counted).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/whatIf"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "findings": {
       "type": "array",
@@ -147,7 +155,7 @@
       "type": "object",
       "description": "A kind of request.",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "missed": {
@@ -193,7 +201,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "missed",
         "requests",
         "errors",
@@ -216,11 +224,11 @@
         },
         "text": {
           "type": "string",
-          "description": "In English."
+          "description": "Display text, not stable: in English."
         },
         "phrases": {
           "type": "array",
-          "description": "The same, as phrases.",
+          "description": "Display text, not stable: the same, as phrases.",
           "items": {
             "$ref": "#/$defs/phrase"
           }
@@ -244,7 +252,8 @@
           "$ref": "#/$defs/phrase"
         },
         "savingText": {
-          "type": "string"
+          "type": "string",
+          "description": "Display text, not stable."
         },
         "savesRequests": {
           "type": "integer"
@@ -279,10 +288,10 @@
         "impact"
       ]
     },
-    "operationSummary": {
+    "kindSummary": {
       "type": "object",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "count": {
@@ -322,7 +331,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "count",
         "errors",
         "misses",
@@ -452,11 +461,11 @@
         "bytesDown": {
           "type": "integer"
         },
-        "operations": {
+        "kinds": {
           "type": "array",
           "description": "Each kind of request.",
           "items": {
-            "$ref": "#/$defs/operationSummary"
+            "$ref": "#/$defs/kindSummary"
           }
         },
         "errorCodes": {
@@ -490,7 +499,7 @@
         "seconds",
         "bytesUp",
         "bytesDown",
-        "operations",
+        "kinds",
         "errorCodes"
       ]
     },
@@ -511,7 +520,11 @@
           "items": false
         },
         "waitingMs": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Null when the session's times cannot say it (an imported log's, to the second).",
           "prefixItems": [
             {
               "type": "number"

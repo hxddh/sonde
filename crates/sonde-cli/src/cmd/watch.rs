@@ -35,6 +35,43 @@ pub(super) struct Logs<'a> {
 struct LogsMark {
     watermark: chrono::DateTime<chrono::Utc>,
     seen: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+    /// The requests of uploads started and not finished yet: an upload
+    /// whose completion is in a later pass's logs is read with it, not
+    /// called unfinished in the pass it started in ([`hold_unfinished`]).
+    #[serde(default)]
+    pending: Vec<Record>,
+}
+
+/// How long an upload is waited for, in the logs' own time: past it, one
+/// still not completed is unfinished.
+const UPLOAD_WAITED: chrono::Duration = chrono::Duration::hours(24);
+
+/// Takes out of `records` the requests of each multipart upload not
+/// completed in them and started less than [`UPLOAD_WAITED`] before their
+/// newest: what a later pass may finish. `records` are put in time order,
+/// numbered from 1.
+fn hold_unfinished(records: &mut Vec<Record>) -> Vec<Record> {
+    records.sort_by_key(|r| r.time);
+    for (i, r) in records.iter_mut().enumerate() {
+        r.id = i as u64 + 1;
+    }
+    let Some(newest) = records.last().map(|r| r.time) else {
+        return Vec::new();
+    };
+    let held: std::collections::HashSet<u64> = episodes(records)
+        .iter()
+        .filter(|e| {
+            e.kind == sonde_proxy::episode::Kind::Multipart
+                && e.title().ends_with("(not completed)")
+                && newest - e.start < UPLOAD_WAITED
+        })
+        .flat_map(|e| e.records.iter().copied())
+        .collect();
+    let (out, kept): (Vec<Record>, Vec<Record>) = std::mem::take(records)
+        .into_iter()
+        .partition(|r| held.contains(&r.id));
+    *records = kept;
+    out
 }
 
 /// How long before the mark a file is still listed, and so still remembered.
@@ -133,6 +170,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
             // whole history under the prefix
             watermark: chrono::Utc::now() - chrono::Duration::from_std(pause).unwrap_or_default(),
             seen: Default::default(),
+            pending: Vec::new(),
         });
     let mut warned: HashSet<String> = HashSet::new();
     let mut sent = Vec::new();
@@ -251,6 +289,12 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
                 "{} nothing new under {src} since the last pass",
                 paint("·", "2", std::io::stderr().is_terminal())
             );
+        }
+        // uploads the passes before left open are read with this one's; the
+        // ones still open wait for the next
+        if !records.is_empty() {
+            records.splice(0..0, std::mem::take(&mut mark.pending));
+            mark.pending = hold_unfinished(&mut records);
         }
         // the seen files old enough to be past the grace are forgotten
         mark.forget_old();
@@ -689,6 +733,112 @@ mod tests {
         assert_eq!(count(), 2);
     }
 
+    /// An upload started in one pass's logs and completed in the next is
+    /// read in the second, whole: never warned of as unfinished.
+    #[tokio::test]
+    async fn an_upload_completed_in_a_later_pass_is_not_unfinished() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Arc::new(Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap());
+        sonde_core::demo::install(&s).await.unwrap();
+        let line = |at: &str, op: &str, uri: &str| {
+            format!(
+                "79a5 demo [06/Feb/2026:00:{at} +0000] 192.0.2.3 - 3E57 {op} big.bin \"{uri} HTTP/1.1\" 200 - 100 100 7 6 \"-\" \"boto3/1.34\" - x SigV4 ECDHE TLSv1.2 - -\n"
+            )
+        };
+        let put = |name: &str, text: String| {
+            let c = s.client("demo").unwrap();
+            let name = name.to_string();
+            async move {
+                c.put_object("demo", &name, bytes::Bytes::from(text), &[])
+                    .await
+                    .unwrap();
+            }
+        };
+        put(
+            "uplogs/2026-02-06-00-01-00-AB",
+            line("00:38", "REST.POST.UPLOADS", "POST /demo/big.bin?uploads")
+                + &line(
+                    "00:39",
+                    "REST.PUT.PART",
+                    "PUT /demo/big.bin?partNumber=1&uploadId=u1",
+                )
+                + &line("00:40", "REST.GET.OBJECT", "GET /demo/other"),
+        )
+        .await;
+        assert_eq!(
+            watch_logs(&s, &logs("demo", "s3://demo/uplogs/"))
+                .await
+                .unwrap(),
+            0
+        );
+        let sessions = || {
+            let mut all: Vec<_> = std::fs::read_dir(s.paths().sessions())
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
+                .collect();
+            all.sort();
+            all
+        };
+        let unfinished = |path: &std::path::Path| {
+            let session = Session::open(path).unwrap();
+            let eps = episodes(&session.records);
+            let obs = observations(&session.records, &eps);
+            (
+                session.records.len(),
+                obs.iter().any(|o| o.phrases[0].key == "obs.unfinished"),
+            )
+        };
+        let first = sessions();
+        assert_eq!(first.len(), 1);
+        assert_eq!(unfinished(&first[0]), (1, false), "the upload waits");
+        put(
+            "uplogs/2026-02-06-00-02-00-CD",
+            line(
+                "01:10",
+                "REST.POST.UPLOAD",
+                "POST /demo/big.bin?uploadId=u1",
+            ),
+        )
+        .await;
+        assert_eq!(
+            watch_logs(&s, &logs("demo", "s3://demo/uplogs/"))
+                .await
+                .unwrap(),
+            0
+        );
+        let all = sessions();
+        assert_eq!(all.len(), 2);
+        let second = all.iter().find(|p| **p != first[0]).unwrap();
+        assert_eq!(unfinished(second), (3, false), "read whole, finished");
+    }
+
+    #[test]
+    fn hold_unfinished_lets_go_of_an_upload_waited_for_a_day() {
+        let at = |h: i64| chrono::DateTime::<chrono::Utc>::UNIX_EPOCH + chrono::Duration::hours(h);
+        let rec = |h: i64, method: &str, op: &str, q: &[(&str, &str)]| Record {
+            time: at(h),
+            method: method.into(),
+            operation: op.into(),
+            bucket: Some("b".into()),
+            key: Some("big".into()),
+            status: Some(200),
+            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+            ..Default::default()
+        };
+        let started = || rec(0, "POST", "CreateMultipartUpload", &[("uploads", "")]);
+        let mut fresh = vec![started(), rec(1, "GET", "GetObject", &[])];
+        assert_eq!(hold_unfinished(&mut fresh).len(), 1);
+        assert_eq!(fresh.len(), 1);
+        let mut stale = vec![started(), rec(30, "GET", "GetObject", &[])];
+        assert!(
+            hold_unfinished(&mut stale).is_empty(),
+            "a day on: unfinished"
+        );
+        assert_eq!(stale.len(), 2);
+    }
+
     #[test]
     fn a_single_pass_over_the_logs_answers_for_itself() {
         assert_eq!(once_exit(false, false, false), 0);
@@ -704,6 +854,7 @@ mod tests {
         let mut mark = LogsMark {
             watermark: t(0),
             seen: Default::default(),
+            pending: Vec::new(),
         };
         // more files than the old limit, all within the grace
         for i in 0..50_010 {

@@ -316,7 +316,8 @@ test("tiles go in rows of equal count: four are two and two, never three and one
 test("runs of one command are told apart by the argument that differs", async () => {
   const { tellApart } = await import("../src/ui/sessionview");
   const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
-  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… http://127.0.0.1:9000/demo/README.md", "… http://127.0.0.1:9000/demo/missing.txt"]);
+  // from what differs, at the edge of its part of the path: a column that cuts at its end cuts what they share
+  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… README.md", "… missing.txt"]);
   // the same to the letter, or different from the start: left whole
   expect(tellApart(["load.py", "load.py"])).toEqual(["load.py", "load.py"]);
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
@@ -444,7 +445,7 @@ test("one function writes a duration, and a scenario has words", async () => {
 });
 
 test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
-  const { signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  const { signalTiles, brief, kindStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
   // signals as Rust counts them: slices of requests (ok, server errors, retries), the most in flight in each
   type Bin = { ok: number; server: number; retried: number; flight: number };
   const bin = (ok: number, server = 0, retried = 0, flight = 0): Bin => ({ ok, server, retried, flight });
@@ -470,12 +471,12 @@ test("a run reads as four signals and in flight; what a log without times cannot
       firstByte: null,
       sizes: { request: [], response: [], throughput: [], mibPerSec: null },
       statuses: [],
-      cost: { amount: 0, currency: "USD", operations: [] },
+      cost: { amount: 0, currency: "USD", kinds: [] },
       prefixes: [],
     } as unknown as Signals;
   };
   const bins = [bin(30, 0, 0, 2), bin(9, 1, 2, 4)];
-  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0, operations: [] };
+  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0, kinds: [] };
   const s = signalsOf(bins, 2000, 39936, 0);
   expect(s.rate.value).toBe(20);
   expect(s.inFlight.series).toEqual([2, 4]);
@@ -525,9 +526,9 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
   expect(quick.every((x) => x.series.length === 0)).toBe(true);
-  // the run by operation: Rust's table
-  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] } });
-  expect(own).toEqual([{ operation: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
+  // the run by kind: Rust's table
+  const own = kindStats({ summary: { ...summary, kinds: [{ kind: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] } });
+  expect(own).toEqual([{ kind: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
   // sizes by their bounds; a prefix by the nearer of its two limits
   expect(sizeLabel(0)).toBe("empty");
   expect(sizeLabel(1024)).toBe("≤ 1.0 KiB");

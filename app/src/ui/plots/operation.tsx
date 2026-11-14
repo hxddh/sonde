@@ -28,7 +28,7 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
       const s = new Date(r.time).getTime() - t0();
       // the wait for the first byte, then the body: one bar in two shades
       const first = r.firstByteMs != null && r.firstByteMs < r.latencyMs ? r.firstByteMs : null;
-      return { id: r.id, op: r.operation, target: r.target, start: s, firstEnd: s + (first ?? Math.max(r.latencyMs, 0.3)), end: s + Math.max(r.latencyMs, 0.3), tone: statusTone(r.status), status: r.status, ms: r.latencyMs, first };
+      return { id: r.id, op: r.kind, target: r.target, start: s, firstEnd: s + (first ?? Math.max(r.latencyMs, 0.3)), end: s + Math.max(r.latencyMs, 0.3), tone: statusTone(r.status), status: r.status, ms: r.latencyMs, first };
     });
   const hovered = signal<number | null>(null);
   const end = () => Math.max(...rows().map((r) => r.end), 1);

@@ -54,12 +54,14 @@
       },
       "beforeSummaryText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }
       },
       "afterSummaryText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }

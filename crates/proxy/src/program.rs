@@ -10,16 +10,42 @@ use crate::profile::Profile;
 use crate::summary::is_miss;
 use reqlog::Record;
 
-/// The program a session ran, as runs of it are grouped: its command with
-/// spaces collapsed. A replay, an imported log or a recording without a
-/// command has none.
+/// The program a session ran, as runs of it are grouped: its command's
+/// words (quotes undone, spaces collapsed) with what changes from run to run
+/// said as what it is ([`crate::profile::stable`]: `etl.py --date
+/// 2026-11-14` and `--date 2026-11-13` are one program), and a trial's place
+/// left out (`{trial}`, `$SONDE_TRIAL`: adding one keeps the program's
+/// history). A replay, an imported log or a recording without a command has
+/// none.
 pub fn program_key(command: Option<&str>) -> Option<String> {
-    let c = command?.split_whitespace().collect::<Vec<_>>().join(" ");
+    let c = command?.trim();
     if c.is_empty() || c.starts_with("replay of ") || c.starts_with("imported from ") {
-        None
-    } else {
-        Some(c)
+        return None;
     }
+    let words: Vec<String> = shell_words(c)
+        .iter()
+        .map(|w| without_trial(&unquote(w)))
+        .collect();
+    let words: Vec<&str> = words.iter().flat_map(|w| w.split_whitespace()).collect();
+    Some(crate::profile::stable_words(&words.join(" ")))
+}
+
+/// A word without the trial's place in it (`{trial}`, `$SONDE_TRIAL`,
+/// `${SONDE_TRIAL}`, `%SONDE_TRIAL%`) and the one separator before it:
+/// `s3://b/etl-{trial}/` is `s3://b/etl/`.
+fn without_trial(word: &str) -> String {
+    let mut w = word.to_string();
+    for place in ["{trial}", "${SONDE_TRIAL}", "$SONDE_TRIAL", "%SONDE_TRIAL%"] {
+        while let Some(at) = w.find(place) {
+            let from = w[..at]
+                .char_indices()
+                .next_back()
+                .filter(|(_, c)| "-_./=:".contains(*c))
+                .map_or(at, |(i, _)| i);
+            w.replace_range(from..at + place.len(), "");
+        }
+    }
+    w
 }
 
 /// The program a session is a run of: the name it was given, else its
@@ -566,16 +592,19 @@ pub struct Check {
 
 /// Whether the project expects finding `o`: an entry of `expect` is its
 /// identity, or its kind for every finding of that kind. A key in an entry
-/// is read as an identity says it (`jobs/{n}/`), whatever it was named in.
+/// is read as an identity says it (`jobs/{n}/`) by the rules of now
+/// ([`crate::profile::IDENTITY_RULES`]), whatever it was named in.
 pub fn expected(o: &Observation, expect: &[String]) -> bool {
     if expect.is_empty() {
         return false;
     }
     let id = crate::profile::finding_identity(o);
     let kind = id.split('|').next().unwrap_or("");
+    // an entry made by older rules is read by these; one that names what
+    // two findings of a run share names both
     expect.iter().any(|e| {
         let e = e.trim();
-        e == kind || e == id || expected_identity(e) == id
+        e == kind || e == id || expected_identity(e) == id || e == expected_identity(&id)
     })
 }
 
@@ -906,6 +935,23 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     }
 }
 
+/// [`check_closing`] of a run whose program may have failed (`exit`, not
+/// 0): a failed run is said to have failed first, whatever its figures.
+pub fn run_closing(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> String {
+    let closing = check_closing(c, trials);
+    match exit {
+        Some(x) if closing == "nothing checked" => format!("the program failed (exit {x})"),
+        Some(x) => format!("the program failed (exit {x}); {closing}"),
+        None => closing,
+    }
+}
+
+/// [`check_passed`] of a run whose program may have failed (`exit`, not
+/// 0): a run that failed fails its check.
+pub fn run_passed(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> bool {
+    exit.is_none() && check_passed(c, trials)
+}
+
 /// Whether a check, with the run's trials, passed: every row of the budget
 /// and the baseline, and no trial that broke.
 pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
@@ -1046,8 +1092,8 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     };
     let mut md = format!(
         "### sonde: {} {}\n",
-        check_closing(c, m.trials),
-        if check_passed(c, m.trials) && m.failed.is_none() {
+        run_closing(c, m.trials, m.failed.map(|(x, _)| x)),
+        if run_passed(c, m.trials, m.failed.map(|(x, _)| x)) {
             "✅"
         } else {
             "❌"
@@ -1500,12 +1546,53 @@ mod tests {
     #[test]
     fn programs_are_their_commands_and_replays_are_none() {
         assert_eq!(
-            program_key(Some("  python  etl.py  --day 1 ")).as_deref(),
-            Some("python etl.py --day 1")
+            program_key(Some("  python3  etl.py  --day 1 ")).as_deref(),
+            Some("python3 etl.py --day {n}")
+        );
+        assert_eq!(
+            program_key(Some("sh -c 'aws s3 cp job1.py s3://b/x'")).as_deref(),
+            Some("sh -c aws s3 cp job1.py s3://b/x")
         );
         assert_eq!(program_key(Some("replay of etl")), None);
         assert_eq!(program_key(Some("imported from CloudTrail")), None);
         assert_eq!(program_key(None), None);
+    }
+
+    /// What changes from one run of a command to the next is not another
+    /// program: a date, a scratch folder's id, a trial's place.
+    #[test]
+    fn a_program_is_its_command_with_what_changes_between_runs_left_out() {
+        let key = |c: &str| program_key(Some(c)).unwrap();
+        assert_eq!(
+            key("python etl.py --date 2026-11-14"),
+            key("python etl.py --date 2026-11-13")
+        );
+        assert_eq!(
+            key("python etl.py --date 2026-11-14"),
+            "python etl.py --date {date}"
+        );
+        assert_eq!(
+            key("./load --run 3fa2b1c9-58cc-4372-a567-0e02b2c3d479"),
+            key("./load --run 0e02b2c3-58cc-4372-a567-3fa2b1c9d479")
+        );
+        // a trial's place, in the command or by its variable: the program
+        // it was before one was added
+        assert_eq!(
+            key("python etl.py 's3://scratch/etl-{trial}/'"),
+            key("python etl.py s3://scratch/etl/")
+        );
+        assert_eq!(
+            key("python etl.py --prefix={trial}"),
+            key("python etl.py --prefix")
+        );
+        assert_eq!(key("sh -c 'etl $SONDE_TRIAL'"), key("sh -c etl"));
+        assert_eq!(key("python etl.py {trial}"), key("python etl.py"));
+        // what does not change stays: two programs stay two
+        assert_ne!(
+            key("python etl.py --day mon"),
+            key("python etl.py --day tue")
+        );
+        assert_ne!(key("python load.py"), key("python etl.py"));
     }
 
     #[test]

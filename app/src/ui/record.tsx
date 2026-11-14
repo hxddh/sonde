@@ -115,7 +115,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
         </If>
         <View class="flex-row items-center gap-2">
           <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} injected={r().injected} />
-          <Title>{r().operation}</Title>
+          <Title>{r().kind}</Title>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
       </View>

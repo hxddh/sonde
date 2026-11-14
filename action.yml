@@ -10,7 +10,7 @@ inputs:
     description: The program's command, as you would type it (`python etl.py --day 2`).
     required: true
   run-args:
-    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--allow-writes`, `--demo`).
+    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`).
     default: ""
   name:
     description: The program's name (default `[program] name` in sonde.toml, else its command).

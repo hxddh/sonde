@@ -47,6 +47,10 @@ export function hm(s: string | null | undefined): string {
   return dateFormat("time")?.format(d) ?? `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
+/** Between a figure and its unit: a space that does not break in Chinese, where a line may break at any
+ * character and left "5.7" at one line's end and "ms" at the next's start (English breaks at words). */
+const unitGap = () => (lang() === "zh" ? "\u00a0" : " ");
+
 export function bytes(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
@@ -62,7 +66,7 @@ export function bytes(n: number | null | undefined): string {
     v /= 1024;
     i++;
   }
-  return i === 0 ? `${Math.round(n)} B` : `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
+  return i === 0 ? `${Math.round(n)}${unitGap()}B` : `${v.toFixed(v >= 100 ? 0 : 1)}${unitGap()}${units[i]}`;
 }
 
 /** Bytes sent and received, the one way everywhere: "↑ 78.1 KiB ↓ 75.1 KiB". */
@@ -127,16 +131,17 @@ export function duration(v: number, as: "measured" | "age" | "counter" = "measur
     return h ? `${h}:${p2(Math.floor((s % 3600) / 60))}:${p2(s % 60)}` : `${Math.floor(s / 60)}:${p2(s % 60)}`;
   }
   const a = Math.abs(v);
-  if (a === 0) return "0 ms";
-  if (a < 9.95) return `${v.toFixed(1)} ms`;
-  if (a < 999.5) return `${Math.round(v)} ms`;
-  if (a < 9995) return `${(v / 1000).toFixed(2)} s`;
-  if (a < 59950) return `${(v / 1000).toFixed(1)} s`;
+  const g = unitGap();
+  if (a === 0) return `0${g}ms`;
+  if (a < 9.95) return `${v.toFixed(1)}${g}ms`;
+  if (a < 999.5) return `${Math.round(v)}${g}ms`;
+  if (a < 9995) return `${(v / 1000).toFixed(2)}${g}s`;
+  if (a < 59950) return `${(v / 1000).toFixed(1)}${g}s`;
   const s = Math.round(a / 1000);
   const sign = v < 0 ? "−" : "";
-  if (s < 3600) return `${sign}${Math.floor(s / 60)} min ${p2(s % 60)} s`;
+  if (s < 3600) return `${sign}${Math.floor(s / 60)}${g}min ${p2(s % 60)}${g}s`;
   const m = Math.round(s / 60);
-  return `${sign}${Math.floor(m / 60)} h ${p2(m % 60)} min`;
+  return `${sign}${Math.floor(m / 60)}${g}h ${p2(m % 60)}${g}min`;
 }
 
 /** How long ago a moment was, as an age: "now", "5 min", "3 h", "86 d". */
@@ -190,7 +195,9 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
 
 /** A column of costs in one unit, said once in its title: the largest
  * decides it ("USD", or "USD per 1,000 runs" when every one is under a
- * cent), and every figure is in it. */
+ * cent), and every figure is in it. A figure under a hundredth of its unit
+ * is written as `costParts` writes it, to two significant figures ("0.0072"):
+ * one cost is written one way on a pane, never "<0.01" beside "0.0072". */
 export function costColumn(values: number[], currency: string): { unit: string; figures: string[] } {
   const top = Math.max(0, ...values.filter(Number.isFinite));
   const per1000 = top > 0 && top < 0.01;
@@ -199,7 +206,7 @@ export function costColumn(values: number[], currency: string): { unit: string; 
     if (!Number.isFinite(v) || v < 0) return "—";
     if (v === 0) return "0";
     const x = per1000 ? v * 1000 : v;
-    return x < 0.01 ? "<0.01" : x.toFixed(2);
+    return x < 0.01 ? x.toPrecision(2) : x.toFixed(2);
   };
   return { unit, figures: values.map(figure) };
 }

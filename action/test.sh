@@ -118,11 +118,11 @@ is "a scheduled run takes the schedule's run before it" "$(output baseline)" "$t
 is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/gh.log")" 1
 
 # the program's command as typed; its status kept for the verdict
-SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --allow-writes" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
+SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --policy allow" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
 is "record writes a session" "$(output session)" "$t/runner/sonde/run.sonde"
 is "the command's words as typed" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|-c|print(1)"
-is "run's flags and the name before --" "$(grep -c -e '^--allow-writes$' -e '^etl$' "$t/sonde.run")" 2
+is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
 
 # check: passed or not; anything else is the step's failure
 export SONDE_SESSION="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto

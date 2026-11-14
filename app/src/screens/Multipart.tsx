@@ -94,7 +94,8 @@ export function Multipart() {
       report(e);
     }
   };
-  const tone = (s: string) => (s === "covered" ? "pass" : s === "missing" ? "fail" : "warn");
+  // no rule is a caution (uploads may be kept and billed), not an error: nothing failed
+  const tone = (s: string) => (s === "covered" ? "pass" : s === "unknown" ? "neutral" : "warn");
   const age = (r: MpuReport) => t("common.days", { n: r.thresholdDays });
   if (!terminal() && !report_()) void scan();
   return (
@@ -140,7 +141,8 @@ export function Multipart() {
                     <View class="flex-1" />
                     <Text class="text-small text-muted-foreground">{t("mpu.days")}</Text>
                     <NumberField bare class={WIDTH.number} label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
-                    <Button label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
+                    {/* the fix: a rule that aborts what is left, the section's one primary */}
+                    <Button variant="primary" label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </If>
                 </View>
                 <Text class="text-body text-foreground">{core(r().lifecycle.messageText, r().lifecycle.message)}</Text>
@@ -155,7 +157,8 @@ export function Multipart() {
                   {/* what the table under it lists, and where */}
                   <Heading class="shrink-0">{t("mpu.uploads", { n: count(r().totalUploads) })}</Heading>
                   <Path path={`${r().bucket}/${r().prefix}`} class="min-w-0 flex-1 text-muted-foreground" />
-                  <Button variant="destructive" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
+                  {/* once, by hand: beside the rule that does it for good, the second act (its dialog says what goes) */}
+                  <Button variant="outline" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
                 </View>
                 {/* the table takes the sheet's remaining height: no box of its own to scroll in a scroll */}
                 <Card pad="none" class={TABLE_BOX} onWidth={(w) => tableWidth.set(w)}>

@@ -58,6 +58,7 @@ pub(super) fn change_line(f: &FindingChange, color: bool) -> String {
     let (mark, tone) = match f.state {
         State::Fixed => ("✓", "32"),
         State::Less => ("↓", "36"),
+        State::More => ("↑", "33"),
         State::New | State::Back => ("!", "33"),
         State::Open => ("·", "2"),
     };
@@ -67,23 +68,43 @@ pub(super) fn change_line(f: &FindingChange, color: bool) -> String {
         paint(f.state.label(), tone, color),
         f.text
     );
+    // how much of it, when it moved: `92 → 216`
+    if let Some([was, now]) = f.counts
+        && was != now
+        && was > 0
+        && now > 0
+    {
+        line.push_str(&paint(
+            &format!(
+                " · {} → {}",
+                output::grouped(was as u64),
+                output::grouped(now as u64)
+            ),
+            "2",
+            color,
+        ));
+    }
     if let Some(saved) = &f.saved_text {
         line.push_str(&paint(&format!(" · {saved}"), "32", color));
     }
     line
 }
 
-/// The findings of a change worth a line (fixed, less, new, back), and how
-/// many are still open, said once.
+/// The findings of a change worth a line (fixed, less, more, new, back),
+/// then those still open as they were, each named.
 pub(super) fn change_lines(findings: &[FindingChange], color: bool) -> Vec<String> {
     let mut out: Vec<String> = findings
         .iter()
         .filter(|f| f.state != State::Open)
         .map(|f| change_line(f, color))
         .collect();
-    let open = findings.iter().filter(|f| f.state == State::Open).count();
-    if open > 0 && !out.is_empty() {
-        out.push(paint(&format!("  {open} still open"), "2", color));
+    let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
+    if !open.is_empty() && !out.is_empty() {
+        out.push(paint(&format!("  {} still open:", open.len()), "2", color));
+        out.extend(
+            open.iter()
+                .map(|f| paint(&format!("    · {}", f.text), "2", color)),
+        );
     }
     out
 }
@@ -187,6 +208,7 @@ mod tests {
             text: text.into(),
             phrases: Vec::new(),
             was: None,
+            counts: None,
             predicted: Saving::default(),
             measured: None,
             saved: None,
@@ -216,10 +238,22 @@ mod tests {
                 "  ✓ fixed  HEAD before GET · saved 20 requests (predicted 20)",
                 "  ↓ less   41 one after another",
                 "  ! back   listed 5 times",
-                "  2 still open",
+                "  2 still open:",
+                "    · small uploads",
+                "    · hot key",
             ]
         );
         // nothing moved: no "still open" alone
         assert!(change_lines(&[change(State::Open, "x", None)], false).is_empty());
+    }
+
+    #[test]
+    fn a_finding_that_grew_says_more_with_its_counts() {
+        let mut grew = change(State::More, "b/logs/ was listed 216 times", None);
+        grew.counts = Some([92, 216]);
+        assert_eq!(
+            change_line(&grew, false),
+            "  ↑ more   b/logs/ was listed 216 times · 92 → 216"
+        );
     }
 }

@@ -167,17 +167,24 @@ fn policy_of(name: &str) -> Result<Policy, String> {
     })
 }
 
-/// The policy a run in `dir` is recorded under: the one asked (the app's
-/// setting, or Run's choice), narrowed by its project's `[record] policy`.
-/// A project's file may narrow what the person chose, never widen it.
-fn run_policy(asked: Policy, dir: Option<&Path>) -> Result<Policy, String> {
-    let project = match dir {
-        Some(d) => sonde_proxy::project::of(d).map_err(err_msg)?,
-        None => None,
-    };
-    Ok(match project.and_then(|p| p.policy) {
-        Some(p) => asked.stricter(p),
-        None => asked,
+/// The project a run in `dir` is of: its `sonde.toml`, or none.
+fn project_in(dir: Option<&Path>) -> Result<Option<sonde_proxy::project::Project>, String> {
+    match dir {
+        Some(d) => sonde_proxy::project::of(d).map_err(err_msg),
+        None => Ok(None),
+    }
+}
+
+/// The policy a run in `dir` is recorded under: the one asked (Run's
+/// choice) narrowed by its project's `[record] policy`; none asked, the
+/// project's, else no-delete. A project's file may narrow what the person
+/// chose, never widen it.
+fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, String> {
+    let project = project_in(dir)?.and_then(|p| p.policy);
+    Ok(match (asked, project) {
+        (Some(a), Some(p)) => a.stricter(p),
+        (Some(a), None) => a,
+        (None, p) => p.unwrap_or_default(),
     })
 }
 
@@ -269,10 +276,10 @@ async fn begin(
     let _starting = Starting;
     let s = sonde();
     let client = s.client(&endpoint).map_err(crate::state::err)?;
-    // none asked: the setting's
+    // none asked: the project's
     let asked = match policy.as_str() {
-        "" => policy_of(&s.settings().record_policy)?,
-        p => policy_of(p)?,
+        "" => None,
+        p => Some(policy_of(p)?),
     };
     let policy = run_policy(asked, cwd.as_deref())?;
     let dir = s.paths().sessions();
@@ -989,6 +996,9 @@ async fn run_recorded(
     }
     let trial = under.as_ref().map(|u| u.scenario.name.clone());
     let dir = crate::run::folder(cwd);
+    // the code that sent each request, unless its project says not
+    let callers =
+        project_in(dir.as_deref())?.is_none_or(|p| p.file.record.name_callers != Some(false));
     let view = begin(endpoint, policy, Some(command.to_string()), dir, under).await?;
     let (env_set, env_unset, writer, path) = {
         let g = RECORDING.lock();
@@ -996,9 +1006,7 @@ async fn run_recorded(
         let (mut set, unset) = r.proxy.env();
         // the code that sent each request, when asked (a Python, Node.js
         // or Java program's)
-        if sonde().settings().name_callers
-            && let Ok(v) = sonde_proxy::callers::caller_env(&sonde().paths().python_hook())
-        {
+        if callers && let Ok(v) = sonde_proxy::callers::caller_env(&sonde().paths().python_hook()) {
             set.extend(v);
         }
         set.push((
@@ -1519,6 +1527,7 @@ impl Sessions {
                             "command": h.command,
                             "requests": count_records(&p),
                             "shape": shape_of(&p),
+                            "program": h.name.clone().or_else(|| sonde_proxy::program::key_of(&h)),
                         })
                     }
                 };
@@ -1694,9 +1703,8 @@ impl Sessions {
     }
 
     /// Starts recording: a local endpoint forwarding to `endpoint`, refusing
-    /// what `policy` (`allow`, `no-delete`, `read-only`; empty: the
-    /// `record-policy` setting) forbids, and a run's project's `[record]
-    /// policy` too. What to point an application at, and the session file.
+    /// what `policy` (`allow`, `no-delete`, `read-only`; empty:
+    /// no-delete) forbids. What to point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
         begin(endpoint, policy, None, None, None).await
     }
@@ -2671,17 +2679,23 @@ mod tests {
     fn a_projects_policy_narrows_the_one_asked_and_never_widens_it() {
         let t = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(t.path().join(".git")).unwrap();
-        let at = |asked| run_policy(asked, Some(t.path()));
+        let at = |asked| run_policy(Some(asked), Some(t.path()));
         assert_eq!(at(Policy::Allow).unwrap(), Policy::Allow);
+        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::NoDelete);
         let file = t.path().join("sonde.toml");
         std::fs::write(&file, "[record]\npolicy = \"read-only\"\n").unwrap();
         assert_eq!(at(Policy::Allow).unwrap(), Policy::ReadOnly);
         std::fs::write(&file, "[record]\npolicy = \"allow\"\n").unwrap();
         assert_eq!(at(Policy::NoDelete).unwrap(), Policy::NoDelete);
+        // none asked: the project's
+        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::Allow);
         // what the command line refuses, the app refuses
         std::fs::write(&file, "[record]\npolicy = \"all\"\n").unwrap();
         assert!(at(Policy::Allow).unwrap_err().contains("one of allow"));
-        assert_eq!(run_policy(Policy::Allow, None).unwrap(), Policy::Allow);
+        assert_eq!(
+            run_policy(Some(Policy::Allow), None).unwrap(),
+            Policy::Allow
+        );
     }
 
     #[test]
@@ -3006,10 +3020,8 @@ mod tests {
         let path = dir.path().join("many.sonde");
         many(&path, 300);
         let p = path.to_string_lossy().into_owned();
-        let v = Sessions::split(p.clone(), "operation".into())
-            .await
-            .unwrap();
-        assert_eq!(v["by"], "operation");
+        let v = Sessions::split(p.clone(), "kind".into()).await.unwrap();
+        assert_eq!(v["by"], "kind");
         assert_eq!(v["sdk"], "aws-sdk-java 2.25");
         let rows = v["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
@@ -3022,7 +3034,7 @@ mod tests {
         let h = h.as_array().unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0]["operationIndex"].as_u64(), Some(7));
-        assert_eq!(h[0]["operation"], "PutObject");
+        assert_eq!(h[0]["kind"], "PutObject");
         assert_eq!(h[0]["target"], "b/data/k00007");
         let none = Sessions::key_history(p, "b".into(), "nope".into())
             .await
@@ -3075,7 +3087,7 @@ mod tests {
             v["operations"][2].get("title").is_none(),
             "said by its phrases"
         );
-        assert!(v["summary"]["operations"][0]["p99Ms"].is_number());
+        assert!(v["summary"]["kinds"][0]["p99Ms"].is_number());
         // the calls a table makes: a range in its order, one operation, where
         // a request and a moment are, the row an operation stands at
         let (_, a) = analysis_of(&p).unwrap();

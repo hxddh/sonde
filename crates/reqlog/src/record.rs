@@ -199,7 +199,9 @@ pub struct Record {
     pub time: DateTime<Utc>,
     /// The endpoint's configured id (never its credentials).
     pub endpoint: Text,
-    /// The S3 operation name, such as `ListObjectsV2`.
+    /// The request's kind: the S3 API call, such as `ListObjectsV2`
+    /// (`operation` in session format 1).
+    #[serde(rename = "kind", alias = "operation")]
     pub operation: Text,
     pub method: Text,
     /// The full URL, with presign / signature query parameters masked.
@@ -257,6 +259,7 @@ pub struct RecordSummary {
     pub id: u64,
     pub time: DateTime<Utc>,
     pub endpoint: String,
+    #[serde(rename = "kind")]
     pub operation: String,
     pub method: String,
     pub target: String,

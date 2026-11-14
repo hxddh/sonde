@@ -29,7 +29,8 @@ pub enum StatusFilter {
 #[serde(rename_all = "camelCase", default)]
 pub struct Filter {
     pub status: Option<StatusFilter>,
-    /// Operation name, matched case-insensitively.
+    /// The request's kind (`GetObject`), matched case-insensitively.
+    #[serde(rename = "kind")]
     pub operation: Option<String>,
     pub endpoint: Option<String>,
     pub job: Option<String>,

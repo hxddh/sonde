@@ -15,7 +15,8 @@
 //! | 77 | refused: a confirmation missing or mismatched |
 
 // std's, but a closed pipe ends the output, not the command: `sonde check |
-// head` keeps check's exit code ([`output::Stdout`])
+// head` keeps check's exit code ([`output::Stdout`]); and a key's control
+// characters are written out, never sent ([`sonde_fmt::terminal`])
 macro_rules! println {
     () => {
         $crate::output::print_out(format_args!(""), true)
@@ -28,6 +29,23 @@ macro_rules! println {
 macro_rules! print {
     ($($arg:tt)*) => {
         $crate::output::print_out(format_args!($($arg)*), false)
+    };
+}
+
+// and what goes to stderr: neither writes a control character sonde did not
+// put there itself ([`sonde_fmt::terminal`])
+macro_rules! eprintln {
+    () => {
+        $crate::output::print_err(format_args!(""), true)
+    };
+    ($($arg:tt)*) => {
+        $crate::output::print_err(format_args!($($arg)*), true)
+    };
+}
+
+macro_rules! eprint {
+    ($($arg:tt)*) => {
+        $crate::output::print_err(format_args!($($arg)*), false)
     };
 }
 
@@ -87,8 +105,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// A tour: a small program's requests to a built-in store, recorded and explained.
-    Demo(cmd::record::DemoArgs),
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
     /// A local S3 endpoint that records what talks to it until Ctrl-C; left running with --rotate.
@@ -121,7 +137,7 @@ enum Command {
 /// The commands as `sonde --help` lists them: by what they are for, not in
 /// one list of fourteen.
 const GROUPS: &[(&str, &[&str])] = &[
-    ("Record", &["demo", "run", "proxy", "import"]),
+    ("Record", &["run", "proxy", "import"]),
     (
         "Read a run",
         &["sessions", "show", "compare", "check", "share"],
@@ -238,7 +254,6 @@ fn main() -> ExitCode {
             }
         };
         let code = match &cli.command {
-            Command::Demo(a) => cmd::record::demo(&sonde, a).await,
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
             Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,

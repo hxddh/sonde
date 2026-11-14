@@ -129,7 +129,7 @@ async fn no_delete_writes_new_objects_and_its_own_again_but_never_over_one_there
     let over = app.send_raw(put("old", "after")).await.unwrap();
     assert_eq!(over.status, 403, "{}", over.text());
     assert!(over.text().contains("no-delete"), "{}", over.text());
-    assert!(over.text().contains("--allow-writes"), "{}", over.text());
+    assert!(over.text().contains("--policy allow"), "{}", over.text());
     assert_eq!(body_of(&store, "old").as_deref(), Some("before"));
     // the If-None-Match was sonde's: not on the record, which says refused
     let rec = log

@@ -251,7 +251,14 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let (before, after) = runs_compared(s, &a.runs)?;
+    let (before, after) = match runs_compared(s, &a.runs)? {
+        Ok(two) => two,
+        // a program's first run: nothing is wrong, there is nothing before it
+        Err(first) => {
+            eprintln!("{first}");
+            return Ok(0);
+        }
+    };
     // one run read, reckoned and let go before the other is read: two runs
     // cost what the larger does, not both at once (the later counted
     // against what the earlier's findings would save)
@@ -327,8 +334,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         && c.errors.0 == c.errors.1
         && ms_text(c.waiting_ms.0) == ms_text(c.waiting_ms.1)
         && c.cost.0 == c.cost.1
-        && c.resolved.is_empty()
-        && c.appeared.is_empty()
+        && c.findings
+            .iter()
+            .all(|f| f.state == sonde_proxy::fixloop::State::Open)
         && c.groups.iter().all(|g| g.requests.0 == g.requests.1);
     if unchanged {
         println!(
@@ -411,19 +419,24 @@ fn file_name(p: &std::path::Path) -> String {
 
 /// The two runs `sonde compare` compares: the two given; one given and its
 /// program's run before it; none, the newest run and the one before it.
-fn runs_compared(s: &Sonde, runs: &[PathBuf]) -> anyhow::Result<(PathBuf, PathBuf)> {
+/// The two runs compared; or, for a program's first run, what says there
+/// is none before it.
+fn runs_compared(
+    s: &Sonde,
+    runs: &[PathBuf],
+) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
     match runs {
-        [before, after] => Ok((
+        [before, after] => Ok(Ok((
             super::sessions::resolve(s, before),
             super::sessions::resolve(s, after),
-        )),
+        ))),
         [one] => before_of(&super::sessions::resolve(s, one)),
         _ => before_of(&newest_session(s)?),
     }
 }
 
-/// A run and its program's run before it.
-fn before_of(after: &std::path::Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+/// A run and its program's run before it, or why it has none (its first).
+fn before_of(after: &std::path::Path) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
     let h = sonde_proxy::session::read_header(after)
         .ok_or_else(|| super::usage(format!("{} is not a sonde session", after.display())))?;
     let key = sonde_proxy::program::key_of(&h).ok_or_else(|| {
@@ -437,14 +450,14 @@ fn before_of(after: &std::path::Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         &key,
         h.created,
         after,
-    )
-    .ok_or_else(|| {
-        super::usage(format!(
-            "{} is the first run of `{key}`: run it again after a change, then compare",
+    );
+    Ok(match before {
+        Some(before) => Ok((before, after.to_path_buf())),
+        None => Err(format!(
+            "{} is the first run of `{key}`: there is no run before it to compare with. Run it again after a change, then compare.",
             file_name(after)
-        ))
-    })?;
-    Ok((before, after.to_path_buf()))
+        )),
+    })
 }
 
 #[cfg(test)]
