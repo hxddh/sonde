@@ -135,6 +135,12 @@ fn init_project(
         );
         return Ok(64);
     }
+    // a budget of nothing is a program whose requests went elsewhere
+    if run.requests == 0 {
+        eprintln!(
+            "warning: the run sent sonde no requests, so max-requests = 0: its SDK probably did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` lists how each SDK is pointed at it). Record a run that sends its requests, then `check --init` again"
+        );
+    }
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits

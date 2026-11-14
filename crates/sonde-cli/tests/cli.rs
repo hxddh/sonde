@@ -2220,6 +2220,12 @@ fn check_init_names_the_action_at_this_major_version() {
         "{}",
         stderr(&c)
     );
+    // `true` sends nothing: a budget of no requests is said for what it is
+    assert!(
+        stderr(&c).contains("its SDK probably did not use the endpoint"),
+        "{}",
+        stderr(&c)
+    );
 }
 
 /// The program that reads one hour's partition, as an hourly job does.
