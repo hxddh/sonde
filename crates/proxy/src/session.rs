@@ -720,6 +720,8 @@ impl Session {
         let Gathered {
             mut records, logs, ..
         } = all;
+        // (no room past the last: a million records are 120 MiB)
+        records.shrink_to_fit();
         // ids name records everywhere (operations, findings, the inspector): a
         // file joined from two recordings repeats them, so number them afresh
         let mut seen = std::collections::HashSet::with_capacity(records.len());

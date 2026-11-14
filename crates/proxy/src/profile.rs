@@ -1302,8 +1302,12 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
 
     let sum_ms: f64 = records.iter().map(|r| r.latency_ms.max(0.0)).sum();
     // the distribution, every request in it (not a sample)
-    let mut all: Vec<f64> = records.iter().map(|r| r.latency_ms.max(0.0)).collect();
-    all.sort_by(f64::total_cmp);
+    // (the slices' latencies are every request's)
+    let mut all = took;
+    for v in &mut all {
+        *v = v.max(0.0);
+    }
+    all.sort_unstable_by(f64::total_cmp);
     let q = |p: f64| percentile(&all, p);
     let mut latency: Vec<LatencyBucket> = LATENCY_EDGES
         .iter()

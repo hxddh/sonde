@@ -340,64 +340,89 @@ fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
     if places.is_empty() {
         return out;
     }
-    let mut groups: std::collections::HashMap<String, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (i, r) in records.iter().enumerate() {
-        if !places.contains(&(r.bucket.as_deref(), r.key.as_deref())) {
-            continue;
-        }
-        groups.entry(request_name(r)).or_default().push(i);
-    }
-    for group in groups.values_mut() {
-        if !group
-            .iter()
-            .any(|&i| crate::episode::retryable(&records[i]))
-        {
-            continue;
-        }
-        group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
-        // (failure, its retry, the wait between them), in time order
-        let mut links: Vec<(usize, usize, i64)> = Vec::new();
-        let mut free = 0;
-        for at in 0..group.len() {
-            let r = &records[group[at]];
-            if !crate::episode::retryable(r) {
-                continue;
+    // the requests there by their name: by a hash of it, sorted (no name is
+    // kept), and by the name itself where two hashes meet
+    let hash = |r: &Record| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        request_name(r).hash(&mut h);
+        h.finish()
+    };
+    let mut named: Vec<(u64, u32)> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| places.contains(&(r.bucket.as_deref(), r.key.as_deref())))
+        .map(|(i, r)| (hash(r), i as u32))
+        .collect();
+    named.sort_unstable();
+    for same in named.chunk_by(|a, b| a.0 == b.0) {
+        let mut group: Vec<usize> = same.iter().map(|&(_, i)| i as usize).collect();
+        if group.len() > 1 {
+            let mut by_name: Vec<(String, usize)> = group
+                .iter()
+                .map(|&i| (request_name(&records[i]), i))
+                .collect();
+            by_name.sort_unstable();
+            for one in by_name.chunk_by(|a, b| a.0 == b.0) {
+                group = one.iter().map(|(_, i)| *i).collect();
+                link_retries(records, &mut group, &mut out);
             }
-            let told = end_us(r);
-            free = free.max(at + 1);
-            while free < group.len() && start_us(&records[group[free]]) < told {
-                free += 1;
-            }
-            if let Some(&next) = group.get(free) {
-                let wait = start_us(&records[next]) - told;
-                if wait <= RETRY_WINDOW_US {
-                    links.push((at, free, wait));
-                    free += 1;
-                }
-            }
-        }
-        // chains of failures each followed by the next: a steady one is a poll
-        let mut i = 0;
-        while i < links.len() {
-            let mut j = i + 1;
-            while j < links.len() && links[j].0 == links[j - 1].1 {
-                j += 1;
-            }
-            let chain = &links[i..j];
-            let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
-            waits.sort_unstable();
-            let mid = waits[waits.len() / 2];
-            let poll = chain.len() >= 3
-                && waits[0] >= POLL_MIN_US
-                && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
-            if !poll {
-                out.extend(chain.iter().map(|l| (group[l.0], group[l.1])));
-            }
-            i = j;
+        } else {
+            link_retries(records, &mut group, &mut out);
         }
     }
     out
+}
+
+/// [`retry_links`] among the requests of one name (`group`, by index).
+fn link_retries(records: &[Record], group: &mut [usize], out: &mut Vec<(usize, usize)>) {
+    if !group
+        .iter()
+        .any(|&i| crate::episode::retryable(&records[i]))
+    {
+        return;
+    }
+    group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
+    // (failure, its retry, the wait between them), in time order
+    let mut links: Vec<(usize, usize, i64)> = Vec::new();
+    let mut free = 0;
+    for at in 0..group.len() {
+        let r = &records[group[at]];
+        if !crate::episode::retryable(r) {
+            continue;
+        }
+        let told = end_us(r);
+        free = free.max(at + 1);
+        while free < group.len() && start_us(&records[group[free]]) < told {
+            free += 1;
+        }
+        if let Some(&next) = group.get(free) {
+            let wait = start_us(&records[next]) - told;
+            if wait <= RETRY_WINDOW_US {
+                links.push((at, free, wait));
+                free += 1;
+            }
+        }
+    }
+    // chains of failures each followed by the next: a steady one is a poll
+    let mut i = 0;
+    while i < links.len() {
+        let mut j = i + 1;
+        while j < links.len() && links[j].0 == links[j - 1].1 {
+            j += 1;
+        }
+        let chain = &links[i..j];
+        let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
+        waits.sort_unstable();
+        let mid = waits[waits.len() / 2];
+        let poll = chain.len() >= 3
+            && waits[0] >= POLL_MIN_US
+            && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
+        if !poll {
+            out.extend(chain.iter().map(|l| (group[l.0], group[l.1])));
+        }
+        i = j;
+    }
 }
 
 /// The smallest body whose transfer is timed against its size: under it the
@@ -563,7 +588,6 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
     let mut took = vec![0f64; slice_at[bins]];
     let mut filled = slice_at.clone();
-    let mut all: Vec<f64> = Vec::with_capacity(records.len());
     let mut counts = ErrorCounts::default();
     let (mut up_bytes, mut down_bytes, mut retries_total) = (0u64, 0u64, 0u64);
     let mut ops: BTreeMap<&str, Op> = BTreeMap::new();
@@ -596,7 +620,6 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         n[i] += 1.0;
         took[filled[i]] = latency_ms;
         filled[i] += 1;
-        all.push(latency_ms);
 
         let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
         up[i] += u as f64;
@@ -705,12 +728,6 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
 
     // latency: the whole run's and each slice's, by the profile's definition
-    let whole = bands(&mut all);
-    let (whole50, whole95, whole99) = (
-        timed.then_some(whole.0),
-        timed.then_some(whole.1),
-        timed.then_some(whole.2),
-    );
     let (mut p50, mut p95, mut p99) = (zeros(), zeros(), zeros());
     for i in 0..bins {
         let l = &mut took[slice_at[i]..slice_at[i + 1]];
@@ -718,6 +735,13 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             (p50[i], p95[i], p99[i]) = bands(l);
         }
     }
+    // (the slices' times are every request's: the whole run's, once the slices are done)
+    let whole = bands(&mut took);
+    let (whole50, whole95, whole99) = (
+        timed.then_some(whole.0),
+        timed.then_some(whole.1),
+        timed.then_some(whole.2),
+    );
 
     // in flight: the requests in the order they started, the ends of those
     // still running kept by time (as many as are in flight, never all of

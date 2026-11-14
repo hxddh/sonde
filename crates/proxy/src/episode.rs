@@ -1822,6 +1822,34 @@ enum ById<V> {
     Map(std::collections::HashMap<u64, V>),
 }
 
+/// Each record by its id: looked up in place when the records are in the
+/// order of their ids (a recording's are), else through a [`ById`].
+enum RecordsById<'a> {
+    InOrder(&'a [Record]),
+    Table(ById<&'a Record>),
+}
+
+impl<'a> RecordsById<'a> {
+    fn of(records: &'a [Record]) -> RecordsById<'a> {
+        if records.is_sorted_by(|a, b| a.id < b.id) {
+            return RecordsById::InOrder(records);
+        }
+        RecordsById::Table(ById::of(records.len(), || {
+            records.iter().map(|r| (r.id, r))
+        }))
+    }
+
+    fn get(&self, id: &u64) -> Option<&'a Record> {
+        match self {
+            RecordsById::InOrder(records) => records
+                .binary_search_by_key(id, |r| r.id)
+                .ok()
+                .map(|i| &records[i]),
+            RecordsById::Table(t) => t.get(id).copied(),
+        }
+    }
+}
+
 impl<V> ById<V> {
     /// Of `n` ids or so, given twice over (once to see how they lie).
     fn of<I: Iterator<Item = (u64, V)>>(n: usize, pairs: impl Fn() -> I) -> ById<V> {
@@ -1878,7 +1906,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let at = |normal: usize, least: usize| if any { least } else { normal };
     let most = at(3, usize::MAX);
     // each record by its id: read once, for every finding that names requests
-    let by_id: ById<&Record> = ById::of(records.len(), || records.iter().map(|r| (r.id, r)));
+    let by_id = RecordsById::of(records);
     // which episode each record belongs to
     let owner: ById<u32> = ById::of(records.len(), || {
         episodes
@@ -2016,7 +2044,6 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 .iter()
                 .filter_map(|id| at.get(id))
                 .min_by_key(|r| (r.time, r.id))
-                .copied()
             else {
                 continue;
             };
@@ -2120,8 +2147,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         .into_iter()
         .filter(|(_, rs)| rs.len() >= at(5, 2))
         .filter(|((b, prefix), rs)| {
-            let first = rs.iter().map(|r| (r.time, r.id)).min();
-            let last = rs.iter().map(|r| (r.time, r.id)).max();
+            let first = rs.iter().map(|r| order_of(r)).min();
+            let last = rs.iter().map(|r| order_of(r)).max();
             let (Some(first), Some(last)) = (first, last) else {
                 return false;
             };
@@ -2464,7 +2491,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .episodes
             .iter()
             .filter_map(|&i| episodes.get(i))
-            .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id).copied()))
+            .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id)))
             .collect();
         (o.callers, o.sdk) = crate::callers::of(&rs);
     }
@@ -2481,7 +2508,7 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
         let Some(b) = r.bucket.as_deref() else {
             continue;
         };
-        let at = (r.time, r.id);
+        let at = order_of(r);
         let w = out.entry(b).or_default();
         if let Some(k) = r.key.as_deref() {
             w.push((at, k));
@@ -2499,13 +2526,18 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
         }
     }
     for w in out.values_mut() {
-        w.sort();
+        w.sort_unstable();
     }
     out
 }
 
-/// When a request was sent, as requests are ordered.
-type Order = (DateTime<Utc>, u64);
+/// When a request was sent, as requests are ordered: its time in
+/// nanoseconds, then its id.
+type Order = (i64, u64);
+
+fn order_of(r: &Record) -> Order {
+    (r.time.timestamp_nanos_opt().unwrap_or(i64::MAX), r.id)
+}
 
 /// Whether a write that `changes` sits strictly between `first` and `last`.
 fn written_between(
@@ -2543,7 +2575,7 @@ fn unchanging_reads<'a>(
         if crate::summary::is_failure(r) {
             continue;
         }
-        let at = (r.time, r.id);
+        let at = order_of(r);
         let whole = header(r, "range").is_none() && query(r, "partNumber").is_none();
         let etag = response_header(r, "etag");
         let e = reads.entry((b, k)).or_insert((at, at, true, etag));
