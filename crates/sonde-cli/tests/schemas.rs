@@ -310,6 +310,24 @@ async fn every_json_output_is_as_its_schema_says() {
 
     // reading a session
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
+    // one with nothing found: no what-if, as the schema says
+    {
+        let quiet = b.path("quiet.log");
+        std::fs::write(
+            &quiet,
+            "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n",
+        )
+        .unwrap();
+        let q = b.path("quiet.sonde");
+        let text = std::fs::read_to_string(&quiet).unwrap();
+        let (_, session) = sonde_proxy::import::import(&text, "quiet").unwrap();
+        sonde_proxy::import::save(&session, &q).unwrap();
+        let q = q.to_str().unwrap();
+        let shown = b.json(&["show", q, "-f", "json"], 0).await;
+        assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
+        holds("show", &shown);
+        holds("show-summary", &b.json(&["show", q, "--summary", "-f", "json"], 0).await);
+    }
     holds(
         "show",
         &b.json(&["show", s, "--errors", "-f", "json"], 0).await,
