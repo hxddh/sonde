@@ -74,24 +74,22 @@ jobs:
       - name: What this release skipped
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           NSH_PACKAGE_KEY: ${{ secrets.NSH_PACKAGE_KEY }}
           NSH_PACKAGE_CERT: ${{ secrets.NSH_PACKAGE_CERT }}
         run: |
           skipped=()
           [ -n "$MACOS_CERTIFICATE_P12" ] || skipped+=("- The macOS app is not signed with a Developer ID: Gatekeeper refuses the \`.dmg\` until you right-click → Open, or run \`xattr -d com.apple.quarantine sonde.app\`.")
-          [ -n "$APPLE_ID" ] || skipped+=("- The \`.dmg\` is not notarized.")
+          [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$APPLE_API_KEY" ] || skipped+=("- The macOS app and \`.dmg\` are not notarized.")
+          [ -n "$AZURE_CLIENT_ID" ] || skipped+=("- \`sonde.exe\` and the Windows app are not signed (no Authenticode): SmartScreen warns before the first start; **More info → Run anyway**.")
           [ -n "$NSH_PACKAGE_KEY" ] && [ -n "$NSH_PACKAGE_CERT" ] || skipped+=("- No signed package of the app's code: an installed app updates only by installing the new app.")
-          # (no Windows signing yet: the release says so until there is)
-          skipped+=("- \`sonde.exe\` and the Windows app are not signed (no Authenticode): SmartScreen warns before the first start; **More info → Run anyway**.")
           if [ ${#skipped[@]} -gt 0 ]; then
             { echo; echo "### Not in this release"; echo; printf '%s\n' "${skipped[@]}"; } >> notes.md
             printf '::warning title=Skipped::%s\n' "${skipped[@]}"
           fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/nsh
-        # (its main at 2ca3b80: D-207)
-        with: { rev: 2ca3b8005cf00907c8c501ad9ba5f21f576fee84 }
       # the app's code alone, signed: installed apps that trust the root run
       # it without a new app (skipped without the release key and its certificate)
       - name: Signed package of the app's code

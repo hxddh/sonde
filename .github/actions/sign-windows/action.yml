@@ -1,0 +1,64 @@
+name: Sign for Windows
+description: >-
+  Signs Windows executables with Azure Trusted Signing (Authenticode, timestamped). Without the
+  signing secrets it signs nothing and says so: a notice, or in a release a warning.
+inputs:
+  files:
+    description: The executables, one absolute path a line
+    required: true
+  release:
+    description: "true: a missing secret is a warning, not a notice"
+    default: "false"
+  tenant-id: { description: AZURE_TENANT_ID, default: "" }
+  client-id: { description: AZURE_CLIENT_ID, default: "" }
+  client-secret: { description: AZURE_CLIENT_SECRET, default: "" }
+  endpoint: { description: "AZURE_SIGNING_ENDPOINT (https://<region>.codesigning.azure.net/)", default: "" }
+  account: { description: AZURE_SIGNING_ACCOUNT, default: "" }
+  profile: { description: AZURE_SIGNING_PROFILE (the certificate profile), default: "" }
+runs:
+  using: composite
+  steps:
+    - id: have
+      shell: bash
+      env:
+        TENANT: ${{ inputs.tenant-id }}
+        CLIENT: ${{ inputs.client-id }}
+        SECRET: ${{ inputs.client-secret }}
+        ENDPOINT: ${{ inputs.endpoint }}
+        ACCOUNT: ${{ inputs.account }}
+        PROFILE: ${{ inputs.profile }}
+        RELEASE: ${{ inputs.release }}
+        FILES: ${{ inputs.files }}
+      run: |
+        missing=()
+        for v in TENANT CLIENT SECRET ENDPOINT ACCOUNT PROFILE; do [ -n "${!v}" ] || missing+=("$v"); done
+        if [ ${#missing[@]} -gt 0 ]; then
+          level=notice; [ "$RELEASE" = true ] && level=warning
+          echo "::$level title=Not signed::no Azure Trusted Signing secrets (AZURE_*): $(echo "$FILES" | xargs -n1 basename | paste -sd, -) not signed"
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        fi
+    - if: steps.have.outputs.ok == 'true'
+      uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+      with:
+        azure-tenant-id: ${{ inputs.tenant-id }}
+        azure-client-id: ${{ inputs.client-id }}
+        azure-client-secret: ${{ inputs.client-secret }}
+        endpoint: ${{ inputs.endpoint }}
+        signing-account-name: ${{ inputs.account }}
+        certificate-profile-name: ${{ inputs.profile }}
+        files: ${{ inputs.files }}
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+    - if: steps.have.outputs.ok == 'true'
+      shell: pwsh
+      env:
+        FILES: ${{ inputs.files }}
+      run: |
+        foreach ($f in ($env:FILES -split "`n" | Where-Object { $_.Trim() })) {
+          $s = Get-AuthenticodeSignature $f.Trim()
+          if ($s.Status -ne 'Valid') { Write-Error "$f is not signed: $($s.Status)"; exit 1 }
+          Write-Output "$f signed by $($s.SignerCertificate.Subject)"
+        }

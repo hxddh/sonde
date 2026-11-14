@@ -5,11 +5,11 @@
 | `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release`, then `cargo build --release -p sonde-cli --features tui`: CLI and terminal UI in one binary, bundle and web viewer embedded. |
 | `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same, statically linked: runs on Alpine, distroless, old distributions (checked in `alpine`). `install.sh` takes it on musl systems or with `SONDE_STATIC=1`. |
 | `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 15 (arm64) and macOS 15 Intel | The same. |
-| `sonde-windows-x86_64.zip` | `build.yml` on Windows (`x86_64-pc-windows-msvc`) | The same, `sonde.exe` in a `.zip`. Unsigned. |
-| `sonde-macos.dmg` | `build.yml` on macOS 15 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), `scripts/macos-sign.sh` (Developer ID, hardened runtime), `scripts/macos-dmg.sh`, `scripts/macos-notarize.sh` (notarytool, stapled). |
-| `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 15 | The `.app` archived for the updater. |
+| `sonde-windows-x86_64.zip` | `build.yml` on Windows (`x86_64-pc-windows-msvc`) | The same, `sonde.exe` (signed) in a `.zip`. |
+| `sonde-macos.dmg` | `build.yml` on macOS 15 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), then signed and notarized (below), and `scripts/macos-dmg.sh`. |
+| `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 15 | The signed, stapled `.app` archived for the updater. |
 | `sonde-<version>-linux-x86_64.tar.gz` | `build.yml` on Ubuntu 24.04 | `nsh package app/App.tsx --target linux`: the desktop app on GTK 4 and WebKitGTK 6 (needs `libgtk-4-1`, `libwebkitgtk-6.0-4`, GStreamer). |
-| `sonde-<version>-windows-x86_64.zip` | `build.yml` on Windows | `nsh package app/App.tsx --target windows`. Unsigned. |
+| `sonde-<version>-windows-x86_64.zip` | `build.yml` on Windows | `nsh package app/App.tsx --target windows`, its `sonde.exe` signed, zipped again. |
 | `latest.json` | `release.yml` | `nsh update-manifest`: what the updater reads (version, notes, URL and SHA-256 per platform). |
 | `SHA256SUMS` | `release.yml` | Every artifact's SHA-256; each also ships as `<artifact>.sha256`. |
 | Build provenance | `release.yml` (`actions/attest-build-provenance`) | Sigstore attestation of each archive, `.dmg`, `.nshpkg`, `latest.json`; `gh attestation verify <file> --repo hxddh/sonde`. |
@@ -29,10 +29,15 @@ finished; the system waits 200 ms.
 
 ## Signing and notarization
 
-Repository secrets: `MACOS_CERTIFICATE_P12` (base64 Developer ID Application `.p12`), `MACOS_CERTIFICATE_PASSWORD`,
-`MACOS_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` (app-specific). Without them the steps
-print a notice, the app stays ad hoc signed and the flow still runs; on `main`, whose build a release publishes, it is
-a warning. Windows binaries are not signed (no Authenticode yet). Each release's notes say what it skipped.
+Ready for when the keys exist. `ci.yml` passes `build.yml` these repository secrets by name, no others:
+
+| Platform | Secrets | Steps |
+|---|---|---|
+| macOS | `MACOS_CERTIFICATE_P12` (base64 Developer ID Application `.p12`), `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY`; `APPLE_API_KEY` (an App Store Connect API key's `.p8`, as text or base64), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | `scripts/macos-sign.sh` signs the `.app` inside out (nested code first, hardened runtime, timestamp); `scripts/macos-notarize.sh` notarizes it (notarytool) and staples it; the updater's archive and the `.dmg` are made from the stapled app; the `.dmg` is signed, notarized and stapled. |
+| Windows | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE` | Azure Trusted Signing (`.github/actions/sign-windows`) signs `sonde.exe` and the app's `sonde.exe` before they are zipped, and checks each signature. |
+
+A step whose secrets are absent is skipped and says so: a notice, or a warning on `main`, whose build a release
+publishes. Each release's notes say what it skipped.
 
 ## The terminal binary has no GUI dependency
 
@@ -53,15 +58,17 @@ runs `sonde --version` in `debian:bookworm-slim`.
 | Run | `ci.yml` jobs | `build.yml` builds |
 |---|---|---|
 | Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), budgets, supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
-| Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours | everything a release ships |
+| Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours; nightly and by hand, `timed` and `ui-perf` | everything a release ships |
 | Dependabot crate update | lint, unit, budgets, supply | nothing |
 
 A tour's variants run side by side (`shots`); `shots-check` holds each platform's pictures, together the run's
 `sonde-shots-<platform>` artifact, to its approved ones (`app/shots.approved.json`; `scripts/shots-diff.py approve`
-on that artifact, then commit); a platform with none approved is reported, not held. Rust's caches are saved by
-`main`'s runs only, so a pull request's never push out the ones every run reads.
-`nightly.yml` runs the timed tests, `fuzz.yml` the fuzzers weekly, `action-live.yml` the Action after each release
-and daily.
+on that artifact, then commit); a platform with none approved is reported, not held. Rust's caches are a few
+shared keys (`debug`, `release`, `lint`, `app`, …), each saved by one job of `main`'s runs, so a pull request's
+never push out the ones every run reads. The Native Shell commit is read from `Cargo.toml` (`.github/actions/nsh`);
+the viewer's web runtime is kept by that commit and Rust's version. The nightly run (CI's schedule) and one by hand
+also run the timed tests (`timed`, `ui-perf`); `fuzz.yml` runs the fuzzers weekly, `action-live.yml` the Action after
+each release and daily.
 
 ## Releasing
 
@@ -71,7 +78,7 @@ and daily.
    tags the chosen commit). `release.yml` builds nothing: it waits (up to two hours) for CI's run of that commit on
    `main` (its push, the nightly or one by hand; never a pull request's), refuses it unless it is green — every
    build, test and tour — and publishes that run's files (`scripts/release-wait.sh`). The release has the changelog
-   section, what it skipped for want of secrets (signing, notarization, the signed package, Windows' Authenticode),
+   section, what it skipped for want of secrets (signing, notarization, Windows' Authenticode, the signed package),
    `SHA256SUMS` and a `.sha256` per file; each file is attested.
 3. `action-tag.yml` then moves the major tag (`v21`) to the release, so `uses: hxddh/sonde@v21` installs it (a
    pre-release does not move it; to repair one: Actions › Action tag › Run workflow with `x.y.z`), and

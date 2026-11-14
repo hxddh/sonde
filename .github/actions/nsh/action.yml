@@ -1,20 +1,27 @@
 name: Native Shell CLI
-description: Installs the nsh CLI at a pinned commit (cached), and the TypeScript compiler nsh check uses.
-inputs:
+description: Installs the nsh CLI at the commit Cargo.toml pins (cached), and says that commit.
+outputs:
   rev:
-    description: longbridge/nsh commit
-    required: true
+    description: The longbridge/nsh commit, as Cargo.toml's nsh-core pins it
+    value: ${{ steps.rev.outputs.rev }}
 runs:
   using: composite
   steps:
+    # one place for the pin: Cargo.toml (docs/decisions.md D-207)
+    - id: rev
+      shell: bash
+      run: |
+        rev=$(sed -n 's/^nsh-core = .*rev = "\([0-9a-f]\{40\}\)".*/\1/p' "$GITHUB_WORKSPACE/Cargo.toml")
+        [ -n "$rev" ] || { echo "::error title=Native Shell::no nsh-core rev in Cargo.toml"; exit 1; }
+        echo "rev=$rev" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       id: cache
       with:
-        # (nsh.exe on Windows: a path that is not there saves nothing)
-        path: ${{ runner.os == 'Windows' && '~/.cargo/bin/nsh.exe' || '~/.cargo/bin/nsh' }}
-        key: nsh-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}
+        # nsh.exe on Windows: a path that is not there saves nothing
+        path: ~/.cargo/bin/${{ runner.os == 'Windows' && 'nsh.exe' || 'nsh' }}
+        key: nsh-${{ runner.os }}-${{ runner.arch }}-${{ steps.rev.outputs.rev }}
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo install --force --locked --git https://github.com/longbridge/nsh --rev ${{ inputs.rev }} nsh-cli
+      run: cargo install --force --locked --git https://github.com/longbridge/nsh --rev ${{ steps.rev.outputs.rev }} nsh-cli
     - shell: bash
       run: nsh --version
