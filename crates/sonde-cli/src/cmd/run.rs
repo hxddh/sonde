@@ -52,10 +52,10 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
-    /// With --trial: try again only what did not survive. A fresh clean
-    /// run, then the scenarios that broke, degraded or were refused by the
-    /// policy in this program's last trials (`sonde run --trial --again -- …`).
-    #[arg(long, requires = "trial", conflicts_with = "faults")]
+    /// A trial of only what did not survive (--trial is implied): a fresh
+    /// clean run, then the scenarios that broke, degraded or were refused by
+    /// the policy in this program's last trials (`sonde run --again -- …`).
+    #[arg(long, conflicts_with = "faults")]
     again: bool,
     /// The program's name: its runs and its baseline go by it, whatever the
     /// command's arguments are this time (default: `name` under `[program]`
@@ -357,7 +357,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             return Ok(64);
         }
     }
-    let trying = a.trial || !asked.is_empty();
+    let trying = a.trial || a.again || !asked.is_empty();
     let ctx = RunCtx {
         trying,
         name: a.name.clone().or(project.file.program.name.clone()),
@@ -559,7 +559,7 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -
     let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
     let mut words = vec!["sonde run".to_string()];
     if a.faults.is_empty() {
-        words.push("--trial --again".into());
+        words.push("--again".into());
     } else {
         for t in trials.iter().filter(|t| {
             matches!(

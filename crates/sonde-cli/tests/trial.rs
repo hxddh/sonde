@@ -2411,7 +2411,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert_eq!(o.code, Some(1), "{}", o.stderr);
     assert!(
         o.stderr
-            .contains("sonde run --trial --again --name etl -o run.sonde --force --url "),
+            .contains("sonde run --again --name etl -o run.sonde --force --url "),
         "the way to try again is said: {}",
         o.stderr
     );
@@ -2429,15 +2429,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     let again = b
         .run(
             Some("retrying"),
-            &[
-                "run",
-                "--trial",
-                "--again",
-                "--name",
-                "etl",
-                "-o",
-                "run.sonde",
-            ],
+            &["run", "--again", "--name", "etl", "-o", "run.sonde"],
         )
         .await;
     assert_eq!(again.code, Some(0), "{}", again.stderr);
@@ -2507,9 +2499,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     let never = b
         .run(
             Some("retrying"),
-            &[
-                "run", "--trial", "--again", "--name", "new", "-o", "n.sonde",
-            ],
+            &["run", "--again", "--name", "new", "-o", "n.sonde"],
         )
         .await;
     assert_eq!(never.code, Some(64), "{}", never.stderr);

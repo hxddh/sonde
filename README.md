@@ -13,7 +13,7 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Record** | `sonde run -- <command>` records every S3 request the program makes. |
 | **Read** | Requests become operations: multipart uploads, retries, listings, the commits of Iceberg, Delta, Hudi, Paimon, SlateDB and Lance. A table per operation (count, errors, p50/p95/p99) and charts over time. |
 | **Find and fix** | Hot keys, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a fix for your SDK and the line that sent it. Run again: each finding reads **fixed** (with the saving measured), **less**, **back** or **new**. |
-| **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--trial --again` tries only what did not survive. |
+| **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--again` tries only what did not survive. |
 | **Gate CI** | `sonde check` fails a job over its budget or past its baseline; the GitHub Action (`hxddh/sonde@v20`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
 | **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|sdk` splits the table and says where the slow and costly requests are. |
 | **Compare and replay** | `compare` two runs, or a session replayed on another store (`--replay`) to see where answers differ. |
@@ -74,7 +74,7 @@ sonde show                              # read the newest run of this folder's p
 sonde run -- python etl.py              # after a change: what is fixed, and what it saved
 sonde show --by prefix                  # where the slow requests are
 sonde run --trial -- python etl.py 's3://scratch/{trial}/'   # the same under faults
-sonde run --trial --again -- python etl.py 's3://scratch/{trial}/'   # after a fix: only what broke
+sonde run --again -- python etl.py 's3://scratch/{trial}/'   # after a fix: only what broke
 sonde check --init && sonde check       # a budget for CI
 sonde compare before.sonde after.sonde
 sonde import access.log
