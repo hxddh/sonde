@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v19
+      - uses: hxddh/sonde@v20
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -51,7 +51,7 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `19.0.0`, `19`, `latest`, `path`. Tag `@v19` installs the newest 19.x; `@v19.0.0` that release. `latest` is refused at a branch or commit. |
+| `version` | the action's tag; at a branch or commit, its own major | `20.0.0`, `20`, `latest`, `path`. Tag `@v20` installs the newest 20.x; `@v20.0.0` that release. `latest` is refused at a branch or commit. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 

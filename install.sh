@@ -3,8 +3,8 @@
 # SHA-256 and, where gh is installed, its build provenance.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
-#   SONDE_VERSION=19.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
-#   SONDE_VERSION=19 sh install.sh    # the newest 19.x
+#   SONDE_VERSION=20.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=19 sh install.sh    # the newest 20.x
 #   SONDE_VERIFY=1 sh install.sh    # fail unless gh confirms the provenance
 set -eu
 repo="hxddh/sonde"
@@ -27,7 +27,7 @@ esac
 libc=""
 if [ "$os-$arch" = linux-x86_64 ] && { [ -n "${SONDE_STATIC:-}" ] || ls /lib/ld-musl-* >/dev/null 2>&1; }; then libc=-musl; fi
 asset="sonde-$os-$arch$libc.tar.gz"
-# A major alone (19) is its newest release (19.x.y), prereleases left out
+# A major alone (20) is its newest release (20.x.y), prereleases left out
 case "$version" in
   latest | *.*) ;;
   *)

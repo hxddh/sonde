@@ -340,6 +340,11 @@ for (const v of variants) {
     await app.press("id:signal-latency");
     await app.wait(700);
     await charts("03m-latency");
+    // the folded header holds the first three figures: bytes is pressed from the header unfolded
+    if (!app.shows("id:signal-bytes")) {
+      await app.scroll("id:time-pane", -10000);
+      await app.wait(500);
+    }
     if (app.shows("id:signal-bytes")) {
       await app.press("id:signal-bytes");
       await app.wait(700);

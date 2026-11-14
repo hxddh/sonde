@@ -1,7 +1,7 @@
 name: Action tag
 
-# Moves the major tag (v19) to a release's commit, so `uses: hxddh/sonde@v19`
-# follows the newest 19.x. Called by release.yml; run by hand to repair one.
+# Moves the major tag (v20) to a release's commit, so `uses: hxddh/sonde@v20`
+# follows the newest 20.x. Called by release.yml; run by hand to repair one.
 on:
   workflow_call:
     inputs:

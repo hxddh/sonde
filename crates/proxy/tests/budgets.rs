@@ -116,7 +116,12 @@ fn a_million_requests_are_read_within_their_memory() {
     );
     // the lake job has what a real one has: the findings are there to be found
     assert!(analysis.observations.len() >= 4 && analysis.what_if.is_some());
-    held("show of a million", took, Duration::from_secs(45), MILLION_MIB);
+    held(
+        "show of a million",
+        took,
+        Duration::from_secs(45),
+        MILLION_MIB,
+    );
 }
 
 /// What `sonde compare` does with two runs: each read (lean), reckoned and
@@ -147,7 +152,12 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
     assert!(c.requests.0 >= 1_000_000 && c.requests.1 >= 1_000_000);
     assert!(!c.groups.is_empty() && !c.prefixes.is_empty());
     // the second run is read once the first is let go: one run's memory
-    held("compare of two millions", took, Duration::from_secs(120), 1450);
+    held(
+        "compare of two millions",
+        took,
+        Duration::from_secs(120),
+        1450,
+    );
 }
 
 #[test]
@@ -160,7 +170,12 @@ fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
     peak_from_now();
     let (took, read, _) = read_as_show(&path);
     assert_eq!(read, 300_000);
-    held("show of an outage of 300 thousand", took, Duration::from_secs(30), 600);
+    held(
+        "show of an outage of 300 thousand",
+        took,
+        Duration::from_secs(30),
+        600,
+    );
 }
 
 #[test]
@@ -180,7 +195,12 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory
         .expect("small files uploaded in parts");
     assert_eq!(small.saves_requests, 200_000);
     assert_eq!(read, 300_000);
-    held("show of 300 thousand small uploads", took, Duration::from_secs(30), 500);
+    held(
+        "show of 300 thousand small uploads",
+        took,
+        Duration::from_secs(30),
+        500,
+    );
 }
 
 #[test]
@@ -207,7 +227,12 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
         sent / 1024,
         a.episodes.len()
     );
-    held("the app's first view of 100 thousand", took, Duration::from_secs(6), 280);
+    held(
+        "the app's first view of 100 thousand",
+        took,
+        Duration::from_secs(6),
+        280,
+    );
     // and it does not grow with the session: a page of operations, not all
     assert_eq!(
         view["operations"].as_array().map(Vec::len),
