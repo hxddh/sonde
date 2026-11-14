@@ -713,7 +713,6 @@ export interface RunPoint {
 
 /** What a project's `sonde.toml` `[check]` allows its program, drawn on the charts it is about (null: not given). */
 export interface ProjectBudget {
-  maxP95Ms: number | null;
   maxErrors: number | null;
   maxWaitingMs: number | null;
 }

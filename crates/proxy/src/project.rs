@@ -13,22 +13,18 @@ use crate::fault::Scenario;
 use crate::program::Budget;
 
 /// The `[check]` table: a run's budget, kept with the code it is about
-/// (`max-waiting` and `max-p95` in ms, or "2s"; `baseline` a session,
+/// (`max-waiting` in ms, or "2s"; `baseline` a session,
 /// `auto`, or an https URL of one).
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Check {
     pub max_requests: Option<usize>,
     pub max_waiting: Option<toml::Value>,
-    pub max_cost: Option<f64>,
     pub max_errors: Option<usize>,
-    pub max_p95: Option<toml::Value>,
     /// Findings kept on purpose: never a new warning.
     #[serde(default)]
     pub expect: Vec<String>,
     pub tolerance: Option<f64>,
-    #[serde(default)]
-    pub no_new_warnings: bool,
     pub baseline: Option<String>,
 }
 
@@ -41,25 +37,14 @@ impl Check {
             .transpose()
     }
 
-    /// `max-p95` in ms.
-    pub fn max_p95_ms(&self) -> Result<Option<f64>, String> {
-        self.max_p95
-            .as_ref()
-            .map(|v| duration_ms("max-p95", v))
-            .transpose()
-    }
-
     /// The limits a run is held to alone (no baseline: no tolerance).
     pub fn budget(&self) -> Result<Budget, String> {
         Ok(Budget {
             max_requests: self.max_requests,
             max_waiting_ms: self.max_waiting_ms()?,
-            max_cost: self.max_cost,
             max_errors: self.max_errors,
-            max_p95_ms: self.max_p95_ms()?,
             expect: self.expect.clone(),
             tolerance: None,
-            no_new_warnings: false,
         })
     }
 }
@@ -291,7 +276,7 @@ mod tests {
     #[test]
     fn every_table_reads_and_what_sonde_does_not_know_is_refused() {
         let p = parse(
-            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-p95 = 250\n\n[program]\nname = \"nightly\"\nruns = \"etl\"\n\n[record]\npolicy = \"allow\"\nname-callers = false\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
+            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-errors = 0\n\n[program]\nname = \"nightly\"\nruns = \"etl\"\n\n[record]\npolicy = \"allow\"\nname-callers = false\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
         )
         .unwrap();
         assert_eq!(p.policy, Some(Policy::Allow));
@@ -304,11 +289,12 @@ mod tests {
         assert_eq!(names("aws s3 ls"), None);
         let b = p.file.check.budget().unwrap();
         assert_eq!(
-            (b.max_requests, b.max_waiting_ms, b.max_p95_ms),
-            (Some(10), Some(2000.0), Some(250.0))
+            (b.max_requests, b.max_waiting_ms, b.max_errors),
+            (Some(10), Some(2000.0), Some(0))
         );
         for (text, says) in [
             ("[chek]\n", "chek"),
+            ("[check]\nmax-p95 = 250\n", "max-p95"),
             ("[record]\npolicy = \"none\"\n", "one of allow"),
             ("[record]\nmode = \"allow\"\n", "mode"),
             ("[[scenarios]]\nname = \"x\"\n", "[[scenario]]"),

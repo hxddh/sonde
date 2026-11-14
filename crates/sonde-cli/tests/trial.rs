@@ -2273,10 +2273,10 @@ async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
     );
 }
 
-/// By default (no-delete) a program writes what it writes, over an object
-/// there before or not, and deletes nothing it did not make.
+/// By default a plain run lets a program do what it would without sonde,
+/// deletes too; a trial's runs refuse the deletes of what they did not make.
 #[tokio::test(flavor = "multi_thread")]
-async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
+async fn a_plain_run_allows_deletes_and_a_trial_refuses_them() {
     let b = Bench::new().await;
     let o = b
         .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
@@ -2291,13 +2291,20 @@ async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
         )
         .await;
     assert_eq!(other.code, Some(0), "{}", other.stderr);
-    assert!(!b.path("data/sessions/written.json").exists());
-    // deletes are refused by default
+    // deletes go through by default
     let deletes = b
         .run(Some("batches"), &["run", "-o", "deletes.sonde"])
         .await;
-    assert_eq!(deletes.code, Some(1), "{}", deletes.stderr);
-    let s = sonde_proxy::session::Session::open(&b.path("deletes.sonde")).unwrap();
+    assert_eq!(deletes.code, Some(0), "{}", deletes.stderr);
+    // the flag refuses them
+    let flag = b
+        .run(
+            Some("batches"),
+            &["run", "--policy", "no-delete", "-o", "flag.sonde"],
+        )
+        .await;
+    assert_eq!(flag.code, Some(1), "{}", flag.stderr);
+    let s = sonde_proxy::session::Session::open(&b.path("flag.sonde")).unwrap();
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
@@ -2306,25 +2313,12 @@ async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
             .is_some_and(|e| e.contains("no-delete")),
         "{refused:?}"
     );
-    assert_eq!(b.store.state.lock().buckets["data"]["a"].0, b"1");
-    // the project may let it, and sonde says so; a flag is over the file
-    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"allow\"\n").unwrap();
-    let allowed = b
-        .run(Some("batches"), &["run", "-o", "allowed.sonde"])
+    // and so does the project's file
+    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"no-delete\"\n").unwrap();
+    let project = b
+        .run(Some("batches"), &["run", "-o", "project.sonde"])
         .await;
-    assert_eq!(allowed.code, Some(0), "{}", allowed.stderr);
-    assert!(
-        allowed.stderr.contains("[record] policy"),
-        "{}",
-        allowed.stderr
-    );
-    let flag = b
-        .run(
-            Some("batches"),
-            &["run", "--policy", "no-delete", "-o", "flag.sonde"],
-        )
-        .await;
-    assert_eq!(flag.code, Some(1), "{}", flag.stderr);
+    assert_eq!(project.code, Some(1), "{}", project.stderr);
     std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"everything\"\n").unwrap();
     let wrong = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
     assert_eq!(wrong.code, Some(64), "{}", wrong.stderr);

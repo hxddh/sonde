@@ -590,18 +590,14 @@ impl RunFigures {
 pub struct Budget {
     pub max_requests: Option<usize>,
     pub max_waiting_ms: Option<f64>,
-    pub max_cost: Option<f64>,
     pub max_errors: Option<usize>,
-    /// How long 95% of the requests may take at most, in ms.
-    pub max_p95_ms: Option<f64>,
     /// Findings the project expects (a habit it keeps on purpose): never a
     /// new warning. Each matches a finding's identity, its kind
     /// (`obs.hot`) or a part of its text.
     pub expect: Vec<String>,
     /// Against the baseline: requests, waiting and cost may grow this much.
+    /// A baseline also holds the run to no warning it did not have.
     pub tolerance: Option<f64>,
-    /// Against the baseline: no warning it did not have.
-    pub no_new_warnings: bool,
 }
 
 /// One line of a check.
@@ -843,14 +839,8 @@ pub fn check(
     if let Some(ms) = budget.max_waiting_ms {
         limit("waiting", r.waiting_ms, ms, "budget");
     }
-    if let Some(c) = budget.max_cost {
-        limit("cost", r.cost, c, "budget");
-    }
     if let Some(n) = budget.max_errors {
         limit("errors", r.errors as f64, n as f64, "budget");
-    }
-    if let Some(ms) = budget.max_p95_ms {
-        limit("p95", r.p95_ms, ms, "budget");
     }
     let mut new_warnings = Vec::new();
     if let Some(b) = baseline {
@@ -877,7 +867,7 @@ pub fn check(
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
-        if budget.no_new_warnings {
+        {
             // a warning the baseline did not have as a warning: new, or grown from a note
             let was_warning: std::collections::HashSet<String> =
                 b.3.iter()
@@ -1023,9 +1013,9 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     };
     let held = match (of("budget"), of("baseline")) {
         (None, None) if c.verdicts.is_empty() => None,
-        (Some(false), Some(false)) => Some("over budget and past its baseline"),
+        (Some(false), Some(false)) => Some("over budget and over its baseline"),
         (Some(false), _) => Some("over budget"),
-        (_, Some(false)) => Some("past its baseline"),
+        (_, Some(false)) => Some("over its baseline"),
         (None, Some(true)) => Some("within its baseline"),
         (Some(true), Some(true)) => Some("within budget and its baseline"),
         _ => Some("within budget"),
@@ -1067,20 +1057,6 @@ pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
         && !trials
             .iter()
             .any(|t| t.standing == crate::trial::Standing::Broke)
-}
-
-/// A trial's mark in a check: `pass` survived, `warn` degraded (it got
-/// through, and not cleanly) or refused by the policy (not judged), `FAIL`
-/// broke, `skip` untested.
-pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
-    use crate::trial::Standing;
-    match s {
-        Standing::Survived => "pass",
-        Standing::Degraded => "warn",
-        Standing::Broke => "FAIL",
-        Standing::Untested => "skip",
-        Standing::Refused => "warn",
-    }
 }
 
 /// A Markdown table whose columns line up as text too (a comment is read
@@ -1232,7 +1208,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         .filter(|v| !v.ok && !said_below(v))
         .map(|v| {
             vec![
-                format!("**FAIL** {}", v.over().unwrap_or_default()),
+                format!("**over** {}", v.over().unwrap_or_default()),
                 v.label().to_string(),
                 shown(v.what, v.value),
                 format!("≤ {}", shown(v.what, v.limit)),
@@ -1365,9 +1341,9 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         .filter(|t| matches!(t.standing, Standing::Broke | Standing::Degraded))
         .map(|t| {
             vec![
-                match trial_mark(t.standing) {
-                    "FAIL" => "**FAIL**".to_string(),
-                    mark => mark.to_string(),
+                match t.standing {
+                    Standing::Broke => "**broke**".to_string(),
+                    s => s.label().to_string(),
                 },
                 md_text(&t.asked()),
                 md_text(&t.line()),
@@ -1629,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expected_finding_is_never_new_and_p95_has_its_limit() {
+    fn an_expected_finding_is_never_new() {
         let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
         let mut grown = base.clone();
         grown.extend((0..12).map(|i| rec(100 + i, "hot")));
@@ -1640,7 +1616,6 @@ mod tests {
                 (&pg, &grown, &prg, &og),
                 Some((&pb, &base, &prb, &ob)),
                 &Budget {
-                    no_new_warnings: true,
                     expect,
                     ..Default::default()
                 },
@@ -1683,17 +1658,6 @@ mod tests {
                 "{e}"
             );
         }
-        // 95% of the requests within a limit
-        let c = check(
-            (&pg, &grown, &prg, &og),
-            None,
-            &Budget {
-                max_p95_ms: Some(pg.p95_ms - 0.5),
-                ..Default::default()
-            },
-        );
-        let v = c.verdicts.iter().find(|v| v.what == "p95").unwrap();
-        assert!(!v.ok && !c.passed);
     }
 
     #[test]
@@ -1780,7 +1744,6 @@ mod tests {
         let budget = Budget {
             max_requests: Some(50),
             tolerance: Some(0.1),
-            no_new_warnings: true,
             ..Default::default()
         };
         let ok = check(
@@ -1870,7 +1833,7 @@ mod tests {
         assert_eq!(row("waiting", "baseline").over(), None, "it passed");
         let md = check_markdown(&c, "USD", None, &[]);
         assert!(
-            squeezed(&md).contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
+            squeezed(&md).contains("| **over** +23% | requests | 123 | ≤ 100 | budget |"),
             "{md}"
         );
         // the columns line up as text: every row as long as the heading's
@@ -1882,7 +1845,7 @@ mod tests {
             "{md}"
         );
         assert!(
-            md.starts_with("### sonde: over budget and past its baseline"),
+            md.starts_with("### sonde: over budget and over its baseline"),
             "{md}"
         );
     }
@@ -1931,7 +1894,7 @@ mod tests {
         );
         assert!(!md.contains("over budget"), "{md}");
         assert!(
-            squeezed(&md).contains("| **FAIL** | slowdown | exited 1 \\| really |"),
+            squeezed(&md).contains("| **broke** | slowdown | exited 1 \\| really |"),
             "{md}"
         );
         assert!(
@@ -1974,8 +1937,7 @@ mod tests {
             (&p, &warned, &pr, &o),
             Some((&p, &warned, &pr, &o)),
             &Budget {
-                no_new_warnings: true,
-                ..Default::default()
+                    ..Default::default()
             },
         );
         let row = c.verdicts.iter().find(|v| v.what == "warnings").unwrap();
@@ -2052,13 +2014,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(md.starts_with("### sonde: past its baseline ❌"), "{md}");
+        assert!(md.starts_with("### sonde: over its baseline ❌"), "{md}");
         // the figure past the baseline, bold, said once; no table of verdicts
         assert!(
             md.contains("- **requests 20 → 40 (+100%)**, past the 22 it may use"),
             "{md}"
         );
-        assert!(!md.contains("| pass") && !md.contains("**FAIL**"), "{md}");
+        assert!(!md.contains("| survived") && !md.contains("**over**"), "{md}");
         assert!(squeezed(&md).contains("| HeadObject | 0 → 20 |"), "{md}");
         let new = md.find("**New findings**").expect("new findings");
         assert!(md[new..].contains("HEAD"), "{md}");

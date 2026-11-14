@@ -31,12 +31,12 @@ pub struct Recording {
     /// The endpoint requests go to (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
     pub(super) endpoint: Option<String>,
-    /// What the program may do to the store: `no-delete` refuses what
-    /// removes data (deletes, aborts, lifecycle rules, bucket policies,
-    /// versioning suspended), but for what the recording made; writes go
-    /// through. `read-only` lets only GET and HEAD through; `allow` lets
-    /// everything through. Default: `[record] policy` in sonde.toml, else
-    /// no-delete.
+    /// What the program may do to the store: `allow` lets everything
+    /// through; `no-delete` refuses deletes, aborts and changes to lifecycle
+    /// rules, bucket policies and versioning, but for what the recording
+    /// made (writes go through); `read-only` lets only GET and HEAD through.
+    /// Default: `[record] policy` in sonde.toml, else allow, and no-delete
+    /// for --trial and --again.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// The session file (default: a new file in the data directory's sessions/).
@@ -74,26 +74,24 @@ pub(super) struct Of<'a> {
     /// What the runs before it made (a trial's clean run): no-delete lets
     /// it be removed.
     pub(super) made: Option<Arc<sonde_proxy::Made>>,
+    /// A trial follows (or this is one of its runs): no-delete by default.
+    pub(super) trying: bool,
 }
 
 impl Recording {
     /// The policy asked for: the flag's, else `[record] policy` of
-    /// sonde.toml, else no-delete. Said when it lets the program delete.
-    fn policy(&self) -> anyhow::Result<Policy> {
+    /// sonde.toml, else allow; a trial's runs, else no-delete (sonde's own
+    /// faults could push a program down a path it would not take).
+    fn policy(&self, trying: bool) -> anyhow::Result<Policy> {
         if let Some(p) = self.policy.as_deref().and_then(Policy::named) {
             return Ok(p);
         }
         let project = load_project(None)?;
-        let chosen = project.policy.unwrap_or_default();
-        if project.policy == Some(Policy::Allow)
-            && let Some(path) = &project.path
-        {
-            eprintln!(
-                "note: {} lets the program delete and write over objects ([record] policy = \"allow\")",
-                path.display()
-            );
-        }
-        Ok(chosen)
+        Ok(project.policy.unwrap_or(if trying {
+            Policy::NoDelete
+        } else {
+            Policy::Allow
+        }))
     }
 }
 
@@ -116,7 +114,7 @@ pub(super) async fn start_under(
     of: &Of<'_>,
 ) -> anyhow::Result<Started> {
     let under = of.under;
-    let policy = r.policy()?;
+    let policy = r.policy(of.trying || under.is_some())?;
     let ep = super::endpoint_to_record(s, r.endpoint.as_deref()).await?;
     let client = s.client(&ep)?;
     let cfg = client.config();

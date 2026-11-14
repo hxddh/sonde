@@ -687,6 +687,7 @@ async fn run_once(
             name: ctx.name.clone(),
             under,
             made: Some(ctx.made.clone()),
+            trying: ctx.trying,
         },
     )
     .await?;

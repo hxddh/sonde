@@ -39,7 +39,7 @@ pub(super) enum MpuAction {
         )]
         format: Format,
     },
-    /// Aborts uploads older than a week: a dry run, unless --confirm repeats the count it prints.
+    /// Aborts uploads older than a week: a dry run, unless --yes.
     #[command(name = "abort-uploads")]
     Abort {
         #[command(flatten)]
@@ -47,9 +47,9 @@ pub(super) enum MpuAction {
         /// Only uploads older than this many days (default: 7).
         #[arg(long)]
         older_than_days: Option<f64>,
-        /// The number of uploads the dry run listed: aborts them.
-        #[arg(long, value_name = "COUNT")]
-        confirm: Option<String>,
+        /// Abort the uploads the dry run lists.
+        #[arg(long)]
+        yes: bool,
     },
     /// Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run, unless --yes.
     Lifecycle {
@@ -227,7 +227,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
         MpuAction::Abort {
             target: t,
             older_than_days,
-            confirm,
+            yes,
         } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
             let r: mpu::MpuReport = serde_json::from_value(
@@ -253,14 +253,11 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                 );
             }
             println!("{}", plan.summary);
-            let Some(c) = confirm else {
-                println!(
-                    "dry run: to abort, run again with --confirm {}",
-                    plan.confirm
-                );
+            if !yes {
+                println!("\ndry run: to abort them, run again with --yes");
                 return Ok(4);
-            };
-            let o = exec::execute(s, &plan.id, c).await?;
+            }
+            let o = exec::execute(s, &plan.id, &plan.confirm).await?;
             println!("aborted {}, failed {}", o.succeeded, o.failed);
             for e in &o.errors {
                 eprintln!("  {e}");

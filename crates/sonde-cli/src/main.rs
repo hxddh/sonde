@@ -100,7 +100,7 @@ pub struct Cli {
 enum Command {
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
-    /// A local S3 endpoint that records what talks to it until Ctrl-C; left running with --rotate.
+    /// A local S3 endpoint that records what talks to it until Ctrl-C.
     Proxy(cmd::record::ProxyArgs),
     /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR, a file or s3://.
     Import(cmd::sessions::ImportArgs),
@@ -112,7 +112,7 @@ enum Command {
     Compare(cmd::record::CompareArgs),
     /// A run against a budget or a baseline run: exit 1 when it is over (for CI).
     Check(cmd::record::CheckArgs),
-    /// A run as a web page anyone opens in a browser, or as OpenTelemetry traces (--otlp).
+    /// A run as one HTML file anyone opens in a browser.
     Share(cmd::share::ShareArgs),
     /// Compatibility probes.
     Probe(cmd::probe::ProbeArgs),

@@ -19,7 +19,6 @@ pub mod index;
 pub mod jvm;
 pub mod logs;
 pub mod op;
-pub mod otlp;
 pub mod phrase;
 pub mod profile;
 pub mod program;
@@ -61,12 +60,13 @@ type Out = BoxBody<Bytes, std::io::Error>;
 /// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
-    /// Everything.
+    /// Everything: a program does with its data what it would without sonde.
+    #[default]
     Allow,
     /// Nothing that removes data: deletes, aborts, lifecycle rules, bucket
     /// policies, versioning suspended, but for what the recording made
-    /// itself ([`Made`]). Writes go through, over an object or not.
-    #[default]
+    /// itself ([`Made`]). Writes go through, over an object or not. A
+    /// trial's default.
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,

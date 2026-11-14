@@ -32,7 +32,7 @@ pub struct ReplayOpts {
     /// The key prefix the replay writes under (default: replay-<time>/).
     #[arg(long)]
     pub(super) prefix: Option<String>,
-    /// Replay without asking first (what it writes, under its prefix, it removes).
+    /// Replay what the dry run says (what it writes, under its prefix, it removes).
     #[arg(long)]
     pub(super) yes: bool,
     /// The replay's session file (default: in the data directory's sessions/).
@@ -116,17 +116,8 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     }
     eprintln!("  Afterwards, everything under {prefix} is deleted.");
     if !a.how.yes {
-        if !std::io::stdin().is_terminal() {
-            eprintln!("sonde: replay writes to {ep}: pass --yes to confirm");
-            return Ok(77);
-        }
-        eprint!("Type yes to replay: ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if answer.trim() != "yes" {
-            eprintln!("Nothing was sent.");
-            return Ok(77);
-        }
+        eprintln!("\ndry run: to replay, run again with --yes");
+        return Ok(4);
     }
     let path = match &a.how.out {
         Some(p) => p.clone(),
@@ -272,20 +263,8 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         output::count(plan.deletes, "delete")
     );
     if !a.how.yes {
-        if !std::io::stdin().is_terminal() {
-            eprintln!(
-                "sonde: replay writes to {}: pass --yes to confirm",
-                a.endpoint.join(", ")
-            );
-            return Ok(77);
-        }
-        eprint!("Type yes to replay: ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if answer.trim() != "yes" {
-            eprintln!("Nothing was sent.");
-            return Ok(77);
-        }
+        eprintln!("\ndry run: to replay, run again with --yes");
+        return Ok(4);
     }
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir)?;

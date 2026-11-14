@@ -153,7 +153,7 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     })
 }
 
-/// A recording policy by its name, none the default (no-delete); an
+/// A recording policy by its name, none the default (allow); an
 /// unknown one is refused, never "allow".
 fn policy_of(name: &str) -> Result<Policy, String> {
     if name.is_empty() {
@@ -176,7 +176,7 @@ fn project_in(dir: Option<&Path>) -> Result<Option<sonde_proxy::project::Project
 
 /// The policy a run in `dir` is recorded under: the one asked (Run's
 /// choice) narrowed by its project's `[record] policy`; none asked, the
-/// project's, else no-delete. A project's file may narrow what the person
+/// project's, else allow. A project's file may narrow what the person
 /// chose, never widen it.
 fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, String> {
     let project = project_in(dir)?.and_then(|p| p.policy);
@@ -739,14 +739,13 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
 /// The budget a project gives its program in the `[check]` of the
 /// `sonde.toml` found from `dir` upwards, read as `sonde check` reads it
 /// ([`sonde_proxy::project`]): what the app draws on a chart as a line —
-/// `max-p95` and `max-waiting` in ms, `max-errors` a count. None without a
-/// file (or one that does not read), or without any of the three.
-pub(crate) fn project_budget(dir: &Path) -> Option<(Option<f64>, Option<u64>, Option<f64>)> {
+/// `max-waiting` in ms, `max-errors` a count. None without a file (or one
+/// that does not read), or without either.
+pub(crate) fn project_budget(dir: &Path) -> Option<(Option<u64>, Option<f64>)> {
     let check = sonde_proxy::project::of(dir).ok()??.file.check;
-    let p95 = check.max_p95_ms().ok()?;
     let waiting = check.max_waiting_ms().ok()?;
     let errors = check.max_errors.map(|n| n as u64);
-    (p95.is_some() || waiting.is_some() || errors.is_some()).then_some((p95, errors, waiting))
+    (waiting.is_some() || errors.is_some()).then_some((errors, waiting))
 }
 
 /// A trial's progress as the app hears it: `{ scenario, state }`, with the
@@ -1647,15 +1646,15 @@ impl Sessions {
 
     /// The budget the session's program has in its project's `sonde.toml`
     /// (found from the folder it ran in), for the charts to draw:
-    /// `{ maxP95Ms, maxErrors, maxWaitingMs }`, each null where it gives
+    /// `{ maxErrors, maxWaitingMs }`, each null where it gives
     /// none; null for a session with no folder or a project with no budget.
     pub fn budget(path: String) -> JsonValue {
         let Some(dir) = header_of(Path::new(&path)).and_then(|h| h.cwd) else {
             return JsonValue::Null;
         };
         match project_budget(Path::new(&dir)) {
-            Some((p95, errors, waiting)) => {
-                json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting })
+            Some((errors, waiting)) => {
+                json!({ "maxErrors": errors, "maxWaitingMs": waiting })
             }
             None => JsonValue::Null,
         }
@@ -2056,7 +2055,6 @@ impl Sessions {
                     let (bp, bs, bpr, bob) = read(&b.to_string_lossy())?;
                     let budget = sonde_proxy::program::Budget {
                         tolerance: Some(0.1),
-                        no_new_warnings: true,
                         ..Default::default()
                     };
                     let c = sonde_proxy::program::check(
@@ -3320,21 +3318,12 @@ mod tests {
         assert_eq!(super::project_budget(&inner), None);
         std::fs::write(
             project.path().join("sonde.toml"),
-            "[check]\nmax-p95 = \"50ms\"\nmax-errors = 3\nmax-waiting = \"2s\"\n",
+            "[check]\nmax-errors = 3\nmax-waiting = \"2s\"\n",
         )
         .unwrap();
         assert_eq!(
             super::project_budget(&inner),
-            Some((Some(50.0), Some(3), Some(2000.0)))
-        );
-        std::fs::write(
-            project.path().join("sonde.toml"),
-            "[check]\nmax-p95 = 120\n",
-        )
-        .unwrap();
-        assert_eq!(
-            super::project_budget(&inner),
-            Some((Some(120.0), None, None))
+            Some((Some(3), Some(2000.0)))
         );
     }
 

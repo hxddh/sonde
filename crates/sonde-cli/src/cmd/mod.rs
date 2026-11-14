@@ -6,6 +6,7 @@ pub mod du;
 pub mod endpoints;
 pub mod fixloop;
 pub mod layout;
+pub mod logs;
 pub mod mpu;
 pub mod probe;
 pub mod proxy;
@@ -17,7 +18,6 @@ pub mod share;
 pub mod show;
 #[cfg(feature = "tui")]
 pub mod tui;
-pub mod watch;
 
 use std::sync::Arc;
 

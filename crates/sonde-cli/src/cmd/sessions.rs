@@ -34,14 +34,14 @@ struct ListArgs {
 enum Action {
     /// List them, newest first (the default).
     List(ListArgs),
-    /// Delete all but the newest N (baselines are kept): a dry run, unless --confirm repeats the count it prints.
+    /// Delete all but the newest N (baselines are kept): a dry run, unless --yes.
     Prune {
-        /// How many of the newest sessions to keep.
+        /// How many of the newest runs to keep.
         #[arg(long, value_name = "N")]
         keep: usize,
-        /// The number of sessions the dry run said it would delete: deletes them.
-        #[arg(long, value_name = "COUNT")]
-        confirm: Option<usize>,
+        /// Delete the runs the dry run lists.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -332,7 +332,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             Ok(0)
         }
-        Some(Action::Prune { keep, confirm }) => {
+        Some(Action::Prune { keep, yes }) => {
             let dir = s.paths().sessions();
             // which sessions are baselines is unknown: none is deleted
             let baselines: std::collections::HashSet<String> =
@@ -362,18 +362,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 );
                 return Ok(0);
             }
-            // what the dry run listed, repeated: anything else deletes nothing
-            let yes = match confirm {
-                None => false,
-                Some(n) if *n == gone.len() => true,
-                Some(n) => {
-                    eprintln!(
-                        "sonde: --confirm {n} does not match: {} would be deleted now; nothing was deleted",
-                        gone.len()
-                    );
-                    return Ok(77);
-                }
-            };
+            let yes = *yes;
             for r in &gone {
                 if yes {
                     std::fs::remove_file(&r.path)?;
@@ -389,9 +378,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             if !yes {
                 eprintln!(
-                    "dry run: to delete {}, run again with --confirm {}",
-                    output::count(gone.len(), "session"),
-                    gone.len()
+                    "dry run: to delete {}, run again with --yes",
+                    if gone.len() == 1 { "it" } else { "them" }
                 );
                 // a dry run with something to do: 4, as every dry run
                 return Ok(4);
@@ -407,8 +395,8 @@ pub struct ImportArgs {
     /// event a line), or a HAR; or a folder of them (gzip or plain, folders
     /// within too), read in the order of their names into one session. Or
     /// `s3://bucket/prefix` where a store writes its access logs or
-    /// CloudTrail files: what arrived since the last import of it, read
-    /// through the endpoint (GET and LIST only), one session a pass.
+    /// CloudTrail files: what arrived since the last import of it (the
+    /// first, the last day's), read through the endpoint (GET and LIST only).
     #[arg(value_name = "FILE|FOLDER|S3_URL")]
     file: PathBuf,
     /// The session file (default: a new one in the data directory's sessions/).
@@ -417,20 +405,9 @@ pub struct ImportArgs {
     /// With -o: write over the file if it is there (else it is refused).
     #[arg(long, requires = "out")]
     force: bool,
-    /// With s3://: keep reading as new log files arrive, each pass its
-    /// session, until Ctrl-C.
-    #[arg(long)]
-    follow: bool,
-    /// With --follow: look for new log files this often ("15m", "1h", "30s").
-    #[arg(long, default_value = "15m", requires = "follow")]
-    every: String,
     /// With s3://: the endpoint the logs are read through.
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
-    /// With s3://: post each new warning finding, and each pass over
-    /// sonde.toml's budget, to this webhook as `{"text": …}`.
-    #[arg(long, value_name = "URL")]
-    alert: Option<String>,
 }
 
 /// Production traffic as a session: the same operations, findings and
@@ -440,21 +417,14 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     if given.starts_with("s3://") {
         if a.out.is_some() {
             return Err(super::usage(
-                "-o is for a file or folder: logs read from s3:// make a session a pass, in the sessions folder",
+                "-o is for a file or folder: logs read from s3:// are kept in the runs folder",
             ));
         }
-        let logs = super::watch::Logs {
-            endpoint: a.endpoint.as_deref(),
-            src: &given,
-            every: &a.every,
-            once: !a.follow,
-            alert: a.alert.as_deref(),
-        };
-        return super::watch::watch_logs(s, &logs).await;
+        return super::logs::import_logs(s, a.endpoint.as_deref(), &given).await;
     }
-    if a.follow || a.endpoint.is_some() || a.alert.is_some() {
+    if a.endpoint.is_some() {
         return Err(super::usage(
-            "--follow, --endpoint and --alert are for logs read from s3://bucket/prefix",
+            "--endpoint is for logs read from s3://bucket/prefix",
         ));
     }
     if let Some(out) = &a.out {
@@ -569,80 +539,4 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         );
     }
     super::record::show_file(s, &path).await
-}
-
-/// A session as OpenTelemetry traces (OTLP/JSON: each operation a span, its
-/// requests under it), to a file, stdout or a collector.
-pub async fn otlp(
-    s: &Arc<Sonde>,
-    file: &std::path::Path,
-    out: Option<&std::path::Path>,
-    to: Option<&str>,
-) -> anyhow::Result<i32> {
-    // spans are made of what the analysis reads: nothing else is kept
-    let (_, session) = open_lean(s, &file.to_path_buf())?;
-    match (to, out) {
-        (Some(url), _) => {
-            // a collector takes a request of a few MiB (4 MiB is the usual
-            // limit), not a session's worth: sent in batches under it
-            const BATCH: usize = 3 << 20;
-            let requests = session.records.len();
-            // made on another thread, a part ahead of the one being sent:
-            // the session's worth of JSON is never held at once
-            let (parts, mut made) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
-            let making = tokio::task::spawn_blocking(move || {
-                sonde_proxy::otlp::batches(&session, BATCH, &mut |part| {
-                    parts
-                        .blocking_send(part)
-                        .map_err(|_| std::io::Error::other("sending stopped"))
-                })
-            });
-            let client = reqwest::Client::new();
-            let mut sent = 0;
-            while let Some(body) = made.recv().await {
-                let resp = client
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .send()
-                    .await?;
-                if !resp.status().is_success() {
-                    eprintln!(
-                        "sonde: {url} answered {}{}",
-                        resp.status(),
-                        if sent > 0 {
-                            format!(" to part {} (the {sent} before it were taken)", sent + 1)
-                        } else {
-                            String::new()
-                        }
-                    );
-                    return Ok(70);
-                }
-                sent += 1;
-            }
-            making.await??;
-            eprintln!(
-                "{} sent to {url} as traces{}",
-                output::count(requests, "request"),
-                if sent > 1 {
-                    format!(", in {sent} parts")
-                } else {
-                    String::new()
-                }
-            );
-        }
-        // written as it is made: a span at a time
-        (None, Some(p)) => {
-            let out = std::io::BufWriter::new(std::fs::File::create(p)?);
-            sonde_proxy::otlp::write_traces(&session, out, true)?;
-        }
-        (None, None) => {
-            use std::io::Write;
-            let mut out = std::io::BufWriter::new(crate::output::Stdout);
-            sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
-            out.write_all(b"\n")?;
-            out.flush()?;
-        }
-    }
-    Ok(0)
 }
