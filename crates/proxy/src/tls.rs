@@ -94,8 +94,8 @@ impl Tls {
 /// The authority's key is never written.
 fn make(dir: &Path) -> Result<(), String> {
     use rcgen::{
-        BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-        KeyUsagePurpose,
+        BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
+        IsCa, KeyPair, KeyUsagePurpose,
     };
     let err = |e: rcgen::Error| e.to_string();
     use chrono::Datelike;
@@ -115,7 +115,7 @@ fn make(dir: &Path) -> Result<(), String> {
     ca.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     ca.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     (ca.not_before, ca.not_after) = (since, until);
-    let ca_cert = ca.self_signed(&ca_key).map_err(err)?;
+    let ca = CertifiedIssuer::self_signed(ca, ca_key).map_err(err)?;
 
     let key = KeyPair::generate().map_err(err)?;
     let mut leaf = CertificateParams::new(vec![
@@ -130,11 +130,11 @@ fn make(dir: &Path) -> Result<(), String> {
     leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     leaf.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     (leaf.not_before, leaf.not_after) = (since, until);
-    let cert = leaf.signed_by(&key, &ca_cert, &ca_key).map_err(err)?;
+    let cert = leaf.signed_by(&key, &ca).map_err(err)?;
 
     create_private_dir(dir)?;
     write_file(&dir.join("key.pem"), key.serialize_pem().as_bytes(), true)?;
-    write_file(&dir.join("ca.pem"), ca_cert.pem().as_bytes(), false)?;
+    write_file(&dir.join("ca.pem"), ca.pem().as_bytes(), false)?;
     // the certificate last: its time is what says the three are fresh
     write_file(&dir.join("cert.pem"), cert.pem().as_bytes(), false)
 }
