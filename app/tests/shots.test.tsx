@@ -413,10 +413,14 @@ for (const v of variants) {
     await app.press("id:signal-bytes");
     await app.wait(700);
     await charts("03n-bytes");
-    if (narrow) await app.keyboard.press("mod+b");
+    // (errors from the same header, before the sidebar comes back: its return lays the pane out anew)
     await app.press("id:signal-errors");
     await app.wait(700);
     await charts("03o-errors");
+    if (narrow) {
+      await app.keyboard.press("mod+b");
+      await app.waitFor("id:sidebar");
+    }
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
     // (by "Since the run before"'s Compare where it is shown: the same two runs, and no menu opened from a menu, which
