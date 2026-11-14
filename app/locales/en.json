@@ -426,8 +426,6 @@
  "runBars.after": "Later run",
  "runBars.fewer": "Later run, fewer",
  "runBars.more": "Later run, more",
- "budget.p95": "Its p95, %{v}, is within the project's budget of %{budget}.",
- "budget.p95.over": "Its p95, %{v}, is past the project's budget of %{budget}.",
  "budget.errors": "%{n} errors, within the project's budget of %{budget} (the dashed line: that many of this run's requests).",
  "budget.errors.over": "%{n} errors, past the project's budget of %{budget} (the dashed line: that many of this run's requests).",
  "chart.csv": "Save its rows as CSV",

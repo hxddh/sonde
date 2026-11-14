@@ -16,13 +16,13 @@ inputs:
     description: The program's name (default `[program] name` in sonde.toml for the program it `runs`, else what the command runs).
     default: ""
   check-args:
-    description: Flags for `sonde check` (`--no-new-warnings`, `--tolerance 5`, `--max-requests 5000`).
+    description: Flags for `sonde check` (`--tolerance 5`, `--max-requests 5000`).
     default: ""
   config:
     description: The project's sonde.toml (default found from the working directory up).
     default: ""
   baseline:
-    description: "`auto`: the session the latest earlier run of this workflow kept on the base branch (on this branch for a push). `none`, or a session path or https URL."
+    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push). `none`, or a run's path or https URL."
     default: auto
   artifact:
     description: The name the run is kept under, and the baseline fetched by. One per job.
@@ -50,9 +50,9 @@ outputs:
   passed:
     description: "`true` when the run is within its budget and baseline and no trial broke."
     value: ${{ steps.check.outputs.passed }}
-  session:
-    description: The run's session file.
-    value: ${{ steps.record.outputs.session }}
+  file:
+    description: The run's file (.sonde).
+    value: ${{ steps.record.outputs.file }}
   report-url:
     description: The HTML report (an artifact).
     value: ${{ steps.report-upload.outputs.artifact-url }}
@@ -94,7 +94,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_FILE: ${{ steps.record.outputs.file }}
         SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
         SONDE_CONFIG: ${{ inputs.config }}
         SONDE_CHECK_ARGS: ${{ inputs.check-args }}
@@ -104,7 +104,7 @@ runs:
       id: report
       shell: bash
       env:
-        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_FILE: ${{ steps.record.outputs.file }}
         SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
         SONDE_REDACT: ${{ inputs.redact }}
       run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" report
@@ -122,7 +122,7 @@ runs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact }}
-        path: ${{ steps.record.outputs.session }}
+        path: ${{ steps.record.outputs.file }}
         overwrite: true
 
     - name: Comment
@@ -130,7 +130,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_FILE: ${{ steps.record.outputs.file }}
         SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
         SONDE_CONFIG: ${{ inputs.config }}
         SONDE_CHECK_ARGS: ${{ inputs.check-args }}

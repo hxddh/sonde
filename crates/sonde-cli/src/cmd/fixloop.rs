@@ -17,7 +17,7 @@ use super::record::{paint, request_prices_for};
 use crate::output;
 
 /// A finding: what it is, what acting on it saves, where in the program,
-/// and the fix for the SDK that sent its requests (`sdk`: the session's,
+/// and the fix for the SDK that sent its requests (`sdk`: the run's,
 /// when the finding's own requests do not say).
 pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> Vec<String> {
     let mark = if o.level == "warn" {
@@ -113,12 +113,13 @@ pub(super) fn change_lines(
         .map(|f| change_line(f, command, color))
         .collect();
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
+    // (each is listed above, with its line and fix: counted here)
     if !open.is_empty() && !out.is_empty() {
-        out.push(paint(&format!("  {} still open:", open.len()), "2", color));
-        out.extend(
-            open.iter()
-                .map(|f| paint(&format!("    · {}", f.text), "2", color)),
-        );
+        out.push(paint(
+            &format!("  {} still open, as above", open.len()),
+            "2",
+            color,
+        ));
     }
     out
 }
@@ -150,15 +151,24 @@ pub(super) fn command_line(change: &str) -> String {
 fn figures_line(c: &RunChange) -> String {
     let n = |v: f64| format!("{v:.0}");
     format!(
-        "requests {} · waiting {} · cost ≈ {}",
+        "requests {} · waiting {} · cost {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),
         if c.waiting_known {
             moved(c.waiting_ms.0, c.waiting_ms.1, ms_text)
         } else {
             "— (not known)".into()
         },
-        moved(c.cost.0, c.cost.1, |v| money_text(v, &c.currency)),
+        cost_moved(c.cost, &c.currency),
     )
+}
+
+/// A cost before and after as [`moved`] says it; under a cent, its share
+/// alone (`-9%`).
+pub(super) fn cost_moved((a, b): (f64, f64), currency: &str) -> String {
+    if a.max(b) < sonde_proxy::program::CENT {
+        return sonde_proxy::program::share_moved(a, b);
+    }
+    moved(a, b, |v| money_text(v, currency))
 }
 
 /// A run against the program's run before it, in a few lines: what it
@@ -269,9 +279,8 @@ mod tests {
                 "  ✓ fixed  HEAD before GET · saved 20 requests (predicted 20)",
                 "  ↓ less   41 one after another",
                 "  ! back   listed 5 times",
-                "  2 still open:",
-                "    · small uploads",
-                "    · hot key",
+                // each listed above, with its line and fix
+                "  2 still open, as above",
             ]
         );
         // nothing moved: no "still open" alone

@@ -24,19 +24,9 @@ pub struct ProxyArgs {
     /// keys sonde prints can then use the endpoint's credentials.
     #[arg(long)]
     pub(super) allow_remote: bool,
-    /// Left running: start a new session file every this many minutes (the
-    /// finished one compressed), with a status line for the last minute
-    /// instead of each request.
-    #[arg(long, value_name = "MINUTES")]
-    pub(super) rotate: Option<u64>,
-    /// Post each new warning finding, and each finished file over
-    /// sonde.toml's budget, to this webhook as `{"text": …}` (Slack, Teams,
-    /// Mattermost and most chat services take it).
-    #[arg(long, value_name = "URL")]
-    pub(super) alert: Option<String>,
 }
 
-pub(super) fn check_listen(a: &ProxyArgs) -> anyhow::Result<()> {
+fn check_listen(a: &ProxyArgs) -> anyhow::Result<()> {
     if !a.listen.ip().is_loopback() && !a.allow_remote {
         anyhow::bail!(
             "{} is reachable from other machines: add --allow-remote if that is what you want (anyone with the keys sonde prints can then use the endpoint's credentials)",
@@ -52,7 +42,7 @@ pub(super) fn check_listen(a: &ProxyArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn print_env(proxy: &Proxy) {
+fn print_env(proxy: &Proxy) {
     let (set, unset) = proxy.env();
     eprintln!(
         "sonde is listening on {}. Point the application at it:\n",
@@ -68,9 +58,6 @@ pub(super) fn print_env(proxy: &Proxy) {
 }
 
 pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<i32> {
-    if a.rotate.is_some() || a.alert.is_some() {
-        return super::watch::watch(s, a).await;
-    }
     check_listen(a)?;
     let mut started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
     print_env(&started.proxy);

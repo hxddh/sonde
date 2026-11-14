@@ -153,7 +153,7 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     })
 }
 
-/// A recording policy by its name, none the default (no-delete); an
+/// A recording policy by its name, none the default (allow); an
 /// unknown one is refused, never "allow".
 fn policy_of(name: &str) -> Result<Policy, String> {
     if name.is_empty() {
@@ -176,7 +176,7 @@ fn project_in(dir: Option<&Path>) -> Result<Option<sonde_proxy::project::Project
 
 /// The policy a run in `dir` is recorded under: the one asked (Run's
 /// choice) narrowed by its project's `[record] policy`; none asked, the
-/// project's, else no-delete. A project's file may narrow what the person
+/// project's, else allow. A project's file may narrow what the person
 /// chose, never widen it.
 fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, String> {
     let project = project_in(dir)?.and_then(|p| p.policy);
@@ -184,20 +184,6 @@ fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, Strin
         (Some(a), Some(p)) => a.stricter(p),
         (Some(a), None) => a,
         (None, p) => p.unwrap_or_default(),
-    })
-}
-
-/// A JSON map beside the sessions (`titles.json`, `baselines.json`,
-/// `imports.json`), to change and write back: empty when there is none, an
-/// error when it is there and does not read. Writing an empty map over a
-/// file that is only damaged would drop every entry in it.
-fn map_to_change(path: &Path) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sonde_proxy::program::read_map(path).map_err(|e| {
-        err_msg(format!(
-            "{} cannot be read ({}): nothing was changed; fix or remove the file",
-            e.path.display(),
-            e.why
-        ))
     })
 }
 
@@ -217,13 +203,6 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
         (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3)
     })
-}
-
-/// Writes the files opened into sessions, by their contents' digest: `imports.json`.
-fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
-    if let Ok(b) = serde_json::to_vec(all) {
-        let _ = reqlog::private::replace(&dir.join("imports.json"), b);
-    }
 }
 
 /// The platform has no trash (as opposed to moving there failing).
@@ -277,7 +256,7 @@ async fn begin(
         Some(c) => project_in(cwd.as_deref())?.and_then(|p| p.file.program.name_for(c)),
         None => None,
     };
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     // named as the CLI names it: by the program (`etl` for `python3 etl.py`)
     let name = sonde_proxy::program::file_stem(program.as_deref(), command.as_deref())
@@ -643,28 +622,19 @@ fn forget(path: &Path) {
     sonde_proxy::summary::forget(path);
 }
 
-/// The titles given to sessions, by file name: `titles.json` beside them.
+/// The titles given to sessions, by file name, as the folder's index keeps them.
 fn titles() -> std::collections::BTreeMap<String, String> {
-    std::fs::read(sonde().paths().sessions().join("titles.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
-/// Holds `titles.json`'s lock: see [`sonde_proxy::index::hold`].
-fn titles_held() -> Option<std::fs::File> {
-    sonde_proxy::index::hold(&sonde().paths().sessions(), "titles")
-}
-
-fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
-    let file = sonde().paths().sessions().join("titles.json");
-    reqlog::private::replace(&file, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)
+    sonde_proxy::index::of(&sonde().paths().runs())
+        .runs
+        .iter()
+        .filter_map(|(name, e)| Some((name.clone(), e.title.clone()?)))
+        .collect()
 }
 
 /// A session of the sessions directory, by path: what may be renamed or
 /// removed (not a file elsewhere on the disk).
 fn own_session(path: &str) -> Result<(PathBuf, String), String> {
-    let dir = sonde().paths().sessions();
+    let dir = sonde().paths().runs();
     own_session_in(&dir, path).map(|name| (dir.join(&name), name))
 }
 
@@ -706,7 +676,7 @@ fn trials_of(session: &Path) -> Vec<sonde_proxy::trial::Trial> {
     let program = header_of(session).and_then(|h| sonde_proxy::program::key_of(&h));
     let mut trials = sonde_proxy::trial::load_with_history(session, program.as_deref());
     for t in &mut trials {
-        t.session = sonde_proxy::trial::session_path(session, t)
+        t.run = sonde_proxy::trial::session_path(session, t)
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned());
     }
@@ -771,14 +741,13 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
 /// The budget a project gives its program in the `[check]` of the
 /// `sonde.toml` found from `dir` upwards, read as `sonde check` reads it
 /// ([`sonde_proxy::project`]): what the app draws on a chart as a line —
-/// `max-p95` and `max-waiting` in ms, `max-errors` a count. None without a
-/// file (or one that does not read), or without any of the three.
-pub(crate) fn project_budget(dir: &Path) -> Option<(Option<f64>, Option<u64>, Option<f64>)> {
+/// `max-waiting` in ms, `max-errors` a count. None without a file (or one
+/// that does not read), or without either.
+pub(crate) fn project_budget(dir: &Path) -> Option<(Option<u64>, Option<f64>)> {
     let check = sonde_proxy::project::of(dir).ok()??.file.check;
-    let p95 = check.max_p95_ms().ok()?;
     let waiting = check.max_waiting_ms().ok()?;
     let errors = check.max_errors.map(|n| n as u64);
-    (p95.is_some() || waiting.is_some() || errors.is_some()).then_some((p95, errors, waiting))
+    (waiting.is_some() || errors.is_some()).then_some((errors, waiting))
 }
 
 /// A trial's progress as the app hears it: `{ scenario, state }`, with the
@@ -1078,10 +1047,9 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     Some(figures.point)
 }
 
-/// Each program's baseline run, by file name: `baselines.json` beside the sessions.
-/// A damaged one is an error, not "none set": said, and never written over.
-fn baselines() -> Result<std::collections::BTreeMap<String, String>, String> {
-    sonde_proxy::program::read_baselines(&sonde().paths().sessions()).map_err(err_msg)
+/// Each program's baseline run, by file name, as the folder's index keeps them.
+fn baselines() -> std::collections::BTreeMap<String, String> {
+    sonde_proxy::program::baselines(&sonde().paths().runs())
 }
 
 /// The requests in a session file: its record lines (not the header, not the
@@ -1381,7 +1349,7 @@ async fn try_under(
             &run.records,
             exit.unwrap_or(1),
         );
-        t.session = Some(run_path);
+        t.run = Some(run_path);
         output.post(trial_event(&scenario.name, Some(&t)));
         trials.push(t);
     }
@@ -1402,7 +1370,7 @@ pub struct Sessions;
 impl Sessions {
     /// The sessions in the data directory, newest first.
     pub fn list() -> JsonValue {
-        let dir = sonde().paths().sessions();
+        let dir = sonde().paths().runs();
         let live = RECORDING.lock().as_ref().map(|r| r.path.clone());
         let mut out: Vec<(String, JsonValue)> = Vec::new();
         let titles = titles();
@@ -1692,15 +1660,15 @@ impl Sessions {
 
     /// The budget the session's program has in its project's `sonde.toml`
     /// (found from the folder it ran in), for the charts to draw:
-    /// `{ maxP95Ms, maxErrors, maxWaitingMs }`, each null where it gives
+    /// `{ maxErrors, maxWaitingMs }`, each null where it gives
     /// none; null for a session with no folder or a project with no budget.
     pub fn budget(path: String) -> JsonValue {
         let Some(dir) = header_of(Path::new(&path)).and_then(|h| h.cwd) else {
             return JsonValue::Null;
         };
         match project_budget(Path::new(&dir)) {
-            Some((p95, errors, waiting)) => {
-                json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting })
+            Some((errors, waiting)) => {
+                json!({ "maxErrors": errors, "maxWaitingMs": waiting })
             }
             None => JsonValue::Null,
         }
@@ -1855,7 +1823,7 @@ impl Sessions {
         let original = full_session(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
         let out = sonde_proxy::session::fresh_path(
-            &s.paths().sessions(),
+            &s.paths().runs(),
             &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
         );
         let prefix = replay::normalize_prefix(&prefix)?;
@@ -1958,7 +1926,7 @@ impl Sessions {
     /// newest run is past it (more than 10% more requests or waiting).
     pub async fn programs() -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
-            let dir = sonde().paths().sessions();
+            let dir = sonde().paths().runs();
             let mut by: std::collections::BTreeMap<String, Vec<(String, PathBuf)>> =
                 Default::default();
             // each program's command as its newest run wrote it
@@ -1977,7 +1945,7 @@ impl Sessions {
                     by.entry(k).or_default().push((h.created.to_rfc3339(), p));
                 }
             }
-            let bases = baselines()?;
+            let bases = baselines();
             let mut out: Vec<(String, JsonValue)> = by
                 .into_iter()
                 .map(|(key, mut runs)| {
@@ -2044,7 +2012,7 @@ impl Sessions {
             let Some(key) = header.as_ref().and_then(sonde_proxy::program::key_of) else {
                 return Ok(JsonValue::Null);
             };
-            let dir = sonde().paths().sessions();
+            let dir = sonde().paths().runs();
             let mut runs: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
                 .into_iter()
                 .flatten()
@@ -2071,7 +2039,7 @@ impl Sessions {
                 .collect();
             let commits: Vec<_> = dated.iter().map(|(_, g)| g.clone()).collect();
             let runs: Vec<_> = dated.iter().map(|(r, _)| r.clone()).collect();
-            let base = baselines()?
+            let base = baselines()
                 .get(&key)
                 .map(|name| dir.join(name))
                 .filter(|p| p.is_file());
@@ -2101,7 +2069,6 @@ impl Sessions {
                     let (bp, bs, bpr, bob) = read(&b.to_string_lossy())?;
                     let budget = sonde_proxy::program::Budget {
                         tolerance: Some(0.1),
-                        no_new_warnings: true,
                         ..Default::default()
                     };
                     let c = sonde_proxy::program::check(
@@ -2166,15 +2133,19 @@ impl Sessions {
         let key = header_of(Path::new(&path))
             .and_then(|h| sonde_proxy::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
-        let dir = sonde().paths().sessions();
-        let _held = sonde_proxy::index::hold(&dir, "baselines");
-        let mut all = map_to_change(&dir.join("baselines.json"))?;
-        if on {
-            all.insert(key, name);
-        } else if all.get(&key) == Some(&name) {
-            all.remove(&key);
-        }
-        sonde_proxy::program::write_baselines(&dir, &all).map_err(err_msg)?;
+        let dir = sonde().paths().runs();
+        sonde_proxy::index::update(&dir, |ix| {
+            let now = ix.folder.baselines.get(&key);
+            let change = if on {
+                Some(sonde_proxy::index::Change::Baseline(Some(name.clone())))
+            } else if now == Some(&name) {
+                Some(sonde_proxy::index::Change::Baseline(None))
+            } else {
+                None
+            };
+            (change.map(|c| (key.clone(), c)).into_iter().collect(), ())
+        })
+        .map_err(err_msg)?;
         Ok(true)
     }
 
@@ -2204,7 +2175,7 @@ impl Sessions {
     /// `sonde run`) to the sessions directory; its path.
     pub fn example() -> Result<String, String> {
         const EXAMPLE: &[u8] = include_bytes!("../../proxy/tests/fixtures/slatedb.sonde");
-        let dir = sonde().paths().sessions();
+        let dir = sonde().paths().runs();
         std::fs::create_dir_all(&dir).map_err(err_msg)?;
         let path = dir.join("example-slatedb.sonde");
         // a real recording (SlateDB on RustFS), named as a user would have
@@ -2225,7 +2196,7 @@ impl Sessions {
     /// Adds a session file the user picked (its name and text) to the
     /// sessions directory, if it reads as one; its new path.
     pub fn import(name: String, text: String) -> Result<String, String> {
-        let dir = sonde().paths().sessions();
+        let dir = sonde().paths().runs();
         std::fs::create_dir_all(&dir).map_err(err_msg)?;
         let stem: String = Path::new(&name)
             .file_stem()
@@ -2247,12 +2218,10 @@ impl Sessions {
         };
         // the same file opened again is the session it made, not a copy
         let digest = format!("{:016x}", fnv1a(text.as_bytes()));
-        // an index that does not read is left as it is (the session is
-        // still made; opening the file again makes another)
-        let _held = sonde_proxy::index::hold(&dir, "imports");
-        let known = map_to_change(&dir.join("imports.json"));
-        let mut imported = known.clone().unwrap_or_default();
-        if let Some(p) = imported
+        let _ = std::fs::create_dir_all(&dir);
+        if let Some(p) = sonde_proxy::index::of(&dir)
+            .folder
+            .imports
             .get(&digest)
             .map(|n| dir.join(n))
             .filter(|p| p.is_file())
@@ -2271,11 +2240,14 @@ impl Sessions {
                 return Err(format!("{name}: {e}"));
             }
         }
-        if let Some(n) = path.file_name()
-            && known.is_ok()
-        {
-            imported.insert(digest, n.to_string_lossy().into_owned());
-            write_imports(&dir, &imported);
+        if let Some(n) = path.file_name() {
+            let n = n.to_string_lossy().into_owned();
+            let _ = sonde_proxy::index::update(&dir, |_| {
+                (
+                    vec![(digest, sonde_proxy::index::Change::Import(Some(n)))],
+                    (),
+                )
+            });
         }
         Ok(path.to_string_lossy().into_owned())
     }
@@ -2326,23 +2298,17 @@ impl Sessions {
 
     /// Gives a session a title of the user's (an empty one takes it away).
     pub fn rename(path: String, title: String) -> Result<bool, String> {
-        let (_, name) = own_session(&path)?;
-        let _held = titles_held();
-        let mut t = map_to_change(&sonde().paths().sessions().join("titles.json"))?;
+        let (p, _) = own_session(&path)?;
         let title = title.trim();
-        if title.is_empty() {
-            t.remove(&name);
-        } else {
-            t.insert(name, title.chars().take(200).collect());
-        }
-        save_titles(&t)?;
+        let title = (!title.is_empty()).then(|| title.chars().take(200).collect());
+        sonde_proxy::index::set(&p, sonde_proxy::index::Change::Title(title));
         Ok(true)
     }
 
     /// Removes a session file (not the one being recorded): to the system's
     /// trash, so it can come back; deleted where there is none.
     pub async fn remove(path: String) -> Result<bool, String> {
-        let (p, name) = own_session(&path)?;
+        let (p, _) = own_session(&path)?;
         if RECORDING.lock().as_ref().is_some_and(|r| r.path == p) {
             return Err(err_msg("this session is being recorded: stop it first"));
         }
@@ -2359,13 +2325,6 @@ impl Sessions {
         sonde_proxy::trial::remove(&p);
         forget(&p);
         sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
-        // the session is gone either way; a titles file that does not read stays
-        let _held = titles_held();
-        if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
-            && t.remove(&name).is_some()
-        {
-            save_titles(&t)?;
-        }
         Ok(true)
     }
 
@@ -2589,7 +2548,8 @@ mod tests {
     #[test]
     fn an_unknown_recording_policy_is_refused_not_allowed() {
         assert_eq!(policy_of("allow").unwrap(), Policy::Allow);
-        assert_eq!(policy_of("").unwrap(), Policy::NoDelete, "safe by default");
+        // a program does with its data what it would without sonde
+        assert_eq!(policy_of("").unwrap(), Policy::Allow);
         assert_eq!(policy_of("no-delete").unwrap(), Policy::NoDelete);
         assert_eq!(policy_of("read-only").unwrap(), Policy::ReadOnly);
         assert!(policy_of("readonly").unwrap_err().contains("readonly"));
@@ -2602,7 +2562,7 @@ mod tests {
         std::fs::create_dir_all(t.path().join(".git")).unwrap();
         let at = |asked| run_policy(Some(asked), Some(t.path()));
         assert_eq!(at(Policy::Allow).unwrap(), Policy::Allow);
-        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::NoDelete);
+        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::Allow);
         let file = t.path().join("sonde.toml");
         std::fs::write(&file, "[record]\npolicy = \"read-only\"\n").unwrap();
         assert_eq!(at(Policy::Allow).unwrap(), Policy::ReadOnly);
@@ -2617,19 +2577,6 @@ mod tests {
             run_policy(Some(Policy::Allow), None).unwrap(),
             Policy::Allow
         );
-    }
-
-    #[test]
-    fn a_damaged_map_is_refused_not_read_as_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let f = dir.path().join("titles.json");
-        assert!(map_to_change(&f).unwrap().is_empty(), "none yet: empty");
-        std::fs::write(&f, "{\"a.sonde\": \"A\"}").unwrap();
-        assert_eq!(map_to_change(&f).unwrap()["a.sonde"], "A");
-        // cut short: every entry would go with the next write
-        std::fs::write(&f, "{\"a.sonde\": \"A\", \"b.so").unwrap();
-        let e = map_to_change(&f).unwrap_err();
-        assert!(e.contains("nothing was changed"), "{e}");
     }
 
     #[test]
@@ -3201,7 +3148,7 @@ mod tests {
             Session::open(&trial).unwrap(),
         );
         let mut verdict = sonde_proxy::trial::judge(&scenario, &c.records, 0, &t.records, 0);
-        verdict.session = Some(trial.to_string_lossy().into_owned());
+        verdict.run = Some(trial.to_string_lossy().into_owned());
         (
             clean.to_string_lossy().into_owned(),
             trial.to_string_lossy().into_owned(),
@@ -3250,7 +3197,7 @@ mod tests {
         let view = view_of(&clean).unwrap();
         assert_eq!(view["trials"][0]["scenario"], "slowdown");
         assert_eq!(view["trials"][0]["standing"], to_json(verdict.standing));
-        assert_eq!(view["trials"][0]["session"], trial.as_str());
+        assert_eq!(view["trials"][0]["run"], trial.as_str());
         let marks = trial_marks(Path::new(&clean));
         assert_eq!(
             marks,
@@ -3384,22 +3331,10 @@ mod tests {
         assert_eq!(super::project_budget(&inner), None);
         std::fs::write(
             project.path().join("sonde.toml"),
-            "[check]\nmax-p95 = \"50ms\"\nmax-errors = 3\nmax-waiting = \"2s\"\n",
+            "[check]\nmax-errors = 3\nmax-waiting = \"2s\"\n",
         )
         .unwrap();
-        assert_eq!(
-            super::project_budget(&inner),
-            Some((Some(50.0), Some(3), Some(2000.0)))
-        );
-        std::fs::write(
-            project.path().join("sonde.toml"),
-            "[check]\nmax-p95 = 120\n",
-        )
-        .unwrap();
-        assert_eq!(
-            super::project_budget(&inner),
-            Some((Some(120.0), None, None))
-        );
+        assert_eq!(super::project_budget(&inner), Some((Some(3), Some(2000.0))));
     }
 
     #[test]
@@ -3426,7 +3361,7 @@ mod tests {
         assert_eq!(done["state"], "done");
         assert_eq!(done["trial"]["scenario"], "slowdown");
         assert_eq!(done["trial"]["standing"], to_json(verdict.standing));
-        assert!(done["trial"]["session"].is_string());
+        assert!(done["trial"]["run"].is_string());
     }
 
     #[test]

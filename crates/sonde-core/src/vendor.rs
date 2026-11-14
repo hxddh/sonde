@@ -10,6 +10,7 @@ pub enum Vendor {
     Minio,
     CephRgw,
     AliyunOss,
+    TencentCos,
     Tigris,
     BackblazeB2,
     Wasabi,
@@ -37,12 +38,13 @@ impl Vendor {
     }
 }
 
-pub const ALL: [Vendor; 10] = [
+pub const ALL: [Vendor; 11] = [
     Vendor::Aws,
     Vendor::R2,
     Vendor::Minio,
     Vendor::CephRgw,
     Vendor::AliyunOss,
+    Vendor::TencentCos,
     Vendor::Tigris,
     Vendor::BackblazeB2,
     Vendor::Wasabi,
@@ -58,6 +60,7 @@ impl Vendor {
             Vendor::Minio => "MinIO",
             Vendor::CephRgw => "Ceph RGW",
             Vendor::AliyunOss => "Alibaba Cloud OSS",
+            Vendor::TencentCos => "Tencent COS",
             Vendor::Tigris => "Tigris",
             Vendor::BackblazeB2 => "Backblaze B2",
             Vendor::Wasabi => "Wasabi",
@@ -73,6 +76,7 @@ impl Vendor {
             Vendor::Minio => "minio",
             Vendor::CephRgw => "ceph-rgw",
             Vendor::AliyunOss => "aliyun-oss",
+            Vendor::TencentCos => "tencent-cos",
             Vendor::Tigris => "tigris",
             Vendor::BackblazeB2 => "backblaze-b2",
             Vendor::Wasabi => "wasabi",
@@ -116,6 +120,7 @@ impl Vendor {
             Vendor::Minio => "http://127.0.0.1:9000",
             Vendor::CephRgw => "http://127.0.0.1:7480",
             Vendor::AliyunOss => "https://oss-{region}.aliyuncs.com",
+            Vendor::TencentCos => "https://cos.{region}.myqcloud.com",
             Vendor::Tigris => "https://fly.storage.tigris.dev",
             Vendor::BackblazeB2 => "https://s3.{region}.backblazeb2.com",
             Vendor::Wasabi => "https://s3.{region}.wasabisys.com",
@@ -133,6 +138,9 @@ impl Vendor {
             Vendor::R2
         } else if u.contains("aliyuncs.com") {
             Vendor::AliyunOss
+        } else if u.contains("myqcloud.com") {
+            // its buckets are reached by name in the host
+            Vendor::TencentCos
         } else if u.contains("tigris.dev") {
             Vendor::Tigris
         } else if u.contains("backblazeb2.com") {
@@ -185,6 +193,10 @@ mod tests {
             Vendor::guess("https://abc.r2.cloudflarestorage.com"),
             Vendor::R2
         );
+        // COS buckets are reached by name in the host
+        let cos = Vendor::guess("https://cos.ap-guangzhou.myqcloud.com");
+        assert_eq!(cos, Vendor::TencentCos);
+        assert!(!cos.default_path_style());
         assert!(Vendor::Aws.has_sts_identity() && !Vendor::Minio.has_sts_identity());
         assert_eq!(
             Vendor::Aws.sts_endpoint("cn-north-1").unwrap(),

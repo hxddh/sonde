@@ -1,6 +1,6 @@
 //! Session files (`.sonde`): one JSON header line, then one redacted record
 //! per line. Written as requests happen, so a crash keeps what came before.
-//! The format is a contract (docs/dev/session-format.md): a field may be added
+//! The format is a contract (docs/dev/run-format.md): a field may be added
 //! within a version, and readers pass over fields they do not know; a change
 //! that would mislead an older reader is a new [`VERSION`], which that reader
 //! refuses by name ([`SessionHeader::readable`]).
@@ -149,7 +149,7 @@ impl SessionHeader {
     /// it goes: a field whose meaning changed would be read in its old one.
     pub fn readable(&self) -> Result<(), String> {
         if self.format != FORMAT {
-            return Err(format!("not a sonde session (format {:?})", self.format));
+            return Err(format!("not a sonde run (format {:?})", self.format));
         }
         if self.version != VERSION {
             let by = self
@@ -400,7 +400,7 @@ impl Lines {
             if self.buf.len() >= MAX_LINE {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("a line longer than {} MiB: not a session's", MAX_LINE >> 20),
+                    format!("a line longer than {} MiB: not a run's", MAX_LINE >> 20),
                 ));
             }
             self.buf.resize(self.buf.len() * 2, 0);
@@ -494,7 +494,7 @@ pub fn is_compressed(path: &Path) -> bool {
 
 /// Compresses a finished session in place (gzip; a tenth of its size or
 /// less): it stays a `.sonde` file every reader opens. A live session is
-/// not compressed: it is still being appended to. A session of the sessions
+/// not compressed: it is still being appended to. A run of the runs
 /// folder is counted as it goes by, and its counts kept beside it
 /// ([`crate::summary::Counted`]): listing it never reads it again.
 pub fn compress(path: &Path) -> std::io::Result<()> {
@@ -505,7 +505,7 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     let listed = path
         .parent()
         .and_then(|d| d.file_name())
-        .is_some_and(|n| n == "sessions");
+        .is_some_and(|n| n == "runs");
     let mut tally = listed.then(Tally::default);
     let mut src = File::open(path)?;
     // synced before it replaces the only copy
@@ -697,10 +697,10 @@ impl Session {
         let first = lines
             .line()
             .map_err(io)?
-            .ok_or(ReadError::Bad("empty session file".into()))?;
+            .ok_or(ReadError::Bad("empty run file".into()))?;
         let first = String::from_utf8_lossy(first);
         let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
-            .map_err(|e| ReadError::Bad(format!("not a sonde session: {e}")))?;
+            .map_err(|e| ReadError::Bad(format!("not a sonde run: {e}")))?;
         header.readable().map_err(ReadError::Bad)?;
         let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
         let workers = if small {
@@ -1054,7 +1054,7 @@ mod tests {
     fn what_a_recording_leaves_is_0600() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sessions").join("s.sonde");
+        let path = dir.path().join("runs").join("s.sonde");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
         w.write(&Record {
@@ -1071,7 +1071,7 @@ mod tests {
         assert_eq!(mode(&path.with_file_name(crate::index::FILE)), 0o600);
     }
 
-    /// docs/dev/session-format.md's promises: the fewest fields a line needs,
+    /// docs/dev/run-format.md's promises: the fewest fields a line needs,
     /// fields not known passed over, a newer format refused by name.
     #[test]
     fn the_format_as_its_spec_says() {
@@ -1130,7 +1130,7 @@ mod tests {
         assert!(
             Session::open(&path)
                 .unwrap_err()
-                .contains("not a sonde session")
+                .contains("not a sonde run")
         );
     }
 
@@ -1295,12 +1295,9 @@ mod tests {
             Err(ReadError::Io(_))
         ));
         std::fs::write(&path, b"").unwrap();
-        assert_eq!(
-            bad(Session::read_said(&path, Keep::All)),
-            "empty session file"
-        );
+        assert_eq!(bad(Session::read_said(&path, Keep::All)), "empty run file");
         std::fs::write(&path, b"hello\n").unwrap();
-        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde session"));
+        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde run"));
         recorded(&path, 10);
         let mut text = std::fs::read(&path).unwrap();
         let at = text.iter().position(|b| *b == b'\n').unwrap() + 1;
@@ -1465,7 +1462,7 @@ mod tests {
     #[test]
     fn a_session_of_the_sessions_folder_is_counted_as_it_is_compressed() {
         let data = tempfile::tempdir().unwrap();
-        let dir = data.path().join("sessions");
+        let dir = data.path().join("runs");
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("run.sonde");
         recorded(&path, 40);

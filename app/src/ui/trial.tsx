@@ -172,7 +172,7 @@ export function TrialDialog(props: {
   // the scenarios as the verdicts list them, drawn as the Runs pane draws them; done, and its run kept: a press opens it
   const rows = (list: TrialStep[]): VerdictRow[] =>
     list.map((s) => {
-      const session = ended() && !ended()!.cancelled ? (s.trial?.session ?? null) : null;
+      const session = ended() && !ended()!.cancelled ? (s.trial?.run ?? null) : null;
       return { scenario: s.scenario, trial: s.trial ?? null, state: s.state, onOpen: session && props.onOpen ? () => open(session) : undefined };
     });
   return (

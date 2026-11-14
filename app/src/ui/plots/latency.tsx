@@ -34,7 +34,7 @@ export const latencyLegend = (profile?: Profile): LegendItem[] => [
 /** How long requests took over the session, on a log scale (a decade a step, as the scatter's): the median a line,
  * the band from it to p95 and the band on to p99 where a slice has `FEW` requests or more; slices without requests
  * leave a gap. */
-export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean; /** the project's `max-p95`, in ms: its line */ budgetMs?: number | null }) {
+export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean }) {
   // every slice, so one without requests leaves a gap rather than a line across it
   const rows = () => props.profile.rate;
   const has = (b: Profile["rate"][number]) => inSlice(b) > 0;
@@ -46,11 +46,11 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     const d = props.domainMs;
     return d ? answered().filter((b) => b.tMs >= d[0] && b.tMs < d[1]) : answered();
   };
-  // from under the fastest median to over the slowest drawn (and the budget's line): a decade at least
+  // from under the fastest median to over the slowest drawn: a decade at least
   const yRange = (): [number, number] => {
     const v = inView();
-    const lo = lg(Math.min(...v.map((b) => b.p50Ms), props.budgetMs ?? Infinity, 1e9));
-    const hi = lg(Math.max(...v.map((b) => (tells(b) ? b.p99Ms : b.p50Ms)), props.budgetMs ?? 0, 0.01));
+    const lo = lg(Math.min(...v.map((b) => b.p50Ms), 1e9));
+    const hi = lg(Math.max(...v.map((b) => (tells(b) ? b.p99Ms : b.p50Ms)), 0.01));
     const spare = Math.max(0, 1 - (hi - lo)) / 2;
     return [lo - spare - 0.1, hi + spare + 0.15];
   };
@@ -102,7 +102,6 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         <Line y={gap(has, (b) => b.p50Ms)} curve="linear" class={`stroke-foreground ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-foreground" />
         <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), props.focus?.() ?? null) ? yRange()[1] : (undefined as unknown as number))} class={FOCUS_RULE} />
         <PlotAxis placement="left" tickValues={ticks()} format={(v) => duration(10 ** v)} labelClass={LABEL.scale} />
-        <Budget value={props.budgetMs ? lg(props.budgetMs) : null} say={(v) => duration(10 ** v)} />
         <If when={props.axis}>
           <TimeAxis domain={domain()} />
         </If>

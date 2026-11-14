@@ -127,7 +127,7 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     let third = since(RUNS[2]);
     assert!(third.previous.as_deref().unwrap().ends_with(RUNS[1]));
     assert_eq!(state_of(&third.findings, "obs.headget"), State::Fixed);
-    let kept = fixloop::read(dir.path()).unwrap();
+    let kept = fixloop::read(dir.path());
     let head = &kept["etl"].findings["obs.headget|etl-bucket/run/in/"];
     assert_eq!(head.state, State::Fixed);
     assert_eq!(head.since, RUNS[2]);
@@ -136,7 +136,7 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     let undone = since(RUNS[4]);
     assert_eq!(state_of(&undone.findings, "obs.headget"), State::Back);
     assert_eq!(state_of(&undone.findings, "obs.small"), State::Back);
-    let kept = fixloop::read(dir.path()).unwrap();
+    let kept = fixloop::read(dir.path());
     assert_eq!(
         kept["etl"].findings["obs.headget|etl-bucket/run/in/"].state,
         State::Back
@@ -147,11 +147,11 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     );
 
     // an older run shown again changes nothing kept
-    let before = std::fs::read(dir.path().join("findings.json")).unwrap();
+    let before = sonde_proxy::index::of(dir.path()).folder.findings.clone();
     let again = since(RUNS[2]);
     assert_eq!(state_of(&again.findings, "obs.headget"), State::Fixed);
     assert_eq!(
-        std::fs::read(dir.path().join("findings.json")).unwrap(),
+        sonde_proxy::index::of(dir.path()).folder.findings.clone(),
         before
     );
 }
@@ -347,7 +347,7 @@ fn a_programs_kept_findings_do_not_grow_with_keys_that_change() {
             "run {seed}: {:#?}",
             since.findings
         );
-        kept.push(fixloop::read(dir.path()).unwrap()["job"].findings.len());
+        kept.push(fixloop::read(dir.path())["job"].findings.len());
     }
     assert_eq!(kept[0], kept[2], "{kept:?}");
 }
@@ -362,13 +362,13 @@ fn a_run_that_failed_is_not_compared_and_changes_nothing_kept() {
     let dir = tempfile::tempdir().unwrap();
     let first = ran(dir.path(), 1, &hot(12), Some(0));
     assert!(first.failed.is_none());
-    let kept = std::fs::read(dir.path().join("findings.json")).unwrap();
+    let kept = sonde_proxy::index::of(dir.path()).folder.findings.clone();
     // it crashed after one request
     let crashed = ran(dir.path(), 2, &hot(1), Some(3));
     assert_eq!(crashed.failed, Some(3));
     assert!(crashed.change.is_none() && crashed.findings.is_empty());
     assert_eq!(
-        std::fs::read(dir.path().join("findings.json")).unwrap(),
+        sonde_proxy::index::of(dir.path()).folder.findings.clone(),
         kept
     );
     // the next is compared with the last that did not fail
@@ -450,7 +450,7 @@ fn less_is_kept_and_over_its_threshold_again_is_back() {
     ran(dir.path(), 1, &hot(12), Some(0));
     let less = ran(dir.path(), 2, &hot(3), Some(0));
     assert_eq!(state_of(&less.findings, "obs.hot"), State::Less);
-    let kept = |dir: &Path| fixloop::read(dir).unwrap()["job"].findings["obs.hot|b/hot"].state;
+    let kept = |dir: &Path| fixloop::read(dir)["job"].findings["obs.hot|b/hot"].state;
     assert_eq!(kept(dir.path()), State::Less);
     let over = ran(dir.path(), 3, &hot(12), Some(0));
     assert_eq!(state_of(&over.findings, "obs.hot"), State::Back);
@@ -721,7 +721,7 @@ fn runs_that_end_out_of_order_keep_all_their_findings() {
             s.spawn(move || shown(d, *minute, rs));
         }
     });
-    let kept = fixloop::read(dir.path()).unwrap();
+    let kept = fixloop::read(dir.path());
     for w in words {
         let id = format!("obs.hot|b/{w}");
         assert!(
@@ -757,12 +757,17 @@ fn findings_kept_under_older_rules_are_made_again() {
             }
         }
     });
-    std::fs::write(
-        dir.path().join("findings.json"),
-        serde_json::to_vec(&old).unwrap(),
-    )
+    sonde_proxy::index::update(dir.path(), |_| {
+        (
+            vec![(
+                "job".to_string(),
+                sonde_proxy::index::Change::Findings(Some(old["job"].clone())),
+            )],
+            (),
+        )
+    })
     .unwrap();
-    let kept = fixloop::read(dir.path()).unwrap();
+    let kept = fixloop::read(dir.path());
     let job = &kept["job"];
     assert_eq!(job.rules, sonde_proxy::profile::IDENTITY_RULES);
     let ids: Vec<&String> = job.findings.keys().collect();

@@ -11,7 +11,7 @@ destructive actions are gated, and a recorded program is limited by a policy.
   are obtained, never a key. The endpoint form cannot submit a key (`credentials: "keep"` keeps static keys without
   reading them).
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
-  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, sessions,
+  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, runs,
   HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no signature.
 - `config.toml` is written with mode 0600 (its temporary file is created so).
 
@@ -28,13 +28,13 @@ destructive actions are gated, and a recorded program is limited by a policy.
 
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
-- On Unix, files holding a program's traffic are `0600` regardless of umask: sessions, each sessions folder's
-  `.index.jsonl` (counts, trial verdicts), baselines, titles, `bucket size`'s cache, `audit.jsonl`.
+- On Unix, files holding a program's traffic are `0600` regardless of umask: runs, each runs folder's
+  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`.
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
   `//host/share`).
-- A code location in a session opens only a source or text file (allow-listed extensions) inside the session's run
-  folder; anything else is shown in the file manager; a network path opens nothing.
+- A code location in a run opens only a source or text file (allow-listed extensions) inside the folder it ran
+  in; anything else is shown in the file manager; a network path opens nothing.
 
 ## One safety model
 
@@ -43,8 +43,8 @@ operations (aborting uploads, deleting versions, delete markers or objects, repl
 never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
-2. It runs only when confirmed: the item count typed where data is lost (`--confirm COUNT`); a lifecycle rule, which
-   keeps the bucket's other rules, on `--yes`.
+2. It runs only with `--yes` (in the app, its confirmation), built again then: what it changes is what the dry run
+   would list at that moment.
 3. Plans expire after 10 minutes and run once.
 4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
@@ -58,29 +58,30 @@ Probes write too (under `sonde-probe/` in the scratch bucket, and their own buck
 ## Run
 
 The recording policy is a safety net against a program's mistakes, not a sandbox: the program runs with the user's
-rights and can reach the store (or anything else) by other means, with other credentials. A repository's
-`sonde.toml` can widen the policy to `allow`, with a warning on stderr only. Run a program you do not trust as you
-would without sonde.
+rights and can reach the store (or anything else) by other means, with other credentials. By default it lets
+everything through: sonde does not change what a program may do with its own data. Run a program you do not trust as
+you would without sonde.
 
 - Run starts the user's command through their shell with their rights, like a terminal.
 - The command gets a local endpoint and throwaway keys, never sonde's credentials; `AWS_SESSION_TOKEN`,
   `AWS_PROFILE` and similar are removed.
 - What it may do is the recording policy ([recording](recording.md#what-a-recorded-program-may-do)):
-  - `no-delete` (default): no deletes, aborts, lifecycle rules, bucket policies or versioning suspension, but of
-    what the recording made itself. Writes go through, over an object or not: use `read-only` to keep what is there.
+  - `allow` (default): everything.
+  - `no-delete` (a trial's default, where sonde's faults could push a program down a bad path): no deletes, aborts,
+    lifecycle rules, bucket policies or versioning suspension, but of what the recording made itself. Writes go
+    through, over an object or not: use `read-only` to keep what is there.
   - `read-only`: GET and HEAD only.
-  - `allow` (`--policy allow`, `[record] policy = "allow"`): everything.
-- `sonde.toml` may set the policy when no flag does (sonde warns on stderr when it allows deletes); in the app it may
-  only narrow the chosen one.
-- The program's output is kept as printed, so printed secrets end up in the session; records stay redacted.
+- `sonde.toml` may set the policy when no flag does; in the app it may only narrow the chosen one.
+- The program's output is kept as printed, so printed secrets end up in the run; records stay redacted.
 - Only the app process starts commands: no listening socket; the TSX VM reaches it only through `sonde/native`.
 - "Name the code" (on by default; `--no-callers`) extends, never replaces, `PYTHONPATH`, `NODE_OPTIONS` and
   `JAVA_TOOL_OPTIONS` with a hook that adds an `x-sonde-caller` header to requests to sonde only. sonde reads it and
   never forwards it; a failing hook leaves the program unchanged. Hook files are replaced whole (renamed into place).
 - The Runs pane's code change runs `git diff` and `git show` in the run's folder with commits checked as hex and
-  fsmonitor off, so a shared session cannot make it run anything else.
+  fsmonitor off, so a shared run cannot make it run anything else.
 
-## Shared sessions
+## Shared runs
 
-`sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds. It
-fetches nothing and runs no server.
+`sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds (`--redact`:
+bucket and key names as tokens; headers, bodies, URLs, output and arguments dropped). It fetches nothing and runs no
+server.

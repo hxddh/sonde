@@ -426,8 +426,6 @@
  "runBars.after": "较晚的运行",
  "runBars.fewer": "较晚的运行，更少",
  "runBars.more": "较晚的运行，更多",
- "budget.p95": "p95 为 %{v}，在项目预算 %{budget} 之内。",
- "budget.p95.over": "p95 为 %{v}，超出了项目预算 %{budget}。",
  "budget.errors": "%{n} 个错误，在项目预算 %{budget} 个之内（虚线：本次运行请求中的这么多个）。",
  "budget.errors.over": "%{n} 个错误，超出了项目预算 %{budget} 个（虚线：本次运行请求中的这么多个）。",
  "chart.csv": "将数据另存为 CSV",

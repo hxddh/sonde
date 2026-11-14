@@ -213,11 +213,11 @@
     },
     "record": {
       "type": "object",
-      "description": "One request: a line of the session file (docs/dev/session-format.md).",
+      "description": "One request: a line of the run file (docs/dev/run-format.md).",
       "properties": {
         "id": {
           "type": "integer",
-          "description": "Unique within the session."
+          "description": "Unique within the run."
         },
         "time": {
           "type": "string",

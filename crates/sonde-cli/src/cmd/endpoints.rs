@@ -16,7 +16,7 @@ pub struct EndpointArgs {
 enum EndpointAction {
     /// Configured endpoints (never their credentials).
     List {
-        /// The format written: table or json.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -30,7 +30,7 @@ enum EndpointAction {
     Test {
         /// The endpoint's id (default: --url, or the only one configured).
         endpoint: Option<String>,
-        /// The format written: table or json.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -64,15 +64,10 @@ enum EndpointAction {
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
     // add and import say what they did on stderr: they have no -f
-    let (command, format) = match &a.action {
-        EndpointAction::List { format } => ("endpoints list", *format),
-        EndpointAction::Test { format, .. } => ("endpoints test", *format),
-        _ => ("endpoints", Format::Table),
+    let format = match &a.action {
+        EndpointAction::List { format } | EndpointAction::Test { format, .. } => *format,
+        _ => Format::Text,
     };
-    if let Some(why) = output::unsupported(format, command, &[Format::Table, Format::Json]) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     match &a.action {
         EndpointAction::Add {
             id,

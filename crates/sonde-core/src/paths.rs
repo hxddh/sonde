@@ -3,7 +3,7 @@
 //! - configuration: `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`,
 //!   else `~/.config/sonde` on Linux and `~/Library/Application Support/sonde`
 //!   on macOS (`config.toml`);
-//! - data (request log database, scan cache, probe runs, audit log, sessions):
+//! - data (request log database, scan cache, probe runs, audit log, runs):
 //!   `$SONDE_DATA_DIR`, else the platform's data directory (`~/.local/share/sonde`,
 //!   `~/Library/Application Support/sonde`);
 //! - exports and downloads: `exports/` and `downloads/` under the data
@@ -54,9 +54,9 @@ impl Paths {
     pub fn probe_runs(&self) -> PathBuf {
         self.data_dir.join("probe-runs")
     }
-    /// Recorded sessions (`sonde run`, `sonde proxy`).
-    pub fn sessions(&self) -> PathBuf {
-        self.data_dir.join("sessions")
+    /// Recorded runs (`sonde run`, `sonde proxy`, `sonde import`).
+    pub fn runs(&self) -> PathBuf {
+        self.data_dir.join("runs")
     }
     /// The hook that names the code sending each request in a Python
     /// program (written there when a run asks for it).

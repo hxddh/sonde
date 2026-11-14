@@ -299,9 +299,8 @@ export function TimePane(props: { /** whether the board is scrolled from its top
   const overTime = () => timed(p()) && shaped();
   const failed = () => sig().errors.count + sig().errors.retriesTotal > 0;
   // the budget's lines, and how far the run is from each (a share of the run's requests for its errors)
-  const p95Budget = () => props.budget?.maxP95Ms ?? null;
   const errorBudget = () => (props.budget?.maxErrors != null && sig().rate.requests > 0 ? props.budget.maxErrors / sig().rate.requests : null);
-  const BUDGET_SAID = { p95: ["budget.p95", "budget.p95.over"], errors: ["budget.errors", "budget.errors.over"] } as const;
+  const BUDGET_SAID = { errors: ["budget.errors", "budget.errors.over"] } as const;
   const budgetSaid = (what: keyof typeof BUDGET_SAID, over: boolean, vars: Record<string, string>) => ` ${t(BUDGET_SAID[what][over ? 1 : 0], vars)}`;
   const charts: ChartSpec[] = [
     // --- traffic: when, how many at once, how much
@@ -424,12 +423,12 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       zooms: true,
       when: () => graphic() && overTime(),
       title: () => t("latencyTime.title"),
-      text: () => latencySaid(zp(), zr()) + (p95Budget() != null && sig().latency.p95Ms != null ? budgetSaid("p95", sig().latency.p95Ms! > p95Budget()!, { v: duration(sig().latency.p95Ms!), budget: duration(p95Budget()!) }) : ""),
+      text: () => latencySaid(zp(), zr()),
       // (no slice with a tail: said, rather than a band named and not drawn)
       how: () => (hasTail(zp()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")),
       legend: () => latencyLegend(zp()),
       rows: () => ({ columns: ["ms", "requests", "p50_ms", "p95_ms", "p99_ms"], rows: zp().rate.map((b) => [b.tMs, b.ok + b.miss + b.client + b.server, b.p50Ms, b.p95Ms, b.p99Ms]) }),
-      body: () => <LatencyBand profile={zp()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT}`} testID="latency-over-time" axis budgetMs={p95Budget()} />,
+      body: () => <LatencyBand profile={zp()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT}`} testID="latency-over-time" axis />,
     },
     {
       // the same latencies as a grid: what a band averages away (two modes, a slow few)

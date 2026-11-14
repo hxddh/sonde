@@ -14,7 +14,7 @@ use sonde_proxy::session::Session;
 
 use super::record::*;
 
-/// The command a tour's sessions say they ran.
+/// The command a tour's runs say they ran.
 pub const TOUR: &str = "sonde run --demo";
 
 /// The program the tour's runs are of: a name of its own, so that the fixed
@@ -117,7 +117,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
     let analysis =
         sonde_proxy::view::Analysis::of(&session, &request_prices_for(s, &session.header.endpoint));
     let since = super::fixloop::since_last(s, &fixed, &session.header, &session.records, &analysis);
-    println!("session: {}", fixed.display());
+    println!("run: {}", fixed.display());
     if let Some(since) = &since {
         for line in super::fixloop::since_lines(since, color) {
             println!("{line}");
@@ -127,7 +127,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
 }
 
 /// One run of `job` (from file `file`), to endpoint `ep`, recorded: the
-/// session's path.
+/// run's path.
 async fn play(
     s: &Arc<Sonde>,
     ep: &str,
