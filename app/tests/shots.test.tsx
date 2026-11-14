@@ -91,14 +91,29 @@ for (const v of variants) {
       }
       await app.waitFor(shown, { timeout: 4000 });
     };
-    // a session's command: its button where the pane has room, else behind its ⋯ by its words
+    // A menu's items, once it is up (a native menu, on macOS, opens a moment after the press that asks for it)
+    const menuItems = async () => {
+      await app.waitUntil(() => (app.menu()?.length ?? 0) > 0, { timeout: 5000 }).catch(() => {});
+      return app.menu()?.map((m) => m.label) ?? [];
+    };
+    // The item `label` of the menu `open` shows: asked again once if the menu was gone before it was chosen
+    const chooseFrom = async (open: () => Promise<unknown>, label: string) => {
+      for (let n = 0; ; n++) {
+        if (app.menu()) await app.closeMenu();
+        await open();
+        await menuItems();
+        try {
+          return await app.chooseMenuItem(label);
+        } catch (e) {
+          if (n > 0) throw e;
+          await app.wait(500);
+        }
+      }
+    };
     // an act on the session header, or in its ⋯ menu where the header has no room for it (its label in the tour's language)
     const act = async (id: string, label: string, zh: string) => {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
-      await app.press("id:session-more");
-      // (a native menu, on macOS, is up a moment after the press)
-      await app.waitUntil(() => app.menu() !== null, { timeout: 5000 });
-      await app.chooseMenuItem(v.lang ? zh : label);
+      await chooseFrom(() => app.press("id:session-more"), v.lang ? zh : label);
     };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
@@ -363,8 +378,7 @@ for (const v of variants) {
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
     await act("compare-open", "Compare…", "对比…");
-    const labels = app.menu()?.map((m) => m.label) ?? [];
-    const run = labels.find((l) => l.includes("nightly-report"));
+    const run = (await menuItems()).find((l) => l.includes("nightly-report"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
