@@ -218,7 +218,11 @@ fn list(id: u64, prefix: &str) -> Record {
     Record {
         kind: "ListObjectsV2".into(),
         key: None,
-        query: vec![("prefix".into(), prefix.to_string().into())].into(),
+        lists: reqlog::Lists {
+            query: vec![("prefix".into(), prefix.to_string().into())],
+            ..Default::default()
+        }
+        .into(),
         ..get(id, "")
     }
 }

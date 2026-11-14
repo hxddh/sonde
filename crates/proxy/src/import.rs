@@ -193,7 +193,8 @@ impl Parts {
                 .as_ref()
                 .and_then(|id| sources.remove(id))
             {
-                r.request_headers
+                r.lists_mut()
+                    .request_headers
                     .push(reqlog::Header::new("x-amz-copy-source", source));
             }
         }
@@ -404,9 +405,13 @@ fn record(
         kind: operation.into(),
         bucket: bucket.map(Into::into),
         key: key.map(Into::into),
-        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: Some(status),
         latency_ms,
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            ..Default::default()
+        }
+        .into(),
         ..Default::default()
     }
 }
@@ -522,7 +527,8 @@ fn access_log(
         r.rare_mut().requester = f.get(4).filter(|v| *v != "-").cloned();
         r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok());
         if let Some(ua) = f.get(16).filter(|v| *v != "-" && !v.is_empty()) {
-            r.request_headers
+            r.lists_mut()
+                .request_headers
                 .push(reqlog::Header::new("user-agent", ua));
         }
         r.response_bytes = num(&f[11]);
@@ -684,7 +690,8 @@ fn cloudtrail(
             .or_else(|| who["principalId"].as_str())
             .map(String::from);
         if let Some(ua) = e["userAgent"].as_str().filter(|v| !v.is_empty()) {
-            r.request_headers
+            r.lists_mut()
+                .request_headers
                 .push(reqlog::Header::new("user-agent", ua));
         }
         let extra = &e["additionalEventData"];
@@ -797,13 +804,13 @@ fn har(
             method,
             r.bucket.as_deref(),
             r.key.as_deref(),
-            &r.query,
+            &r.query(),
             &headers,
         )
         .into();
         // what the request carried: the SDK it names, its conditions, its
         // range (secrets masked here, as on every record)
-        r.request_headers = headers
+        r.lists_mut().request_headers = headers
             .iter()
             .filter(|(n, _)| !n.starts_with(':'))
             .map(|(n, v)| reqlog::Header::new(n, reqlog::redact::redact_header(n, v)))
@@ -974,12 +981,12 @@ mod tests {
         assert_eq!(s.records[0].first_byte_ms, Some(10.0));
         assert_eq!(s.records[1].first_byte_ms, None);
         let ua = s.records[0]
-            .request_headers
+            .request_headers()
             .iter()
             .find(|h| h.name == "user-agent");
         assert_eq!(ua.map(|h| h.value.as_str()), Some("aws-sdk-java/2.21"));
         assert!(crate::summary::is_miss(&s.records[1]));
-        assert_eq!(s.records[2].query[1], ("prefix".into(), "t/".into()));
+        assert_eq!(s.records[2].query()[1], ("prefix".into(), "t/".into()));
         assert_eq!(
             s.header.command.as_deref(),
             Some("imported from S3 server access log")
@@ -1003,7 +1010,7 @@ mod tests {
         );
         assert!(
             s.records[0]
-                .request_headers
+                .request_headers()
                 .iter()
                 .any(|h| h.name == "user-agent" && h.value == "[aws-cli/2.15]")
         );
@@ -1109,7 +1116,7 @@ mod tests {
         assert_eq!(i.not_requests, 2);
         // what it read is kept on the copy, as the request's own header says it
         let source = |r: &Record| {
-            r.request_headers
+            r.request_headers()
                 .iter()
                 .find(|h| h.name == "x-amz-copy-source")
                 .map(|h| h.value.clone())
@@ -1187,7 +1194,7 @@ mod tests {
         let r = &d.imported.session.records;
         assert_eq!(r.len(), 1);
         assert_eq!(
-            r[0].request_headers
+            r[0].request_headers()
                 .iter()
                 .find(|h| h.name == "x-amz-copy-source")
                 .map(|h| h.value.as_str()),
@@ -1259,7 +1266,7 @@ mod tests {
         let (_, s) = import(ct, "trail").unwrap();
         let q = |i: usize, k: &str| {
             s.records[i]
-                .query
+                .query()
                 .iter()
                 .find(|(n, _)| n == k)
                 .map(|(_, v)| v.as_str())
@@ -1348,7 +1355,7 @@ mod tests {
         let (_, s) = import(har, "browser").unwrap();
         let r = &s.records[0];
         let h = |n: &str| {
-            r.request_headers
+            r.request_headers()
                 .iter()
                 .find(|h| h.name.eq_ignore_ascii_case(n))
                 .map(|h| h.value.as_str())

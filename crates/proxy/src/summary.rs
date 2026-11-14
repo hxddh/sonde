@@ -109,7 +109,7 @@ pub fn summarize(records: &[Record]) -> Summary {
         s.bytes_up += up;
         s.bytes_down += down;
         let refused = r
-            .response_headers
+            .response_headers()
             .iter()
             .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"));
         if is_miss(r) {
@@ -120,7 +120,7 @@ pub fn summarize(records: &[Record]) -> Summary {
                 s.refused += 1;
                 if s.refusals.len() < REFUSALS_NAMED {
                     let header = |n: &str| {
-                        r.response_headers
+                        r.response_headers()
                             .iter()
                             .find(|h| h.name.eq_ignore_ascii_case(n))
                             .map(|h| h.value.to_string())
@@ -560,7 +560,7 @@ mod tests {
         let mut slow = rec("GetObject", 503, 80.0, 100);
         slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         let mut refused = rec("DeleteObject", 403, 0.0, 150);
-        refused.response_headers = vec![
+        refused.lists_mut().response_headers = vec![
             Header::new("x-sonde-proxy", "refused"),
             Header::new("x-sonde-policy", "no-delete"),
         ]

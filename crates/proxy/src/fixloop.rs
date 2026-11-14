@@ -127,7 +127,7 @@ pub struct FindingChange {
 /// its prefix).
 pub fn asked(r: &Record) -> String {
     let prefix = r
-        .query
+        .query()
         .iter()
         .find(|(k, _)| k == "prefix")
         .map(|(_, v)| v.to_string())

@@ -305,7 +305,7 @@ impl<'a> Depends<'a> {
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
         r.kind.starts_with("ListObjects").then(|| {
             let prefix = r
-                .query
+                .query()
                 .iter()
                 .find(|(k, _)| k == "prefix")
                 .map_or("", |(_, v)| v.as_str());
@@ -813,7 +813,7 @@ pub fn percentile(sorted: &[f64], q: f64) -> f64 {
 /// answer, a body cut short, a race the store had let the write win) is.
 pub fn reached_store(r: &Record) -> bool {
     let has = |name: &str| {
-        r.response_headers
+        r.response_headers()
             .iter()
             .any(|h| h.name.eq_ignore_ascii_case(name))
     };
@@ -2323,14 +2323,17 @@ mod tests {
                 },
                 status: Some(200),
                 latency_ms: 10.0,
-                request_headers: vec![Header::new(
-                    crate::callers::CALLER_HEADER,
-                    if i < 4 {
-                        "etl/load.py:12 read"
-                    } else {
-                        "etl/load.py:30 check"
-                    },
-                )]
+                lists: reqlog::Lists {
+                    request_headers: vec![Header::new(
+                        crate::callers::CALLER_HEADER,
+                        if i < 4 {
+                            "etl/load.py:12 read"
+                        } else {
+                            "etl/load.py:30 check"
+                        },
+                    )],
+                    ..Default::default()
+                }
                 .into(),
                 ..Default::default()
             })
@@ -2490,7 +2493,8 @@ mod tests {
     #[test]
     fn a_request_that_never_reached_the_store_is_not_on_its_bill() {
         let mut refused = rec(2, 10, "PutObject", 403, 0.0);
-        refused.response_headers = vec![reqlog::Header::new("x-sonde-proxy", "refused")].into();
+        refused.lists_mut().response_headers =
+            vec![reqlog::Header::new("x-sonde-proxy", "refused")].into();
         let mut lost = rec(3, 20, "PutObject", 200, 5.0);
         lost.status = None;
         lost.rare_mut().transport_error = Some("connection refused".into());
@@ -2717,13 +2721,15 @@ mod injected {
         fault.status = Some(503);
         fault.rare_mut().injected = Some("slowdown".into());
         fault
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", "slowdown"));
         assert!(!reached_store(&fault));
         assert_eq!(price(&fault, &prices), 0.0);
         // an answer lost on purpose: the store made the write, and bills it
         let mut lost = fault.clone();
-        lost.response_headers
+        lost.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-store-status", "200"));
         assert_eq!(price(&lost, &prices), price(&put, &prices));
         let p = profile(&[put, fault, lost], &prices);
@@ -2782,7 +2788,7 @@ mod injected {
             ..Default::default()
         };
         l.bucket = Some("b".into());
-        l.query = vec![("prefix".into(), "out/".into())].into();
+        l.lists_mut().query = vec![("prefix".into(), "out/".into())].into();
         listed.push(l);
         assert_eq!(
             chains(&listed).iter().map(|c| c.requests).sum::<usize>(),

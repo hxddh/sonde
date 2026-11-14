@@ -23,7 +23,7 @@ fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u
 }
 
 fn q(mut r: Record, q: &[(&str, &str)]) -> Record {
-    r.query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
+    r.lists_mut().query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
     r
 }
 
@@ -139,9 +139,10 @@ fn a_session_cut_off_mid_character_still_opens() {
 #[test]
 fn a_replays_root_listing_reads_as_the_original() {
     let mut a = rec(1, 0, "GET", "ListObjectsV2", None, 200);
-    a.query = vec![("list-type".into(), "2".into())].into();
+    a.lists_mut().query = vec![("list-type".into(), "2".into())].into();
     let mut b = a.clone();
-    b.query
+    b.lists_mut()
+        .query
         .push(("prefix".into(), "replay-20261107-015048/".into()));
     assert_eq!(
         sonde_proxy::replay::transcript(&[a]),
@@ -232,7 +233,7 @@ fn a_head_before_ranged_reads_is_not_a_request_too_many() {
             Some(&k),
             206,
         );
-        g.request_headers.push(reqlog::Header {
+        g.lists_mut().request_headers.push(reqlog::Header {
             name: "Range".into(),
             value: "bytes=0-99".into(),
         });
@@ -249,7 +250,7 @@ fn a_head_before_ranged_reads_is_not_a_request_too_many() {
 fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
     use sonde_proxy::replay::{ReplayOptions, plan};
     let mut copy = rec(1, 0, "PUT", "CopyObject", Some("dst"), 200);
-    copy.request_headers.push(reqlog::Header {
+    copy.lists_mut().request_headers.push(reqlog::Header {
         name: "x-amz-copy-source".into(),
         value: "/b/src?versionId=v1".into(),
     });

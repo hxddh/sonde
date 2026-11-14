@@ -111,7 +111,7 @@ pub struct Plan {
 }
 
 fn refused(r: &Record) -> bool {
-    r.response_headers
+    r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
@@ -119,7 +119,7 @@ fn refused(r: &Record) -> bool {
 /// The operation a record's own method, place and query name today.
 fn named(r: &Record) -> String {
     let headers: Vec<(String, String)> = r
-        .request_headers
+        .request_headers()
         .iter()
         .map(|h| (h.name.to_string(), h.value.to_string()))
         .collect();
@@ -127,7 +127,7 @@ fn named(r: &Record) -> String {
         &r.method,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query,
+        &r.query(),
         &headers,
     )
 }
@@ -152,11 +152,11 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if !opts.prefix.is_empty() && (changes_bucket(&r.kind) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
-    if r.query.iter().any(|(k, _)| k == "versionId") {
+    if r.query().iter().any(|(k, _)| k == "versionId") {
         return Some("names a version of the original endpoint".into());
     }
     // a copy of a version: its id is the original endpoint's
-    if r.request_headers
+    if r.request_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-amz-copy-source") && h.value.contains("versionId="))
     {
@@ -259,7 +259,7 @@ struct State {
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.query
+    r.query()
         .iter()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.as_str())
@@ -297,7 +297,7 @@ impl State {
         }
         let listing = r.kind.starts_with("List") && r.kind != "ListBuckets" && r.key.is_none();
         let mut has_prefix = false;
-        for (k, v) in &r.query {
+        for (k, v) in r.query() {
             match k.as_str() {
                 "prefix" => {
                     has_prefix = true;
@@ -353,7 +353,7 @@ impl State {
         if listing && !has_prefix && !opts.prefix.is_empty() {
             req = req.query("prefix", opts.prefix.clone());
         }
-        for h in &r.request_headers {
+        for h in r.request_headers() {
             if !keep_header(&h.name) {
                 continue;
             }
@@ -463,7 +463,7 @@ impl State {
             _ => {}
         }
         let original = r
-            .response_headers
+            .response_headers()
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("etag"))
             .map(|h| h.value.to_string());
@@ -647,7 +647,7 @@ impl Comparison {
 }
 
 fn conditions(r: &Record) -> Vec<String> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .filter(|h| {
             let n = h.name.to_ascii_lowercase();
@@ -1065,7 +1065,7 @@ pub fn transcript(records: &[Record]) -> String {
             (Some(b), Some(k)) => format!("{b}/{}", strip(k)),
             (Some(b), None) => {
                 let p = r
-                    .query
+                    .query()
                     .iter()
                     .find(|(k, _)| k == "prefix")
                     .map(|(_, v)| strip(v))
@@ -1137,7 +1137,8 @@ mod tests {
                 ..Default::default()
             };
             if let Some(n) = keys {
-                r.response_headers
+                r.lists_mut()
+                    .response_headers
                     .push(reqlog::Header::new(reqlog::KEYS_HEADER, n));
             }
             r
@@ -1202,12 +1203,18 @@ mod tests {
                 method: "GET".into(),
                 kind: "ListObjectsV2".into(),
                 bucket: Some("b".into()),
-                query: vec![("prefix".into(), "p/".into())].into(),
                 status: Some(200),
+                lists: reqlog::Lists {
+                    query: vec![("prefix".into(), "p/".into())],
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             };
             if let Some(t) = token {
-                r.query.push(("continuation-token".into(), t.into()));
+                r.lists_mut()
+                    .query
+                    .push(("continuation-token".into(), t.into()));
             }
             r
         };
@@ -1251,7 +1258,7 @@ mod tests {
             status: Some(200),
             ..Default::default()
         };
-        a.request_headers = vec![reqlog::Header::new("If-None-Match", "*")].into();
+        a.lists_mut().request_headers = vec![reqlog::Header::new("If-None-Match", "*")].into();
         let mut b = a.clone();
         b.key = Some("replay-20261107-015048/db/x".into());
         b.status = Some(412);

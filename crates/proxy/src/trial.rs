@@ -266,7 +266,7 @@ fn is_false(b: &bool) -> bool {
 pub const JITTER_FLOOR_MS: f64 = 50.0;
 
 fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.response_headers
+    r.response_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.trim())
@@ -303,7 +303,7 @@ fn hidden(r: &Record) -> Vec<&str> {
     if !faulted(r) {
         return Vec::new();
     }
-    r.response_headers
+    r.response_headers()
         .iter()
         .filter(|h| h.name.eq_ignore_ascii_case(crate::fault::HIDDEN_HEADER))
         .map(|h| h.value.as_str())
@@ -492,11 +492,11 @@ fn named_request(r: &Record, name: &str) -> Named {
         &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query,
+        &r.query(),
         None,
     );
     let query: Vec<(String, String)> = r
-        .query
+        .query()
         .iter()
         .map(|(k, v)| (k.to_string(), unplace_both(v, name).into_owned()))
         .collect();
@@ -665,7 +665,7 @@ fn place_of(r: &Record) -> String {
         Some(k) => format!("{b}/{k}"),
         None => {
             let prefix = r
-                .query
+                .query()
                 .iter()
                 .find(|(k, _)| k == "prefix")
                 .map_or("", |(_, v)| v.as_str());
@@ -985,7 +985,7 @@ pub fn judge(
                 && w.bucket == r.bucket
                 && w.key == r.key
                 && !w
-                    .query
+                    .query()
                     .iter()
                     .any(|(k, _)| k == "uploadId" || k == "uploads")
         })
@@ -1073,7 +1073,7 @@ pub fn judge(
             attempts = attempts.max(2);
             if let Some(next) = group.get(i + 1) {
                 let header = |x: &Record| {
-                    x.request_headers
+                    x.request_headers()
                         .iter()
                         .find(|h| h.name.eq_ignore_ascii_case("if-match"))
                         .map(|h| h.value.clone())
@@ -1218,7 +1218,7 @@ pub fn judge(
             let again = listings.iter().any(|x| {
                 (x.time, x.id) > (l.time, l.id)
                     && x.bucket == l.bucket
-                    && x.query
+                    && x.query()
                         .iter()
                         .find(|(k, _)| k == "prefix")
                         .is_none_or(|(_, p)| key.starts_with(p.as_str()))
@@ -2033,7 +2033,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     let signed: Vec<&Record> = clean
         .iter()
         .filter(|r| {
-            let presigned = r.request_headers.iter().any(|h| {
+            let presigned = r.request_headers().iter().any(|h| {
                 h.name.eq_ignore_ascii_case("x-sonde-note") && h.value.starts_with("presigned")
             });
             !presigned && response_header(r, "x-sonde-proxy").is_none()
@@ -2090,7 +2090,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
             && writes.iter().any(|w| {
                 end_of(w) <= l.time
                     && w.bucket == l.bucket
-                    && l.query
+                    && l.query()
                         .iter()
                         .find(|(k, _)| k == "prefix")
                         .is_none_or(|(_, p)| w.key.as_deref().unwrap_or("").starts_with(p.as_str()))
@@ -2126,7 +2126,8 @@ mod tests {
 
     fn fault(mut r: Record, scenario: &str) -> Record {
         r.rare_mut().injected = Some(scenario.into());
-        r.response_headers
+        r.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-fault", scenario));
         r
     }
@@ -2138,7 +2139,8 @@ mod tests {
     fn lost(r: Record, store: u16) -> Record {
         let mut r = fault(r, "lost-answer");
         r.status = Some(500);
-        r.response_headers
+        r.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-store-status", store.to_string()));
         r
     }
@@ -2270,7 +2272,7 @@ mod tests {
     fn an_upload_started_again_under_a_new_id_retries_its_parts() {
         let part = |id, at, upload: &str, status| {
             let mut r = rec(id, at, "PUT", "UploadPart", "big", status);
-            r.query = vec![
+            r.lists_mut().query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
             ]
@@ -2311,7 +2313,7 @@ mod tests {
         let batch = |id, at, body: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.query = vec![("delete".into(), "".into())].into();
+            r.lists_mut().query = vec![("delete".into(), "".into())].into();
             r.rare_mut().request_body = Some(body.into());
             r
         };
@@ -2376,11 +2378,11 @@ mod tests {
         let s = crate::fault::scenario("lost-answer").unwrap();
         let complete = |id, at, status| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.query = vec![("uploadId".into(), "u1".into())].into();
+            r.lists_mut().query = vec![("uploadId".into(), "u1".into())].into();
             r
         };
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", "big", 200);
-        create.query = vec![("uploads".into(), "".into())].into();
+        create.lists_mut().query = vec![("uploads".into(), "".into())].into();
         let clean = vec![create.clone(), complete(2, 10, 200)];
         let mut refused = complete(3, 120, 404);
         refused.rare_mut().error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
@@ -2590,7 +2592,8 @@ mod tests {
                 .iter()
                 .cloned()
                 .map(|mut r| {
-                    r.request_headers
+                    r.lists_mut()
+                        .request_headers
                         .push(Header::new("user-agent", "aws-sdk-java/2.25.1 ua/2.0"));
                     r
                 })
@@ -2620,12 +2623,13 @@ mod tests {
         );
         // only by presigned URLs, or refused: no clock of the program's signed it
         let mut presigned = rec(1, 0, "PUT", "PutObject", "a", 200);
-        presigned.request_headers.push(Header::new(
+        presigned.lists_mut().request_headers.push(Header::new(
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
         let mut refused = get(2, 5, "b", 403);
         refused
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         assert_eq!(
@@ -2656,7 +2660,9 @@ mod tests {
             ["slowdown", "error", "skew", "lost-answer"]
         );
         let mut swap = put(1, 0, "pointer", 200);
-        swap.request_headers.push(Header::new("If-Match", "\"e1\""));
+        swap.lists_mut()
+            .request_headers
+            .push(Header::new("If-Match", "\"e1\""));
         assert_eq!(
             names(&[swap]),
             ["slowdown", "error", "skew", "lost-answer", "lost-race"]
@@ -2665,7 +2671,7 @@ mod tests {
         let list = |id, at, prefix: &str| {
             let mut r = rec(id, at, "GET", "ListObjectsV2", "", 200);
             r.key = None;
-            r.query = vec![
+            r.lists_mut().query = vec![
                 ("list-type".into(), "2".into()),
                 ("prefix".into(), prefix.into()),
             ]
@@ -2690,7 +2696,9 @@ mod tests {
 
     fn create(id: u64, at_ms: i64, key: &str, status: u16) -> Record {
         let mut r = put(id, at_ms, key, status);
-        r.request_headers.push(Header::new("If-None-Match", "*"));
+        r.lists_mut()
+            .request_headers
+            .push(Header::new("If-None-Match", "*"));
         r
     }
 
@@ -2698,7 +2706,8 @@ mod tests {
         let mut r = fault(r, "lost-race");
         r.status = Some(412);
         if let Some(s) = store {
-            r.response_headers
+            r.lists_mut()
+                .response_headers
                 .push(Header::new("x-sonde-store-status", s.to_string()));
         }
         r
@@ -2718,10 +2727,11 @@ mod tests {
         );
         let n = last + 1 - first;
         r.response_bytes = Some(n);
-        r.response_headers
+        r.lists_mut()
+            .response_headers
             .push(Header::new("content-length", n.to_string()));
         if r.status == Some(206) {
-            r.response_headers.push(Header::new(
+            r.lists_mut().response_headers.push(Header::new(
                 "content-range",
                 format!("bytes {first}-{last}/{whole}"),
             ));
@@ -2734,7 +2744,8 @@ mod tests {
         let mut r = fault(r, "cut-body");
         r.response_bytes = Some(sent);
         r.rare_mut().transport_error = Some("sonde cut the response body".into());
-        r.response_headers
+        r.lists_mut()
+            .response_headers
             .push(Header::new(crate::CUT_HEADER, sent.to_string()));
         r
     }
@@ -2799,14 +2810,14 @@ mod tests {
         let list = |id, at, prefix: &str, status| {
             let mut r = rec(id, at, "GET", "ListObjectsV2", "", status);
             r.key = None;
-            r.query = vec![("prefix".into(), prefix.into())].into();
+            r.lists_mut().query = vec![("prefix".into(), prefix.into())].into();
             r
         };
         let batch = |id, at, run: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
             let body = format!("<Delete><Object><Key>etl-{run}/a</Key></Object></Delete>");
-            r.request_headers.push(Header::new(
+            r.lists_mut().request_headers.push(Header::new(
                 crate::fault::BODY_HASH_HEADER,
                 crate::fault::body_hash(body.as_bytes()),
             ));
@@ -3085,12 +3096,12 @@ mod tests {
         let s = crate::fault::scenario("complete-500").unwrap();
         let upload = |id, at| {
             let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
-            r.query = vec![("uploads".into(), "".into())].into();
+            r.lists_mut().query = vec![("uploads".into(), "".into())].into();
             r
         };
         let part = |id, at, upload: &str| {
             let mut r = rec(id, at, "PUT", "UploadPart", "big", 200);
-            r.query = vec![
+            r.lists_mut().query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
             ]
@@ -3099,7 +3110,7 @@ mod tests {
         };
         let complete = |id, at, status, upload: &str| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.query = vec![("uploadId".into(), upload.into())].into();
+            r.lists_mut().query = vec![("uploadId".into(), upload.into())].into();
             r
         };
         let head = |id, at, status| rec(id, at, "HEAD", "HeadObject", "big", status);
@@ -3179,9 +3190,11 @@ mod tests {
             r.latency_ms = 2_000.0;
             r.status = None;
             r.rare_mut().transport_error = Some("the program stopped waiting".into());
-            r.response_headers
+            r.lists_mut()
+                .response_headers
                 .push(Header::new("x-sonde-fault", "slow-first-byte"));
-            r.response_headers
+            r.lists_mut()
+                .response_headers
                 .push(Header::new(crate::fault::GIVEN_UP_HEADER, "1"));
         }
         r
@@ -3249,17 +3262,19 @@ mod tests {
     fn listing(id: u64, at_ms: i64, prefix: &str, hidden: &[&str]) -> Record {
         let mut r = rec(id, at_ms, "GET", "ListObjectsV2", "", 200);
         r.key = None;
-        r.query = vec![
+        r.lists_mut().query = vec![
             ("list-type".into(), "2".into()),
             ("prefix".into(), prefix.into()),
         ]
         .into();
         if !hidden.is_empty() {
             r.rare_mut().injected = Some("stale-list".into());
-            r.response_headers
+            r.lists_mut()
+                .response_headers
                 .push(Header::new("x-sonde-fault", "stale-list"));
             for k in hidden {
-                r.response_headers
+                r.lists_mut()
+                    .response_headers
                     .push(Header::new(crate::fault::HIDDEN_HEADER, *k));
             }
         }
@@ -3411,7 +3426,8 @@ mod tests {
         assert_eq!(t.line(), "1 fault, retried · 1.2× the requests");
         // two places in the code that write one key, one after the other
         let from = |mut r: Record, place: &str| {
-            r.request_headers
+            r.lists_mut()
+                .request_headers
                 .push(Header::new(crate::callers::CALLER_HEADER, place));
             r
         };
@@ -3717,7 +3733,9 @@ mod tests {
     fn an_if_match_sent_again_unchanged_would_lose_again() {
         let swap = |id, at, etag: &str, status| {
             let mut r = put(id, at, "pointer", status);
-            r.request_headers.push(Header::new("If-Match", etag));
+            r.lists_mut()
+                .request_headers
+                .push(Header::new("If-Match", etag));
             r
         };
         let clean = vec![get(1, 0, "pointer", 200), swap(2, 10, "\"v1\"", 200)];
@@ -3767,11 +3785,11 @@ mod tests {
     #[test]
     fn a_broke_verdict_says_where_and_what_to_change() {
         let from = |mut r: Record| {
-            r.request_headers.push(Header::new(
+            r.lists_mut().request_headers.push(Header::new(
                 crate::callers::CALLER_HEADER,
                 "/home/me/job/etl.py:12 in save",
             ));
-            r.request_headers.push(Header::new(
+            r.lists_mut().request_headers.push(Header::new(
                 "User-Agent",
                 "Boto3/1.34.0 md/Botocore#1.34.0 ua/2.0",
             ));
@@ -3830,7 +3848,9 @@ mod tests {
     fn a_skewed_clock_is_offered_only_to_an_sdk_that_retries_it() {
         let sent_by = |agent: &str| {
             let mut r = get(1, 0, "a", 200);
-            r.request_headers.push(Header::new("User-Agent", agent));
+            r.lists_mut()
+                .request_headers
+                .push(Header::new("User-Agent", agent));
             r
         };
         let skew = |c: &[Record]| choose(c).iter().any(|s| s.name == "skew");
@@ -3852,9 +3872,11 @@ mod tests {
         let mut refused = put(1, 0, "etl-slowdown/state", 403);
         refused.rare_mut().error_body = Some("sonde refused PutObject".into());
         refused
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         refused
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-policy", "no-delete"));
         let run = vec![refused];

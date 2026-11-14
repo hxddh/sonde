@@ -14,7 +14,7 @@ use serde::Serialize;
 pub const CALLER_HEADER: &str = "x-sonde-caller";
 
 fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.trim())
@@ -317,7 +317,11 @@ mod tests {
 
     fn rec(headers: &[(&str, &str)]) -> Record {
         Record {
-            request_headers: headers.iter().map(|(k, v)| Header::new(*k, *v)).collect(),
+            lists: reqlog::Lists {
+                request_headers: headers.iter().map(|(k, v)| Header::new(*k, *v)).collect(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
     }

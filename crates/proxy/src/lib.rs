@@ -159,7 +159,7 @@ impl Made {
         let m = Made::default();
         for r in records.iter().filter(|r| !r.is_error()) {
             let header = |n: &str| {
-                r.response_headers
+                r.response_headers()
                     .iter()
                     .find(|h| h.name.eq_ignore_ascii_case(n))
                     .map(|h| h.value.as_str())
@@ -1153,9 +1153,11 @@ fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
     record.status = Some(403);
     record.rare_mut().error_body = Some(msg.clone());
     record
+        .lists_mut()
         .response_headers
         .push(Header::new("x-sonde-proxy", "refused"));
     record
+        .lists_mut()
         .response_headers
         .push(Header::new("x-sonde-policy", shared.cfg.policy.name()));
     shared.log.push(record);
@@ -1164,7 +1166,7 @@ fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
 
 /// Whether the recording policy refused `r` (not the store, not a fault).
 pub fn refused_by_policy(r: &Record) -> bool {
-    r.response_headers
+    r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-policy"))
 }
@@ -1229,17 +1231,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         method: method.as_str().into(),
         bucket: bucket.as_deref().map(Into::into),
         key: key.as_deref().map(Into::into),
-        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: None,
         latency_ms: 0.0,
         retries: 0,
-        request_headers: app_headers
-            .iter()
-            // (a control body's hash is sonde's to say: see below)
-            .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
-            .map(|(k, v)| Header::new(k, v))
-            .collect(),
-        response_headers: Default::default(),
         request_bytes: None,
         response_bytes: None,
         first_byte_ms: None,
@@ -1251,9 +1245,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             ..Default::default()
         }
         .into(),
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            request_headers: app_headers
+                .iter()
+                // (a control body's hash is sonde's to say: see below)
+                .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
+                .map(|(k, v)| Header::new(k, v))
+                .collect(),
+            ..Default::default()
+        }
+        .into(),
     };
     if presigned {
-        record.request_headers.push(Header::new(
+        record.lists_mut().request_headers.push(Header::new(
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
@@ -1266,6 +1271,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(501);
         record.rare_mut().error_body = Some(msg.clone());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1278,6 +1284,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(403);
         record.rare_mut().error_body = Some(msg.clone());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1291,6 +1298,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(400);
         record.rare_mut().error_body = Some(msg.into());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1304,6 +1312,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(400);
         record.rare_mut().error_body = Some(msg.into());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1394,6 +1403,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     }
                 };
                 record
+                    .lists_mut()
                     .request_headers
                     .push(Header::new(fault::BODY_HASH_HEADER, &hash));
                 body_hash = Some(hash);
@@ -1469,6 +1479,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             record.rare_mut().error_body = Some(format!("{code}: {msg}"));
             record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
             record
+                .lists_mut()
                 .response_headers
                 .push(Header::new("x-sonde-fault", &name));
             shared.log.push(record);
@@ -1779,7 +1790,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let headers = s3raw::header_pairs(resp.headers());
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
-    record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1857,10 +1868,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let sent: Bytes = match stale {
                 Some((text, hidden)) => {
                     record
+                        .lists_mut()
                         .response_headers
                         .push(Header::new("x-sonde-fault", &name));
                     for k in &hidden {
                         record
+                            .lists_mut()
                             .response_headers
                             .push(Header::new(fault::HIDDEN_HEADER, k));
                     }
@@ -1920,9 +1933,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             )
         };
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record.status = Some(told);
@@ -1942,12 +1957,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let cutting = cut.map(|(at, whole)| {
         let name = record.rare().injected.clone().unwrap_or_default();
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(CUT_HEADER, at.to_string()));
         builder = std::mem::replace(&mut builder, Response::builder())
@@ -2088,9 +2106,11 @@ impl Drop for GivenUp {
             "the program stopped waiting while sonde held the request (scenario {name})"
         ));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(fault::GIVEN_UP_HEADER, "1"));
         self.log.log.push(record);
@@ -2463,7 +2483,8 @@ impl Drop for Pending {
                 .take()
                 .filter(|_| r.rare().transport_error.is_none())
             {
-                r.response_headers
+                r.lists_mut()
+                    .response_headers
                     .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
             }
             self.log.log.push(r);

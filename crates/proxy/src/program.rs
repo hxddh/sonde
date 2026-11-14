@@ -2102,6 +2102,7 @@ mod tests {
         refused.status = Some(403);
         refused.rare_mut().error_body = Some("sonde refused DeleteObject: no-delete mode".into());
         refused
+            .lists_mut()
             .response_headers
             .push(reqlog::Header::new("x-sonde-policy", "no-delete"));
         let (pf, prf, of) = point(std::slice::from_ref(&refused));

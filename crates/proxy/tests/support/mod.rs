@@ -146,12 +146,9 @@ fn record(
         method: method.into(),
         bucket: Some(BUCKET.into()),
         key: key.map(Into::into),
-        query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: (ms * 1000.0).round() / 1000.0,
         retries: 0,
-        request_headers: request_headers.into(),
-        response_headers: response_headers.into(),
         request_bytes: Some(up),
         response_bytes: Some(down),
         first_byte_ms: Some((ms * (0.3 + 0.6 * rng.unit()) * 1000.0).round() / 1000.0),
@@ -163,6 +160,12 @@ fn record(
             error_body,
             region: Some("us-east-1".into()),
             ..Default::default()
+        }
+        .into(),
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
+            request_headers: request_headers,
+            response_headers: response_headers,
         }
         .into(),
         ..Default::default()
@@ -543,11 +546,8 @@ fn plain(
         method: method.into(),
         bucket: Some("b".into()),
         key: Some(key.into()),
-        query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: ms,
-        request_headers: vec![Header::new("user-agent", "aws-sdk-java/2.25")].into(),
-        response_headers: vec![Header::new("x-amz-request-id", format!("{n:016X}"))].into(),
         request_bytes: Some(up),
         response_bytes: Some(down),
         first_byte_ms: Some(ms * 0.8),
@@ -564,6 +564,12 @@ fn plain(
         }),
             region: Some("us-east-1".into()),
             ..Default::default()
+        }
+        .into(),
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
+            request_headers: vec![Header::new("user-agent", "aws-sdk-java/2.25")],
+            response_headers: vec![Header::new("x-amz-request-id", format!("{n:016X}"))],
         }
         .into(),
         ..Default::default()

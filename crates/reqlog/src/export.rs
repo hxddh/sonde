@@ -23,7 +23,7 @@ pub fn to_har(records: &[Record]) -> Value {
                 hs.iter().map(|h| json!({"name": h.name, "value": h.value})).collect()
             };
             let query: Vec<Value> =
-                r.query.iter().map(|(n, v)| json!({"name": n, "value": v})).collect();
+                r.query().iter().map(|(n, v)| json!({"name": n, "value": v})).collect();
             let mime = r.header("content-type").unwrap_or("application/octet-stream");
             let content = match &r.rare().error_body {
                 Some(body) => json!({"size": body.len(), "mimeType": mime, "text": body}),
@@ -36,7 +36,7 @@ pub fn to_har(records: &[Record]) -> Value {
                     "method": r.method,
                     "url": r.rare().url,
                     "httpVersion": "HTTP/1.1",
-                    "headers": headers(&r.request_headers),
+                    "headers": headers(&r.request_headers()),
                     "queryString": query,
                     "cookies": [],
                     "headersSize": -1,
@@ -46,7 +46,7 @@ pub fn to_har(records: &[Record]) -> Value {
                     "status": r.status.unwrap_or(0),
                     "statusText": r.rare().transport_error.clone().unwrap_or_default(),
                     "httpVersion": "HTTP/1.1",
-                    "headers": headers(&r.response_headers),
+                    "headers": headers(&r.response_headers()),
                     "cookies": [],
                     "content": content,
                     "redirectURL": "",
@@ -81,10 +81,14 @@ mod tests {
             kind: "GetObject".into(),
             method: "GET".into(),
             status: Some(403),
-            request_headers: vec![Header::new("x-amz-security-token", "tok")].into(),
             rare: crate::Rare {
                 url: "https://h/b/k?X-Amz-Signature=secret".into(),
                 error_body: Some("<Error><Code>AccessDenied</Code></Error>".into()),
+                ..Default::default()
+            }
+            .into(),
+            lists: crate::Lists {
+                request_headers: vec![Header::new("x-amz-security-token", "tok")],
                 ..Default::default()
             }
             .into(),

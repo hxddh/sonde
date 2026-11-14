@@ -689,7 +689,7 @@ fn million() -> Vec<Record> {
                     0
                 }),
                 response_bytes: Some(if op == "GetObject" { i % 300_000 } else { 200 }),
-                retries: u32::from(i % 211 == 0),
+                retries: u16::from(i % 211 == 0),
                 rare: reqlog::Rare {
                     error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
                     ..Default::default()

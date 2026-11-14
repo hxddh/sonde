@@ -253,12 +253,16 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("k".into()),
             status,
-            request_headers: vec![Header::new(
-                "Authorization",
-                "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc",
-            )].into(),
             rare: crate::Rare {
                 endpoint: "e1".into(),
+                ..Default::default()
+            }
+            .into(),
+            lists: crate::Lists {
+                request_headers: vec![Header::new(
+                "Authorization",
+                "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc",
+            )],
                 ..Default::default()
             }
             .into(),
@@ -286,8 +290,12 @@ mod tests {
         let log = RequestLog::new(10);
         let id = log.push(rec("GetObject", Some(200)));
         let r = log.get(id).unwrap();
-        assert!(!r.request_headers[0].value.contains("Signature=abc"));
-        assert!(!r.request_headers[0].value.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!r.request_headers()[0].value.contains("Signature=abc"));
+        assert!(
+            !r.request_headers()[0]
+                .value
+                .contains("AKIAIOSFODNN7EXAMPLE")
+        );
     }
 
     #[test]

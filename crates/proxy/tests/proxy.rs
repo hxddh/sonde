@@ -351,7 +351,7 @@ async fn put_get_list_are_resigned_and_recorded() {
     assert_eq!(put.rare().endpoint, "target");
     // what the application sent is kept; its signature is masked
     let auth = put
-        .request_headers
+        .request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("authorization"))
         .unwrap();
@@ -1211,7 +1211,7 @@ async fn a_request_held_past_the_programs_patience_is_kept_as_given_up() {
     assert!(held.rare().transport_error.is_some(), "{held:?}");
     assert!(sonde_proxy::trial::faulted(&held));
     assert!(
-        held.response_headers
+        held.response_headers()
             .iter()
             .any(|h| h.name == sonde_proxy::fault::GIVEN_UP_HEADER),
         "{held:?}"
@@ -1248,7 +1248,7 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.rare().injected.as_deref(), Some("lost-answer"));
     assert!(
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-store-status" && h.value == "200")
     );
@@ -1296,7 +1296,7 @@ async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.key.as_deref(), Some(".."));
     assert!(
-        !rec.response_headers
+        !rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-proxy"),
         "not refused"
@@ -1464,7 +1464,7 @@ async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
     for rec in log.list(&reqlog::Filter::default(), 10) {
         assert_eq!(rec.status, Some(400));
         assert!(
-            rec.response_headers
+            rec.response_headers()
                 .iter()
                 .any(|h| h.name == "x-sonde-proxy" && h.value == "refused")
         );
@@ -1500,7 +1500,7 @@ async fn a_body_hash_the_program_sends_is_not_the_requests_name() {
     assert_eq!(names.len(), 2, "{names:?}");
     for r in &recs {
         let kept: Vec<&str> = r
-            .request_headers
+            .request_headers()
             .iter()
             .filter(|h| {
                 h.name
@@ -1550,7 +1550,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     assert_eq!(rec.response_bytes, Some(500));
     assert_eq!(rec.rare().injected.as_deref(), Some("cut-body"));
     let header = |n: &str| {
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .find(|h| h.name == n)
             .map(|h| h.value.as_str())

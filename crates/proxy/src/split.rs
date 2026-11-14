@@ -441,10 +441,13 @@ mod tests {
             status: Some(200),
             latency_ms: ms,
             response_bytes: Some(bytes),
-            request_headers: vec![Header {
-                name: "user-agent".into(),
-                value: "Boto3/1.44.2 md/Botocore#1.44.2 Python/3.12".into(),
-            }]
+            lists: reqlog::Lists {
+                request_headers: vec![Header {
+                    name: "user-agent".into(),
+                    value: "Boto3/1.44.2 md/Botocore#1.44.2 Python/3.12".into(),
+                }],
+                ..Default::default()
+            }
             .into(),
             ..Default::default()
         }

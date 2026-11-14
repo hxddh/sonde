@@ -236,7 +236,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         .format("%H:%M:%S%.3f")
         .to_string();
     let refused = r
-        .response_headers
+        .response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"));
     let miss = sonde_proxy::summary::is_miss(r);
@@ -259,13 +259,13 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         (Some(b), None) => format!("{b}/"),
         _ => "/".into(),
     };
-    let conditions = r.request_headers.iter().filter_map(|h| {
+    let conditions = r.request_headers().iter().filter_map(|h| {
         let n = h.name.to_ascii_lowercase();
         (n.starts_with("if-") || n == "x-amz-copy-source-if-match")
             .then(|| format!("{n}: {}", h.value))
     });
     let detail = r
-        .query
+        .query()
         .iter()
         .filter(|(k, _)| {
             matches!(

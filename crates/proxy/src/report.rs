@@ -187,41 +187,44 @@ fn redact_with(s: &mut Session, r: &Redactor) {
         .map(|c| crate::program::program_name(c).unwrap_or_default());
     s.logs.clear();
     for rec in &mut s.records {
-        rec.rare_mut().endpoint = "endpoint".into();
-        rec.rare_mut().url = String::new();
-        rec.rare_mut().job = None;
-        // what failed, not where: the message names the URL
-        rec.rare_mut().transport_error = rec
-            .rare()
-            .transport_error
-            .as_ref()
-            .map(|_| "the request did not reach the store".to_string());
         rec.bucket = rec
             .bucket
             .as_deref()
             .map(|b| format!("bucket-{}", r.token(b)).into());
         rec.key = rec.key.as_deref().map(|k| r.path(k).into());
-        for (k, v) in rec.query.make_mut() {
-            if matches!(
-                k.as_str(),
-                "prefix" | "start-after" | "marker" | "key-marker"
-            ) {
-                *v = r.path(v).into();
-            } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
-                // ids, tokens, response-* overrides (a file name), an app's own
-                *v = r.token(v).into();
+        if rec.lists.is_some() {
+            let l = rec.lists_mut();
+            for (k, v) in &mut l.query {
+                if matches!(
+                    k.as_str(),
+                    "prefix" | "start-after" | "marker" | "key-marker"
+                ) {
+                    *v = r.path(v).into();
+                } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
+                    // ids, tokens, response-* overrides (a file name), an app's own
+                    *v = r.token(v).into();
+                }
             }
+            l.request_headers.clear();
+            l.response_headers.clear();
         }
-        rec.request_headers = Default::default();
-        rec.response_headers = Default::default();
-        rec.rare_mut().request_body = None;
-        rec.rare_mut().request_id = None;
-        rec.rare_mut().host_id = None;
+        let x = rec.rare_mut();
+        x.endpoint = "endpoint".into();
+        x.url = String::new();
+        x.job = None;
+        // what failed, not where: the message names the URL
+        x.transport_error = x
+            .transport_error
+            .as_ref()
+            .map(|_| "the request did not reach the store".to_string());
+        x.request_body = None;
+        x.request_id = None;
+        x.host_id = None;
         // who asked (an IAM ARN: account and user) and from where
-        rec.rare_mut().requester = None;
-        rec.rare_mut().region = None;
+        x.requester = None;
+        x.region = None;
         // the S3 error code says what went wrong; the message may name things
-        rec.rare_mut().error_body = rec.rare_mut().error_body.as_deref().and_then(|b| {
+        x.error_body = x.error_body.as_deref().and_then(|b| {
             let code = b.split("<Code>").nth(1)?.split("</Code>").next()?;
             Some(format!("<Error><Code>{code}</Code></Error>"))
         });
@@ -318,7 +321,7 @@ mod tests {
         r.rare_mut().transport_error = Some(
             "error sending request for url (https://acme-payroll.s3.amazonaws.com/hr/alice)".into(),
         );
-        r.query = vec![
+        r.lists_mut().query = vec![
             (
                 "response-content-disposition".into(),
                 "attachment; filename=alice-salary.csv".into(),

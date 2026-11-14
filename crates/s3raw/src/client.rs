@@ -501,7 +501,7 @@ impl S3Client {
         let sent = self.http.request(method, parsed).send().await;
         let latency = start.elapsed();
         let mut record = self.record(&req, url, &[], 0, latency);
-        record.query = url::Url::parse(url)
+        record.lists_mut().query = url::Url::parse(url)
             .map(|u| {
                 u.query_pairs()
                     .map(|(k, v)| (Text::new(&k), Text::new(&v)))
@@ -516,7 +516,8 @@ impl S3Client {
                 record.status = Some(status);
                 record.response_bytes = Some(body.len() as u64);
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
                     record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).to_string());
@@ -698,7 +699,8 @@ impl S3Client {
                 record.status = Some(status);
                 record.response_bytes = resp.content_length();
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 if !(200..300).contains(&status) {
                     let rid = record.rare().request_id.clone();
                     let hid = record.rare().host_id.clone();
@@ -752,7 +754,8 @@ impl S3Client {
                 record.status = Some(status);
                 record.response_bytes = Some(body.len() as u64);
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
                     record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).to_string());
@@ -813,16 +816,9 @@ impl S3Client {
             method: req.method.as_str().into(),
             bucket: req.bucket.as_deref().map(Into::into),
             key: req.key.as_deref().map(Into::into),
-            query: req
-                .query
-                .iter()
-                .map(|(k, v)| (k.into(), v.into()))
-                .collect(),
             status: None,
             latency_ms: latency.as_secs_f64() * 1000.0,
-            retries: attempt,
-            request_headers: headers.iter().map(|(k, v)| Header::new(k, v)).collect(),
-            response_headers: Default::default(),
+            retries: u16::try_from(attempt).unwrap_or(u16::MAX),
             request_bytes: Some(req.body.len()),
             response_bytes: None,
             first_byte_ms: None,
@@ -837,6 +833,16 @@ impl S3Client {
                 },
                 region: Some(self.cfg.region.as_str().into()),
                 job: self.job.clone(),
+                ..Default::default()
+            }
+            .into(),
+            lists: reqlog::Lists {
+                query: req
+                    .query
+                    .iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect(),
+                request_headers: headers.iter().map(|(k, v)| Header::new(k, v)).collect(),
                 ..Default::default()
             }
             .into(),
@@ -1002,6 +1008,7 @@ fn listed(record: &mut Record, body: &[u8]) {
         let mut k = reqlog::KeyCounter::default();
         k.feed(body);
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
     }

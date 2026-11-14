@@ -152,26 +152,26 @@ impl Analysis {
 
     /// Everything a session amounts to, worked out once: its operations and
     /// findings on this thread while its counts, its signals and where its
-    /// time went are reckoned on others (each reads every record, none
+    /// time went are reckoned on another (each reads every record, none
     /// needs another's answer).
     pub fn of_records(
         header: &crate::session::SessionHeader,
         records: &[reqlog::Record],
         prices: &RequestPrices,
     ) -> Analysis {
-        let (summary, signals, profile, episodes, observations) = std::thread::scope(|scope| {
-            let summary = scope.spawn(|| crate::summary::summarize(records));
-            let signals = scope.spawn(|| crate::signals::signals(records, prices));
-            let profile = scope.spawn(|| crate::profile::profile(records, prices));
+        let ((summary, signals, profile), episodes, observations) = std::thread::scope(|scope| {
+            // (one after another, on one thread: what each lets go the next
+            // uses, where three threads would each keep their own)
+            let counts = scope.spawn(|| {
+                (
+                    crate::summary::summarize(records),
+                    crate::signals::signals(records, prices),
+                    crate::profile::profile(records, prices),
+                )
+            });
             let episodes = episodes(records);
             let observations = observations_of(header, records, &episodes);
-            (
-                joined(summary),
-                joined(signals),
-                joined(profile),
-                episodes,
-                observations,
-            )
+            (joined(counts), episodes, observations)
         });
         let shared_notes = shared_notes(&episodes)
             .into_iter()
@@ -186,32 +186,29 @@ impl Analysis {
                 owner.push((*id, i as u32));
             }
         }
+        // (a request two operations claim is the later's: first of its id)
+        owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
         let mut kinds = vec![0u64; episodes.len()];
-        {
-            let mut by_id: Vec<(u64, u32)> = owner.clone();
-            by_id.sort_unstable_by_key(|(id, _)| *id);
-            for r in records {
-                let mut k = by_id.partition_point(|(id, _)| *id < r.id);
-                while k < by_id.len() && by_id[k].0 == r.id {
-                    let name: &str = &r.kind;
-                    let bit = match kind_names.iter().position(|n| n == name) {
-                        Some(b) => b,
-                        None if kind_names.len() < 63 => {
-                            kind_names.push(name.to_string());
-                            kind_names.len() - 1
-                        }
-                        None => 63,
-                    };
-                    kinds[by_id[k].1 as usize] |= 1 << bit;
-                    k += 1;
-                }
+        for r in records {
+            let mut k = owner.partition_point(|(id, _)| *id < r.id);
+            while k < owner.len() && owner[k].0 == r.id {
+                let name: &str = &r.kind;
+                let bit = match kind_names.iter().position(|n| n == name) {
+                    Some(b) => b,
+                    None if kind_names.len() < 63 => {
+                        kind_names.push(name.to_string());
+                        kind_names.len() - 1
+                    }
+                    None => 63,
+                };
+                kinds[owner[k].1 as usize] |= 1 << bit;
+                k += 1;
             }
         }
-        // (a request two operations claim is the later's)
-        owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         owner.dedup_by_key(|(id, _)| *id);
+        owner.shrink_to_fit();
         let span = episodes.iter().map(|e| e.start).min().and_then(|start| {
             let end = episodes.iter().map(|e| e.end).max()?;
             Some((start, end))

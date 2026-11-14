@@ -15,7 +15,7 @@ mod record;
 pub mod redact;
 mod ring;
 
-pub use list::List;
+pub use list::Lists;
 pub use name::Name;
 pub use record::{
     Header, KEYS_HEADER, KeyCounter, MAX_LATENCY_MS, MAX_REQUEST_BODY, Rare, Record, RecordSummary,

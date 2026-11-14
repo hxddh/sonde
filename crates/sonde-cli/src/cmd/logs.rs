@@ -424,7 +424,11 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("big".into()),
             status: Some(200),
-            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+            lists: reqlog::Lists {
+                query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let started = || rec(0, "POST", "CreateMultipartUpload", &[("uploads", "")]);

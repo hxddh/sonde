@@ -48,14 +48,14 @@ fn endpoint_url(url: &str) -> Option<String> {
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.query
+    r.query()
         .iter()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.as_str())
 }
 
 fn req_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
@@ -181,7 +181,7 @@ pub fn as_curl(r: &Record) -> String {
         ),
         format!("curl -sS -i -X {} {}", r.method, shell_quote(&url)),
     ];
-    for h in &r.request_headers {
+    for h in r.request_headers() {
         if skip.contains(&h.name.to_ascii_lowercase().as_str()) {
             continue;
         }
@@ -206,26 +206,28 @@ mod tests {
             kind: "ListObjectsV2".into(),
             method: "GET".into(),
             bucket: Some("bucket".into()),
-            query: vec![
-                ("list-type".into(), "2".into()),
-                // decoded, as s3raw and the proxy keep a record's query
-                ("prefix".into(), "logs/".into()),
-                ("delimiter".into(), "/".into()),
-            ]
-            .into(),
-            request_headers: vec![
-                Header::new(
-                    "Authorization",
-                    "AWS4-HMAC-SHA256 Credential=AKIAX/s, SignedHeaders=host, Signature=zzz",
-                ),
-                Header::new("x-amz-date", "20240101T000000Z"),
-                Header::new("x-amz-security-token", "TOKEN"),
-                Header::new("x-amz-request-payer", "requester"),
-            ]
-            .into(),
             rare: crate::Rare {
                 url: "http://127.0.0.1:9000/bucket?list-type=2&prefix=logs%2F&delimiter=%2F".into(),
                 region: Some("us-east-1".into()),
+                ..Default::default()
+            }
+            .into(),
+            lists: crate::Lists {
+                query: vec![
+                    ("list-type".into(), "2".into()),
+                    // decoded, as s3raw and the proxy keep a record's query
+                    ("prefix".into(), "logs/".into()),
+                    ("delimiter".into(), "/".into()),
+                ],
+                request_headers: vec![
+                    Header::new(
+                        "Authorization",
+                        "AWS4-HMAC-SHA256 Credential=AKIAX/s, SignedHeaders=host, Signature=zzz",
+                    ),
+                    Header::new("x-amz-date", "20240101T000000Z"),
+                    Header::new("x-amz-security-token", "TOKEN"),
+                    Header::new("x-amz-request-payer", "requester"),
+                ],
                 ..Default::default()
             }
             .into(),
@@ -257,7 +259,7 @@ mod tests {
     #[test]
     fn a_percent_sign_in_a_prefix_is_copied_as_it_is() {
         let mut r = rec();
-        r.query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())].into();
+        r.lists_mut().query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())].into();
         let cmd = as_aws_cli(&r);
         assert!(cmd.contains("--prefix sale-50%25off/a%2Fb "), "{cmd}");
     }

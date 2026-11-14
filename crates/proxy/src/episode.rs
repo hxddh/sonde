@@ -501,7 +501,7 @@ pub enum Outcome {
 /// One operation: requests that belong together. Its title is its phrases
 /// ([`Episode::title_text`], and [`Episode::title`] the English of them),
 /// made when they are asked for: a session may have a million operations,
-/// most of them one request, and each is held in 144 bytes
+/// most of them one request, and each is held in 128 bytes
 /// ([`Ids`] and [`Title`] hold one request's in place).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
@@ -524,12 +524,13 @@ pub struct Episode {
 /// An operation's title, as it is held.
 #[derive(Debug, Clone, PartialEq)]
 enum Title {
-    /// One request: `{op} {target}` (the target text its operations share),
-    /// and what follows it (a listing's prefix, a write's size).
+    /// One request: `{op} {bucket}/{key}`, of its record's own names, and
+    /// the size it wrote (the operation's bytes up) when `sized`.
     Request {
         op: reqlog::Name,
-        target: reqlog::Text,
-        more: Box<[Phrase]>,
+        bucket: Option<reqlog::Name>,
+        key: Option<reqlog::Text>,
+        sized: bool,
     },
     Phrases(Box<[Phrase]>),
 }
@@ -636,15 +637,27 @@ impl Episode {
     /// Its title, as phrases.
     pub fn title_text(&self) -> Vec<Phrase> {
         match &self.title {
-            Title::Request { op, target, more } => {
-                let mut t = vec![p_shared(
-                    "request",
-                    &[("op", op.as_str().into()), ("target", target.clone())],
-                )];
-                t.extend(more.iter().cloned());
+            Title::Request {
+                op,
+                bucket,
+                key,
+                sized,
+            } => {
+                let mut t = vec![request_phrase(*op, *bucket, key.as_deref())];
+                if *sized {
+                    t.push(p("size", &[("size", human(self.bytes_up))]));
+                }
                 t
             }
             Title::Phrases(t) => t.to_vec(),
+        }
+    }
+
+    /// Whether its title says the phrase `key` (asked without making it).
+    pub fn title_says(&self, key: &str) -> bool {
+        match &self.title {
+            Title::Request { .. } => key == "request",
+            Title::Phrases(t) => t.iter().any(|p| p.key == key),
         }
     }
 
@@ -679,7 +692,7 @@ fn end_of(r: &Record) -> DateTime<Utc> {
 }
 
 fn refused(r: &Record) -> bool {
-    r.response_headers
+    r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
@@ -711,21 +724,21 @@ fn is_write(r: &Record) -> bool {
 }
 
 fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
 }
 
 fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.response_headers
+    r.response_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.query
+    r.query()
         .iter()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.as_str())
@@ -894,8 +907,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         }
         alone.push(r);
     }
-    let mut targets = Targets::default();
-    out.extend(alone.iter().map(|r| single(r, &mut targets)));
+    out.extend(alone.iter().map(|r| single(r)));
     for (f, rs) in buffers {
         out.push(loose(f, rs));
     }
@@ -928,45 +940,40 @@ fn flush_idle(
     }
 }
 
-/// Each request's target as text its operations share, by its bucket and
-/// key (the key is held once for the session, [`crate::session`], and
-/// told by where it is): a key read a thousand times is one title's
-/// target, not a thousand.
-#[derive(Default)]
-struct Targets(std::collections::HashMap<(Option<reqlog::Name>, usize), reqlog::Text>);
-
-impl Targets {
-    fn of(&mut self, r: &Record) -> reqlog::Text {
-        let key = r.key.as_ref().map_or(0, |k| k.as_ptr() as usize);
-        self.0
-            .entry((r.bucket, key))
-            .or_insert_with(|| {
-                match (&r.bucket, &r.key) {
-                    (Some(b), Some(k)) => format!("{b}/{k}"),
-                    (Some(b), None) => format!("{b}/"),
-                    _ => "/".into(),
-                }
-                .into()
-            })
-            .clone()
-    }
+/// `{op} {bucket}/{key}`: a request's title.
+fn request_phrase(op: reqlog::Name, bucket: Option<reqlog::Name>, key: Option<&str>) -> Phrase {
+    let target = match (bucket, key) {
+        (Some(b), Some(k)) => format!("{b}/{k}"),
+        (Some(b), None) => format!("{b}/"),
+        _ => "/".into(),
+    };
+    p_shared(
+        "request",
+        &[("op", op.as_str().into()), ("target", target.into())],
+    )
 }
 
 /// A request that is nothing more, an operation of its own: most of a large
-/// session, so its title is held as the request's own words ([`Title::Request`]).
-fn single(r: &Record, targets: &mut Targets) -> Episode {
-    let mut more = Vec::new();
-    if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
-        more.push(p("request.prefix", &[("prefix", x.to_string())]));
-    }
-    if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
-        more.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
-    }
-    let title = Title::Request {
+/// session, so its title is held as the request's own words
+/// ([`Title::Request`]) when they are all it says.
+fn single(r: &Record) -> Episode {
+    let sized = matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0;
+    let mut title = Title::Request {
         op: r.kind,
-        target: targets.of(r),
-        more: more.into(),
+        bucket: r.bucket,
+        key: r.key.clone(),
+        sized,
     };
+    if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
+        let mut said = vec![
+            request_phrase(r.kind, r.bucket, r.key.as_deref()),
+            p("request.prefix", &[("prefix", x.to_string())]),
+        ];
+        if sized {
+            said.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
+        }
+        title = Title::Phrases(said.into());
+    }
     let mut e = built(Shape::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
     e
@@ -988,8 +995,7 @@ fn conditional_note(e: &mut Episode, rs: &[&Record]) {
 
 fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     if rs.len() < 3 {
-        let mut targets = Targets::default();
-        return rs.into_iter().map(|r| single(r, &mut targets)).collect();
+        return rs.into_iter().map(single).collect();
     }
     let bucket = rs[0].bucket.clone().unwrap_or_default();
     let dirs: Vec<&str> = rs
@@ -1012,7 +1018,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
 
 fn flush_listing(rs: Vec<&Record>) -> Episode {
     if rs.len() == 1 {
-        return single(rs[0], &mut Targets::default());
+        return single(rs[0]);
     }
     let prefix = query(rs[0], "prefix").unwrap_or("");
     let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
@@ -1243,7 +1249,7 @@ fn retries<'a>(
             r.method.as_str(),
             r.bucket.as_deref(),
             r.key.as_deref(),
-            r.query.as_slice(),
+            r.query(),
         )
     }
     // the records of each identity a retryable failure has, in time order: a
@@ -1864,14 +1870,14 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // each record by its id: read once, for every finding that names requests
     let by_id: ById<&Record> = ById::of(records.len(), || records.iter().map(|r| (r.id, r)));
     // which episode each record belongs to
-    let owner: ById<usize> = ById::of(records.len(), || {
+    let owner: ById<u32> = ById::of(records.len(), || {
         episodes
             .iter()
             .enumerate()
-            .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
+            .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i as u32)))
     });
     let of_records = |ids: &mut dyn Iterator<Item = u64>| -> Vec<usize> {
-        ids.filter_map(|id| owner.get(&id).copied())
+        ids.filter_map(|id| owner.get(&id).map(|i| *i as usize))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -1934,7 +1940,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .weigh(impact, 0, total),
         );
     }
-    let orphans = of_episodes(&|e| e.title().contains("no commit followed"));
+    let orphans = of_episodes(&|e| e.title_says("loose.uncommitted"));
     if !orphans.is_empty() {
         let n = orphans.len();
         let impact = requests_of(&orphans);
@@ -2653,7 +2659,7 @@ mod tests {
 
     #[test]
     fn an_operation_of_one_request_is_small_and_titled_as_ever() {
-        assert_eq!(std::mem::size_of::<Episode>(), 144);
+        assert_eq!(std::mem::size_of::<Episode>(), 128);
         let r = Record {
             id: 4,
             kind: "PutObject".into(),
@@ -2663,7 +2669,7 @@ mod tests {
             request_bytes: Some(2048),
             ..Default::default()
         };
-        let e = single(&r, &mut Targets::default());
+        let e = single(&r);
         assert_eq!(
             (e.records.clone(), e.title()),
             (Ids::One(4), "PutObject b/k · 2.0 KiB".into())
@@ -2712,10 +2718,14 @@ mod tests {
             kind: op.into(),
             bucket: Some("b".into()),
             key: Some("big".into()),
-            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
             status: Some(status),
             request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
             latency_ms: 5.0,
+            lists: reqlog::Lists {
+                query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let rs = vec![
@@ -2771,7 +2781,7 @@ mod tests {
     }
 
     fn with_query(mut r: Record, q: &[(&str, &str)]) -> Record {
-        r.query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
+        r.lists_mut().query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         r
     }
 
@@ -2853,7 +2863,8 @@ mod tests {
     fn a_trials_503s_are_not_the_stores() {
         let fault = |mut r: Record| {
             r.rare_mut().injected = Some("slowdown".into());
-            r.response_headers
+            r.lists_mut()
+                .response_headers
                 .push(Header::new("x-sonde-fault", "slowdown"));
             r
         };
@@ -2900,7 +2911,7 @@ mod tests {
     #[test]
     fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
-        create.query = vec![("uploads".into(), "".into())].into();
+        create.lists_mut().query = vec![("uploads".into(), "".into())].into();
         let q = [("uploadId", "u1")];
         let part = with_query(
             rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
@@ -2911,9 +2922,11 @@ mod tests {
             &q,
         );
         lost.rare_mut().injected = Some("lost-answer".into());
-        lost.response_headers
+        lost.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-store-status", "200"));
-        lost.response_headers
+        lost.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-fault", "lost-answer"));
         let mut again = with_query(
             rec(4, 130, "POST", "CompleteMultipartUpload", Some("big"), 404),
@@ -3146,7 +3159,7 @@ mod tests {
             Some("t/_delta_log/00000000000000000007.json"),
             200,
         );
-        won.request_headers = vec![Header::new("If-None-Match", "*")].into();
+        won.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")].into();
         let mut lost = rec(
             2,
             50,
@@ -3155,10 +3168,10 @@ mod tests {
             Some("t/_delta_log/00000000000000000008.json"),
             412,
         );
-        lost.request_headers = vec![Header::new("If-None-Match", "*")].into();
+        lost.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")].into();
         lost.rare_mut().error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
         let mut refused = rec(3, 100, "DELETE", "DeleteObject", Some("x"), 403);
-        refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")].into();
+        refused.lists_mut().response_headers = vec![Header::new("x-sonde-proxy", "refused")].into();
         let records = [won, lost, refused];
         let eps = episodes(&records);
         assert_eq!(eps[0].title(), "commit 7");
@@ -3460,7 +3473,7 @@ mod tests {
                 format!("out/part-{i}.parquet"),
             );
             let mut copy = req(next(), i * 100, "COPY", &dst, 0);
-            copy.request_headers =
+            copy.lists_mut().request_headers =
                 vec![Header::new("x-amz-copy-source", format!("lake/{src}"))].into();
             rs.push(copy);
             rs.push(req(next(), i * 100 + 10, "DELETE", &src, 0));
@@ -3607,7 +3620,7 @@ mod tests {
         let other: Vec<Record> = (1..=15)
             .map(|i| {
                 let mut r = get(i, "conf.json", 200);
-                r.response_headers = vec![reqlog::Header {
+                r.lists_mut().response_headers = vec![reqlog::Header {
                     name: "ETag".into(),
                     value: if i < 8 {
                         "\"a\"".into()
@@ -3640,7 +3653,7 @@ mod tests {
         let ranged: Vec<Record> = (1..=12)
             .map(|i| {
                 let mut r = get(i, "big.parquet", 206);
-                r.request_headers = vec![reqlog::Header {
+                r.lists_mut().request_headers = vec![reqlog::Header {
                     name: "Range".into(),
                     value: format!("bytes={}-{}", i * 100, i * 100 + 99).into(),
                 }]

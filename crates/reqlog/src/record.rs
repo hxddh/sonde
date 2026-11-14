@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{List, Name};
+use crate::{Lists, Name};
 
 /// A header's name or value: text that the records repeating it share. A
 /// session of a million requests says `user-agent` and its value a million
@@ -194,12 +194,13 @@ impl Header {
 /// One HTTP exchange with an object store. Every field is redacted when the
 /// record is built ([`Record::redacted`]), never later.
 ///
-/// What every request has is held here, in 168 bytes; what few have (an
-/// error's body, a transport error, a fault's mark) and what no analysis
-/// reads (the URL, the store's ids, the endpoint and region) is behind one
-/// pointer ([`Record::rare`]), which a record read for its analysis has
-/// only when it failed or was marked. A million requests are then about
-/// 200 MiB. Written to a file and sent to the app as one flat object.
+/// What every request has is held here, in 120 bytes. Its query and
+/// headers are behind one pointer ([`Record::lists`]) that the records
+/// holding the same share. What few have (an error's body, a transport
+/// error, a fault's mark) and what no analysis reads (the URL, the store's
+/// ids, the endpoint and region) is behind another ([`Record::rare`]),
+/// which a record read for its analysis has only when it failed or was
+/// marked. Written to a file and sent to the app as one flat object.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Record {
     /// Monotonic id within the log (assigned by [`crate::RequestLog::push`]).
@@ -212,7 +213,7 @@ pub struct Record {
     pub method: Name,
     pub bucket: Option<Name>,
     /// How many times the request was retried before this outcome.
-    pub retries: u32,
+    pub retries: u16,
     pub latency_ms: f64,
     /// How long until the response's first byte: the proxy's measure, or the
     /// turnaround an access log gives (S3's time to its first byte).
@@ -222,10 +223,8 @@ pub struct Record {
     /// Bytes of the response body read, when known.
     pub response_bytes: Option<u64>,
     pub key: Option<Text>,
-    /// Query parameters, masked like the URL.
-    pub query: List<(Text, Text)>,
-    pub request_headers: List<Header>,
-    pub response_headers: List<Header>,
+    /// Its query and headers ([`Lists`]): `None` when they would be empty.
+    pub lists: Option<std::sync::Arc<Lists>>,
     /// The rest ([`Rare`]): `None` when it would be empty.
     pub rare: Option<Box<Rare>>,
 }
@@ -305,7 +304,7 @@ struct Written<'a> {
     query: &'a [(Text, Text)],
     status: Option<u16>,
     latency_ms: f64,
-    retries: u32,
+    retries: u16,
     request_id: &'a Option<String>,
     host_id: &'a Option<String>,
     request_headers: &'a [Header],
@@ -343,17 +342,17 @@ struct Read {
     bucket: Option<Name>,
     key: Option<Text>,
     #[serde(default)]
-    query: List<(Text, Text)>,
+    query: Vec<(Text, Text)>,
     status: Option<u16>,
     latency_ms: f64,
     #[serde(default)]
-    retries: u32,
+    retries: u16,
     request_id: Option<String>,
     host_id: Option<String>,
     #[serde(default)]
-    request_headers: List<Header>,
+    request_headers: Vec<Header>,
     #[serde(default)]
-    response_headers: List<Header>,
+    response_headers: Vec<Header>,
     request_bytes: Option<u64>,
     response_bytes: Option<u64>,
     error_body: Option<String>,
@@ -380,14 +379,14 @@ impl Serialize for Record {
             url: &x.url,
             bucket: self.bucket,
             key: &self.key,
-            query: &self.query,
+            query: self.query(),
             status: self.status,
             latency_ms: self.latency_ms,
             retries: self.retries,
             request_id: &x.request_id,
             host_id: &x.host_id,
-            request_headers: &self.request_headers,
-            response_headers: &self.response_headers,
+            request_headers: self.request_headers(),
+            response_headers: self.response_headers(),
             request_bytes: self.request_bytes,
             response_bytes: self.response_bytes,
             error_body: &x.error_body,
@@ -420,9 +419,12 @@ impl<'de> Deserialize<'de> for Record {
             request_bytes: r.request_bytes,
             response_bytes: r.response_bytes,
             key: r.key,
-            query: r.query,
-            request_headers: r.request_headers,
-            response_headers: r.response_headers,
+            lists: Lists {
+                query: r.query,
+                request_headers: r.request_headers,
+                response_headers: r.response_headers,
+            }
+            .into(),
             rare: Rare {
                 endpoint: r.endpoint,
                 url: r.url,
@@ -454,7 +456,7 @@ pub struct RecordSummary {
     pub target: String,
     pub status: Option<u16>,
     pub latency_ms: f64,
-    pub retries: u32,
+    pub retries: u16,
     pub request_id: Option<String>,
     /// Time to the response's first byte, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -538,18 +540,35 @@ impl Record {
         self.rare.get_or_insert_with(Box::default)
     }
 
+    /// Query parameters, masked like the URL.
+    pub fn query(&self) -> &[(Text, Text)] {
+        self.lists.as_deref().map_or(&[], |l| &l.query)
+    }
+
+    pub fn request_headers(&self) -> &[Header] {
+        self.lists.as_deref().map_or(&[], |l| &l.request_headers)
+    }
+
+    pub fn response_headers(&self) -> &[Header] {
+        self.lists.as_deref().map_or(&[], |l| &l.response_headers)
+    }
+
+    /// Its query and headers, to change: its own (copied when shared),
+    /// made when it has none.
+    pub fn lists_mut(&mut self) -> &mut Lists {
+        std::sync::Arc::make_mut(self.lists.get_or_insert_with(Default::default))
+    }
+
     /// Redacts every field that can carry a secret. Idempotent.
     pub fn redacted(mut self) -> Self {
-        for (k, v) in self.query.make_mut() {
-            *v = crate::redact::redact_query_value(k, v).into();
-        }
-        for h in self
-            .request_headers
-            .make_mut()
-            .iter_mut()
-            .chain(self.response_headers.make_mut().iter_mut())
-        {
-            h.value = crate::redact::redact_header(&h.name, &h.value).into();
+        if self.lists.is_some() {
+            let l = self.lists_mut();
+            for (k, v) in &mut l.query {
+                *v = crate::redact::redact_query_value(k, v).into();
+            }
+            for h in l.request_headers.iter_mut().chain(&mut l.response_headers) {
+                h.value = crate::redact::redact_header(&h.name, &h.value).into();
+            }
         }
         let Some(x) = self.rare.as_deref_mut() else {
             return self;
@@ -581,7 +600,7 @@ impl Record {
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.response_headers
+        self.response_headers()
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case(name))
             .map(|h| h.value.as_str())
@@ -634,7 +653,7 @@ mod tests {
 
     #[test]
     fn a_record_is_small_and_written_flat() {
-        assert_eq!(std::mem::size_of::<Record>(), 168);
+        assert_eq!(std::mem::size_of::<Record>(), 120);
         let r = Record {
             id: 3,
             kind: "GetObject".into(),
@@ -642,7 +661,11 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("k".into()),
             status: Some(404),
-            request_headers: vec![Header::new("user-agent", "x")].into(),
+            lists: Lists {
+                request_headers: vec![Header::new("user-agent", "x")],
+                ..Default::default()
+            }
+            .into(),
             rare: Rare {
                 endpoint: "prod".into(),
                 url: "https://s3/b/k".into(),

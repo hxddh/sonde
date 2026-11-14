@@ -2640,10 +2640,13 @@ mod tests {
                     key: Some("hot".into()),
                     status: Some(200),
                     latency_ms: 2.0,
-                    request_headers: vec![reqlog::Header::new(
-                        "x-sonde-caller",
-                        "etl/load.py:3 main",
-                    )]
+                    lists: reqlog::Lists {
+                        request_headers: vec![reqlog::Header::new(
+                            "x-sonde-caller",
+                            "etl/load.py:3 main",
+                        )],
+                        ..Default::default()
+                    }
                     .into(),
                     ..Default::default()
                 });
@@ -2871,13 +2874,16 @@ mod tests {
                 key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
                 latency_ms: 1.0 + (n - i) as f64 / 10.0,
-                request_headers: vec![
-                    reqlog::Header::new("authorization", "AWS4-HMAC-SHA256 Credential=…"),
-                    reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
-                ]
-                .into(),
                 rare: reqlog::Rare {
                     url: format!("http://s3/b/data/k{i:05}"),
+                    ..Default::default()
+                }
+                .into(),
+                lists: reqlog::Lists {
+                    request_headers: vec![
+                        reqlog::Header::new("authorization", "AWS4-HMAC-SHA256 Credential=…"),
+                        reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
+                    ],
                     ..Default::default()
                 }
                 .into(),
@@ -3048,7 +3054,7 @@ mod tests {
         let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
         assert_eq!(full.rare().url, "http://s3/b/data/k00041");
         assert!(
-            full.request_headers
+            full.request_headers()
                 .iter()
                 .any(|h| h.name == "authorization")
         );

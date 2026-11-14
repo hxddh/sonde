@@ -805,12 +805,17 @@ pub fn read_by_analysis(name: &str) -> bool {
 
 /// A record as [`Keep::Analysis`] keeps it.
 pub fn lean(r: &mut Record) {
-    r.request_headers.retain(|h| read_by_analysis(&h.name));
-    r.response_headers.retain(|h| read_by_analysis(&h.name));
+    if let Some(l) = &mut r.lists
+        && (l.request_headers.iter())
+            .chain(&l.response_headers)
+            .any(|h| !read_by_analysis(&h.name))
+    {
+        let l = std::sync::Arc::make_mut(l);
+        l.request_headers.retain(|h| read_by_analysis(&h.name));
+        l.response_headers.retain(|h| read_by_analysis(&h.name));
+    }
     // (most requests of a run say the same: those lists are held once)
-    r.request_headers = std::mem::take(&mut r.request_headers).shared();
-    r.response_headers = std::mem::take(&mut r.response_headers).shared();
-    r.query = std::mem::take(&mut r.query).shared();
+    r.lists = reqlog::Lists::shared(r.lists.take());
     if let Some(x) = r.rare.as_deref_mut() {
         x.endpoint = String::new();
         x.url = String::new();
@@ -1189,20 +1194,22 @@ mod tests {
                 method: "GET".into(),
                 key: Some(format!("k{i}").into()),
                 status: Some(200),
-                request_headers: vec![
-                    reqlog::Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=…"),
-                    reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
-                    reqlog::Header::new("Range", "bytes=0-9"),
-                ]
-                .into(),
-                response_headers: vec![
-                    reqlog::Header::new("x-amz-request-id", format!("{i:016X}")),
-                    reqlog::Header::new("ETag", "\"abc\""),
-                ]
-                .into(),
                 rare: reqlog::Rare {
                     url: format!("https://x.r2.dev/b/k{i}"),
                     host_id: Some("host".into()),
+                    ..Default::default()
+                }
+                .into(),
+                lists: reqlog::Lists {
+                    request_headers: vec![
+                        reqlog::Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=…"),
+                        reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
+                        reqlog::Header::new("Range", "bytes=0-9"),
+                    ],
+                    response_headers: vec![
+                        reqlog::Header::new("x-amz-request-id", format!("{i:016X}")),
+                        reqlog::Header::new("ETag", "\"abc\""),
+                    ],
                     ..Default::default()
                 }
                 .into(),
@@ -1356,9 +1363,9 @@ mod tests {
         let full = Session::open(&path).unwrap();
         let lean = Session::open_lean(&path).unwrap();
         let names = |r: &Record| -> Vec<String> {
-            r.request_headers
+            r.request_headers()
                 .iter()
-                .chain(&r.response_headers)
+                .chain(r.response_headers())
                 .map(|h| h.name.to_string())
                 .collect()
         };

@@ -294,7 +294,7 @@ fn took_ms(r: &Record) -> f64 {
 /// and its `Range` (two ranges of one object are two requests).
 pub(crate) fn request_name(r: &Record) -> String {
     let range = r
-        .request_headers
+        .request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("range"))
         .map_or("", |h| h.value.trim());
@@ -602,8 +602,9 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         // how a program's SDK retries through the proxy: the same request
         // again after an answer that asks for it ([`retry_links`] has the rule)
         let again = u32::from(sent_again[at]);
-        retries[i] += (r.retries + again) as f64;
-        retries_total += (r.retries + again) as u64;
+        let mine = u32::from(r.retries);
+        retries[i] += (mine + again) as f64;
+        retries_total += (mine + again) as u64;
         if is_failure(r) {
             // what sonde did in the store's place is not the store's failure
             let (series, count) = if r.rare().injected.is_some() {
@@ -1337,7 +1338,9 @@ mod tests {
     fn another_range_of_the_object_is_another_request() {
         let ranged = |id, at, range: &str, status| {
             let mut r = get(id, at, "k", status);
-            r.request_headers.push(Header::new("range", range));
+            r.lists_mut()
+                .request_headers
+                .push(Header::new("range", range));
             r
         };
         assert_eq!(
