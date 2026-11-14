@@ -457,20 +457,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .iter()
         .filter(|t| t.standing == Standing::Broke)
         .count();
-    let tried = trials
-        .iter()
-        .filter(|t| t.standing != Standing::Untested)
-        .count();
-    eprintln!(
-        "\n{}",
-        if tried == 0 {
-            "Nothing was tried: no scenario met a request of the program's.".to_string()
-        } else if broke == 0 {
-            "The program did not break.".to_string()
-        } else {
-            format!("The program broke under {broke} of {tried}.")
-        }
-    );
+    let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
+    eprintln!("\n{}", trials_summary(&standings));
     eprintln!("Each trial is a session:");
     for t in &trials {
         if let Some(path) = sonde_proxy::trial::session_path(&file, t) {
@@ -486,25 +474,103 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         })
     {
         eprintln!("Once changed, try again what did not survive:");
-        eprintln!("  {}", again_command(a));
+        eprintln!("  {}", again_command(cli, a, &trials));
     }
     Ok(if broke > 0 { 1 } else { 0 })
 }
 
-/// The command that tries a program again under what did not survive.
-fn again_command(a: &RunArgs) -> String {
-    let mut words = vec!["sonde run --trial --again".to_string()];
-    if let Some(n) = &a.name {
-        words.push(format!(
-            "--name {}",
-            sonde_proxy::program::shell_join(std::slice::from_ref(n))
+/// What a trial's runs came to, in a sentence: "did not break" only when
+/// every scenario was judged; the ones that were not are said.
+fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
+    use sonde_proxy::trial::Standing;
+    let count = |s: Standing| standings.iter().filter(|t| **t == s).count();
+    let (broke, refused, untested) = (
+        count(Standing::Broke),
+        count(Standing::Refused),
+        count(Standing::Untested),
+    );
+    let judged = standings.len() - refused - untested;
+    let mut unjudged = Vec::new();
+    if refused > 0 {
+        unjudged.push(format!("{refused} refused by the recording policy"));
+    }
+    if untested > 0 {
+        unjudged.push(format!(
+            "{untested} met no request of the program's"
         ));
     }
+    let unjudged = unjudged.join(", ");
+    match (judged, broke) {
+        (0, _) if refused == 0 => {
+            "Nothing was tried: no scenario met a request of the program's.".to_string()
+        }
+        (0, _) => format!("Nothing was judged: {unjudged}."),
+        (_, 0) if unjudged.is_empty() => "The program did not break.".to_string(),
+        (_, 0) => format!(
+            "The program did not break under the {judged} judged; not judged: {unjudged}."
+        ),
+        _ if unjudged.is_empty() => format!("The program broke under {broke} of {judged}."),
+        _ => format!("The program broke under {broke} of {judged} judged; not judged: {unjudged}."),
+    }
+}
+
+/// The command that tries a program again under what did not survive, with
+/// the flags of the trial it repeats: the same store, policy and recording.
+/// A trial of scenarios named (`--fault`) names again the ones that did not
+/// survive.
+fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -> String {
+    use sonde_proxy::trial::Standing;
+    let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
+    let mut words = vec!["sonde run".to_string()];
+    if a.faults.is_empty() {
+        words.push("--trial --again".into());
+    } else {
+        for t in trials.iter().filter(|t| {
+            matches!(
+                t.standing,
+                Standing::Broke | Standing::Degraded | Standing::Refused
+            )
+        }) {
+            words.push(format!("--fault {}", q(&t.asked())));
+        }
+    }
+    if let Some(n) = &a.name {
+        words.push(format!("--name {}", q(n)));
+    }
     if let Some(out) = &a.rec.out {
-        words.push(format!(
-            "-o {}",
-            sonde_proxy::program::shell_join(&[out.to_string_lossy().into_owned()])
-        ));
+        words.push(format!("-o {}", q(&out.to_string_lossy())));
+    }
+    if a.demo {
+        words.push("--demo".into());
+    }
+    if let Some(url) = &cli.url {
+        words.push(format!("--url {}", q(url)));
+        if cli.region != "us-east-1" {
+            words.push(format!("--region {}", q(&cli.region)));
+        }
+        if cli.path_style {
+            words.push("--path-style".into());
+        }
+        if let Some(ca) = &cli.ca_file {
+            words.push(format!("--ca-file {}", q(&ca.to_string_lossy())));
+        }
+    }
+    if let Some(e) = &a.rec.endpoint
+        && !a.demo
+    {
+        words.push(format!("-e {}", q(e)));
+    }
+    if a.rec.allow_writes {
+        words.push("--allow-writes".into());
+    }
+    if let Some(p) = &a.rec.policy {
+        words.push(format!("--policy {}", q(p)));
+    }
+    if a.rec.tls {
+        words.push("--tls".into());
+    }
+    if a.no_callers {
+        words.push("--no-callers".into());
     }
     words.push("--".into());
     words.push(sonde_proxy::program::shell_join(&a.command));
@@ -878,6 +944,35 @@ mod tests {
             assert_eq!(all, "123456789abcdefgh");
         }
         assert_eq!(KeptInput::default().limit, 8 << 20);
+    }
+
+    #[test]
+    fn did_not_break_is_said_only_when_every_scenario_was_judged() {
+        use sonde_proxy::trial::Standing::*;
+        assert_eq!(
+            trials_summary(&[Survived, Degraded]),
+            "The program did not break."
+        );
+        assert_eq!(
+            trials_summary(&[Survived, Refused, Refused, Untested]),
+            "The program did not break under the 1 judged; not judged: 2 refused by the recording policy, 1 met no request of the program's."
+        );
+        assert_eq!(
+            trials_summary(&[Broke, Survived]),
+            "The program broke under 1 of 2."
+        );
+        assert_eq!(
+            trials_summary(&[Broke, Refused]),
+            "The program broke under 1 of 1 judged; not judged: 1 refused by the recording policy."
+        );
+        assert_eq!(
+            trials_summary(&[Refused, Untested]),
+            "Nothing was judged: 1 refused by the recording policy, 1 met no request of the program's."
+        );
+        assert_eq!(
+            trials_summary(&[Untested]),
+            "Nothing was tried: no scenario met a request of the program's."
+        );
     }
 
     #[cfg(unix)]

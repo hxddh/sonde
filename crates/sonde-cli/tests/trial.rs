@@ -644,10 +644,21 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
                 "slowdown",
                 "-o",
                 session.to_str().unwrap(),
+                "--allow-writes",
             ],
         )
         .await;
     assert_eq!(o.code, Some(1), "{}", o.stderr);
+    // the way to try again keeps the trial's flags
+    assert!(
+        o.stderr.contains(&format!(
+            "sonde run --fault slowdown -o {} --url {} --path-style --allow-writes -- ",
+            session.display(),
+            b.store.url
+        )),
+        "{}",
+        o.stderr
+    );
     let all = trials(&session);
     let t = trial(&all, "slowdown");
     assert_eq!(t["standing"], "broke", "{t:#}");
@@ -2284,7 +2295,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert_eq!(o.code, Some(1), "{}", o.stderr);
     assert!(
         o.stderr
-            .contains("sonde run --trial --again --name etl -o run.sonde -- "),
+            .contains("sonde run --trial --again --name etl -o run.sonde --url "),
         "the way to try again is said: {}",
         o.stderr
     );

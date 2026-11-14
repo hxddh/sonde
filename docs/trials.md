@@ -150,6 +150,9 @@ repeatable; duplicates run once.
 | **untested** | no request met the fault, or hidden keys mattered to nothing. Only untested: exit 0, *Nothing was tried* |
 | **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place (or, when the refused key has it already, `--allow-writes`). Not judged; never broke |
 
+The last line says *The program did not break* only when every scenario was judged; otherwise it says how many
+were judged and which were not (refused, met no request).
+
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
 requests show; sonde does not read data back.
@@ -170,7 +173,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 |---|---|
 | History | Each verdict is added to its program's in `verdicts.json` beside its runs: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
-| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command. |
+| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
 | App | `Sessions.trialAgain(path, …)`: the same, from a run of the program. |
 
 ## Where the results go
