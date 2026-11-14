@@ -1869,20 +1869,20 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
 
 /// Something for each request, by its id. A session's ids are 1 to n (or
 /// near it): a table by id then, with no hashing; a map when they are not.
-enum ById<V> {
+pub(crate) enum ById<V> {
     Table(u64, Vec<Option<V>>),
     Map(std::collections::HashMap<u64, V>),
 }
 
 /// Each record by its id: looked up in place when the records are in the
 /// order of their ids (a recording's are), else through a [`ById`].
-enum RecordsById<'a> {
+pub(crate) enum RecordsById<'a> {
     InOrder(&'a [Record]),
     Table(ById<&'a Record>),
 }
 
 impl<'a> RecordsById<'a> {
-    fn of(records: &'a [Record]) -> RecordsById<'a> {
+    pub(crate) fn of(records: &'a [Record]) -> RecordsById<'a> {
         if records.is_sorted_by(|a, b| a.id < b.id) {
             return RecordsById::InOrder(records);
         }
@@ -1891,7 +1891,7 @@ impl<'a> RecordsById<'a> {
         }))
     }
 
-    fn get(&self, id: &u64) -> Option<&'a Record> {
+    pub(crate) fn get(&self, id: &u64) -> Option<&'a Record> {
         match self {
             RecordsById::InOrder(records) => records
                 .binary_search_by_key(id, |r| r.id)

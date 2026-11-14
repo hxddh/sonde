@@ -90,9 +90,8 @@ pub struct Analysis {
     pub sdk: Option<String>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
-    /// Which operation each request belongs to, by request id (sorted: a
-    /// map's buckets would cost twice as much a request).
-    owner: Vec<(u64, u32)>,
+    /// Which operation each request belongs to.
+    owner: Owners,
     /// The kinds of request each operation sent, as bits of `kind_names`
     /// (the 64th holds every kind past the 63rd): what a query by kind reads.
     kinds: Vec<u64>,
@@ -105,6 +104,53 @@ pub struct Analysis {
 
 fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
     (b - a).num_microseconds().unwrap_or(0) as f64 / 1000.0
+}
+
+/// Which operation each request belongs to, by its id (a request two
+/// operations claim is the later's): a table when the ids are about 1 to n
+/// (a recording's), sorted pairs when not (a map's buckets would cost twice
+/// as much a request).
+enum Owners {
+    Table { first: u64, of: Vec<u32> },
+    Pairs(Vec<(u64, u32)>),
+}
+
+impl Owners {
+    fn of(episodes: &[Episode]) -> Owners {
+        let ids = || {
+            episodes
+                .iter()
+                .enumerate()
+                .flat_map(|(i, e)| e.records.iter().map(move |id| (*id, i as u32)))
+        };
+        let (n, first, last) = ids().fold((0u64, u64::MAX, 0), |(n, lo, hi), (id, _)| {
+            (n + 1, lo.min(id), hi.max(id))
+        });
+        if n > 0 && last - first <= 2 * n {
+            let mut of = vec![u32::MAX; (last - first + 1) as usize];
+            for (id, i) in ids() {
+                of[(id - first) as usize] = i;
+            }
+            return Owners::Table { first, of };
+        }
+        let mut pairs: Vec<(u64, u32)> = ids().collect();
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        pairs.dedup_by_key(|(id, _)| *id);
+        Owners::Pairs(pairs)
+    }
+
+    fn get(&self, id: u64) -> Option<u32> {
+        match self {
+            Owners::Table { first, of } => of
+                .get(id.checked_sub(*first)? as usize)
+                .copied()
+                .filter(|i| *i != u32::MAX),
+            Owners::Pairs(pairs) => {
+                let at = pairs.binary_search_by_key(&id, |(id, _)| *id).ok()?;
+                Some(pairs[at].1)
+            }
+        }
+    }
 }
 
 impl Analysis {
@@ -163,20 +209,13 @@ impl Analysis {
         // (an imported log's times are to the second: its waiting is not known)
         let what_if =
             crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
-        let mut owner = Vec::with_capacity(records.len());
-        for (i, e) in episodes.iter().enumerate() {
-            for id in &e.records {
-                owner.push((*id, i as u32));
-            }
-        }
-        // (a request two operations claim is the later's: first of its id)
-        owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        let owner = Owners::of(&episodes);
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
         let mut kinds = vec![0u64; episodes.len()];
-        for r in records {
-            let mut k = owner.partition_point(|(id, _)| *id < r.id);
-            while k < owner.len() && owner[k].0 == r.id {
+        let by_id = crate::episode::RecordsById::of(records);
+        for (e, bits) in episodes.iter().zip(&mut kinds) {
+            for r in e.records.iter().filter_map(|id| by_id.get(id)) {
                 let name: &str = &r.kind;
                 let bit = match kind_names.iter().position(|n| n == name) {
                     Some(b) => b,
@@ -186,12 +225,9 @@ impl Analysis {
                     }
                     None => 63,
                 };
-                kinds[owner[k].1 as usize] |= 1 << bit;
-                k += 1;
+                *bits |= 1 << bit;
             }
         }
-        owner.dedup_by_key(|(id, _)| *id);
-        owner.shrink_to_fit();
         let span = episodes.iter().map(|e| e.start).min().and_then(|start| {
             let end = episodes.iter().map(|e| e.end).max()?;
             Some((start, end))
@@ -246,11 +282,7 @@ impl Analysis {
 
     /// The operation a request belongs to.
     pub fn episode_of(&self, record: u64) -> Option<usize> {
-        let at = self
-            .owner
-            .binary_search_by_key(&record, |(id, _)| *id)
-            .ok()?;
-        Some(self.owner[at].1 as usize)
+        self.owner.get(record).map(|i| i as usize)
     }
 
     /// The operations a query shows, in its order.
