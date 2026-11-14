@@ -5,7 +5,7 @@
 import { signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
-import { copy, endpoint, endpoints, report, settings } from "../store";
+import { copy, endpoint, endpoints, report } from "../store";
 import type { EpisodeRow, RecordingView } from "../types";
 import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row } from "./kit";
 import { OperationView } from "./sessionview";
@@ -19,7 +19,7 @@ export type Policy = "allow" | "no-delete" | "read-only";
  * endpoint and keys to point an application at. `policy`: the caller's
  * choice (no switch of its own then). */
 export function RecordPanel(props: { recording: RecordingView | null; onChange: () => void; policy?: () => Policy }) {
-  const own = signal<Policy>(settings()?.["record-policy"] ?? "no-delete");
+  const own = signal<Policy>("no-delete");
   const policy = () => props.policy?.() ?? own();
   const open = signal(false);
   const start = async () => {

@@ -129,7 +129,8 @@ Set a baseline with `sonde check --set-baseline` (or in the app) and keep the da
 or point `--baseline` at a session kept from the main branch (path or URL).
 
 `sonde.toml` has four tables: `[program]`, `[check]`, `[[scenario]]` ([trials](trials.md#a-projects-own-scenarios))
-and `[record]` (`policy`, `tls`). Any other key is an error.
+and `[record]` (`policy`, `name-callers`, `tls`); [configuration](configuration.md) says which file holds what. Any
+other key is an error.
 
 ```toml
 [program]
@@ -155,7 +156,7 @@ expect = ["obs.hot|slate/db/gc/manifest.boundary", "obs.listed"]
 
 sonde reads an `x-sonde-caller: file:line function` header (never forwarded), the SDK and version from the user
 agent, and the trace from `traceparent`. `sonde run` adds the header before signing (off: `--no-callers`, or
-`name-callers = false`), naming the program's first own frame; work handed to a thread pool (boto3's transfer
+`[record] name-callers = false` in `sonde.toml`), naming the program's first own frame; work handed to a thread pool (boto3's transfer
 manager) is named by the line that handed it:
 
 | Language | SDK | How |

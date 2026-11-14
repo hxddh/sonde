@@ -16,7 +16,7 @@ The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credential
 ([credentials](credentials.md)).
 
 **In the app**, Run does the same: a command (and working directory), an endpoint and a policy (starting at
-Settings › Safety, `no-delete`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows), with
+`no-delete`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows), with
 operations beside it; Stop ends it, a notification says how, the session opens. Output is kept in the session with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
 highlights its lines and back. Output is kept as printed: do not print secrets.
@@ -136,8 +136,8 @@ How `no-delete` finds an existing object:
 - `sonde proxy` and `watch` record no program: only what the recording itself wrote.
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`, or `--allow-writes`); `[record] policy`
-in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at the
-`record-policy` setting, which `[record] policy` may narrow, never widen.
+in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
+project's `[record] policy` when Run is not asked for one), which `[record] policy` may narrow, never widen.
 
 ## Session files
 

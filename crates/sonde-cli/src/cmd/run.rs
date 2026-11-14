@@ -30,7 +30,7 @@ pub struct RunArgs {
     /// It is named by default for Python's boto3, the AWS SDK for
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
     /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
-    /// says its line. Also `name-callers = false` in the settings.
+    /// says its line. Also `[record] name-callers = false` in sonde.toml.
     #[arg(long)]
     no_callers: bool,
     /// Then run the command again under faults chosen from what it did (a
@@ -133,6 +133,9 @@ struct RunCtx {
     stop: Stop,
     /// How it is recorded: the command line's, and sonde.toml's `[record]`.
     rec: Recording,
+    /// The runs name the code that sent each request: unless
+    /// `--no-callers` or `[record] name-callers = false`.
+    callers: bool,
     /// What the runs wrote: a trial's runs may write again what the clean
     /// run wrote, under no-delete as under allow.
     written: Arc<sonde_proxy::Written>,
@@ -330,6 +333,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             tls: rec.tls || project.file.record.tls,
             ..rec
         },
+        callers: !a.no_callers && project.file.record.name_callers != Some(false),
         written: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
@@ -575,7 +579,7 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if !a.no_callers && s.settings().name_callers {
+    if ctx.callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`

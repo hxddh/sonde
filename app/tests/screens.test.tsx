@@ -151,8 +151,8 @@ test("errors are readable: what went wrong, said whole", async () => {
 test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  // one safety setting: what a recorded program may do
-  expect(app.shows("id:record-policy")).toBe(true);
+  // what a recorded program may do is the project's (sonde.toml) and Run's, not a setting
+  expect(app.shows("id:record-policy")).toBe(false);
   expect(app.shows("id:read-only")).toBe(false);
   expect(app.shows("id:toolbar-lock")).toBe(false);
   await place(app, "multipart");
