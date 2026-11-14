@@ -114,8 +114,13 @@ fn a_million_requests_are_read_within_their_memory() {
         analysis.episodes.len(),
         analysis.observations.len()
     );
-    // the lake job has what a real one has: the findings are there to be found
-    assert!(analysis.observations.len() >= 4 && analysis.what_if.is_some());
+    // the lake job has what a real one has: the findings are there to be found (three since 21.0, whose
+    // advice holds only for a key read alike every time)
+    assert!(
+        analysis.observations.len() >= 3 && analysis.what_if.is_some(),
+        "{} findings",
+        analysis.observations.len()
+    );
     held(
         "show of a million",
         took,
