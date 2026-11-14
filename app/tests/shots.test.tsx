@@ -165,8 +165,13 @@ for (const v of variants) {
     await app.press("id:welcome-demo");
     await app.waitFor("id:screen-run", { timeout: 15000 });
     if (v.theme || v.lang) {
-      await app.keyboard.press("mod+,");
-      await app.waitFor("id:screen-settings-area");
+      // (the shortcut asked again where the window took it before it was ready for it)
+      for (let n = 0; ; n++) {
+        await app.keyboard.press("mod+,");
+        const opened = await app.waitFor("id:screen-settings-area", { timeout: 5000 }).then(() => true, () => false);
+        if (opened) break;
+        if (n === 2) throw new Error("Settings did not open on mod+, three times");
+      }
       await app.press(`id:theme-${v.theme ?? "light"}`);
       if (v.lang) {
         await app.press("label:Language");
