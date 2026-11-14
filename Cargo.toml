@@ -86,12 +86,12 @@ async-trait = "0.1"
 tempfile = "3"
 
 # Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its main
-# at 2ca3b80 (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
+# at 27f288e (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "27f288e2e8f62c017520c63190a0fb4c3ca42f8a" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "27f288e2e8f62c017520c63190a0fb4c3ca42f8a" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "27f288e2e8f62c017520c63190a0fb4c3ca42f8a" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "27f288e2e8f62c017520c63190a0fb4c3ca42f8a" }
+nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "27f288e2e8f62c017520c63190a0fb4c3ca42f8a" }
 
 [profile.release]
 lto = "thin"

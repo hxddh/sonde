@@ -1,6 +1,6 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (now pinned at its main, commit `2ca3b80`, after `v0.5.1`, see `Cargo.toml`), without changing it. These are the gaps it
+sonde was written against Native Shell as it is (now pinned at its main, commit `27f288e`, after `v0.5.1`, see `Cargo.toml`), without changing it. These are the gaps it
 met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
 
 ## Open
