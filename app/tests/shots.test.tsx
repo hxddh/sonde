@@ -168,8 +168,13 @@ for (const v of variants) {
     await app.press("id:welcome-demo");
     await app.waitFor("id:screen-run", { timeout: 15000 });
     if (v.theme || v.lang) {
-      await app.keyboard.press("mod+,");
-      await app.waitFor("id:screen-settings-area");
+      // (the shortcut asked again where the window took it before it was ready for it)
+      for (let n = 0; ; n++) {
+        await app.keyboard.press("mod+,");
+        const opened = await app.waitFor("id:screen-settings-area", { timeout: 5000 }).then(() => true, () => false);
+        if (opened) break;
+        if (n === 2) throw new Error("Settings did not open on mod+, three times");
+      }
       await app.press(`id:theme-${v.theme ?? "light"}`);
       if (v.lang) {
         await app.press("label:Language");
@@ -182,6 +187,10 @@ for (const v of variants) {
     // recording a program started elsewhere: what it asks before it starts
     await app.press("id:record");
     await app.waitFor("id:record-start");
+    // (the demo's toast, shown in 02-run, closed: whether it was still up here was a race, run to run)
+    // (pressed if it is still up: it may close itself between the look and the press)
+    for (let n = 0; n < 5 && app.shows("id:toast-close"); n++) await app.press("id:toast-close").catch(() => {});
+    await app.waitUntil(() => !app.shows("id:toast"), { timeout: 3000 }).catch(() => {});
     await shot("02a-record");
     await app.press("id:record-cancel");
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
@@ -404,10 +413,14 @@ for (const v of variants) {
     await app.press("id:signal-bytes");
     await app.wait(700);
     await charts("03n-bytes");
-    if (narrow) await app.keyboard.press("mod+b");
+    // (errors from the same header, before the sidebar comes back: its return lays the pane out anew)
     await app.press("id:signal-errors");
     await app.wait(700);
     await charts("03o-errors");
+    if (narrow) {
+      await app.keyboard.press("mod+b");
+      await app.waitFor("id:sidebar");
+    }
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
     // (by "Since the run before"'s Compare where it is shown: the same two runs, and no menu opened from a menu, which
