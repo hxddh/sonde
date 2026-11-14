@@ -8,11 +8,13 @@
 //! that is wrong, not on a slow machine. docs/performance.md has the figures.
 //!
 //! Ignored by default (they make sessions of up to a million requests); CI
-//! runs them optimised, each in a process of its own:
+//! runs them optimised, each in a process of its own, with the sessions made
+//! once for all of them in `SONDE_BUDGET_SESSIONS`:
 //! `cargo test --release -p sonde-proxy --test budgets -- --ignored --exact NAME`.
 
 mod support;
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sonde_proxy::profile::RequestPrices;
@@ -30,6 +32,27 @@ fn alone(first: bool) -> std::sync::MutexGuard<'static, ()> {
         std::thread::sleep(Duration::from_millis(500));
     }
     ONE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The session `name`, made by `make` the first time: kept in
+/// `SONDE_BUDGET_SESSIONS` when it is set, so that tests run each in a
+/// process of its own make each session once; else made in `dir` for this
+/// test alone.
+fn session(dir: &Path, name: &str, make: impl FnOnce(&Path) -> u64) -> PathBuf {
+    let Some(kept) = std::env::var_os("SONDE_BUDGET_SESSIONS") else {
+        let path = dir.join(name);
+        make(&path);
+        return path;
+    };
+    let path = PathBuf::from(kept).join(name);
+    if !path.is_file() {
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("the sessions' folder");
+        // whole or not there: a test stopped half-way leaves no session
+        let part = path.with_extension("part");
+        make(&part);
+        std::fs::rename(&part, &path).expect("the session kept");
+    }
+    path
 }
 
 /// Starts the count of [`peak_mib`] again from what is held now (Linux):
@@ -100,13 +123,13 @@ const MILLION_MIB: u64 = 1300;
 fn a_million_requests_are_read_within_their_memory() {
     let _alone = alone(true);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = dir.path().join("million.sonde");
-    let n = support::lake(1_000_000, &path, 1);
-    assert!(n >= 1_000_000);
+    let path = session(dir.path(), "lake-1000000-1.sonde", |p| {
+        support::lake(1_000_000, p, 1)
+    });
     let before = peak_mib();
     peak_from_now();
     let (took, read, analysis) = read_as_show(&path);
-    assert_eq!(read as u64, n);
+    assert!(read >= 1_000_000);
     eprintln!(
         "a million requests: {:.1} s, peak {:?} MiB (before reading: {before:?}), {} operations, {} findings",
         took.as_secs_f64(),
@@ -132,9 +155,12 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
     use sonde_proxy::profile::{Run, compare_runs};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let (a, b) = (dir.path().join("a.sonde"), dir.path().join("b.sonde"));
-    support::lake(1_000_000, &a, 1);
-    support::lake(1_000_000, &b, 2);
+    let a = session(dir.path(), "lake-1000000-1.sonde", |p| {
+        support::lake(1_000_000, p, 1)
+    });
+    let b = session(dir.path(), "lake-1000000-2.sonde", |p| {
+        support::lake(1_000_000, p, 2)
+    });
     peak_from_now();
     let started = Instant::now();
     let run = |p: &std::path::Path| {
@@ -165,8 +191,9 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
 fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = dir.path().join("outage.sonde");
-    support::outage(300_000, &path);
+    let path = session(dir.path(), "outage-300000.sonde", |p| {
+        support::outage(300_000, p)
+    });
     peak_from_now();
     let (took, read, _) = read_as_show(&path);
     assert_eq!(read, 300_000);
@@ -183,8 +210,9 @@ fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
 fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = dir.path().join("uploads.sonde");
-    support::small_uploads(300_000, &path);
+    let path = session(dir.path(), "uploads-300000.sonde", |p| {
+        support::small_uploads(300_000, p)
+    });
     peak_from_now();
     let (took, read, analysis) = read_as_show(&path);
     // every upload is in the finding, and acting on it leaves one PUT each
@@ -208,8 +236,9 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory
 fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = dir.path().join("view.sonde");
-    let n = support::lake(100_000, &path, 2);
+    let path = session(dir.path(), "lake-100000-2.sonde", |p| {
+        support::lake(100_000, p, 2)
+    });
     peak_from_now();
     // what the bridge does when a window opens a session: read it, analyse
     // it, and build the view that is sent (the first page and the totals)
@@ -218,6 +247,7 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
     let a = Analysis::of(&s, &RequestPrices::default());
     let view = serde_json::Value::Object(a.view(&path.to_string_lossy(), &s.header));
     let took = started.elapsed();
+    let n = s.records.len();
     let sent = serde_json::to_string(&view)
         .expect("the view as text")
         .len();
