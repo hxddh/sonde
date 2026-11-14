@@ -2,7 +2,8 @@
 # Screenshots of the app on a real window: tests/shots.test.tsx on this
 # machine's desktop target (GTK on Linux, under a virtual display when there
 # is none; AppKit on macOS; Win32 on Windows). Fresh config and data; PNGs in
-# app/shots (or $SONDE_SHOTS). SONDE_SHOT_VARIANTS=wide,min: those variants only.
+# app/shots (or $SONDE_SHOTS). SHOTS_FILTER="shots wide" or "part 1": those
+# variants only (CI runs them side by side).
 set -eu
 cd "$(dirname "$0")/../app"
 tmp="$(mktemp -d)"
@@ -12,6 +13,8 @@ cleanup() {
   # SONDE_SHOTS_KEEP=DIR: the tour's sessions kept (tests/fixtures/make.py makes the fixtures of them)
   if [ -n "${SONDE_SHOTS_KEEP:-}" ]; then mkdir -p "$SONDE_SHOTS_KEEP" && cp -R "$tmp/data/sessions/." "$SONDE_SHOTS_KEEP/" || true; fi
   rm -rf "$tmp"
+  # (the file the tour was told this machine by goes back to its committed form)
+  printf '{ "max": "" }\n' > tests/shots.env.json
 }
 trap cleanup EXIT
 export SONDE_CONFIG_DIR="$tmp/config" SONDE_DATA_DIR="$tmp/data"
@@ -47,8 +50,11 @@ if [ "$target" = linux ] && [ -z "${DISPLAY:-}" ]; then
   if command -v openbox >/dev/null; then openbox >/dev/null 2>&1 & wm=$!; fi
   sleep 1
 fi
-mkdir -p "${SONDE_SHOTS:-shots}"
+# what the tour is told of this machine: a file, as its VM has no environment
+printf '{ "max": "%s" }\n' "${SONDE_SHOT_MAX:-}" > tests/shots.env.json
+mkdir -p shots
 nsh test tests/shots.test.tsx --target "$target" ${SHOTS_FILTER:+--filter "$SHOTS_FILTER"}
+if [ -n "${SONDE_SHOTS:-}" ]; then mkdir -p "$SONDE_SHOTS" && cp shots/*.png "$SONDE_SHOTS/"; fi
 ls "${SONDE_SHOTS:-shots}"
 # SONDE_README=1: the README's pictures (docs/images) from this tour, so they are of this version's screens
 if [ -n "${SONDE_README:-}" ]; then

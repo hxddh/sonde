@@ -219,13 +219,13 @@ jobs:
     # wide and at the least size, light and dark, English and Chinese — kept
     # as an artifact, the visual record of each build. Linux on every change;
     # macOS and Windows on main's runs too (a release waits for them), the
-    # nightly and by hand. The tour's variants run side by side (each one
-    # job of Linux's, two of macOS's and Windows'), shots-check holds them.
+    # nightly and by hand. The tour's variants run side by side (a job each
+    # on Linux, two halves on macOS and Windows); shots-check holds them.
     if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name != 'pull_request' && '[{"os":"ubuntu-24.04","name":"linux","part":"wide","variants":"wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","variants":"min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","variants":"dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","variants":"zh"},{"os":"macos-15","name":"macos","part":"wide-min","variants":"wide,min"},{"os":"macos-15","name":"macos","part":"dark-zh","variants":"dark,zh"},{"os":"windows-latest","name":"windows","part":"wide-min","variants":"wide,min"},{"os":"windows-latest","name":"windows","part":"dark-zh","variants":"dark,zh"}]' || '[{"os":"ubuntu-24.04","name":"linux","part":"wide","variants":"wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","variants":"min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","variants":"dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","variants":"zh"}]') }}
+        include: ${{ fromJSON(github.event_name != 'pull_request' && '[{"os":"ubuntu-24.04","name":"linux","part":"wide","filter":"shots wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","filter":"shots min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","filter":"shots dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","filter":"shots zh"},{"os":"macos-15","name":"macos","part":"1","filter":"part 1"},{"os":"macos-15","name":"macos","part":"2","filter":"part 2"},{"os":"windows-latest","name":"windows","part":"1","filter":"part 1"},{"os":"windows-latest","name":"windows","part":"2","filter":"part 2"}]' || '[{"os":"ubuntu-24.04","name":"linux","part":"wide","filter":"shots wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","filter":"shots min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","filter":"shots dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","filter":"shots zh"}]') }}
     name: shots (${{ matrix.name }}, ${{ matrix.part }})
     runs-on: ${{ matrix.os }}
     defaults:
@@ -244,7 +244,7 @@ jobs:
         # window is cut off, and system_profiler does not say so there
         env:
           SONDE_SHOT_MAX: ${{ runner.os == 'macOS' && '1024x688' || '' }}
-          SONDE_SHOT_VARIANTS: ${{ matrix.variants }}
+          SHOTS_FILTER: ${{ matrix.filter }}
         run: scripts/shots.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

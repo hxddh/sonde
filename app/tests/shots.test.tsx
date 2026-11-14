@@ -1,13 +1,16 @@
 // Screenshots of every place in its key states, on a real window
-// (`nsh test tests/shots.test.tsx --target linux` under a display): wide and
-// at the least window size, light and dark, English and Chinese. Written to
-// $SONDE_SHOTS (default ./shots), one PNG per state, for review and for the
-// visual record CI keeps of each build.
+// (scripts/shots.sh, which runs `nsh test tests/shots.test.tsx` for this
+// machine's desktop): wide and at the least window size, light and dark,
+// English and Chinese. Written to ./shots, one PNG per state, for review and
+// for the visual record CI keeps of each build.
 
 import { type App, open, test } from "nsh/test";
 import { runAction } from "./helpers";
+// what scripts/shots.sh tells the tour of this machine, as its VM has no environment (committed with none): `max`,
+// the largest window its screen holds, "WxH" ("" for any)
+import here from "./shots.env.json";
 
-const dir = (globalThis as any).process?.env?.SONDE_SHOTS ?? "shots";
+const dir = "shots";
 
 /** The tour's program in the shell Run starts it in: sh, or cmd.exe on
  * Windows. The recording endpoint is in AWS_ENDPOINT_URL either way. */
@@ -52,29 +55,28 @@ async function enter(app: any, id: string, text: string) {
 
 interface Variant {
   name: string;
+  /** The half of the tour it is in: CI runs a platform's halves side by side (`--filter "part 1"`), Linux's variants
+   * each on its own (`--filter "shots wide"`). (The tour's VM has no environment to choose them by.) */
+  part: 1 | 2;
   width: number;
   height: number;
   theme?: "dark";
   lang?: "zh";
 }
 
-const all: Variant[] = [
-  { name: "wide", width: 1280, height: 820 },
-  { name: "min", width: 900, height: 560 },
-  { name: "dark", width: 1280, height: 820, theme: "dark" },
-  { name: "zh", width: 1280, height: 820, lang: "zh" },
+const variants: Variant[] = [
+  { name: "wide", part: 1, width: 1280, height: 820 },
+  { name: "min", part: 1, width: 900, height: 560 },
+  { name: "dark", part: 2, width: 1280, height: 820, theme: "dark" },
+  { name: "zh", part: 2, width: 1280, height: 820, lang: "zh" },
 ];
-// SONDE_SHOT_VARIANTS=wide,min: those only (CI runs the variants side by side); an unknown name fails
-const only = String((globalThis as any).process?.env?.SONDE_SHOT_VARIANTS ?? "").split(",").filter(Boolean);
-for (const name of only) if (!all.some((v) => v.name === name)) throw new Error(`SONDE_SHOT_VARIANTS: no variant ${name} (${all.map((v) => v.name).join(", ")})`);
-const variants = only.length ? all.filter((v) => only.includes(v.name)) : all;
 
 // a window no larger than the screen it is on: the macOS runner's is
-// 1024×768, and a larger window is cut off (scripts/shots.sh sets it)
-const [maxW, maxH] = String((globalThis as any).process?.env?.SONDE_SHOT_MAX ?? "").split("x").map(Number);
+// 1024×768, and a larger window is cut off
+const [maxW, maxH] = String(here.max ?? "").split("x").map(Number);
 
 for (const v of variants) {
-  test(`shots ${v.name}`, async () => {
+  test(`shots ${v.name} · part ${v.part}`, async () => {
     const width = maxW ? Math.min(v.width, maxW) : v.width;
     const height = maxH ? Math.min(v.height, maxH) : v.height;
     const app: App = await open("../App.tsx", { width, height });
@@ -365,19 +367,24 @@ for (const v of variants) {
     await app.press("id:signal-latency");
     await app.wait(700);
     await charts("03m-latency");
-    // the folded header holds the first three figures: bytes is pressed from the header unfolded
-    // (a narrow pane keeps the signals that fit, bytes the fourth: the least window's puts the sidebar away for it,
-    // and takes it back after)
-    await app.scroll("id:time-pane", -10000);
-    await app.wait(500);
+    // the folded header holds the first three figures: bytes is pressed from the header unfolded, the board at its top
+    // (a narrow pane keeps the signals that fit, bytes the fourth: the least window's puts the sidebar away for it, and
+    // takes it back after; putting it away moves the board, so the board is brought back to its top after)
+    const top = async () => {
+      await app.scroll("id:time-pane", -10000);
+      await app.wait(500);
+    };
+    await top();
     const narrow = !app.shows("id:signal-bytes");
-    if (narrow) await app.keyboard.press("mod+b");
+    if (narrow) {
+      await app.keyboard.press("mod+b");
+      await app.waitFor("id:sidebar", { state: "gone" });
+      await app.wait(600);
+      await top();
+    }
     await app.waitFor("id:signal-bytes").catch(() => {
       throw new Error("the bytes signal is not in the session's header, the sidebar put away: its chart cannot be opened from it");
     });
-    // (the board laid out again at the pane's new width, two charts abreast where it had one, before its chart is
-    // brought into view: a press before then scrolled to where the chart had been)
-    if (narrow) await app.wait(1200);
     await app.press("id:signal-bytes");
     await app.wait(700);
     await charts("03n-bytes");

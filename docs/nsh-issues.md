@@ -31,13 +31,6 @@ seven casts (measured).
 - **Expected**: `accessibilityState` (or `expanded`) on `Button`, as `Collapsible`'s docs ask of its trigger.
 - **Repro**: `<Button accessibilityState={{ expanded: true }} />`: TS2322.
 
-## A macOS test window larger than the screen is captured cut off
-
-- **What**: on a 1024×768 CI screen, `open("../App.tsx", { width: 1024, height: 688 })` then `app.screenshot()` gives
-  a 1280×820 image with 1024 points of content, offset 128 and cut on both sides.
-- **Expected**: `open`'s size is the window's and the screenshot's, or the app is laid out for the fitted size.
-- **Repro**: `nsh test tests/shots.test.tsx --target macos` on `macos-15` with `SONDE_SHOT_MAX=1024x688`.
-
 ## Plot has no press, selection or brush
 
 - **What**: Plot reports only `onHoverChange`. Picking a slice needs a wrapping Button (two focus stops; Enter on the
