@@ -284,9 +284,8 @@ async fn begin(
     let policy = run_policy(asked, cwd.as_deref())?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
-    let name = command
-        .as_deref()
-        .and_then(sonde_proxy::program::program_name)
+    // named as the CLI names it: by what the command runs (`etl` for `python3 etl.py`)
+    let name = sonde_proxy::program::file_stem(None, command.as_deref())
         .unwrap_or_else(|| "recording".into());
     let path = match &under {
         Some(u) => u.path.clone(),
