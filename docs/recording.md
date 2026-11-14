@@ -98,7 +98,8 @@ committer settings; empty `…/` directory markers are reported with their delet
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
    SignatureDoesNotMatch`, recorded as refused, never forwarded.
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
-   refused. A path starting `//` gets `400 InvalidURI`.
+   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
+   (`a/../b`, a key of its own in S3) are forwarded as sent.
 5. Re-signed (SigV4) for the real endpoint. Bodies stream through, except: signed `aws-chunked`
    (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
    checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);

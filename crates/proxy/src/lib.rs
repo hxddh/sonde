@@ -7,6 +7,7 @@
 //! [`RequestLog`] with the headers the application sent. Responses stream
 //! back unchanged.
 
+mod asis;
 pub mod callers;
 pub mod chunked;
 pub mod episode;
@@ -1142,11 +1143,11 @@ pub fn empty_first_segment(host: &str, path: &str) -> bool {
     !virtual_hosted && path.starts_with("//")
 }
 
-/// Whether a request's place has a `.` or `..` segment, in the bucket's
-/// position or in the key: what the proxy would record is not what the
-/// store would be asked for.
-pub fn dot_segment(bucket: Option<&str>, key: Option<&str>) -> bool {
-    bucket.is_some_and(|b| b == "." || b == "..") || key.is_some_and(s3raw::has_dot_segment)
+/// Whether a request's bucket is `.` or `..`: no bucket is, and a store
+/// would fold it (`/../demo` read as a listing of `demo`). A key's own `.`
+/// and `..` segments are forwarded as sent ([`asis`]).
+pub fn dot_bucket(bucket: Option<&str>) -> bool {
+    bucket.is_some_and(|b| b == "." || b == "..")
 }
 
 /// Query pairs, decoded (`+` stays a plus: S3 clients encode spaces as %20).
@@ -1236,16 +1237,24 @@ async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String
             &creds,
         );
     }
-    let mut rb = client.http_streaming().head(format!("{origin}{path}"));
-    for (k, v) in &headers {
-        if !k.eq_ignore_ascii_case("host") {
-            rb = rb.header(k.as_str(), v.as_str());
+    let url = format!("{origin}{path}");
+    let send = async {
+        if s3raw::has_dot_segment(key) {
+            let empty = reqwest::Body::from(Vec::new());
+            return asis::send(&http::Method::HEAD, &url, &headers, empty, cfg.ca_pem.as_deref())
+                .await;
         }
-    }
-    let resp = tokio::time::timeout(cfg.timeout, rb.send())
+        let mut rb = client.http_streaming().head(&url);
+        for (k, v) in &headers {
+            if !k.eq_ignore_ascii_case("host") {
+                rb = rb.header(k.as_str(), v.as_str());
+            }
+        }
+        rb.send().await.map_err(|e| e.to_string())
+    };
+    let resp = tokio::time::timeout(cfg.timeout, send)
         .await
-        .map_err(|_| "no answer".to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "no answer".to_string())??;
     match resp.status().as_u16() {
         200..=299 => Ok(true),
         404 => Ok(false),
@@ -1379,11 +1388,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(400, "InvalidURI", msg));
     }
 
-    // a `.` or `..` segment never reaches the store as the place it names:
-    // the HTTP library folds it, and `a/../b` would be signed and sent as
-    // `b`, `/../demo` as a listing of `demo`. The bucket's place as the key's.
-    if dot_segment(bucket.as_deref(), key.as_deref()) {
-        let msg = "sonde refused the request: its path has a . or .. segment, which would reach the store as another place";
+    // `.` or `..` in the bucket's place names no bucket: a store would fold
+    // it, `/../demo` read as a listing of `demo`
+    if dot_bucket(bucket.as_deref()) {
+        let msg = "sonde refused the request: its bucket is . or .., which would reach the store as another place";
         record.status = Some(400);
         record.error_body = Some(msg.into());
         record
@@ -1773,20 +1781,26 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
     }
 
-    let mut rb = client.http_streaming().request(parts.method.clone(), &url);
-    for (k, v) in &out {
-        if !k.eq_ignore_ascii_case("host") {
-            rb = rb.header(k.as_str(), v.as_str());
-        }
-    }
     if let Some(n) = sent_len
         && (n > 0 || method == "PUT" || method == "POST")
     {
-        rb = rb.header("content-length", n.to_string());
+        out.push(("content-length".into(), n.to_string()));
     }
-    moved.touch();
-    let sent = tokio::select! {
-        r = rb.body(upstream_body).send() => r.map_err(|e| {
+    // a key with a `.` or `..` segment goes as written: the HTTP client's
+    // URL library would fold it into another key
+    let as_is = key.as_deref().is_some_and(s3raw::has_dot_segment);
+    let send = async {
+        if as_is {
+            return asis::send(&parts.method, &url, &out, upstream_body, cfg.ca_pem.as_deref())
+                .await;
+        }
+        let mut rb = client.http_streaming().request(parts.method.clone(), &url);
+        for (k, v) in &out {
+            if !k.eq_ignore_ascii_case("host") {
+                rb = rb.header(k.as_str(), v.as_str());
+            }
+        }
+        rb.body(upstream_body).send().await.map_err(|e| {
             let mut msg = e.to_string();
             let mut src = std::error::Error::source(&e);
             while let Some(s) = src {
@@ -1795,7 +1809,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 src = s.source();
             }
             msg
-        }),
+        })
+    };
+    moved.touch();
+    let sent = tokio::select! {
+        r = send => r,
         _ = moved.quiet_for(idle) => Err(stalled(idle)),
     };
     record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
@@ -2447,19 +2465,23 @@ mod tests {
     }
 
     #[test]
-    fn a_dot_segment_is_refused_wherever_in_the_path_it_stands() {
+    fn a_dot_segment_in_the_buckets_place_is_refused_and_in_a_key_is_a_key() {
         let at = |path: &str| {
-            let (b, k) = parse_target("127.0.0.1:9000", path);
-            dot_segment(b.as_deref(), k.as_deref())
+            let (b, _) = parse_target("127.0.0.1:9000", path);
+            dot_bucket(b.as_deref())
         };
         // the bucket's place: the store would be asked for a listing of `demo`
         assert!(at("/%2e%2e/demo") && at("/../demo") && at("/./demo/k"));
         assert!(at("/..") && at("/%2E"));
-        assert!(at("/b/a/../k") && at("/b/./k") && at("/b/k/%2e%2e"));
-        assert!(!at("/b/k") && !at("/b/.hidden") && !at("/b/a..b/k...") && !at("/.b/k"));
+        // a key's own: forwarded as sent
+        assert!(!at("/b/a/../k") && !at("/b/./k") && !at("/b/k/%2e%2e"));
+        assert!(!at("/b/k") && !at("/b/.hidden") && !at("/.b/k"));
+        let (b, k) = parse_target("127.0.0.1:9000", "/b/a/%2E%2E/k");
+        assert_eq!((b.as_deref(), k.as_deref()), (Some("b"), Some("a/../k")));
         // virtual-hosted: the path is all key
         let (b, k) = parse_target("data.localhost:9000", "/../k");
-        assert!(dot_segment(b.as_deref(), k.as_deref()));
+        assert!(!dot_bucket(b.as_deref()));
+        assert_eq!(k.as_deref(), Some("../k"));
     }
 }
 

@@ -1105,31 +1105,34 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     assert_eq!(app.send_raw(get).await.unwrap().status, 200);
 }
 
+/// S3 keeps `a/../g1` as a key of its own: the proxy sends it as written,
+/// never as `g1`, which the HTTP client's URL library would make of it.
 #[tokio::test]
-async fn a_key_with_a_dot_segment_is_refused_and_never_reaches_another_key() {
+async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another_key() {
     let (proxy, _app, log, up) = setup(Policy::Allow).await;
-    for path in [
-        "/data/a/../g1",
-        "/data/a/./g1",
-        "/data/a/%2e%2e/g1",
-        "/data/..",
+    for (path, sent) in [
+        ("/data/a/../g1", "/data/a/%2E%2E/g1"),
+        ("/data/a/./g1", "/data/a/%2E/g1"),
+        ("/data/a/%2e%2e/g1", "/data/a/%2E%2E/g1"),
+        ("/data/..", "/data/%2E%2E"),
     ] {
-        for method in ["GET", "DELETE"] {
+        for method in ["PUT", "GET", "DELETE"] {
             let answer = raw(&proxy, method, path).await;
-            assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
-            assert!(answer.contains(". or .. segment"), "{answer}");
+            assert!(!answer.starts_with("HTTP/1.1 4"), "{method} {path}: {answer}");
+            let calls = up.calls.lock().clone();
+            assert_eq!(calls.last().unwrap(), &format!("{method} {sent}"), "{calls:?}");
         }
     }
-    assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
+    // nothing reached another key
+    let calls = up.calls.lock().clone();
+    assert!(!calls.iter().any(|c| c.ends_with(" /data/g1") || c.ends_with(" /data")), "{calls:?}");
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.status, Some(400));
+    assert_eq!(rec.key.as_deref(), Some(".."));
     assert!(
-        rec.response_headers
-            .iter()
-            .any(|h| h.name == "x-sonde-proxy" && h.value == "refused"),
-        "recorded as refused"
+        !rec.response_headers.iter().any(|h| h.name == "x-sonde-proxy"),
+        "not refused"
     );
-    // a dot in a name is a name
+    // a dot in a name is a name, and goes the usual way
     let answer = raw(&proxy, "GET", "/data/a/..b/.c").await;
     assert!(!answer.starts_with("HTTP/1.1 400"), "{answer}");
 }
@@ -1286,7 +1289,7 @@ async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
     ] {
         let answer = raw(&proxy, "GET", path).await;
         assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
-        assert!(answer.contains(". or .. segment"), "{answer}");
+        assert!(answer.contains("its bucket is . or .."), "{answer}");
     }
     assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
     for rec in log.list(&reqlog::Filter::default(), 10) {
