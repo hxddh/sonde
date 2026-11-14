@@ -341,7 +341,15 @@ impl WhatIf {
             money_text(self.cost.0, &self.currency),
             money_text(self.cost.1, &self.currency),
         );
-        if before != after {
+        // under a cent, an amount nobody acts on: its share
+        if self.cost.0.max(self.cost.1) < crate::program::CENT {
+            if self.cost.0 != self.cost.1 {
+                parts.push(format!(
+                    "cost {}",
+                    crate::program::share_moved(self.cost.0, self.cost.1)
+                ));
+            }
+        } else if before != after {
             parts.push(format!("cost {before} → {after}"));
         }
         format!("acting on {which}: {}", parts.join(" · "))

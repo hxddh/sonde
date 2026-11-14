@@ -914,6 +914,26 @@ pub fn ms_text(ms: f64) -> String {
     sonde_fmt::duration(ms)
 }
 
+/// A cent: a request cost under it is no amount anyone acts on, so a change
+/// of one is said by its share alone ([`share_moved`]).
+pub const CENT: f64 = 0.01;
+
+/// How much a figure moved, as a share: `-9%`, `under 1%`, `no change`.
+pub fn share_moved(a: f64, b: f64) -> String {
+    if a == b {
+        return "no change".into();
+    }
+    if a <= 0.0 {
+        return "new".into();
+    }
+    let pct = (b - a) * 100.0 / a;
+    if pct.abs() < 0.5 {
+        "under 1%".into()
+    } else {
+        format!("{pct:+.0}%")
+    }
+}
+
 /// Money to two significant digits under a cent: a session's requests often
 /// cost thousandths.
 pub fn money_text(v: f64, currency: &str) -> String {

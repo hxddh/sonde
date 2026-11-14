@@ -213,16 +213,34 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let m = probes::report::matrix(&runs);
             let mut headers = vec!["probe"];
             headers.extend(m.columns.iter().map(|c| c.name.as_str()));
+            // what did not pass says why, in its row: on several endpoints,
+            // each named
+            headers.push("why");
+            let several = m.columns.len() > 1;
             let rows: Vec<Vec<String>> = m
                 .rows
                 .iter()
                 .map(|r| {
+                    let why: Vec<String> = r
+                        .cells
+                        .iter()
+                        .zip(&m.columns)
+                        .filter_map(|(c, col)| {
+                            let c = c.as_ref().filter(|c| c.verdict != Verdict::Pass)?;
+                            Some(if several {
+                                format!("{}: {}", col.name, c.summary)
+                            } else {
+                                c.summary.clone()
+                            })
+                        })
+                        .collect();
                     std::iter::once(r.probe.id.clone())
                         .chain(r.cells.iter().map(|c| {
                             c.as_ref()
                                 .map(|c| format!("{} {}", c.verdict.symbol(), c.verdict.label()))
                                 .unwrap_or_default()
                         }))
+                        .chain([why.join("; ")])
                         .collect()
                 })
                 .collect();

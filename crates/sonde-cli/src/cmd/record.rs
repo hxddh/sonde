@@ -449,11 +449,14 @@ pub(super) fn print_summary_of(
     };
     let s = &a.summary;
     let p = &a.profile;
-    let mut head = format!(
-        "{} ({})",
-        output::count(s.requests as usize, "request"),
-        output::count(a.episodes.len(), "operation"),
-    );
+    // operations said when they are not the requests again
+    let mut head = output::count(s.requests as usize, "request");
+    if a.episodes.len() != s.requests as usize {
+        head.push_str(&format!(
+            " ({})",
+            output::count(a.episodes.len(), "operation")
+        ));
+    }
     if let Some(sdk) = &a.sdk {
         head.push_str(&format!(" from {sdk}"));
     }
@@ -466,7 +469,8 @@ pub(super) fn print_summary_of(
     if p.waiting_ms > 0.0 && !header.whole_seconds {
         head.push_str(&format!(", waiting {}", output::duration(p.waiting_ms)));
     }
-    if p.cost.amount > 0.0 {
+    // (under a cent the table's shares say it)
+    if p.cost.amount >= sonde_proxy::program::CENT {
         head.push_str(&format!(
             ", cost ≈ {}",
             money_text(p.cost.amount, &p.cost.currency)

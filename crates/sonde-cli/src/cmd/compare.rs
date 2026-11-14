@@ -1,7 +1,7 @@
 //! `sonde compare`: two runs of a program, a session and its replay, or a
 //! session replayed on another endpoint (`--replay`).
 
-use sonde_proxy::program::{money_text, ms_text};
+use sonde_proxy::program::ms_text;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -387,8 +387,8 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         change(c.errors.0 as f64, c.errors.1 as f64, n)
     );
     println!(
-        "  cost ≈     {}",
-        change(c.cost.0, c.cost.1, |v| money_text(v, &c.currency))
+        "  cost       {}",
+        super::fixloop::cost_moved(c.cost, &c.currency)
     );
     // the kinds that changed, the largest change first; the rest counted
     const ROWS: usize = 10;
