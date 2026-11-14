@@ -24,7 +24,7 @@ A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and C
 
 | | |
 |---|---|
-| ![A run: its figures, what stands out, operations](docs/images/session.png) | ![A trial: what the program did under each fault](docs/images/trial.png) |
+| ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial: what the program did under each fault](docs/images/trial.png) |
 | ![Time: one timeline, each chart in its frame](docs/images/time.png) | ![Buckets: objects and their details](docs/images/store.png) |
 
 ## Where it helps

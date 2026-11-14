@@ -17,7 +17,7 @@ import { notify, report } from "../store";
 import type { EndpointView, Matrix, ProbeMeta, ProbeResult } from "../types";
 import { titleCells, Actions, Back, Badge, Button, Card, Disclosure, Empty, Field, Heading, KeyValue, Modal, ModalBody, Mono, More, Muted, ProgressBar, ROW, rowHeight, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, COLUMN, TEXT } from "../ui/kit";
 import { Document } from "../ui/record";
-import { StatusMark } from "../ui/sessionview";
+import { StatusMark } from "../ui/runview";
 
 function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName: string; onBack: () => void }) {
   return (

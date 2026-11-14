@@ -10,13 +10,13 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openSession, openSessionFile, section, settings, sessionsTick, sideList, storeTab, useEndpoint } from "../store";
-import type { SessionInfo } from "../types";
+import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openRun, openRunFile, section, settings, runsTick, sideList, storeTab, useEndpoint } from "../store";
+import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { programOf, scrubCommand } from "./sessionview";
+import { programOf, scrubCommand } from "./runview";
 import { BREAK, Button, CONTROL, DOT, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, ListRow, TEXT } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
-import { sessionName } from "./manage";
+import { runName } from "./manage";
 import { paletteOpen } from "./palette";
 
 const mac = platform.os === "macos";
@@ -27,7 +27,7 @@ void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)
 /** Whether the sidebar shows: the user's choice (⌘B). It holds the places
  * and the current place's list, so it never folds away by itself — and it
  * comes back while the place has nothing to show without its list (a bucket
- * or a session to choose, a listing that failed). */
+ * or a run to choose, a listing that failed). */
 export const sidebarOpen = () => wanted() || sidebarHeld();
 /** The place holds the sidebar open: it has nothing to show without its list.
  * The toggle does nothing then, and says why. */
@@ -38,38 +38,38 @@ export function toggleSidebar() {
   void Storage.setItem(SIDEBAR_KEY, `${wanted()}`).catch(() => {});
 }
 
-export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" };
-export const AREA_KEY: Record<Area, string> = { run: "mod+1", sessions: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
+export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" };
+export const AREA_KEY: Record<Area, string> = { run: "mod+1", runs: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
 
-/** File › Open Recent: the newest sessions, by the name the list gives them. */
+/** File › Open Recent: the newest runs, by the name the list gives them. */
 function recentMenu(): MenuItem[] {
-  sessionsTick();
-  let list: SessionInfo[] = [];
+  runsTick();
+  let list: RunInfo[] = [];
   try {
-    list = api.sessions.list().slice(0, 10);
+    list = api.runs.list().slice(0, 10);
   } catch {
-    // no sessions directory yet
+    // no runs directory yet
   }
   if (!list.length) return [{ label: t("timeline.empty"), disabled: true }];
   return list.map((s) => ({
-    label: `${sessionName(s)} — ${date(s.created)}`,
+    label: `${runName(s)} — ${date(s.created)}`,
     onSelect: () => {
-      openSession.set(s.path);
-      go("sessions");
+      openRun.set(s.path);
+      go("runs");
     },
   }));
 }
 
 /** The application's menus: macOS's menu bar; the toolbar's menu button elsewhere. */
 export function appMenus(open: (a: Area) => void): { label: string; submenu: MenuItem[] }[] {
-  const places: MenuItem[] = (["run", "sessions", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
+  const places: MenuItem[] = (["run", "runs", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
   return [
     {
       label: t("menu.file"),
       submenu: [
         { label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") },
-        { label: t("sessions.openFile"), shortcut: "mod+o", onSelect: () => void openSessionFile() },
-        { label: t("sessions.openRecent"), submenu: recentMenu() },
+        { label: t("runs.openFile"), shortcut: "mod+o", onSelect: () => void openRunFile() },
+        { label: t("runs.openRecent"), submenu: recentMenu() },
         { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: t("menu.quit") } as const]),
       ],
@@ -80,7 +80,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
   ];
 }
 
-/** Where the window is: the place, then what it shows (a session, a bucket, a tab). */
+/** Where the window is: the place, then what it shows (a run, a bucket, a tab). */
 function Breadcrumb() {
   const detail = () => {
     // Buckets says its section and the bucket it looks at in the section's own header: the title bar does not repeat them
@@ -258,10 +258,10 @@ export function Sidebar(props: { open: (a: Area) => void }) {
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
           <Place area="run" open={props.open} />
-          <Place area="sessions" open={props.open} />
+          <Place area="runs" open={props.open} />
           <Place area="store" open={props.open} />
         </ToolbarGroup>
-        {/* under them, the place's own list: its sessions, its buckets, the commands run before */}
+        {/* under them, the place's own list: its runs, its buckets, the commands run before */}
         <Each of={sideList() ? [sideList()!] : []} key={(l) => l.key}>
           {(l) => (
             <View class="min-h-0 flex-1 pt-3">

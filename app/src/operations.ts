@@ -1,13 +1,13 @@
-// A session's operations as their table reads them: a window of rows over
+// A run's operations as their table reads them: a window of rows over
 // however many there are, sorted and narrowed where they are kept. The app
-// asks the bridge for pages as the table scrolls (`paged.ts`: a session of a
+// asks the bridge for pages as the table scrolls (`paged.ts`: a run of a
 // hundred thousand operations is never whole in the interface); a shared
 // page holds its operations whole and answers from them, here. The table,
 // the inspector and what lines output up with operations all read through
 // one `Operations`.
 
 import { batch, computed, signal, untracked } from "nsh";
-import type { Episode, EpisodeQuery, EpisodeRow, SessionView, WholeSession } from "./types";
+import type { Episode, EpisodeQuery, EpisodeRow, RunView, WholeRun } from "./types";
 
 /** What narrows and orders the operations: a query without its range. */
 export type OpQuery = Omit<EpisodeQuery, "offset" | "limit">;
@@ -37,11 +37,11 @@ export interface Operations {
 
 const time = (iso: string) => new Date(iso).getTime();
 
-/** An operation of a whole session as a row: its index, how many requests, whether it is a lookup that found nothing. */
+/** An operation of a whole run as a row: its index, how many requests, whether it is a lookup that found nothing. */
 export const rowOf = (e: Episode, index: number): EpisodeRow => ({ ...e, index, requests: e.records.length, ...(e.shape === "probe" || e.title.includes("found nothing") ? { miss: true as const } : {}) });
 
-/** A whole session (a shared page's) in the shape a view has: its operations as rows, its span, its families, each finding's count and start. */
-export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "operations"> & SessionView {
+/** A whole run (a shared page's) in the shape a view has: its operations as rows, its span, its families, each finding's count and start. */
+export function viewOfWhole<T extends WholeRun>(d: T): Omit<T, "operations"> & RunView {
   const episodes = d.operations.map(rowOf);
   const formats: Record<string, number> = {};
   const kinds: Record<string, number> = {};
@@ -63,8 +63,8 @@ export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "operations">
   };
 }
 
-/** A whole session's operations, answered from memory as the bridge answers a paged one: the same order (ties by index), the same narrowing. */
-export function wholeOperations(view: () => SessionView): Operations {
+/** A whole run's operations, answered from memory as the bridge answers a paged one: the same order (ties by index), the same narrowing. */
+export function wholeOperations(view: () => RunView): Operations {
   const query = signal<OpQuery>({});
   const all = () => view().operations;
   const t0 = computed(() => all().reduce((m, e) => Math.min(m, time(e.start)), Infinity));

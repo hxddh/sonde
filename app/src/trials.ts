@@ -1,5 +1,5 @@
 // A trial as the app follows it: the scenarios it will run, one after the
-// other, and what the bridge says of each as it goes (`Sessions.trial`'s
+// other, and what the bridge says of each as it goes (`Runs.trial`'s
 // events), folded into the list the dialog shows.
 
 import { t } from "./i18n";

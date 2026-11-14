@@ -140,7 +140,7 @@ export function latencySaid(p: Profile, range?: [number, number] | null): string
 }
 
 /** How the latencies spread over the stretch shown: its median and p99, of every request that ran in it. A
- * stretch reckoned on its own (the app's) is a profile of its own, with its own figures; a zoom into the session's
+ * stretch reckoned on its own (the app's) is a profile of its own, with its own figures; a zoom into the run's
  * slices (a shared page's) reads them off the latencies' grid, to its buckets' edges ("up to"). */
 export function heatLatencySaid(p: Profile, range?: [number, number] | null): string {
   const [a, b] = within(p.rate.length, range);
@@ -261,7 +261,7 @@ export function costSaid(s: Signals): string {
   return top ? t("costBy.text", { op: top.kind, pct: percent(top.share), total: cost(s.cost.amount, s.cost.currency) }) : "";
 }
 
-/** When each prefix was busy: the busiest prefix, in the session's busiest second or the stretch's busiest slice. */
+/** When each prefix was busy: the busiest prefix, in the run's busiest second or the stretch's busiest slice. */
 export function heatSaid(p: Profile, range?: [number, number] | null): string {
   if (!range) {
     const top = [...p.prefixes].sort((a, b) => b.peakPerSecond - a.peakPerSecond)[0];

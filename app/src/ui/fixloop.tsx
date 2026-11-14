@@ -13,16 +13,16 @@ import { api } from "../native";
 import type { FindingChange, SinceLast } from "../types";
 import { Icon } from "./icon";
 import { Button, Card, EMPHASIS, ICON, Row, TEXT } from "./kit";
-import { StateBadge } from "./sessionview";
+import { StateBadge } from "./runview";
 import { changedFindings, savedText } from "./runchange";
 
 
-/** A run against its program's run before it, read off the interface's thread: null for a session that is no run of a program, or while it is read. */
+/** A run against its program's run before it, read off the interface's thread: null for a run that is no run of a program, or while it is read. */
 export function sinceLastOf(path: () => string | null) {
   return resource(path, async (p): Promise<SinceLast | null> => {
     if (!p) return null;
     try {
-      return await api.sessions.sinceLast(p);
+      return await api.runs.sinceLast(p);
     } catch {
       return null;
     }

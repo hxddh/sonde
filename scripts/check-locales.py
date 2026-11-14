@@ -82,7 +82,7 @@ for k in en:
         continue
     print(f"en.json: {k} is used nowhere")
     bad += 1
-# what sonde says of a session (app/src/phrases.ts): English is Rust's own templates, letter for
+# what sonde says of a run (app/src/phrases.ts): English is Rust's own templates, letter for
 # letter (crates/proxy/src/phrase.rs), and Chinese has a template for every one of them
 phrases = (top / "app" / "src" / "phrases.ts").read_text()
 rust = (top / "crates" / "proxy" / "src" / "phrase.rs").read_text()

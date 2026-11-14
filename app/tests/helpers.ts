@@ -40,7 +40,7 @@ export async function place(app: App, where: string) {
   if (!app.shows(`id:nav-${area}`)) await app.back();
   await app.press(`id:nav-${area}`);
   // a terminal pushes the place over its home list: there once the list has gone (a place
-  // with much to read, a long list of sessions, takes a moment)
+  // with much to read, a long list of runs, takes a moment)
   if (!window) await app.waitFor(`id:nav-${area}`, { state: "gone" });
   if (area === "store" || area === "settings") await app.press(`id:tab-${where}`);
   if (area === "activity") await app.press(`id:activity-tab-${where}`);
@@ -67,20 +67,20 @@ export async function runCommand(app: App) {
 
 /** Waits for a run that ended to show its own view on Run (its header read off the interface's thread). */
 export async function runView(app: App) {
-  await app.waitFor("id:session-pane", { timeout: 25000 });
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-pane", { timeout: 25000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
 }
 
-/** A session's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
+/** A run's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
  * by its words. */
-export async function sessionAction(app: App, label: string) {
-  await app.press("id:session-more");
+export async function runAction(app: App, label: string) {
+  await app.press("id:run-more");
   await app.chooseMenuItem(label);
 }
 
-/** The words of the session header's `⋯` menu, the menu closed again. */
-export async function sessionMenu(app: App): Promise<string[]> {
-  await app.press("id:session-more");
+/** The words of the run header's `⋯` menu, the menu closed again. */
+export async function runMenu(app: App): Promise<string[]> {
+  await app.press("id:run-more");
   const labels = app.menu()?.map((m) => m.label) ?? [];
   await app.closeMenu();
   return labels;

@@ -284,13 +284,13 @@ export const READING = "w-full max-w-[560px]";
  * name in full, the search field rather than its button); from `inspector`
  * a pane holds an inspector beside what it details (under it, the inspector
  * comes in from the edge, and rows drop what ranks last). Two heights of a
- * session's pane: under `short` the shape strip goes and the findings keep
+ * run's pane: under `short` the shape strip goes and the findings keep
  * to a line or two; from `tall` each finding has its lines in full. */
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
- * (a session's signal, a comparison's fact with its two lines, a bucket's
+ * (a run's signal, a comparison's fact with its two lines, a bucket's
  * size), how high a dialog's scrolling part grows before it scrolls, a
- * terminal's matrix, and the findings' room over a session's operations (in
+ * terminal's matrix, and the findings' room over a run's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
  * not; the room is then rounded down to whole findings). lint-kit and
@@ -366,11 +366,11 @@ export const PANE = {
   /** the program's output once it has ended: it yields to the result beside it */
   terminalDone: 200,
   operationsLeast: 340,
-  /** a session's output beside its operations */
+  /** a run's output beside its operations */
   outputLeast: 240,
   besideLeast: 320,
-  /** a session beside its inspector */
-  sessionLeast: 460,
+  /** a run beside its inspector */
+  runLeast: 460,
   inspector: 420,
   inspectorLeast: 320,
   inspectorMost: 680,
@@ -632,7 +632,7 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a session's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
+export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a run's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
   if (props.command !== undefined)
     return (
       <Text testID={props.testID} role="header" accessibilityLabel={props.command} class={`font-mono ${TEXT.body} line-clamp-1 ${props.class ?? ""}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
@@ -652,7 +652,7 @@ export function Title(props: { children?: JSX.Element; page?: boolean; /** at th
 
 /** A section's title: the second and last heading level (as `Section`'s),
  * with how many it holds ("Title · n"). `quiet` is the same level said
- * small over a list (a day of sessions, the sidebar's lists). */
+ * small over a list (a day of runs, the sidebar's lists). */
 export function Heading(props: { children: JSX.Element; count?: number; quiet?: boolean; mono?: boolean; class?: string; testID?: string }) {
   return (
     <Text testID={props.testID} role="header" class={`${props.quiet ? TEXT.meta : TEXT.body} font-bold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
@@ -703,7 +703,7 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
 }
 
 /** The one row a press opens: hover, pressed, selected and focus, one look
- * in every list (sessions, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
+ * in every list (runs, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
  * stacks two lines of text; `divided` is a row of a card that draws its
  * rows edge to edge under hairlines (`first` has none); `top` keeps what
  * stands beside wrapped text at its first line. What ends the row
@@ -758,7 +758,7 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a run (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
   // the figure in the text's colour (a quiet one muted): its tone is a mark beside its name, never its figure
   const tint = () => (props.tone === "quiet" ? TONE.quiet.text : "text-foreground");
   const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
@@ -1583,11 +1583,11 @@ export function Loading(props: { text?: string; class?: string; testID?: string 
   );
 }
 
-/** Where a session will be while it is read: its header, findings and rows, in outline. */
-export function SessionSkeleton(props: { rows?: number }) {
+/** Where a run will be while it is read: its header, findings and rows, in outline. */
+export function RunSkeleton(props: { rows?: number }) {
   const bar = (w: string, h = "h-3") => <View class={`${h} ${w} rounded-(--radius-sm) bg-muted`} />;
   return (
-    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3 px-4 pt-4">
+    <View testID="run-reading" accessibilityLabel={t("runs.reading")} class="flex-1 gap-3 px-4 pt-4">
       <View class="gap-2">
         {bar("w-56", "h-4")}
         {bar("w-80")}

@@ -2,13 +2,13 @@
 // screen says what sonde does and offers one way in: the built-in demo,
 // which lands on Run with a command ready to press Return on. The AWS
 // profiles already on this machine, an endpoint by hand and the example
-// session are a line below, for those who know what they want.
+// run are a line below, for those who know what they want.
 
 import { platform, signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { command } from "../run";
-import { endpointsMode, go, notify, openExample, openSessionFile, refreshEndpoints, report, startDemo } from "../store";
+import { endpointsMode, go, notify, openExample, openRunFile, refreshEndpoints, report, startDemo } from "../store";
 import type { EndpointView } from "../types";
 import { Actions, Button, Card, Check, Heading, READING, terminal, Title, TEXT } from "../ui/kit";
 
@@ -94,7 +94,7 @@ export function Welcome() {
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
             <If when={!terminal()}>
-              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" class="justify-start" />
+              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
             </If>
             <Button small variant="ghost" icon="scroll-text" label={t("example.open")} onPress={openExample} testID="open-example" class="justify-start" />
           </View>

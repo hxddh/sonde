@@ -1,13 +1,13 @@
-// The shared-session viewer on a real delta-rs session (sample.json, from
+// The shared-run viewer on a real delta-rs run (sample.json, from
 // `sonde share`).
 
 import { expect, open, test } from "nsh/test";
 
-test("a shared session reads as in the app: operations and a request", async () => {
+test("a shared run reads as in the app: operations and a request", async () => {
   const app = await open("../Demo.tsx", { width: 1280, height: 800 });
   await app.waitFor("id:viewer");
   // the run's figures as the app shows them: its signals, each a tile
-  expect(app.shows("id:session-summary")).toBe(true);
+  expect(app.shows("id:run-summary")).toBe(true);
   expect(app.shows("text:in 171 ms")).toBe(true);
   expect(app.shows("text:/conditional create \\(If-None-Match/")).toBe(true);
   await app.press("text:/^commit 2/");
@@ -22,7 +22,7 @@ test("a shared session reads as in the app: operations and a request", async () 
 test("a shared page has the app's Time pane: its charts, titles and sentences", async () => {
   const app = await open("../Demo.tsx", { width: 1280, height: 800 });
   await app.waitFor("id:viewer");
-  await app.press("id:session-pane-mode-time");
+  await app.press("id:run-pane-mode-time");
   await app.waitFor("id:time-pane");
   await app.waitFor("id:chart-timeline");
   expect(app.shows("text:When were requests sent?")).toBe(true);

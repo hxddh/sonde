@@ -1,9 +1,9 @@
-// A trial started from the app: the session's command run again, once per
+// A trial started from the app: the run's command run again, once per
 // fault scenario, sonde answering some requests in the store's place. The
 // dialog says first what will run (each scenario and how hard it presses,
 // what the program may do, where the runs write, why none can run), then
 // follows the trial scenario by scenario with the time it has taken, and
-// ends on the verdicts — each a way into its own session, and all kept on
+// ends on the verdicts — each a way into its own run, and all kept on
 // the run's Runs pane.
 
 import { announce, batch, cleanup, resource, signal, Text, View } from "nsh";
@@ -11,14 +11,14 @@ import { asError, api } from "../native";
 import { duration } from "../format";
 import { t } from "../i18n";
 import { running } from "../run";
-import type { Policy } from "./session";
-import { report, sessionsChanged } from "../store";
+import type { Policy } from "./runparts";
+import { report, runsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
 import type { Trial, TrialEvent, TrialPlan } from "../types";
 import { AGAIN, STANDING, trialAsked, TrialVerdicts, type VerdictRow } from "./history";
 import { Icon } from "./icon";
 import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Row, Title, TEXT } from "./kit";
-import { scrubCommand } from "./sessionview";
+import { scrubCommand } from "./runview";
 
 /** Whether a trial is running (one at a time, as a program is). */
 export const trying = signal(false);
@@ -36,8 +36,8 @@ export function TrialDialog(props: {
   onClose: () => void;
   /** it ended with verdicts: the run's Runs pane shows them */
   onDone?: (trials: Trial[]) => void;
-  /** a finished scenario pressed: its own session */
-  onOpen?: (session: string) => void;
+  /** a finished scenario pressed: its own run */
+  onOpen?: (run: string) => void;
   /** "Try again what broke": these verdicts' scenarios, on a fresh run of the program */
   again?: Trial[];
   /** tried again: the fresh run, to open (on its Runs pane) as the dialog closes */
@@ -48,7 +48,7 @@ export function TrialDialog(props: {
     () => props.path,
     async (p): Promise<{ plan: TrialPlan } | { refused: string }> => {
       try {
-        return { plan: api.sessions.trialPlan(p) };
+        return { plan: api.runs.trialPlan(p) };
       } catch (e) {
         return { refused: asError(e).message };
       }
@@ -91,7 +91,7 @@ export function TrialDialog(props: {
   const start = () => (again() ? startAgain() : startTrial());
   /** The verdicts as the program keeps them (`run` the trial's run): each with its history over the program's runs. */
   const withHistory = (run: string) =>
-    api.sessions
+    api.runs
       .history(run)
       .then((h) => {
         const kept = h?.trials ?? [];
@@ -102,7 +102,7 @@ export function TrialDialog(props: {
     const list = again() ?? [];
     if (!list.length || trying()) return;
     batch(() => (steps.set(trialSteps(list.map((x) => ({ name: x.scenario, about: x.about })))), ended.set(null), fresh.set(null), afresh.set(true), trying.set(true), started.set(Date.now()), now.set(Date.now())));
-    api.sessions
+    api.runs
       .trialAgain(props.path, limit(), 100, 30, (e) => {
         // the fresh run's own events carry no scenario: the first that does ends it
         if ("scenario" in e) {
@@ -115,7 +115,7 @@ export function TrialDialog(props: {
         const failed = r.cleanExit !== undefined && r.cleanExit !== null && r.cleanExit !== 0 ? r.cleanExit : null;
         batch(() => (now.set(Date.now()), fresh.set(r.path), afresh.set(false), ended.set({ cancelled: r.cancelled, cleanFailed: failed }), trying.set(false)));
         announce(r.cancelled ? t("trial.cancelled") : failed !== null ? t("trial.againFailed", { exit: failed }) : t("trial.endedSaid", { t: duration(Math.max(0, now() - started())) }));
-        sessionsChanged();
+        runsChanged();
         if (!r.cancelled && r.trials.length) void withHistory(r.path);
         if (!r.cancelled && r.trials.length) props.onDone?.(r.trials);
       })
@@ -128,7 +128,7 @@ export function TrialDialog(props: {
     const list = chosen();
     if (!list.length || trying()) return;
     batch(() => (steps.set(trialSteps(list)), ended.set(null), trying.set(true), started.set(Date.now()), now.set(Date.now())));
-    api.sessions
+    api.runs
       .trial(props.path, list.map(asked), limit(), 100, 30, (e) => {
         steps.set(foldTrial(steps() ?? [], e));
         // a verdict as it arrives, told to a screen reader: the dialog's text alone changes in silence
@@ -137,7 +137,7 @@ export function TrialDialog(props: {
       .then((r) => {
         batch(() => (now.set(Date.now()), ended.set({ cancelled: r.cancelled }), trying.set(false)));
         announce(r.cancelled ? t("trial.cancelled") : t("trial.endedSaid", { t: duration(Math.max(0, now() - started())) }));
-        sessionsChanged();
+        runsChanged();
         if (!r.cancelled && r.trials.length) void withHistory(r.path);
         if (!r.cancelled && r.trials.length) props.onDone?.(r.trials);
       })
@@ -149,7 +149,7 @@ export function TrialDialog(props: {
   // stopping is not dismissing: it ends the program, and the trial keeps nothing
   const stop = () => {
     try {
-      api.sessions.kill();
+      api.runs.kill();
     } catch (e) {
       report(e);
     }
@@ -165,16 +165,16 @@ export function TrialDialog(props: {
   /** The verdicts of this dialog's trial that did not survive: what "Try again" would take up. */
   const leftOver = () => (steps() ?? []).flatMap((s) => (s.trial && AGAIN.includes(s.trial.standing) ? [s.trial] : []));
   const tryAgainHere = () => batch(() => (again.set(leftOver()), steps.set(null), ended.set(null)));
-  // the session first, then the dialog closed: what closing does after a trial (the run's Runs pane) gives way to it
-  const open = (session: string) => {
-    props.onOpen?.(session);
+  // the run first, then the dialog closed: what closing does after a trial (the run's Runs pane) gives way to it
+  const open = (run: string) => {
+    props.onOpen?.(run);
     props.onClose();
   };
   // the scenarios as the verdicts list them, drawn as the Runs pane draws them; done, and its run kept: a press opens it
   const rows = (list: TrialStep[]): VerdictRow[] =>
     list.map((s) => {
-      const session = ended() && !ended()!.cancelled ? (s.trial?.run ?? null) : null;
-      return { scenario: s.scenario, trial: s.trial ?? null, state: s.state, onOpen: session && props.onOpen ? () => open(session) : undefined };
+      const run = ended() && !ended()!.cancelled ? (s.trial?.run ?? null) : null;
+      return { scenario: s.scenario, trial: s.trial ?? null, state: s.state, onOpen: run && props.onOpen ? () => open(run) : undefined };
     });
   return (
     // one frame from its plan to its verdicts: as wide as a dialog that lists, as high as the window allows,
@@ -184,7 +184,7 @@ export function TrialDialog(props: {
       <If when={plan.loading() && !plan()}>
         <Loading />
       </If>
-      {/* no trial of this session: why, and nothing to press but Close */}
+      {/* no trial of this run: why, and nothing to press but Close */}
       <If when={refused()}>{(why) => <Notice testID="trial-refused" tone="warn" text={why()} />}</If>
       {/* (no body to fill the frame: the actions stay at its foot) */}
       <If when={!the()}>

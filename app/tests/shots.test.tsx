@@ -115,10 +115,10 @@ for (const v of variants) {
         }
       }
     };
-    // an act on the session header, or in its ⋯ menu where the header has no room for it (its label in the tour's language)
+    // an act on the run header, or in its ⋯ menu where the header has no room for it (its label in the tour's language)
     const act = async (id: string, label: string, zh: string) => {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
-      await chooseFrom(() => app.press("id:session-more"), v.lang ? zh : label);
+      await chooseFrom(() => app.press("id:run-more"), v.lang ? zh : label);
     };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
@@ -134,11 +134,11 @@ for (const v of variants) {
     };
     // a run that ended: its own view on Run, its header read
     const ranView = async () => {
-      await app.waitFor("id:session-pane", { timeout: 30000 });
-      await app.waitFor("id:session-summary", { timeout: 10000 });
+      await app.waitFor("id:run-pane", { timeout: 30000 });
+      await app.waitFor("id:run-summary", { timeout: 10000 });
     };
     // The screens that draw measured figures (a run's times, a trial's run over its clean run, two runs compared, a
-    // program's runs) show committed sessions (tests/fixtures/sessions, which scripts/shots.sh puts in the tour's
+    // program's runs) show committed runs (tests/fixtures/runs, which scripts/shots.sh puts in the tour's
     // data folder): `./nightly-report.sh` run on two mornings, before its fix and after (with a slowdown trial).
     // The tour's own runs are measured anew each time; their screens show what recording does, not its figures.
     // The committed run after the fix, opened from the list of runs: the oldest are last, so the list is brought to
@@ -146,20 +146,20 @@ for (const v of variants) {
     // back to its start.
     // A run opened by its row's name (the first of that name in the list), the list brought down to it and back.
     const openRow = async (name: string, header: string) => {
-      await go("sessions");
-      if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
-      for (let n = 0; n < 30 && !app.shows(`id:session-list >> text:${name}`); n++) await app.scroll("id:session-list", 800);
-      await app.scroll("id:session-list", 800);
+      await go("runs");
+      if (!app.shows("id:run-list")) await app.keyboard.press("mod+b");
+      for (let n = 0; n < 30 && !app.shows(`id:run-list >> text:${name}`); n++) await app.scroll("id:run-list", 800);
+      await app.scroll("id:run-list", 800);
       await app.wait(300);
-      // (its header says its command: the session shown is the one pressed; a press the list's settling undid, again)
-      const shown = () => app.shows("id:session-summary") && app.texts().some((x) => x.includes(header));
+      // (its header says its command: the run shown is the one pressed; a press the list's settling undid, again)
+      const shown = () => app.shows("id:run-summary") && app.texts().some((x) => x.includes(header));
       for (let n = 0; n < 4 && !shown(); n++) {
-        await app.press(`id:session-list >> text:${name} >> nth=0`);
+        await app.press(`id:run-list >> text:${name} >> nth=0`);
         await app.waitUntil(shown, { timeout: 4000 }).catch(() => {});
       }
       await app.waitUntil(shown, { timeout: 10000 });
-      if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
-      for (let n = 0; n < 30 && !app.shows("id:session-0"); n++) await app.scroll("id:session-list", -800);
+      if (!app.shows("id:run-list")) await app.keyboard.press("mod+b");
+      for (let n = 0; n < 30 && !app.shows("id:run-0"); n++) await app.scroll("id:run-list", -800);
       await app.wait(600);
     };
     const fixture = () => openRow("nightly-report.sh", "./nightly-report.sh");
@@ -200,14 +200,14 @@ for (const v of variants) {
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     // (ended: its own view, or what to point at sonde when it reached no store)
-    await app.waitUntil(() => app.shows("id:session-pane") || app.shows("id:run-no-requests"), { timeout: 30000 });
+    await app.waitUntil(() => app.shows("id:run-pane") || app.shows("id:run-no-requests"), { timeout: 30000 });
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
       await enter(app, "id:run-command", command(!cmd, marker));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
-      await app.waitUntil(() => app.shows("id:session-pane"), { timeout: 30000 });
+      await app.waitUntil(() => app.shows("id:run-pane"), { timeout: 30000 });
     }
     await ranView().catch(() => {
       throw new Error("the tour's program reached no store in either shell's form: the run has no requests to show");
@@ -222,7 +222,7 @@ for (const v of variants) {
     await app.waitFor("id:since-run", { timeout: 10000 });
     await charts("02bb-since");
     // the same command under faults (from the view's ⋯): said before it runs, followed as it goes, its verdicts
-    await act("session-try", "Try under faults…", "在故障下试运行…");
+    await act("run-try", "Try under faults…", "在故障下试运行…");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
     await shot("02e-trial-plan");
     await app.press("id:trial-start");
@@ -247,9 +247,9 @@ for (const v of variants) {
     await app.press("id:trial-close");
     await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
-    // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
+    // a trial's own run: its notice, the faults' moments on its shape, and the run over its clean run
     // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
-    // (the trial's session can take longer than a press's wait to open: what is on screen decides the next step)
+    // (the trial's run can take longer than a press's wait to open: what is on screen decides the next step)
     for (let n = 0; n < 6 && !app.shows("id:trial-note"); n++) {
       if (app.shows("id:trial-slowdown")) {
         await app.press("id:trial-slowdown");
@@ -261,32 +261,32 @@ for (const v of variants) {
     }
     await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.wait(600);
-    await shot("02i-trial-session");
+    await shot("02i-trial-run");
     // the run under faults over its clean run, on its Time pane: the committed run's slowdown trial, opened as the
     // tour's was, from the run's History
     await fixture();
-    await app.press("id:session-pane-mode-runs");
+    await app.press("id:run-pane-mode-runs");
     await app.waitFor("id:trial-slowdown", { timeout: 10000 });
     await app.press("id:trial-slowdown");
     await app.waitFor("id:trial-note", { timeout: 20000 });
-    await app.press("id:session-pane-mode-time");
+    await app.press("id:run-pane-mode-time");
     await app.waitFor("id:time-pane");
     await app.wait(900);
     await charts("02j-trial-time");
     await app.press("id:trial-open-clean");
     await app.waitFor("id:trial-note", { state: "gone", timeout: 20000 });
-    await app.waitFor("id:session-summary", { timeout: 10000 });
+    await app.waitFor("id:run-summary", { timeout: 10000 });
     // the program's output lined up with what it did (the committed run kept its output)
-    await app.waitUntil(() => app.enabled("id:session-pane-mode-aligned"), { timeout: 5000 }).catch(() => {
-      throw new Error("the committed run has no output to line up: Output is disabled (tests/fixtures/sessions)");
+    await app.waitUntil(() => app.enabled("id:run-pane-mode-aligned"), { timeout: 5000 }).catch(() => {
+      throw new Error("the committed run has no output to line up: Output is disabled (tests/fixtures/runs)");
     });
-    await app.press("id:session-pane-mode-aligned");
+    await app.press("id:run-pane-mode-aligned");
     await app.waitFor("id:output", { timeout: 5000 });
     await shot("02k-output");
-    // the run's own session (the committed run, its clean run): what failed over its time, and the first byte against
+    // the run's own view (the committed run, its clean run): what failed over its time, and the first byte against
     // the rest
-    await go("sessions");
-    await app.waitFor("id:session-summary", { timeout: 10000 });
+    await go("runs");
+    await app.waitFor("id:run-summary", { timeout: 10000 });
     await app.press("id:signal-errors");
     await app.waitFor("id:time-pane");
     await app.wait(900);
@@ -298,9 +298,9 @@ for (const v of variants) {
     await app.scroll("id:time-pane", 320);
     await charts("02d-first-byte");
 
-    await go("sessions");
+    await go("runs");
     // (back on Operations: the example opens on the pane the run was left on, and has no History of its own)
-    await app.press("id:session-pane-mode-operations");
+    await app.press("id:run-pane-mode-operations");
     await app.wait(500);
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
     // the example, from its one door after the welcome: the palette (read off the interface's thread: there once its
@@ -310,10 +310,10 @@ for (const v of variants) {
     // (a press the list's settling undid: the example opened from its row instead)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
       await openRow("gen-slatedb", "gen-slatedb s3://slate");
-      await app.press("id:session-pane-mode-operations");
+      await app.press("id:run-pane-mode-operations");
       await app.waitFor(wal, { timeout: 10000 });
     }
-    await shot("03-session");
+    await shot("03-run");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
     // (the operation's chart of its requests draws itself in: shot once drawn)
@@ -344,11 +344,11 @@ for (const v of variants) {
     await app.press(v.lang ? "label:分组" : "label:Group by");
     await app.press(v.lang ? "text:逐个操作" : "text:Each operation");
     await app.waitFor("id:operations");
-    // a slice pressed on the session's shape: on the strip over the operations, or, in a window too short for the
+    // a slice pressed on the run's shape: on the strip over the operations, or, in a window too short for the
     // strip (under the kit's BREAK.short, 600, the operations keep its room), on the same shape on the Time pane
-    const strip = height >= 600 ? "id:session-shape" : "id:time-shape";
+    const strip = height >= 600 ? "id:run-shape" : "id:time-shape";
     if (strip === "id:time-shape") {
-      await app.press("id:session-pane-mode-time");
+      await app.press("id:run-pane-mode-time");
       await app.waitFor("id:time-pane");
       await app.wait(900);
     }
@@ -356,7 +356,7 @@ for (const v of variants) {
     await app.hover(strip);
     await app.press(strip);
     await shot("03f-slice");
-    await app.press("id:session-pane-mode-time");
+    await app.press("id:run-pane-mode-time");
     await app.waitFor("id:time-pane");
     // the board's charts draw themselves in: the picture is of them drawn
     await app.wait(900);
@@ -399,7 +399,7 @@ for (const v of variants) {
       await top();
     }
     await app.waitFor("id:signal-bytes").catch(() => {
-      throw new Error("the bytes signal is not in the session's header, the sidebar put away: its chart cannot be opened from it");
+      throw new Error("the bytes signal is not in the run's header, the sidebar put away: its chart cannot be opened from it");
     });
     await app.press("id:signal-bytes");
     await app.wait(700);
@@ -417,7 +417,7 @@ for (const v of variants) {
       await act("compare-open", "Compare…", "对比…");
       const labels = await menuItems();
       const run = labels.find((l) => l.includes("nightly-report"));
-      if (!run) throw new Error(`Compare… offers no other run of nightly-report.sh (tests/fixtures/sessions): ${labels.join(" | ")}`);
+      if (!run) throw new Error(`Compare… offers no other run of nightly-report.sh (tests/fixtures/runs): ${labels.join(" | ")}`);
       await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
     }
     await app.waitFor("id:run-change", { timeout: 10000 });
@@ -427,7 +427,7 @@ for (const v of variants) {
     await app.press("id:compare-back");
 
     // what a replay on another store would send, said before it runs
-    await app.waitFor("id:session-more", { timeout: 10000 });
+    await app.waitFor("id:run-more", { timeout: 10000 });
     await act("replay-open", "Replay on…", "重放到…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");

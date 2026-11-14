@@ -70,7 +70,7 @@ const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fil
 const OUTCOME_TO: Record<string, string> = { ok: "to-bar/40", "not found": "to-status-miss/40", "client error": "to-status-client/40", "server error": "to-status-server/40" };
 
 /**
- * Where a session's requests went: from each kind of request to the
+ * Where a run's requests went: from each kind of request to the
  * prefixes it touched, and from each prefix to how it was answered. The
  * widths are requests; the pointer over a node keeps its flows and fades the rest.
  */
@@ -102,7 +102,7 @@ export function Flows(props: { profile: Profile }) {
     if (!n) return null;
     const all = props.profile.flows.filter((f) => OUTCOME_FILL[f.target]).reduce((s, f) => s + f.value, 0);
     const whole = n.stage === 1 && n.name !== "other prefixes" ? prefixTitle(props.profile.prefixes.find((x) => x.prefix === n.name) ?? { prefix: n.name }) : name(n);
-    return { title: whole, lines: [`${t("sessions.requestsN", { n: through(n) })} · ${pct(through(n) / Math.max(all, 1))}`] };
+    return { title: whole, lines: [`${t("runs.requestsN", { n: through(n) })} · ${pct(through(n) / Math.max(all, 1))}`] };
   };
   const label = () => {
     const ok = props.profile.flows.filter((f) => f.target === "ok").reduce((s, f) => s + f.value, 0);
@@ -152,7 +152,7 @@ export function Flows(props: { profile: Profile }) {
 
 // --- when, and where ---------------------------------------------------------------
 
-/** Requests by prefix and slice of the session: when each part of the key space was busy. */
+/** Requests by prefix and slice of the run: when each part of the key space was busy. */
 export function Heat(props: { profile: Profile; range?: [number, number] | null }) {
   const p = () => props.profile;
   // a stretch chosen on the timeline: its slices only, as every chart over time
@@ -168,11 +168,11 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   };
   const rows = () => p().heat.filter((c) => c.bin >= from() && c.bin <= to()).map((c) => ({ x: `${c.bin}`, y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
   const hovered = signal<number | null>(null);
-  // of the whole session, so a stretch keeps the colors it had
+  // of the whole run, so a stretch keeps the colors it had
   const max = () => p().heat.reduce((m, r) => Math.max(m, r.n), 1);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: whole(r.prefix), lines: [`+${duration(slotMs(p(), r.bin))} – +${duration(slotMs(p(), r.bin + 1))}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: whole(r.prefix), lines: [`+${duration(slotMs(p(), r.bin))} – +${duration(slotMs(p(), r.bin + 1))}`, t("runs.requestsN", { n: r.n })] } : null;
   };
   const label = () => {
     const top = p().prefixes[0];
@@ -219,7 +219,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
 const READS_PER_S = 5500;
 const WRITES_PER_S = 3500;
 
-/** Where a session's requests went by prefix, and how near each came to S3's per-prefix limit (5,500 reads,
+/** Where a run's requests went by prefix, and how near each came to S3's per-prefix limit (5,500 reads,
  * 3,500 writes a second): a bar each, most requests first, its length the requests, and beside it the busiest
  * second and its share of the limit; a prefix past half its limit in the warning tone. (What they cost is "What
  * did the requests cost?".) */
@@ -292,7 +292,7 @@ export function PrefixUse(props: { profile: Profile; /** each prefix's busiest s
   );
 }
 
-/** What the session's requests cost, by kind: a bar each, dearest
+/** What the run's requests cost, by kind: a bar each, dearest
  * first, with its share of the whole. */
 export function CostBy(props: { signals: Signals; max?: number }) {
   const c = () => props.signals.cost;

@@ -1,13 +1,13 @@
-// A stretch of a session's time kept in a link: the slices chosen on the
+// A stretch of a run's time kept in a link: the slices chosen on the
 // Time pane (D-123: chosen by two presses, never dragged or wheeled) go into
 // a `sonde://` link and a shared page's address as milliseconds from the
-// session's start, so whoever opens it sees the same time. Slices are a
-// session's own (a live one's change length): the link holds times, and
+// run's start, so whoever opens it sees the same time. Slices are a
+// run's own (a live one's change length): the link holds times, and
 // each reader turns them into its own slices.
 
 import { signal } from "nsh";
 
-/** A stretch in ms from the session's start: `[from, to)`. */
+/** A stretch in ms from the run's start: `[from, to)`. */
 export type Range = [number, number];
 
 /** `range=120-480` as a link's query or a page's hash writes it; null for anything else. */
@@ -30,9 +30,9 @@ export function slicesOf(r: Range, binMs: number, bins: number): [number, number
   return b > a ? [a, b] : null;
 }
 
-/** A link's stretch, waiting for its session (by file name: a file opened by its path is
- * added to the sessions folder under the same name) to open on its Time pane. */
+/** A link's stretch, waiting for its run (by file name: a file opened by its path is
+ * added to the runs folder under the same name) to open on its Time pane. */
 export const rangeOnOpen = signal<{ name: string; range: Range } | null>(null);
 
-/** The stretch each open session's Time pane shows, by path: what "Copy link to this time" puts in the link. */
+/** The stretch each open run's Time pane shows, by path: what "Copy link to this time" puts in the link. */
 export const shownRange = signal<Record<string, Range | null>>({});

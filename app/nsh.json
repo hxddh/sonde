@@ -12,9 +12,9 @@
   "schemes": ["sonde"],
   "fileTypes": [
     {
-      "name": "sonde session",
+      "name": "sonde run",
       "extensions": ["sonde"],
-      "mimeTypes": ["application/x-sonde-session"],
+      "mimeTypes": ["application/x-sonde-run"],
       "role": "viewer"
     }
   ],

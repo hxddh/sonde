@@ -43,7 +43,7 @@ export function ConfigNotice() {
   };
   const reveal = () => {
     try {
-      void api.sessions.reveal(`${api.paths().config}`).catch(report);
+      void api.runs.reveal(`${api.paths().config}`).catch(report);
     } catch (e) {
       report(e);
     }

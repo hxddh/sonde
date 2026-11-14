@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""The sessions the screenshot tour shows where it draws measured figures.
+"""The runs the screenshot tour shows where it draws measured figures.
 
-    python3 app/tests/fixtures/make.py SESSIONS_DIR
+    python3 app/tests/fixtures/make.py RUNS_DIR
 
-SESSIONS_DIR is a tour's own sessions folder (`$SONDE_DATA_DIR/sessions` of a
+RUNS_DIR is a tour's own runs folder (`$SONDE_DATA_DIR/runs` of a
 `scripts/shots.sh` run, kept with `SONDE_SHOTS_KEEP=DIR`): its first run of the
 tour's program (the config read ten times), the run after the fix, and that
-run's slowdown trial. They are written here under `sessions/`, as one program
+run's slowdown trial. They are written here under `runs/`, as one program
 (`./nightly-report.sh`) run on two mornings, with the trial's verdict in the
 folder's index: what scripts/shots.sh copies into the tour's data folder, so
 those screens are the same from run to run.
@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent / "sessions"
+HERE = Path(__file__).resolve().parent / "runs"
 COMMAND = "./nightly-report.sh"
 # the two mornings the runs are put on
 MORNINGS = [datetime(2026, 11, 2, 7, 14, 5, tzinfo=timezone.utc), datetime(2026, 11, 3, 7, 14, 5, tzinfo=timezone.utc)]
@@ -38,7 +38,7 @@ def text(path: Path) -> list[str]:
 
 
 def moved(lines: list[str], by: timedelta, header: dict) -> list[str]:
-    """Every time in the session moved by `by`, the header made the fixture's."""
+    """Every time in the run moved by `by`, the header made the fixture's."""
     header = {k: v for k, v in header.items() if k != "sonde"}
     out = [json.dumps(header, separators=(",", ":"))]
     for line in lines[1:]:
@@ -48,7 +48,7 @@ def moved(lines: list[str], by: timedelta, header: dict) -> list[str]:
 
 def write(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # finished sessions are kept compressed; mtime 0, so the bytes are the same each time
+    # finished runs are kept compressed; mtime 0, so the bytes are the same each time
     path.write_bytes(gzip.compress(("\n".join(lines) + "\n").encode(), mtime=0))
 
 
@@ -85,7 +85,7 @@ def main(src: Path) -> None:
     if not verdict:
         sys.exit(f"{src}: no slowdown verdict for {fixed.name} in its index")
     for t in verdict:
-        t["session"] = trial_name
+        t["run"] = trial_name
         for k, v in list(t.items()):
             if isinstance(v, str) and STAMP.fullmatch(f'"{v}"'):
                 t[k] = (parse(v) + by).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

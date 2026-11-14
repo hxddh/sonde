@@ -1,4 +1,4 @@
-// A session on screen, with no state of the app's own: its header and
+// A run on screen, with no state of the app's own: its header and
 // figures, what stands out (each a filter of the operations), the
 // operations with their outcome and place in time, the program's output,
 // and how output and operations line up. The app and the web viewer
@@ -9,10 +9,10 @@ import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say, sharedNotes } from "../phrases";
-import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
+import { Chart, runStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
-import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
+import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
 import { titleCells, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
@@ -20,7 +20,7 @@ import { rememberedSize } from "./sizes";
 import { commandLine } from "../command";
 
 export { commandLine, programOf, ranCommand, scrubCommand } from "../command";
-export { SessionList, tellApart } from "./sessionlist";
+export { RunList, tellApart } from "./runlist";
 
 export { clock };
 
@@ -43,7 +43,7 @@ export function StateBadge(props: { state: FindingState; testID?: string }) {
 type StatusTone = Extract<Tone, "ok" | "miss" | "client" | "fail" | "refused" | "injected">;
 
 /** How an operation ended, as a status color: lookups that found nothing are not errors; one that
- * failed on an answer sonde gave in the store's place (`injected`, the session's ids) is in sonde's
+ * failed on an answer sonde gave in the store's place (`injected`, the run's ids) is in sonde's
  * own tone, never the store's failure. */
 export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests"> & { records?: number[] }, injected?: Set<number>): StatusTone {
   if (e.outcome.kind === "refused") return "refused";
@@ -97,22 +97,22 @@ function family(e: Pick<EpisodeRow, "format" | "shape">): { label: string; class
 /** How long an operation ran, in ms (a number: `duration` writes it). */
 export const episodeMs = (e: Pick<EpisodeRow, "start" | "end">) => time(e.end) - time(e.start);
 
-/** The session's span in time: its first operation's start, its last one's end. */
-export function span(v: SessionView): [number, number] {
+/** The run's span in time: its first operation's start, its last one's end. */
+export function span(v: RunView): [number, number] {
   if (!v.span) return [0, 1];
   const a = time(v.span.start);
   return [a, Math.max(time(v.span.end), a + 1)];
 }
 
 /** The commit a run's code was at, as a person reads it: a1b2c3d (main), changed. */
-export function gitText(g: SessionView["header"]["git"]): string {
+export function gitText(g: RunView["header"]["git"]): string {
   if (!g) return "";
   return `${g.commit.slice(0, 7)}${g.branch ? ` (${g.branch})` : ""}${g.dirty ? ` · ${t("git.dirty")}` : ""}`;
 }
 
 
-/** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
+/** The command and where it ran, then the run's figures. */
+export function RunHeader(props: { view: RunView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the run (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
@@ -128,10 +128,10 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
       <View class="gap-0">
         <Title>{command() ? commandLine(command()!) : props.view.header.endpoint}</Title>
         {props.children}
-        <Text class="text-muted-foreground" testID="session-summary">
+        <Text class="text-muted-foreground" testID="run-summary">
           {line()}
         </Text>
-        <Text class="text-foreground" testID="session-story">{sessionStory(props.view.profile)}</Text>
+        <Text class="text-foreground" testID="run-story">{runStory(props.view.profile)}</Text>
       </View>
     );
   }
@@ -163,14 +163,14 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
   // chart), then the commands
   const FOLDED = 3;
   const said = (i: number, x: SignalTile) =>
-    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("session.foldedErrors", { v: x.value }) : x.value;
+    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : x.value;
   const folded = () => (
-    <View testID="session-folded" class="flex-row items-center gap-3">
+    <View testID="run-folded" class="flex-row items-center gap-3">
       <View selectable class="min-w-0 flex-1">
         <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
       </View>
-      {/* (the session's figures, folded: the same summary in a line, quiet words, no buttons' look) */}
-      <View testID="session-summary" class="shrink-0 flex-row items-center" accessibilityLabel={line()}>
+      {/* (the run's figures, folded: the same summary in a line, quiet words, no buttons' look) */}
+      <View testID="run-summary" class="shrink-0 flex-row items-center" accessibilityLabel={line()}>
         <Each of={tiles().slice(0, FOLDED)}>
           {(x, i) => (
             <>
@@ -193,21 +193,21 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
           <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
-          <Text testID="session-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
+          <Text testID="run-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("run.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
         </View>
         {acts()}
       </View>
-      {/* the session in a sentence: where its time went, and the first thing to do. Across the pane
+      {/* the run in a sentence: where its time went, and the first thing to do. Across the pane
           (not held to the title's column beside the commands); it wraps to two lines as the pane
           narrows, and what is past them is cut at the second line's end */}
       <If when={profile()?.groups.length}>
-        <Text testID="session-story" class="text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
+        <Text testID="run-story" class="text-body leading-5 text-foreground line-clamp-2">{runStory(profile())}</Text>
       </If>
       {props.children}
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
-      {/* (a page shared before sessions had a profile: its figures in a line) */}
-      <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class={`tabular-nums ${TEXT.note}`}>{line()}</Text>}>
-        <Tiles ranked short={props.short} min={SIZES.signalTile} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
+      {/* (a page shared before runs had a profile: its figures in a line) */}
+      <If when={tiles().length > 0} else={<Text testID="run-summary" accessibilityLabel={line()} class={`tabular-nums ${TEXT.note}`}>{line()}</Text>}>
+        <Tiles ranked short={props.short} min={SIZES.signalTile} testID="run-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
     </If>
@@ -325,13 +325,13 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
 }
 
 /** Where each finding begins, by its number in the list: for the shape. */
-export function findingMarks(v: SessionView): { tMs: number; n: number }[] {
+export function findingMarks(v: RunView): { tMs: number; n: number }[] {
   const t0 = v.span ? Date.parse(v.span.start) : 0;
   return v.observations.flatMap((o, i) => (o.firstStart ? [{ tMs: Math.max(0, Date.parse(o.firstStart) - t0), n: i + 1 }] : []));
 }
 
 /** Acting on every finding at once, as an estimate: requests, waiting, cost. */
-export function whatIfText(v: SessionView): string | null {
+export function whatIfText(v: RunView): string | null {
   const w = v.whatIf;
   if (!w) return null;
   // the cost as what changes: amounts of thousandths of a cent read as nothing
@@ -341,10 +341,10 @@ export function whatIfText(v: SessionView): string | null {
   return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
 }
 
-/** What stands out in a session — its core result. Each finding says what
+/** What stands out in a run — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
+export function Observations(props: { view: RunView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
   const about = (o: Observation) => o.operationsTotal ?? o.operations?.length ?? 0;
@@ -464,7 +464,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         </>
       }
     >
-      {/* its number, in its level's tone: where it stands on the session's shape */}
+      {/* its number, in its level's tone: where it stands on the run's shape */}
       <View class={`mt-1 size-4 shrink-0 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
         {/* emphasis: the number the shape marks this finding with */}
         <Text class={`tabular-nums ${TEXT.captionSize} ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
@@ -575,8 +575,8 @@ const tableClasses = {
  * there; back at the end, the table follows again. */
 export const followsEnd = (total: number, known: number, endSeen: number): boolean => total > known && endSeen >= known;
 
-/** A session's operations: outcome, time, family, title, requests, duration,
- * place in the session's time and notes. `rows` (default all) are the
+/** A run's operations: outcome, time, family, title, requests, duration,
+ * place in the run's time and notes. `rows` (default all) are the
  * episodes shown, by index; events name episodes by index too. */
 /** The operations' columns as the user last sized them (kept with the app's sizes). */
 const opsWidths = { bar: rememberedSize("ops.bar", 150), notes: rememberedSize("ops.notes", 320) };
@@ -585,9 +585,9 @@ const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => 
 /** The operations as a table to paste (tab-separated), in the order given:
  * figures as plain numbers in one unit each, named in the column's title —
  * what the table shows ("840 ms", "2.35 s") would not sort or sum. */
-export function operationsText(view: SessionView, rows: EpisodeRow[]): string {
+export function operationsText(view: RunView, rows: EpisodeRow[]): string {
   const plain = (s: string) => s.replace(/[\t\r\n]+/g, " ");
-  const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
+  const head = [t("column.time"), t("column.operation"), t("column.requests"), t("runs.tookMs"), t("column.notes")];
   // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
   const body = rows.map((e) => [e.start, plain(episodeTitle(e)), `${e.requests}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]);
   return [head, ...body].map((r) => r.join("\t")).join("\n");
@@ -616,7 +616,7 @@ export function operationColumns(width: number, wanted: { format: boolean; bar: 
 }
 
 export function OperationsTable(props: {
-  view: SessionView;
+  view: RunView;
   /** The rows: a window over however many operations there are, sorted and narrowed where they are kept. */
   source: Operations;
   /** A row pressed: its operation, by index. */
@@ -626,9 +626,9 @@ export function OperationsTable(props: {
   /** The operations marked (chosen, or running when an output line was printed), by index. */
   highlight?: number[];
   compact?: boolean;
-  /** A session still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
+  /** A run still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
   follow?: boolean;
-  /** whether the table is scrolled from its first row (the session's header folds while it is) */
+  /** whether the table is scrolled from its first row (the run's header folds while it is) */
   onScrolled?: (away: boolean) => void;
 }) {
   // the requests sonde answered in the store's place (a trial's): their operations in sonde's own tone
@@ -687,7 +687,7 @@ export function OperationsTable(props: {
         case "title":
           return { key, title: t("column.operation"), width: titleWidth(), minWidth: COLUMN.titleLeast };
         case "duration":
-          return { key, title: t("sessions.took"), width: l.widths.duration, align: "end" as const, sortable: true };
+          return { key, title: t("runs.took"), width: l.widths.duration, align: "end" as const, sortable: true };
         case "requests":
           return { key, title: t("column.requests"), width: l.widths.requests, align: "end" as const, sortable: true };
         case "time":
@@ -723,7 +723,7 @@ export function OperationsTable(props: {
       case "status":
         return (
           <View class="flex-1 items-center justify-center">
-            <Dot tone={episodeTone(e, hurt())} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? t("sessions.refused") : e.outcome.detail} />
+            <Dot tone={episodeTone(e, hurt())} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? t("runs.refused") : e.outcome.detail} />
           </View>
         );
       case "format":
@@ -777,7 +777,7 @@ export function OperationsTable(props: {
         props.ref?.(r);
       }}
       testID="operations"
-      accessibilityLabel={t("sessions.operations")}
+      accessibilityLabel={t("runs.operations")}
       class="min-h-0 flex-1"
       columns={columns()}
       // the rows held, of however many there are: the table asks for the rest as it scrolls
@@ -829,11 +829,11 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
     <DataTable
       ref={props.ref}
       testID="output"
-      accessibilityLabel={t("sessions.output")}
+      accessibilityLabel={t("runs.output")}
       class={`min-h-0 flex-1 ${CARD}`}
       columns={[
         { key: "time", title: t("column.time"), width: COLUMN.outputTime },
-        { key: "line", title: t("sessions.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
+        { key: "line", title: t("runs.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
       ]}
       renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, {}])}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
@@ -904,7 +904,7 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
             <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e(), hurt())} />
               {/* how it failed, beside its dot */}
-              <Text class={TEXT.small}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              <Text class={TEXT.small}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("runs.refused")}</Text>
             </View>
           </If>
         </View>

@@ -9,7 +9,7 @@ import { say } from "../phrases";
 import type { FindingChange, Profile, RunChange, Signals } from "../types";
 import { Icon } from "./icon";
 import { Card, Empty, Heading, ICON, Notice, Row, Stat, terminal, Tiles, type TileLook, SIZES, WIDTH, TEXT } from "./kit";
-import { type FindingState, StateBadge } from "./sessionview";
+import { type FindingState, StateBadge } from "./runview";
 import { brief, FEW, handful } from "../signals";
 import { Chart, cost, DistributionCompare, PrefixChangeMap, RunBars, MARK, Sparkline, TrialOverClean, trialLegend, kindChangeSaid, prefixChangeSaid, latencyChangeSaid, overTimeSaid } from "./plots";
 

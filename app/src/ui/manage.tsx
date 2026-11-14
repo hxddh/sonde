@@ -1,33 +1,33 @@
-// Looking after sessions: a title of the user's, removing one, sharing one
-// as a web page. Each is in the session's context menu and its ⋯ menu.
+// Looking after runs: a title of the user's, removing one, sharing one
+// as a web page. Each is in the run's context menu and its ⋯ menu.
 
 import { effect, openUrl, signal, untracked } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { forgetRun } from "../run";
-import { copy, notify, report, sessionsChanged } from "../store";
-import type { SessionInfo } from "../types";
+import { copy, notify, report, runsChanged } from "../store";
+import type { RunInfo } from "../types";
 import { Actions, Button, Field, Modal, Title, confirmAlert } from "./kit";
-import { programOf } from "./sessionview";
+import { programOf } from "./runview";
 import { toast } from "./toast";
 
 /** A path's last part, with either separator (Windows' too). */
 export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 
-/** What a session is called: the user's title, else its program, else its endpoint. */
-export const sessionName = (s: Pick<SessionInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
+/** What a run is called: the user's title, else its program, else its endpoint. */
+export const runName = (s: Pick<RunInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
 
-/** The session being renamed, while the dialog is open, and the window that
- * asked (a session's own window, by its path; null: the main window). */
-const asked = signal<{ session: SessionInfo; window: string | null } | null>(null);
-export const rename = (s: SessionInfo, window: string | null = null) => asked.set({ session: s, window });
+/** The run being renamed, while the dialog is open, and the window that
+ * asked (a run's own window, by its path; null: the main window). */
+const asked = signal<{ run: RunInfo; window: string | null } | null>(null);
+export const rename = (s: RunInfo, window: string | null = null) => asked.set({ run: s, window });
 
-/** The dialog that gives a session a title (an empty one takes it away):
+/** The dialog that gives a run a title (an empty one takes it away):
  * one per window, open only in the window that asked. */
 export function RenameDialog(props: { window?: string }) {
   const renaming = () => {
     const a = asked();
-    return a && a.window === (props.window ?? null) ? a.session : null;
+    return a && a.window === (props.window ?? null) ? a.run : null;
   };
   const draft = signal("");
   // each opening starts from the title the user gave (none: empty, the
@@ -40,18 +40,18 @@ export function RenameDialog(props: { window?: string }) {
     const s = renaming();
     if (!s) return;
     try {
-      // an empty title takes the user's away: the session is called by its program again
-      api.sessions.rename(s.path, draft().trim());
+      // an empty title takes the user's away: the run is called by its program again
+      api.runs.rename(s.path, draft().trim());
       asked.set(null);
-      sessionsChanged();
+      runsChanged();
     } catch (e) {
       report(e);
     }
   };
   return (
     <Modal open={renaming() !== null} onClose={() => asked.set(null)} testID="rename-dialog">
-      <Title>{t("sessions.renameTitle")}</Title>
-      <Field label={t("sessions.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
+      <Title>{t("runs.renameTitle")}</Title>
+      <Field label={t("runs.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
       <Actions>
         <Button variant="ghost" label={t("common.cancel")} onPress={() => asked.set(null)} />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="rename-save" />
@@ -60,16 +60,16 @@ export function RenameDialog(props: { window?: string }) {
   );
 }
 
-/** Asks, then removes a session's file. Resolves whether it went. */
-export async function removeSession(s: SessionInfo, removed?: () => void): Promise<boolean> {
-  if (!(await confirmAlert({ title: t("sessions.removeTitle", { name: sessionName(s) }), text: t("sessions.removeText", { n: s.requests }), commit: t("sessions.remove") }))) return false;
+/** Asks, then removes a run's file. Resolves whether it went. */
+export async function removeRun(s: RunInfo, removed?: () => void): Promise<boolean> {
+  if (!(await confirmAlert({ title: t("runs.removeTitle", { name: runName(s) }), text: t("runs.removeText", { n: s.requests }), commit: t("runs.remove") }))) return false;
   try {
-    await api.sessions.remove(s.path);
+    await api.runs.remove(s.path);
     // Run no longer offers to open or run again what is gone
     forgetRun(s.path);
     removed?.();
-    sessionsChanged();
-    notify(t("sessions.removed", { name: sessionName(s) }));
+    runsChanged();
+    notify(t("runs.removed", { name: runName(s) }));
     return true;
   } catch (e) {
     report(e);
@@ -78,9 +78,9 @@ export async function removeSession(s: SessionInfo, removed?: () => void): Promi
 }
 
 /** Writes a run as one web page, opens it in the browser, and says where the file is. */
-export async function shareSession(path: string) {
+export async function shareRun(path: string) {
   try {
-    const r = await api.sessions.share(path);
+    const r = await api.runs.share(path);
     void openUrl(r.url);
     toast({
       id: "shared",
@@ -89,7 +89,7 @@ export async function shareSession(path: string) {
       description: t("share.where", { file: r.file }),
       // the page in the file manager, where it is a press away
       action: t("share.showFile"),
-      onAction: () => void api.sessions.reveal(r.file).catch(() => copy(r.file)),
+      onAction: () => void api.runs.reveal(r.file).catch(() => copy(r.file)),
       duration: 10000,
     });
   } catch (e) {

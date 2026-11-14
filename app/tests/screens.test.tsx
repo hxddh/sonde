@@ -6,7 +6,7 @@ import { openDemo, openExample, desktop, place, withDemo } from "./helpers";
 test("a run's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);
   await openExample(app);
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   await app.press("id:op-request-0");
@@ -205,19 +205,19 @@ test("sonde:// links: a bucket's folder opens in the store; an unknown endpoint 
 test("sonde:// links keep a stretch of time: a run opens on its Time pane over it", async () => {
   const app = await withDemo();
   await openExample(app);
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   const { api } = await import("../src/native");
   // (the example: 172 requests over 467 ms, slices enough for a stretch of 200 ms)
-  const example = api.sessions.list().find((s) => (s.command ?? "").includes("gen-slatedb"));
+  const example = api.runs.list().find((s) => (s.command ?? "").includes("gen-slatedb"));
   expect(!!example).toBe(true);
   const name = example!.path.split(/[\\/]/).pop()!;
-  await app.openWithUrl(`sonde://session/${encodeURIComponent(name)}?range=0-200`);
+  await app.openWithUrl(`sonde://run/${encodeURIComponent(name)}?range=0-200`);
   await app.waitFor("id:time-pane", { timeout: 10000 });
-  // the stretch is the session's one selection of time: its chip says it, and offers the whole session back
+  // the stretch is the run's one selection of time: its chip says it, and offers the whole run back
   await app.waitFor("id:clear-filter", { timeout: 5000 });
   // the stretch is the pane's selection: a chart not drawn over time is reckoned again from the
   // requests that started in it, and says so
-  const held = await api.sessions.stretch(example!.path, 0, 200);
+  const held = await api.runs.stretch(example!.path, 0, 200);
   expect(held.summary.requests).toBeGreaterThan(0);
   expect(held.summary.requests).toBeLessThan(172);
   await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
@@ -323,24 +323,24 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
 });
 
 test("a run file that cannot be read says so, and why", async () => {
-  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.view": async () => {
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.view": async () => {
     throw new Error("line 3 is cut short: not a whole record");
   } } } });
   await openExample(app);
-  await app.waitFor("id:session-pane", { timeout: 10000 });
-  await app.waitFor("id:session-error", { timeout: 10000 });
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  await app.waitFor("id:run-error", { timeout: 10000 });
   expect(app.shows("text:Could not load this")).toBe(true);
   expect(app.shows("text:/line 3 is cut short/")).toBe(true);
-  // no figure of a session that was not read
-  expect(app.shows("id:session-summary")).toBe(false);
+  // no figure of a run that was not read
+  expect(app.shows("id:run-summary")).toBe(false);
 });
 
-// --- a session of any size: its operations come in pages, as the table scrolls, sorts and narrows
+// --- a run of any size: its operations come in pages, as the table scrolls, sorts and narrows
 
-/** A session of `n` operations as the bridge would answer for it, whatever file is asked for (the
- * calls that answer at once are the bridge's own, so the session opened is a real one): the view
+/** A run of `n` operations as the bridge would answer for it, whatever file is asked for (the
+ * calls that answer at once are the bridge's own, so the run opened is a real one): the view
  * carries the totals and the first page only; a page is made when it is asked for, and every ask is kept. */
-function bigSession(n: number) {
+function bigRun(n: number) {
   const t0 = Date.parse("2026-11-07T00:00:00Z");
   const row = (i: number) => ({ index: i, shape: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
   const zeros = [0, 0];
@@ -363,7 +363,7 @@ function bigSession(n: number) {
     return all;
   };
   const modules = {
-    "Sessions.view": async (path: string) => ({
+    "Runs.view": async (path: string) => ({
       path, header: { endpoint: "demo", url: "http://127.0.0.1:9000", region: "us-east-1", created: new Date(t0).toISOString(), command: "etl --all" },
       summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, kinds: [{ kind: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
       profile, signals, whatIf: null, injected: [], sharedNotes: [],
@@ -371,7 +371,7 @@ function bigSession(n: number) {
       span: { start: new Date(t0).toISOString(), end: new Date(t0 + n * 10).toISOString() }, families: { formats: {}, kinds: { request: n } },
       observations: [{ level: "info", text: "300 operations of every third", operations: Array.from({ length: 200 }, (_, k) => k * 3), operationsTotal: 300, firstStart: new Date(t0).toISOString() }],
     }),
-    "Sessions.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
+    "Runs.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
       const offset = q.offset ?? 0;
       const limit = Math.min(q.limit ?? 500, 5000);
       asked.push({ offset, limit, sort: q.sort, descending: q.descending, finding: q.finding });
@@ -384,12 +384,12 @@ function bigSession(n: number) {
 
 test("a run of a hundred thousand operations opens on its totals and first page, and reads on in pages", async () => {
   const N = 100000;
-  const big = bigSession(N);
+  const big = bigRun(N);
   const began = Date.now();
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: big.modules } });
   await openExample(app);
   // its totals at once, from the view: nothing waits for the operations to be whole
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.waitFor("text:operation 0", { timeout: 10000 });
   expect(app.shows("label:/100,000 requests · 100,000 operations/")).toBe(true);
   // (opened and drawn well inside the budget; the window's own start is most of it here)

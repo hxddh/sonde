@@ -11,10 +11,10 @@ import { core, endpointName } from "./phrases";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
-/** The app's places: Run, Sessions and Buckets ("store"); Activity and
+/** The app's places: Run, Runs and Buckets ("store"); Activity and
  * Settings, which a window shows over its place (a sheet, a window of their
  * own) and a terminal as places of their own. */
-export type Area = "run" | "sessions" | "store" | "activity" | "settings";
+export type Area = "run" | "runs" | "store" | "activity" | "settings";
 /** The tabs of Store: what is in a bucket. */
 export type StoreTab = "browse" | "capacity" | "multipart" | "layouts";
 /** The tabs of Settings. */
@@ -22,16 +22,16 @@ export type SettingsTab = "settings" | "endpoints";
 /** The tabs of Activity: what sonde itself did. */
 export type ActivityTab = "jobs" | "audit";
 /** Where to go: an area, or a tab of one. */
-export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
+export type Section = "run" | "runs" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
-export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
+export const AREAS: Area[] = ["run", "runs", "store", "activity", "settings"];
 export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "layouts"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["jobs", "audit"];
 
 export function areaOf(s: Section): Area {
-  if (s === "run" || s === "sessions") return s;
+  if (s === "run" || s === "runs") return s;
   if ((STORE_TABS as string[]).includes(s)) return "store";
   if ((ACTIVITY_TABS as string[]).includes(s)) return "activity";
   return "settings";
@@ -52,7 +52,7 @@ export const activityTab = signal<ActivityTab>("jobs");
 /** The area on screen. */
 export const area = () => areaOf(section());
 /** The run the Runs place shows (set by the palette, a notification, a link, …). */
-export const openSession = signal<string | null>(null);
+export const openRun = signal<string | null>(null);
 /** A command of what is on screen (a run's Try under faults…, a Buckets section's Scan again): its place shows
  * it (a button, or behind ⋯), the palette lists it while it is shown, and its shortcut runs it. `run` is given
  * the button a menu would open under, where there is one. */
@@ -79,25 +79,25 @@ export function offerCommands(group: () => string, list: () => PlaceCommand[]) {
       ),
     );
 }
-/** The sessions read since launch, whatever way led to them (the Sessions
+/** The runs read since launch, whatever way led to them (the Runs
  * place, a window of their own, a comparison): every reader says so here. */
 const read = new Set<string>();
 export const reading = (path: string) => void read.add(path);
 /** Whether `path` is being read or was, or is on its way to being: what
- * tidies up after a run asks this one question before it removes a session. */
-export const wasRead = (path: string) => read.has(path) || openSession() === path;
-/** A comparison to open with a session: the run before it (`Run again`). */
+ * tidies up after a run asks this one question before it removes a run. */
+export const wasRead = (path: string) => read.has(path) || openRun() === path;
+/** A comparison to open with a run: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
 /** A pane to show a run on when it opens: a trial tried again opens its fresh run on its runs. */
 export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
-/** What the current place shows, for the toolbar's breadcrumb (a session's command). */
+/** What the current place shows, for the toolbar's breadcrumb (a run's command). */
 export const crumb = signal<string | null>(null);
-/** Bumped when the list of sessions changes (a run ended, an example opened, a replay). */
+/** Bumped when the list of runs changes (a run ended, an example opened, a replay). */
 /** The window is out of sight (minimized, hidden, another space): polls rest until it is back. */
 export const away = () => lifecycle() === "background";
 
-export const sessionsTick = signal(0);
-export const sessionsChanged = () => sessionsTick.set(sessionsTick() + 1);
+export const runsTick = signal(0);
+export const runsChanged = () => runsTick.set(runsTick() + 1);
 /** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */
 export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The main window's width, as its shell measures it (windowSize() follows
@@ -106,7 +106,7 @@ export const shellWidth = signal(1280);
 /** The window's height, as its shell is laid out: what a surface over it may take. */
 export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
- * (its sessions, its buckets, the commands run before), given by the place
+ * (its runs, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */
 export const sideList = signal<{ key: string; render: () => JSX.Element; needed?: () => boolean } | null>(null);
 /** Gives the sidebar a place's list while the place is on screen; returns
@@ -216,9 +216,9 @@ export async function startDemo(): Promise<boolean> {
 /** Opens the example (a SlateDB program's run, built in) in Runs. */
 export function openExample() {
   try {
-    openSession.set(api.sessions.example());
-    sessionsChanged();
-    go("sessions");
+    openRun.set(api.runs.example());
+    runsChanged();
+    go("runs");
   } catch (e) {
     report(e);
   }
@@ -233,7 +233,7 @@ export function init() {
   }
 }
 
-/** Asks for a `.sonde` file (one recorded elsewhere, or shared) and opens it in Sessions. */
+/** Asks for a `.sonde` file (one recorded elsewhere, or shared) and opens it in Runs. */
 /** A local path from a `file:` URL (a file manager's drop). */
 export function pathOf(uri: string): string {
   let rest = uri.replace(/^file:/i, "");
@@ -258,7 +258,7 @@ export function pathOf(uri: string): string {
   return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
 }
 
-/** A path a link may open: a session file (`.sonde`, `.sonde.gz`) on this
+/** A path a link may open: a run file (`.sonde`, `.sonde.gz`) on this
  * machine. A UNC path (`\\host\share`, `//host/share`) would have Windows
  * reach that host, with the user's credentials, before anything is read. */
 export function linkable(path: string): boolean {
@@ -268,8 +268,8 @@ export function linkable(path: string): boolean {
 /**
  * A `sonde://` link (from `sonde show --app`, a shared page, the docs). Its
  * URL is anyone's to make: it only opens what sonde would open itself.
- *   sonde://open?path=/abs/file.sonde   a session file, added as a drop is
- *   sonde://session/<file name>         a session of the sessions folder
+ *   sonde://open?path=/abs/file.sonde   a run file, added as a drop is
+ *   sonde://run/<file name>         a run of the runs folder
  *   …&range=120-480 / ?range=120-480     either, on its Time pane over that stretch (ms from its start)
  *   sonde://bucket/<endpoint>/<bucket>[/<prefix>]
  */
@@ -277,7 +277,7 @@ export function openLink(url: string) {
   const m = /^sonde:\/\/([a-z]+)(\/[^?#]*)?(\?[^#]*)?/i.exec(url.trim());
   if (!m) return;
   const [, what, rest = "", query = ""] = m;
-  // a stretch of the session's time: its Time pane opens over it
+  // a stretch of the run's time: its Time pane opens over it
   const range = rangeOf(query);
   const part = (s: string) => {
     try {
@@ -293,14 +293,14 @@ export function openLink(url: string) {
     if (!path || !linkable(path)) return;
     if (range) rangeOnOpen.set({ name: path.split(/[\\/]/).pop() ?? path, range });
     openPaths([path]);
-  } else if (what === "session") {
+  } else if (what === "run") {
     const name = part(rest.slice(1));
-    const s = api.sessions.list().find((x) => x.name === name);
-    if (!s) return notify(t("link.noSession", { name }), { kind: "warning" });
+    const s = api.runs.list().find((x) => x.name === name);
+    if (!s) return notify(t("link.noRun", { name }), { kind: "warning" });
     batch(() => {
       if (range) rangeOnOpen.set({ name, range });
-      openSession.set(s.path);
-      go("sessions");
+      openRun.set(s.path);
+      go("runs");
     });
   } else if (what === "bucket") {
     const [ep, b, ...p] = rest.slice(1).split("/").map(part);
@@ -336,7 +336,7 @@ export function openSystemFiles(paths: string[]) {
 
 /** Of `paths`, those not handed over a moment ago. Where the app runs once,
  * a second launch with a file says so twice (its arguments, and the file
- * the system opened it with): the file opens once, not as two sessions. */
+ * the system opened it with): the file opens once, not as two runs. */
 const handed = new Map<string, number>();
 export function once(paths: string[], now = Date.now(), within = 2000): string[] {
   for (const [p, at] of handed) if (now - at > within) handed.delete(p);
@@ -355,82 +355,82 @@ export function launchFiles(args: string[], cwd: string): string[] {
     .flatMap((a) => (/^file:/i.test(a) ? [pathOf(a)] : /^[a-z][a-z0-9+.-]*:\/\//i.test(a) ? [] : [absolute(a) || !cwd ? a : `${cwd.replace(/[\\/]+$/, "")}${sep}${a}`]));
 }
 
-/** Opens session files dropped on the window; anything else is said to be no session. */
+/** Opens run files dropped on the window; anything else is said to be no run. */
 export function openDropped(uris: string[]) {
   openPaths(
     uris.flatMap((uri) => {
       const path = pathOf(uri);
       if (/^file:/i.test(uri)) return [path];
-      notify(t("sessions.notSession", { name: uri }), { kind: "warning" });
+      notify(t("runs.notRun", { name: uri }), { kind: "warning" });
       return [];
     }),
   );
 }
 
-/** What opens as a session: a recording, or traffic sonde reads as one (an
+/** What opens as a run: a recording, or traffic sonde reads as one (an
  * S3 server access log, CloudTrail events, a HAR), gzipped or not. */
 const OPENS = /\.(sonde|log|txt|json|jsonl|har)(\.gz)?$/i;
 
-/** Of what a drag carries, how many would open as sessions and how many would not: said before the drop. */
+/** Of what a drag carries, how many would open as runs and how many would not: said before the drop. */
 export function wouldOpen(uris: string[]): { opens: number; others: number } {
   const opens = uris.filter((u) => /^file:/i.test(u) && OPENS.test(pathOf(u))).length;
   return { opens, others: uris.length - opens };
 }
 
-/** Opens session files by path; anything else is said to be no session. */
+/** Opens run files by path; anything else is said to be no run. */
 export function openPaths(paths: string[]) {
   let last: string | null = null;
   for (const path of paths) {
     const name = path.split(/[\\/]/).pop() ?? path;
     if (!OPENS.test(name)) {
-      notify(t("sessions.notSession", { name }), { kind: "warning" });
+      notify(t("runs.notRun", { name }), { kind: "warning" });
       continue;
     }
     try {
-      last = api.sessions.importPath(path);
+      last = api.runs.importPath(path);
     } catch (e) {
       // a log or JSON that is no traffic sonde reads: said as plainly as any other file
       if (name.toLowerCase().endsWith(".sonde")) report(e);
-      else notify(t("sessions.notSession", { name }), { kind: "warning" });
+      else notify(t("runs.notRun", { name }), { kind: "warning" });
     }
   }
   if (!last) return;
   const opened = last;
   batch(() => {
-    openSession.set(opened);
-    sessionsChanged();
-    go("sessions");
+    openRun.set(opened);
+    runsChanged();
+    go("runs");
   });
 }
 
-export async function openSessionFile() {
+export async function openRunFile() {
   try {
     // the file is read by sonde, never by the app's script engine: a large
     // CloudTrail dump opens as a small one does
     let path: string | null;
     try {
-      path = await api.sessions.pick(t("sessions.fileType"), t("sessions.trafficType"));
+      path = await api.runs.pick(t("runs.fileType"), t("runs.trafficType"));
     } catch (e) {
       // the picker only where there is no system dialog; any other failure
-      // (a file that is no session) is said
+      // (a file that is no run) is said
       if (!/no file dialog|file chooser|not supported|no trash/i.test(String((e as Error)?.message ?? e))) throw e;
       // no system dialog here (the web): the picker hands the file over
       const [picked] = await Picker.pickFiles({
         filters: [
-          { name: t("sessions.fileType"), extensions: ["sonde"] },
-          { name: t("sessions.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
+          { name: t("runs.fileType"), extensions: ["sonde"] },
+          { name: t("runs.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
         ],
       });
       // (a file larger than the picker reads comes without its bytes: said, not opened as an empty one)
-      if (picked && !picked.file) throw new Error(t("sessions.fileTooLarge", { name: picked.name, size: bytes(picked.size) }));
-      path = picked?.file ? api.sessions.import(picked.file.name, await picked.file.text()) : null;
+      if (picked && !picked.file) throw new Error(t("runs.fileTooLarge", { name: picked.name, size: bytes(picked.size) }));
+      path = picked?.file ? api.runs.import(picked.file.name, await picked.file.text()) : null;
     }
     if (!path) return;
     const opened = path;
     batch(() => {
-      openSession.set(opened);
-      sessionsChanged();
-      go("sessions");
+      openRun.set(opened);
+      runsChanged();
+      go("runs");
     });
   } catch (e) {
     report(e);

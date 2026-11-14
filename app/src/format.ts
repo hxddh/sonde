@@ -194,7 +194,7 @@ export function change(a: number, b: number): string {
   return r === 0 ? `${sign}<1%` : `${sign}${r}%`;
 }
 
-/** A cost as its figure and its unit apart: a session's requests often cost
+/** A cost as its figure and its unit apart: a run's requests often cost
  * thousandths of a cent, which read as a thousand runs' worth ("0.28" in
  * "USD per 1,000 runs"). Two costs in one unit can then be said with the
  * unit once. */

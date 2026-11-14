@@ -4,13 +4,13 @@
 import { host, mount } from "nsh";
 import { Empty } from "../app/src/ui/kit";
 import { t } from "../app/src/i18n";
-import { type SharedSession, SessionViewer } from "./SessionViewer";
+import { type SharedRun, RunViewer } from "./RunViewer";
 
 function App() {
-  const data = host.params as unknown as SharedSession | undefined;
+  const data = host.params as unknown as SharedRun | undefined;
   return (
     <If when={data?.format === "sonde-share" ? data : null} else={<Empty icon="circle-alert" text={t("viewer.noRun")} />}>
-      {(d) => <SessionViewer data={d()} />}
+      {(d) => <RunViewer data={d()} />}
     </If>
   );
 }

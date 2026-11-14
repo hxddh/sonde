@@ -5,7 +5,7 @@ import type { Tone } from "./ui/kit";
 
 const LABEL: Record<Section, Key> = {
   run: "nav.run",
-  sessions: "nav.sessions",
+  runs: "nav.runs",
   browse: "nav.browse",
   multipart: "nav.multipart",
   capacity: "nav.capacity",
@@ -18,7 +18,7 @@ const LABEL: Record<Section, Key> = {
 
 const AREA: Record<Area, Key> = {
   run: "nav.run",
-  sessions: "nav.sessions",
+  runs: "nav.runs",
   store: "nav.store",
   settings: "nav.settings",
   activity: "nav.activity",

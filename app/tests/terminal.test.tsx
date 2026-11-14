@@ -86,12 +86,12 @@ test("multipart and the guard", async () => {
 
 test("runs in a terminal: runs › operations › requests › request", async () => {
   const app = await open("../App.tsx", term);
-  await place(app, "sessions");
+  await place(app, "runs");
   await openExample(app);
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.waitFor("text:/172 requests · 34 operations/");
   // the run in a sentence; nothing to act on (no copy kept would answer as SlateDB's store does), as on the desktop
-  await app.waitFor("id:session-story");
+  await app.waitFor("id:run-story");
   expect(app.shows("id:observation-0")).toBe(false);
   await app.press("text:WAL 1 written empty (fencing marker)");
   await app.waitFor("id:operation-detail");
@@ -101,8 +101,8 @@ test("runs in a terminal: runs › operations › requests › request", async (
   await app.waitFor("id:operation-detail");
   await app.press("id:operation-back");
   await app.waitFor("id:operations");
-  await app.press("id:sessions-back");
-  await app.waitFor("id:session-0");
+  await app.press("id:runs-back");
+  await app.waitFor("id:run-0");
 });
 
 test("run in a terminal: the program above, its operations below", async () => {
@@ -113,7 +113,7 @@ test("run in a terminal: the program above, its operations below", async () => {
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   // once it ended, its own view under the command
-  await app.waitFor("id:session-summary", { timeout: 25000 });
+  await app.waitFor("id:run-summary", { timeout: 25000 });
   expect(app.shows("id:run-command")).toBe(true);
   await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
 });

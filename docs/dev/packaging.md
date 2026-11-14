@@ -24,7 +24,7 @@ From `app/nsh.json`, written into each platform's package by `nsh package`:
   Linux `assets/icon-fill.png` (edge to edge). Both made from `assets/icon.png` by `python3 scripts/icons.py`
   (Pillow); `--check` fails when either is stale.
 
-On quit (`Application.on("quit")`) a recorded program and a running trial are ended and the session is written as
+On quit (`Application.on("quit")`) a recorded program and a running trial are ended and the run is written as
 finished; the system waits 200 ms.
 
 ## Signing and notarization
@@ -86,7 +86,7 @@ each release and daily.
 | | |
 |---|---|
 | `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`21.0.0`, or `21`: the newest 21.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
-| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed sessions (`app/tests/fixtures`). |
+| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code
 

@@ -76,24 +76,24 @@ test("updates: asking is the user's move; a development run is up to date", asyn
 
 test("a run file opens from Runs: a picked .sonde, and a refusal for anything else", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:nav-sessions");
+  await app.press("id:nav-runs");
   const encode = (s: string) => new TextEncoder().encode(s);
-  app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name: "elsewhere.sonde", data: encode(SESSION) }] : null));
+  app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name: "elsewhere.sonde", data: encode(RUN) }] : null));
   await app.keyboard.press("mod+o");
-  await app.waitFor("id:session-pane", { timeout: 10000 });
-  // the session is read off the interface's thread: its header comes when the reading ends
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  // the run is read off the interface's thread: its header comes when the reading ends
   await app.waitFor("text:$ python gen_delta.py s3://lake/delta", { timeout: 10000 });
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
   await app.press("id:open-file");
   await app.waitFor("text:/notes.sonde: not a sonde run/", { timeout: 5000 });
 });
 
-const SESSION = "{\"format\":\"sonde-session\",\"version\":2,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"kind\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
+const RUN = "{\"format\":\"sonde-run\",\"version\":2,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"kind\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
 
 test("a second launch hands over its files: relative ones from where it was started, links and options left out", async () => {
   const { launchFiles } = await import("../src/store");
   // (its sonde:// links reach the app through UrlScheme, as every link does)
-  expect(launchFiles(["--verbose", "run.sonde", "/tmp/b.sonde", "sonde://session/x.sonde"], "/home/me/etl")).toEqual(["/home/me/etl/run.sonde", "/tmp/b.sonde"]);
+  expect(launchFiles(["--verbose", "run.sonde", "/tmp/b.sonde", "sonde://run/x.sonde"], "/home/me/etl")).toEqual(["/home/me/etl/run.sonde", "/tmp/b.sonde"]);
   expect(launchFiles(["run.sonde", "D:\\logs\\b.sonde"], "C:\\Users\\me\\")).toEqual(["C:\\Users\\me\\run.sonde", "D:\\logs\\b.sonde"]);
   expect(launchFiles(["file:///home/me/a%20b.sonde"], "/")).toEqual(["/home/me/a b.sonde"]);
   expect(launchFiles([], "/home/me")).toEqual([]);
@@ -115,8 +115,8 @@ test("a dropped file's URL becomes its path on every platform", async () => {
   expect(pathOf("file:///tmp/a%20b%.sonde")).toBe("/tmp/a b%.sonde");
 });
 
-test("a command keeps its secrets out and its Windows paths whole; sonde's own sessions read as its words", async () => {
-  const { commandLine, programOf, ranCommand, scrubCommand } = await import("../src/ui/sessionview");
+test("a command keeps its secrets out and its Windows paths whole; sonde's own runs read as its words", async () => {
+  const { commandLine, programOf, ranCommand, scrubCommand } = await import("../src/ui/runview");
   expect(scrubCommand("AWS_SECRET_ACCESS_KEY=abc python x.py")).toBe("AWS_SECRET_ACCESS_KEY=… python x.py");
   expect(scrubCommand("tool --password=hunter2 --region=eu")).toBe("tool --password=… --region=eu");
   expect(scrubCommand("sh -c 'TOKEN=abc python x.py'")).toBe("sh -c 'TOKEN=… python x.py'");
@@ -257,19 +257,19 @@ test("prefixes with a doubled or a leading slash keep their own names", async ()
 });
 
 test("every chart over one stretch of time names the same round moments", async () => {
-  const { timeTicks, sessionSpan } = await import("../src/ui/plots");
+  const { timeTicks, runSpan } = await import("../src/ui/plots");
   // 1, 2 or 5 of a power of ten apart, three or four of them
   expect(timeTicks([0, 467])).toEqual([0, 200, 400]);
   expect(timeTicks([0, 600])).toEqual([0, 200, 400, 600]);
   expect(timeTicks([0, 60000])).toEqual([0, 20000, 40000, 60000]);
-  // a zoomed stretch: round moments of the session, not offsets of the stretch
+  // a zoomed stretch: round moments of the run, not offsets of the stretch
   expect(timeTicks([230, 460])).toEqual([300, 400]);
   expect(timeTicks([5, 5])).toEqual([5]);
   // slices and wall time give one span: a chart of slices and a chart of moments agree
-  expect(sessionSpan({ startMs: 0, binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
-  expect(sessionSpan({ startMs: 0, binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
-  // a stretch's own profile: on the session's axis, from where it starts
-  expect(sessionSpan({ startMs: 1000, binMs: 10, wallMs: 467 }, 40)).toEqual([1000, 1467]);
+  expect(runSpan({ startMs: 0, binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
+  expect(runSpan({ startMs: 0, binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
+  // a stretch's own profile: on the run's axis, from where it starts
+  expect(runSpan({ startMs: 1000, binMs: 10, wallMs: 467 }, 40)).toEqual([1000, 1467]);
 });
 
 test("a shape in a terminal is block characters, a burst kept, never wider than its room", async () => {
@@ -290,7 +290,7 @@ test("a scale of sizes is ticked at powers of 1024, or of 32 where it is narrow"
 });
 
 test("a table that narrows drops its columns by rank, whole, and clips none", async () => {
-  const { operationColumns, OP_NAME } = await import("../src/ui/sessionview");
+  const { operationColumns, OP_NAME } = await import("../src/ui/runview");
   const all = { format: true, bar: true, notes: true };
   const sized = { bar: 150, notes: 320 };
   // not measured yet, and wide: every column, in rank order
@@ -340,7 +340,7 @@ test("tiles go in rows of equal count: four are two and two, never three and one
 });
 
 test("runs of one command are told apart by the argument that differs", async () => {
-  const { tellApart } = await import("../src/ui/sessionview");
+  const { tellApart } = await import("../src/ui/runview");
   const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
   // from what differs, at the edge of its part of the path: a column that cuts at its end cuts what they share
   expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… README.md", "… missing.txt"]);
@@ -350,7 +350,7 @@ test("runs of one command are told apart by the argument that differs", async ()
 });
 
 test("a live table follows its end until the reader goes up, and again once they are back", async () => {
-  const { followsEnd } = await import("../src/ui/sessionview");
+  const { followsEnd } = await import("../src/ui/runview");
   // the first rows arrive: it opens at its end
   expect(followsEnd(12, 0, 0)).toBe(true);
   // at the end (its view ended at the 12th row), more arrive: it goes on
@@ -563,7 +563,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
 });
 
-test("a stretch of time in a link: read from a query or a hash, as slices of the reader's own session", async () => {
+test("a stretch of time in a link: read from a query or a hash, as slices of the reader's own run", async () => {
   const { rangeOf, rangeParam, slicesOf } = await import("../src/range");
   expect(rangeOf("?range=120-480")).toEqual([120, 480]);
   expect(rangeOf("?path=%2Fa.sonde&range=0-1500")).toEqual([0, 1500]);
@@ -576,7 +576,7 @@ test("a stretch of time in a link: read from a query or a hash, as slices of the
   expect(rangeParam([120.4, 479.2])).toBe("range=120-480");
   // 100 ms slices, 20 of them: the first and the last slice the stretch covers
   expect(slicesOf([120, 480], 100, 20)).toEqual([1, 4]);
-  // past the session's end: up to its last slice; less than two slices: no stretch
+  // past the run's end: up to its last slice; less than two slices: no stretch
   expect(slicesOf([1500, 9000], 100, 20)).toEqual([15, 19]);
   expect(slicesOf([120, 180], 100, 20)).toBe(null);
 });

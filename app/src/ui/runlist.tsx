@@ -1,4 +1,4 @@
-// The sessions in the sidebar, newest first, by day: a row a session — its
+// The runs in the sidebar, newest first, by day: a row a run — its
 // program (or the endpoint), what tells it from its neighbours, its time and
 // requests, and a mark of its requests over its time.
 
@@ -7,7 +7,7 @@ import { isAvailable } from "nsh/desktop";
 import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
-import type { SessionInfo } from "../types";
+import type { RunInfo } from "../types";
 import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT } from "./kit";
 import { Sparkline } from "./plots";
 
@@ -42,21 +42,21 @@ export function tellApart(args: string[]): string[] {
   return args.map((a) => `… ${a.slice(common.length)}`);
 }
 
-/** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */
-export function SessionList(props: {
-  sessions: SessionInfo[];
+/** The runs, newest first, by day: the program (or the endpoint), its time and requests. */
+export function RunList(props: {
+  runs: RunInfo[];
   selected: string | null;
   onSelect: (p: string) => void;
-  onContextMenu?: (s: SessionInfo, at?: { x: number; y: number }) => void;
+  onContextMenu?: (s: RunInfo, at?: { x: number; y: number }) => void;
   /** The context menu's commands, offered to screen readers on each row. */
-  actions?: (s: SessionInfo) => { name: string; label: string; run: () => void }[];
+  actions?: (s: RunInfo) => { name: string; label: string; run: () => void }[];
 }) {
-  // one list, the days as headers that stay in view while their sessions scroll
-  type Row = { day: string } | { s: SessionInfo; i: number };
+  // one list, the days as headers that stay in view while their runs scroll
+  type Row = { day: string } | { s: RunInfo; i: number };
   const rows = (): Row[] => {
     const out: Row[] = [];
     let last = "";
-    props.sessions.forEach((s, i) => {
+    props.runs.forEach((s, i) => {
       const day = dayLabel(s.created);
       if (day !== last) out.push({ day: (last = day) });
       out.push({ s, i });
@@ -66,11 +66,11 @@ export function SessionList(props: {
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   // how many of a run's trials broke (none: nothing is said)
-  const broke = (s: SessionInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
-  const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
+  const broke = (s: RunInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
+  const name = (s: RunInfo) => s.title || programOf(s.command) || s.endpoint;
   // the rest of the command after its program, scrubbed; the whole of it when
   // the program is not its first word (`cd etl && python load.py`)
-  const args = (s: SessionInfo) => {
+  const args = (s: RunInfo) => {
     const p = programOf(s.command);
     if (s.title || !s.command || !p || p.endsWith("…")) return "";
     const c = scrubCommand(s.command);
@@ -82,8 +82,8 @@ export function SessionList(props: {
   // command is the same to the letter, by the second they started
   // (worked out once per list, each command read once: rows ask for it as they draw)
   const told = computed(() => {
-    const by = new Map<string, { s: SessionInfo; args: string }[]>();
-    for (const s of props.sessions) {
+    const by = new Map<string, { s: RunInfo; args: string }[]>();
+    for (const s of props.runs) {
       const n = name(s);
       by.set(n, [...(by.get(n) ?? []), { s, args: args(s) }]);
     }
@@ -98,12 +98,12 @@ export function SessionList(props: {
   });
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
-  const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
+  const inWindowMenu = (x: () => { s: RunInfo; i: number }, body: JSX.Element) => (
     <InWindowMenu enabled={!props.onContextMenu && !!props.actions && !isAvailable} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
       {body}
     </InWindowMenu>
   );
-  const row = (x: () => { s: SessionInfo; i: number }) => inWindowMenu(x,
+  const row = (x: () => { s: RunInfo; i: number }) => inWindowMenu(x,
     <View
       onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}
       accessibilityActions={props.actions?.(x().s).map(({ name, label }) => ({ name, label }))}
@@ -111,7 +111,7 @@ export function SessionList(props: {
     >
     <ListRow
       lines={2}
-      testID={`session-${x().i}`}
+      testID={`run-${x().i}`}
       label={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
       selected={props.selected === x().s.path}
       onPress={() => props.onSelect(x().s.path)}
@@ -125,17 +125,17 @@ export function SessionList(props: {
         <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
         {/* the same command run again: its time at the row's end, to the second */}
         <If when={told().get(x().s.path)?.twin}>
-          <Text testID="session-time" class={`shrink-0 tabular-nums ${TEXT.caption}`}>{clock(x().s.created, "s")}</Text>
+          <Text testID="run-time" class={`shrink-0 tabular-nums ${TEXT.caption}`}>{clock(x().s.created, "s")}</Text>
         </If>
       </View>
       <View class="flex-row items-center gap-2">
         {/* (a twin's time is at its row's end, to the second: not said twice) */}
-        <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
           {(n) => (
-            <Text testID="session-broke" class={`shrink-0 ${TEXT.meta}`} accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
+            <Text testID="run-broke" class={`shrink-0 ${TEXT.meta}`} accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
               {t("trial.ofBroke", { n: n(), of: x().s.trials!.length })}
             </Text>
           )}
@@ -150,7 +150,7 @@ export function SessionList(props: {
   );
   return (
     <List
-      testID="session-list"
+      testID="run-list"
       class="flex-1"
       each={rows()}
       stickyHeaderIndices={headers()}
@@ -159,17 +159,17 @@ export function SessionList(props: {
       scrollbar={false}
     >
       {(r) => {
-        // a recycled cell: what it shows follows the item it is given. A session's row reads the last session the
+        // a recycled cell: what it shows follows the item it is given. A run's row reads the last run the
         // cell was given: as the cell turns into a day's heading (a row deleted above it), the row's words are
-        // read once more before it goes, and must not read a heading as a session
-        let held: { s: SessionInfo; i: number } | undefined;
-        const session = () => {
+        // read once more before it goes, and must not read a heading as a run
+        let held: { s: RunInfo; i: number } | undefined;
+        const run = () => {
           const v = r();
-          if (!("day" in v)) held = v as { s: SessionInfo; i: number };
+          if (!("day" in v)) held = v as { s: RunInfo; i: number };
           return held!;
         };
         return (
-        <If when={dayOf(r())} else={row(session)}>
+        <If when={dayOf(r())} else={row(run)}>
           {(day) => (
             <View class="bg-sidebar px-2 pb-1 pt-2 terminal:bg-transparent">
               <Heading quiet>{day()}</Heading>

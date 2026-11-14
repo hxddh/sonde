@@ -69,7 +69,7 @@ export function ranCommand(command?: string | null): boolean {
   return !!c && !OWN_WORDS.some((w) => c.startsWith(w));
 }
 
-/** The session's title line: `$ command` for a run, sonde's own words otherwise. */
+/** The run's title line: `$ command` for a run, sonde's own words otherwise. */
 export function commandLine(command: string): string {
   return ranCommand(command) ? `$ ${scrubCommand(command)}` : command;
 }

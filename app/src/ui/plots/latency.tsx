@@ -1,4 +1,4 @@
-// Latency: how long requests took — over the session, every one of them,
+// Latency: how long requests took — over the run, every one of them,
 // by kind, as a distribution, the first byte against the rest, chains, and
 // where the time went.
 
@@ -9,7 +9,7 @@ import { bytes, cost, count, duration, percent, transfer } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
 import { FEW } from "../../signals";
-import { AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
+import { AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, runSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable, TEXT } from "../kit";
 import { scatterSaid } from "./answers";
 
@@ -31,7 +31,7 @@ export const latencyLegend = (profile?: Profile): LegendItem[] => [
   ...(!profile || hasTail(profile) ? [{ label: t("latencyTime.p99"), swatch: "bg-latency-tail" }] : []),
 ];
 
-/** How long requests took over the session, on a log scale (a decade a step, as the scatter's): the median a line,
+/** How long requests took over the run, on a log scale (a decade a step, as the scatter's): the median a line,
  * the band from it to p95 and the band on to p99 where a slice has `FEW` requests or more; slices without requests
  * leave a gap. */
 export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean }) {
@@ -60,7 +60,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     return decades(Math.ceil(a - 1e-9), b).filter((d) => d >= a && d <= b);
   };
   const hovered = signal<number | null>(null);
-  const domain = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
+  const domain = (): [number, number] => props.domainMs ?? runSpan(props.profile, props.profile.rate.length);
   const label = () => {
     const last = answered()[answered().length - 1];
     return last ? t("band.text", { p50: duration(last.p50Ms), p95: duration(last.p95Ms), p99: duration(last.p99Ms) }) : "";
@@ -69,7 +69,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     const b = hovered() === null ? null : rows()[hovered()!];
     if (!b || !has(b)) return null;
     // a slice of a few: its median, and how many (no tail to tell)
-    return { title: `+${duration(b.tMs)}`, lines: [tells(b) ? t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) }) : t("band.lineFew", { p50: duration(b.p50Ms) }), t("sessions.requestsN", { n: inSlice(b) })] };
+    return { title: `+${duration(b.tMs)}`, lines: [tells(b) ? t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) }) : t("band.lineFew", { p50: duration(b.p50Ms) }), t("runs.requestsN", { n: inSlice(b) })] };
   };
   return (
     <If when={!terminal() && answered().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
@@ -113,7 +113,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
 /** How many latency buckets a decade is cut in (each about 2.15× the last). */
 const PER_DECADE = 3;
 
-/** Latency over the session as a grid: a column a slice of time, a row a
+/** Latency over the run as a grid: a column a slice of time, a row a
  * bucket of latency on a log scale, a cell's tone how many requests fell in
  * it. What bands average away shows here: two modes, a slow few, a shift.
  * Counted by Rust over every request (`latencyHeat`), never from a sample. */
@@ -137,7 +137,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: `${sinceTick(slotMs(p(), r.bin))} – ${sinceTick(slotMs(p(), r.bin + 1))}`, lines: [`${duration(edge(r.bucket - 1))} – ${duration(edge(r.bucket))}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: `${sinceTick(slotMs(p(), r.bin))} – ${sinceTick(slotMs(p(), r.bin + 1))}`, lines: [`${duration(edge(r.bucket - 1))} – ${duration(edge(r.bucket))}`, t("runs.requestsN", { n: r.n })] } : null;
   };
   const label = () => t("latencyHeat.text", { p50: duration(p().p50Ms ?? 0), p99: duration(p().p99Ms ?? 0) });
   // a decade's edge is named on the scale; the buckets between are not
@@ -182,7 +182,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
 /** Chains of requests that each waited for the one before: how long each took
  * in turn, beside how long the same requests would take eight at once. */
 export function Chains(props: { profile: Profile; max?: number; /** the stretch chosen on the timeline (ms from the start): the chains in it, over it */ domainMs?: [number, number] | null }) {
-  const span = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
+  const span = (): [number, number] => props.domainMs ?? runSpan(props.profile, props.profile.rate.length);
   const inSpan = (c: { startMs: number; endMs: number }) => !props.domainMs || (c.endMs > props.domainMs[0] && c.startMs < props.domainMs[1]);
   const rows = () => (props.profile.chains ?? []).filter(inSpan).slice(0, props.max ?? 5).map((c, i) => ({ ...c, name: t("chains.row", { i: i + 1, n: c.requests }), soon: c.startMs + c.atOnceMs }));
   const hovered = signal<number | null>(null);
@@ -239,7 +239,7 @@ export function Chains(props: { profile: Profile; max?: number; /** the stretch 
 
 // --- where the time went --------------------------------------------------------
 
-/** Where a session's time went: a bar per kind of request, its share of the time the program waited. */
+/** Where a run's time went: a bar per kind of request, its share of the time the program waited. */
 export function TimeSpent(props: { profile: Profile; max?: number }) {
   // (by line of the program, the waiting is Group by's table: "Which lines of the program were slow or failed?")
   const rows = () => props.profile.groups.slice(0, props.max ?? 8).map((g) => ({ ...g, name: groupName(g) }));
@@ -397,7 +397,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
     const pad = (b - a) * 0.015;
     return [a - pad, b + pad];
   };
-  const span = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
+  const span = (): [number, number] => props.domainMs ?? runSpan(props.profile, props.profile.rate.length);
   const p95 = () => log10(Math.max(props.profile.p95Ms ?? 0, 0.1));
   // a decade's line and its words (1 ms, 10 ms…); a scale under a decade wide names its two ends
   const ticks = () => decades(Math.ceil(yLo() - 1e-9), yHi()).filter((d) => d >= yLo() && d <= yHi());

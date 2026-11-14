@@ -1,4 +1,4 @@
-// The pieces of a session shared by Run and Sessions: its header,
+// The pieces of a run shared by Run and Runs: its header,
 // observations, operations, an operation's requests, the program's output,
 // and the panel that records without a program.
 
@@ -8,9 +8,9 @@ import { api } from "../native";
 import { copy, endpoint, endpoints, report } from "../store";
 import type { EpisodeRow, RecordingView } from "../types";
 import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row, TEXT } from "./kit";
-import { OperationView } from "./sessionview";
+import { OperationView } from "./runview";
 
-export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, SessionHeader, SessionList, statusTone } from "./sessionview";
+export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, RunHeader, RunList, statusTone } from "./runview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
 
@@ -26,7 +26,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
     const ep = endpoint();
     if (!ep) return;
     try {
-      await api.sessions.start(ep, policy());
+      await api.runs.start(ep, policy());
       open.set(false);
       props.onChange();
     } catch (e) {
@@ -81,7 +81,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
           <View class="flex-row items-center gap-2">
             <Dot tone="live" />
             <Heading class="flex-1 line-clamp-1">{t("timeline.recording", { url: r().url })}</Heading>
-            <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
+            <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.runs.stop(); props.onChange(); }} testID="record-stop" />
           </View>
           <Text class={TEXT.note}>{t("timeline.pointApp")}</Text>
           <View selectable class="gap-0 rounded-(--radius) bg-muted/60 px-3 py-2">
@@ -96,11 +96,11 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
   );
 }
 
-/** An operation in the inspector, its requests read from its session (`episode`: whole, with every request's id). */
+/** An operation in the inspector, its requests read from its run (`episode`: whole, with every request's id). */
 export function OperationDetail(props: { path: string; episode: EpisodeRow; shared: string[]; onRecord: (id: number) => void; onBack?: () => void }) {
   const rows = () => {
     try {
-      return api.sessions.records(props.path, props.episode.records);
+      return api.runs.records(props.path, props.episode.records);
     } catch (e) {
       report(e);
       return [];

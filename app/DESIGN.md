@@ -314,7 +314,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **One selection**: the stretch of time chosen — a slice pressed on the Operations strip, or two on the Time pane's
   timeline — is one state of the run, said as one chip (what narrows, and its ✕) over both panes. Charts over time
   zoom to a stretch of two slices or more (one slice is marked, the rest quiet); every other chart is
-  reckoned again from the requests that started in it (`sessions.stretch`). Every chart keeps its sentence,
+  reckoned again from the requests that started in it (`runs.stretch`). Every chart keeps its sentence,
   reckoned over the stretch, with the stretch beside it ("… · in +200 ms – +400 ms"); a shared page, which cannot
   reckon, says "of the whole run". A slice or stretch where no request began does not become the stretch.
   A sentence that states a percentile of fewer than twenty requests carries the tile's mark ("· of only 8
@@ -326,7 +326,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   height. The Time pane is a list of chart descriptors drawn by one loop. `CHARTS` names the chart
   components (a `Plot` anywhere else fails the lint, as does a chart used outside a frame); `FRAMED` those that
   draw their own frame (`RunTrend`); `MARKS` what is not a chart and stands in none: a run's `Sparkline` in its
-  row and the shape strip under a run's header (`SessionShape strip`).
+  row and the shape strip under a run's header (`RunShape strip`).
 - **One left edge**: rows' names in one gutter (`GUTTER`, 176 pt, `AXIS_LABEL`), wide enough for
   "GetObject, not found" whole; a legend or a note under a chart of rows starts at the plot's edge (`gutter`). Flows
   have the same gutter either side.
@@ -356,7 +356,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **One time axis** (`TimeAxis`), under every chart over time — the timeline and the strip on Operations, lanes,
   bytes, latency's bands and its grid, the scatter, errors and their rate, chains, the prefix heat
   map, a trial over its clean run (`OVER_TIME` names them): the same round moments (`timeTicks`: 1, 2 or 5 of a
-  power of ten apart, three or four of them) over the same stretch (`sessionSpan`, or the zoom), each said from
+  power of ten apart, three or four of them) over the same stretch (`runSpan`, or the zoom), each said from
   the run's start (`+200 ms`, `sinceTick`). A chart of slices puts a tick on the slice its moment falls in.
   A length of time on an axis (the waterfall, from its operation's first request) has the same ticks, said as
   lengths. lint-charts fails a `PlotAxis` that writes a moment anywhere else.
@@ -462,8 +462,8 @@ red "Broke" on a run that exited as it did. The run header says what found nothi
 ("0%", and under it "67% not found"). A dialog that acts is titled and committed by its act and count ("Abort 2
 uploads"), and a section's fix is its primary (Buckets' "Add abort rule…"; aborting by hand is outline); a
 figure's place holds a figure or says there is none ("Not measured"), never a verb. Chinese keeps a figure with
-its unit (`duration`, `bytes`: a space that does not break). A recording is a **run**, in every word a reader sees
-(ids and file names keep `session` until the CLI's rename). One word for the example and one for the demo ("Open
+its unit (`duration`, `bytes`: a space that does not break). A recording is a **run**, in every word a
+reader or a developer sees. One word for the example and one for the demo ("Open
 the example", "Start the demo"). Nouns for places (Run, Runs, Buckets, Activity), verbs for commands. Chinese is
 written, not translated: `桶`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
 their own (运行 the place Run, 运行记录 the place Runs, 启动 its button, 历史 a run's History tab; 操作 what

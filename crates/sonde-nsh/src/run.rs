@@ -204,7 +204,7 @@ mod tests {
     }
 
     // a POSIX shell's words; on Windows the pseudo-console's output does not
-    // end with the program (FINDINGS 16), which `Sessions::run` handles
+    // end with the program (FINDINGS 16), which `Runs::run` handles
     #[cfg(unix)]
     #[tokio::test]
     async fn runs_in_a_terminal_with_the_environment() {

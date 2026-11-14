@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rewrites every session fixture in the session format this sonde writes.
+"""Rewrites every run fixture in the run format this sonde writes.
 
     python3 scripts/fixtures.py          # rewrite them
     python3 scripts/fixtures.py --check  # exit 1 when one is not current
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = [ROOT / "crates/proxy/tests/fixtures", ROOT / "app/tests/fixtures/sessions"]
+FIXTURES = [ROOT / "crates/proxy/tests/fixtures", ROOT / "app/tests/fixtures/runs"]
 # a record's fields the current version renamed: {old: new}
 RENAMES = {"operation": "kind"}
 
@@ -31,7 +31,7 @@ def version() -> int:
 def current(lines: list[str], want: int) -> list[str]:
     header = json.loads(lines[0])
     if header.get("format") != "sonde-session":
-        raise SystemExit(f"not a session: {lines[0][:80]}")
+        raise SystemExit(f"not a run: {lines[0][:80]}")
     header["version"] = want
     out = [json.dumps(header, separators=(",", ":"), ensure_ascii=False)]
     for line in lines[1:]:

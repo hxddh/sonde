@@ -14,12 +14,12 @@
 mod api;
 mod listing;
 mod run;
-mod sessions;
+mod runs;
 mod state;
 
 pub use api::Sonde;
 pub use listing::Listing;
-pub use sessions::Sessions;
+pub use runs::Runs;
 pub use state::{install, sonde};
 
 use nsh_core::prelude::*;
@@ -29,6 +29,6 @@ use nsh_core::prelude::*;
 fn native(registry: &mut Registry) {
     registry
         .module::<Sonde>()
-        .module::<Sessions>()
+        .module::<Runs>()
         .class::<Listing>();
 }

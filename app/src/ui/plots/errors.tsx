@@ -1,4 +1,4 @@
-// Errors: what failed over the session, by class.
+// Errors: what failed over the run, by class.
 
 import { signal, Text } from "nsh";
 import { Button as BaseButton } from "nsh/base";
@@ -16,10 +16,10 @@ const FAILURES = ["throttled", "server", "client", "transport", "injected"] as c
 export const FAILURE_FILL: Record<(typeof FAILURES)[number], string> = { throttled: "fill-warn/55", server: "fill-status-server", client: "fill-status-client", transport: "fill-status-refused", injected: "fill-status-injected" };
 const FAILURE_SWATCH: Record<(typeof FAILURES)[number], string> = { throttled: "bg-warn/55", server: "bg-status-server", client: "bg-status-client", transport: "bg-status-refused", injected: "bg-status-injected" };
 
-/** The slices the failures charts show of a whole session: those around its failures and retries (`fitted`), or all. */
+/** The slices the failures charts show of a whole run: those around its failures and retries (`fitted`), or all. */
 export const failedSlices = (s: Signals) => fitted(s.errors.series.length, (i) => (s.errors.series[i] ?? 0) + (s.errors.retries[i] ?? 0) > 0);
 
-/** What the failures chart's colors stand for: the classes the session had, each with its count, and its retries. */
+/** What the failures chart's colors stand for: the classes the run had, each with its count, and its retries. */
 export function failureLegend(s: Signals): LegendItem[] {
   const c = s.errors.counts;
   return [
@@ -94,7 +94,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
   );
 }
 
-/** Failures over the session by class — the store's throttles and other 5xx,
+/** Failures over the run by class — the store's throttles and other 5xx,
  * the program's 4xx, no answer, a fault scenario's own — stacked on the
  * timeline's slices, with the times a request was sent again as dots over
  * them. A press on a slice's bar: the operations that failed in it. */

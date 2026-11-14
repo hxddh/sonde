@@ -12,15 +12,15 @@ import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, output, policy, resize, running, start, startedAt, stop } from "../run";
-import { away, endpoint, endpoints, go, openSession, report, sessionsTick, showInSidebar } from "../store";
-import type { SessionInfo, SessionView, Stretch } from "../types";
+import { away, endpoint, endpoints, go, openRun, report, runsTick, showInSidebar } from "../store";
+import type { RunInfo, RunView, Stretch } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Card, CARD, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
-import { programOf, scrubCommand } from "../ui/sessionview";
-import { type Policy, OperationsTable, RecordPanel } from "../ui/session";
-import { Chart, focusOf, LatencyBand, liveFigures, liveSaid, SessionShape, STRIP } from "../ui/plots";
+import { programOf, scrubCommand } from "../ui/runview";
+import { type Policy, OperationsTable, RecordPanel } from "../ui/runparts";
+import { Chart, focusOf, LatencyBand, liveFigures, liveSaid, RunShape, STRIP } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
-import { SessionPane } from "./Sessions";
+import { RunPane } from "./Runs";
 
 const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
   { value: "allow", title: t("timeline.allow"), icon: "shield-check" },
@@ -123,7 +123,7 @@ function ProgramTerminal() {
 
 /** The run's figures as they change: running for, requests, errors, not found; once it ended having sent
  * nothing to show, how it ended. */
-function StatusBand(props: { view: SessionView | null; now: () => number }) {
+function StatusBand(props: { view: RunView | null; now: () => number }) {
   const s = () => props.view?.summary;
   const r = () => lastRun();
   // the errors in the tone their rows are drawn in: the client's where every one was a 4xx
@@ -197,7 +197,7 @@ function LivePanel(props: { live: Stretch }) {
       </View>
       <If when={shaped()}>
         <View class="flex-row gap-4">
-          <SessionShape profile={p()} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="run-shape" />
+          <RunShape profile={p()} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="live-shape" />
           <View class="min-w-0 flex-1">
             <LatencyBand profile={p()} focus={focus} class={STRIP} testID="run-band" />
           </View>
@@ -230,7 +230,7 @@ function LiveOperations() {
     () => (running() ? `${path()}\n${tick()}` : null),
     async () => {
       const p = path();
-      return p ? await api.sessions.live(p) : null;
+      return p ? await api.runs.live(p) : null;
     },
   );
   let held: Stretch | null = null;
@@ -288,7 +288,7 @@ function NoRequests() {
 /** Before the first run: what Run does, and recording without a program (a terminal, which has no sidebar,
  * lists the commands run before here). */
 function Intro() {
-  const recording = signal(api.sessions.current());
+  const recording = signal(api.runs.current());
   return (
     <View class="flex-1 items-center justify-center p-6" testID="run-intro">
       <View class={`${READING} gap-6`}>
@@ -308,7 +308,7 @@ function Intro() {
             </Each>
           </View>
         </If>
-        <RecordPanel recording={recording()} onChange={() => recording.set(api.sessions.current())} policy={policy} />
+        <RecordPanel recording={recording()} onChange={() => recording.set(api.runs.current())} policy={policy} />
       </View>
     </View>
   );
@@ -379,12 +379,12 @@ export function Run() {
   const read = analysis(ended).view;
   const shown = () => (ended() && (read()?.summary.requests ?? 0) > 0 ? ended() : null);
   // the runs, for the view's Compare… and its name: read again as they change
-  const runs = signal<SessionInfo[]>([]);
+  const runs = signal<RunInfo[]>([]);
   effect(() => {
-    sessionsTick();
+    runsTick();
     untracked(() => {
       try {
-        runs.set(api.sessions.list());
+        runs.set(api.runs.list());
       } catch {
         // none yet
       }
@@ -409,7 +409,7 @@ export function Run() {
           {/* one view a run: the pane keyed by its run, so another run gets a fresh one */}
           <Each of={[shown()!]} key={(p) => p}>
             {(p) => (
-              <SessionPane
+              <RunPane
                 path={p()}
                 others={runs}
                 tick={() => 0}
@@ -421,8 +421,8 @@ export function Run() {
                   </If>
                 }
                 onOpen={(other) => {
-                  openSession.set(other);
-                  go("sessions");
+                  openRun.set(other);
+                  go("runs");
                 }}
               />
             )}

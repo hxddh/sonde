@@ -115,12 +115,12 @@ jobs:
       # crates/proxy/tests/signals.rs: two seconds, optimised
       - name: The signals of a million requests
         run: cargo test --release --locked -p sonde-proxy --test signals -- --ignored --nocapture
-      # crates/sonde-nsh/src/sessions.rs: what a window asks for when it opens a
-      # large session, a later page, and the size of what crosses to it
+      # crates/sonde-nsh/src/runs.rs: what a window asks for when it opens a
+      # large run, a later page, and the size of what crosses to it
       - name: A million requests through the app's bridge
         run: |
           cargo run --release --locked -p sonde-proxy --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
-          SONDE_BIG_SESSION="$RUNNER_TEMP/big.sonde" cargo test --release --locked -p sonde-nsh --lib -- --ignored a_large_session --nocapture
+          SONDE_BIG_RUN="$RUNNER_TEMP/big.sonde" cargo test --release --locked -p sonde-nsh --lib -- --ignored a_large_run --nocapture
 
   ui-perf:
     # app/tests/perf.test.tsx: 100,000 rows loaded and scrolled (its numbers

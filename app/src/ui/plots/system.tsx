@@ -21,17 +21,17 @@ export const pct = percent;
 /** The chart components: each draws its `Plot`s as the body of a `Chart`
  * frame. lint-charts fails a `Plot` outside these, and one of these used
  * outside a frame. */
-export const CHARTS = ["Lanes", "SessionShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy"] as const;
+export const CHARTS = ["Lanes", "RunShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy"] as const;
 /** The charts drawn over time: each has the one time axis (`TimeAxis`), so
  * they name the same moments at the same places. lint-charts fails one
  * without it, and a time axis made any other way. */
-export const OVER_TIME = ["Lanes", "SessionShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
+export const OVER_TIME = ["Lanes", "RunShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
 /** The charts of counts: each has the one value scale (`ValueAxis`: zero and the peak, with its unit). */
-export const COUNTS = ["SessionShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
-/** Marks that are not charts and stand in no frame: a session's requests a
- * few points high in its row, and the shape of a session as the strip under
- * its header (`SessionShape strip`). */
-export const MARKS = ["Sparkline", "SessionShape strip"] as const;
+export const COUNTS = ["RunShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
+/** Marks that are not charts and stand in no frame: a run's requests a
+ * few points high in its row, and the shape of a run as the strip under
+ * its header (`RunShape strip`). */
+export const MARKS = ["Sparkline", "RunShape strip"] as const;
 /** Charts that draw their own frame around their plot (their figure stands
  * where a frame's control does): used as they are, never inside another `Chart`. */
 export const FRAMED = ["RunTrend"] as const;
@@ -68,13 +68,13 @@ export const rowsHeight = (n: number) => Math.max(1, n) * PITCH + 8;
 export const TREEMAP = "h-56";
 /** Every plot against time or size that is not rows. */
 export const PLOT = "h-44";
-/** The session's shape on the Time pane, its findings' numbers over it. */
+/** The run's shape on the Time pane, its findings' numbers over it. */
 export const SHAPE = "h-28";
 /** A thin strip: a figure over a program's runs, latency in Run's live panel. */
 export const STRIP = "h-16";
 /** One bar of parts, a stack (Capacity's classes). */
 export const STACK = "h-3";
-/** The shape of a session under its header (`SessionShape strip`). */
+/** The shape of a run under its header (`RunShape strip`). */
 export const SHAPE_STRIP = "h-11";
 /** A mark a few points high, in a row or beside a figure (`Sparkline`). */
 export const MARK = { row: "h-4 w-16", tile: "h-5 w-16 shrink-0", pair: "h-5 w-12 shrink-0" } as const;
@@ -219,20 +219,20 @@ export const ROW_FIGURE_BEFORE = "-translate-y-1/2 pr-2";
 /** Two charts abreast where the board is wide, one under another where it is not. */
 export const HALF = "min-w-[420px] flex-1";
 
-/** A moment on a time axis, read from the session's start: `+230 ms`. The one
+/** A moment on a time axis, read from the run's start: `+230 ms`. The one
  * form of every moment (a length of time — a latency, how long a chain took
  * — is `duration` alone). */
 export const sinceTick = (ms: number) => `+${duration(ms)}`;
 
-/** The whole of a session on a time axis, in ms: its slices' extent (never
- * less than its wall time), the one stretch every chart over a session shows
+/** The whole of a run on a time axis, in ms: its slices' extent (never
+ * less than its wall time), the one stretch every chart over a run shows
  * until a zoom picks another — so their ticks are the same ticks. */
-export const sessionSpan = (x: { startMs: number; binMs: number; wallMs: number }, slices: number): [number, number] => [x.startMs, x.startMs + Math.max(slices * x.binMs, x.wallMs, 1)];
+export const runSpan = (x: { startMs: number; binMs: number; wallMs: number }, slices: number): [number, number] => [x.startMs, x.startMs + Math.max(slices * x.binMs, x.wallMs, 1)];
 
-/** Where slice `i` of a profile or of signals begins, from the session's start (a stretch's own slices begin at
+/** Where slice `i` of a profile or of signals begins, from the run's start (a stretch's own slices begin at
  * its `startMs`). */
 export const slotMs = (x: { startMs: number; binMs: number }, i: number) => x.startMs + i * x.binMs;
-/** The slice a moment (from the session's start) falls in, of a profile or of signals (not past their last). */
+/** The slice a moment (from the run's start) falls in, of a profile or of signals (not past their last). */
 export const sliceAt = (x: { startMs: number; binMs: number }, ms: number) => Math.max(0, Math.floor((ms - x.startMs) / Math.max(x.binMs, 1e-9)));
 
 /** The moments a time axis names over `[a, b]` ms: round ones (1, 2 or 5 of a
@@ -252,7 +252,7 @@ export function timeTicks(domain: [number, number]): number[] {
 }
 
 /** The one time axis, under every chart over time: `timeTicks` of the stretch
- * shown, each said from the session's start (`+200 ms`). A chart of slices
+ * shown, each said from the run's start (`+200 ms`). A chart of slices
  * (a band scale) gives how many it shows (`slices`): a tick stands on the
  * slice its moment falls in. `lengths` for an axis of time within one
  * operation: the same ticks, said as lengths. lint-charts fails a `PlotAxis`
@@ -305,7 +305,7 @@ export const HEADROOM = { plot: 1.25, strip: 1.45 } as const;
 
 /** A budget drawn on its chart: sonde.toml's limit (`max-p95`, `max-errors`,
  * `max-waiting`) as a dashed line in the warning's tone, its words over it at
- * the far edge ("budget 50 ms"). Nothing where the session's program has no
+ * the far edge ("budget 50 ms"). Nothing where the run's program has no
  * budget for it. The chart's domain must reach it (`budgetTop`). */
 export function Budget(props: { value: number | null | undefined; say: (v: number) => string }) {
   return (
@@ -347,7 +347,7 @@ export type Outcome = (typeof OUTCOME_TONES)[number];
 export const OUTCOME_TOKEN: Record<Outcome, string> = { ok: "bar", miss: "status-miss", client: "status-client", fail: "status-server", injected: "status-injected" };
 /** A request's outcome in a chart: its status's, or (a fault scenario answered it, not the store) the injected one. */
 export const toneOf = (x: { id?: number; status?: number | null }, injected?: Set<number>): Outcome => (x.id !== undefined && injected?.has(x.id) ? "injected" : statusTone(x.status ?? null));
-/** The legend's entry for requests a scenario answered, when a session has any. */
+/** The legend's entry for requests a scenario answered, when a run has any. */
 export const injectedLegend = (ids?: number[]): LegendItem[] => (ids?.length ? [{ label: t("plots.injected"), swatch: TONE.injected.fill }] : []);
 export const tones = () => ({ type: "ordinal" as const, domain: [...OUTCOME_TONES, "dim"], range: [...OUTCOME_TONES.map((x) => token(OUTCOME_TOKEN[x] as never) as unknown as string), token("bar-track" as never) as unknown as string] });
 
@@ -475,10 +475,10 @@ export function NoneInStretch() {
 
 // --- one moment across the charts ------------------------------------------------
 
-/** The moment the pointer rests on in one time chart (ms from the session's
+/** The moment the pointer rests on in one time chart (ms from the run's
  * start), marked in the others: the charts of a pane read as one. Each pane
  * (and each window) makes its own with `focusOf()` and hands it to its
- * charts; two sessions open at once do not mark each other's moments. */
+ * charts; two runs open at once do not mark each other's moments. */
 export type Focus = { (): number | null; set: (at: number | null) => void };
 export const focusOf = (): Focus => signal<number | null>(null);
 
@@ -616,10 +616,10 @@ const FIT_LEAST = 12;
 
 /** The slices a chart of a few marks over time shows when no stretch is
  * chosen: from a slice before its first mark to one after its last, never
- * fewer than `FIT_LEAST` (nor a fifth of the session). Two failures in a
+ * fewer than `FIT_LEAST` (nor a fifth of the run). Two failures in a
  * run's last moment are two bars of a dozen slices, not two slivers at the
  * edge of a chart nine tenths empty. Null where that is (nearly) the whole
- * session: it shows the whole session, as every other chart does. */
+ * run: it shows the whole run, as every other chart does. */
 export function fitted(n: number, has: (i: number) => boolean): [number, number] | null {
   let a = -1;
   let b = -1;
@@ -635,7 +635,7 @@ export function fitted(n: number, has: (i: number) => boolean): [number, number]
   return hi - lo + 1 >= n * 0.8 ? null : [lo, hi];
 }
 
-/** A stretch of the session's slices (a zoom), or all of them. */
+/** A stretch of the run's slices (a zoom), or all of them. */
 export const stretch = <T,>(rows: T[], range?: [number, number] | null): T[] => (range ? rows.slice(range[0], range[1] + 1) : rows);
 
 /** A path too long for its place, cut at its start on a folder's edge: the

@@ -1,4 +1,4 @@
-// Two sessions side by side — a recording and its replay on another
+// Two runs side by side — a recording and its replay on another
 // endpoint, or any two — and the dialog that starts a replay.
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
@@ -7,13 +7,13 @@ import { change, clock, count, date, day, dayRange, duration, hm, percent, rate,
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
-import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
-import type { LatencyChange, Profile, SessionInfo, Signals } from "../types";
+import { endpoint, endpoints, go, reading, report, runsChanged } from "../store";
+import type { LatencyChange, Profile, RunInfo, Signals } from "../types";
 import { Icon } from "./icon";
 import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { RunChangeView } from "./runchange";
-import { StateBadge } from "./sessionview";
-import { fileName, sessionName } from "./manage";
+import { StateBadge } from "./runview";
+import { fileName, runName } from "./manage";
 import { brief, FEW, handful, signalsOf } from "../signals";
 import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
 
@@ -27,12 +27,12 @@ interface Comparison {
 
 type Answers = { comparison: Comparison; a: string; b: string; latency?: LatencyChange[]; endpoints?: [string, string] };
 
-/** Two sessions side by side, the earlier first: whichever was opened, a run is compared with the
+/** Two runs side by side, the earlier first: whichever was opened, a run is compared with the
  * one before it ("before → after"), never the other way round. */
 export function CompareView(props: { a: string; b: string; onClose: () => void }) {
   const created = (p: string) => {
     try {
-      return api.sessions.list().find((x) => x.path === p)?.created ?? "";
+      return api.runs.list().find((x) => x.path === p)?.created ?? "";
     } catch {
       return "";
     }
@@ -45,17 +45,17 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
 }
 
 function ComparePair(props: { a: string; b: string; onClose: () => void }) {
-  // the sessions there are, read once per pair: their names, and which one is a replay
-  const sessions = computed((): SessionInfo[] => {
+  // the runs there are, read once per pair: their names, and which one is a replay
+  const listed = computed((): RunInfo[] => {
     props.a;
     props.b;
     try {
-      return api.sessions.list();
+      return api.runs.list();
     } catch {
       return [];
     }
   });
-  const info = (p: string) => sessions().find((x) => x.path === p);
+  const info = (p: string) => listed().find((x) => x.path === p);
   // both are being read: neither is tidied away meanwhile
   effect(() => (reading(props.a), reading(props.b)));
   // which one is a replay: its answers are compared with its original's, whichever was opened first
@@ -63,15 +63,15 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
     const isReplay = (p: string) => !!info(p)?.command?.startsWith("replay of ");
     return isReplay(props.a) ? "a" : isReplay(props.b) ? "b" : null;
   });
-  // the two runs as sessions are named everywhere: the program (or the user's title) and when it ran
+  // the two runs as runs are named everywhere: the program (or the user's title) and when it ran
   const title = () => {
     const [a, b] = [info(props.a), info(props.b)];
-    if (!a || !b) return `${a ? sessionName(a) : fileName(props.a)} → ${b ? sessionName(b) : fileName(props.b)}`;
-    if (sessionName(a) !== sessionName(b)) return `${sessionName(a)} · ${date(a.created)} → ${sessionName(b)} · ${date(b.created)}`;
+    if (!a || !b) return `${a ? runName(a) : fileName(props.a)} → ${b ? runName(b) : fileName(props.b)}`;
+    if (runName(a) !== runName(b)) return `${runName(a)} · ${date(a.created)} → ${runName(b)} · ${date(b.created)}`;
     // one program on one day: the day once, and the two times (to the second where they share a minute)
-    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${dayRange(a.created, b.created)}`;
+    if (day(a.created) !== day(b.created)) return `${runName(a)} · ${dayRange(a.created, b.created)}`;
     const fine = hm(a.created) === hm(b.created) ? "s" : "m";
-    return `${sessionName(a)} · ${day(a.created)} · ${clock(a.created, fine)} → ${clock(b.created, fine)}`;
+    return `${runName(a)} · ${day(a.created)} · ${clock(a.created, fine)} → ${clock(b.created, fine)}`;
   };
   const answers = resource(
     () => `${props.a}\n${props.b}`,
@@ -79,7 +79,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
       // the original first: a replay's records name the original's
       const [o, r] = untracked(replayOf) === "a" ? [props.b, props.a] : [props.a, props.b];
       try {
-        return (await api.sessions.compare(o, r)) as Answers;
+        return (await api.runs.compare(o, r)) as Answers;
       } catch (e) {
         report(e);
         return null;
@@ -89,14 +89,14 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   // a failure is said in place, with Try again: never "Loading…" for good
   const runs = resource(
     () => `${props.a}\n${props.b}`,
-    () => api.sessions.compareRuns(props.a, props.b),
+    () => api.runs.compareRuns(props.a, props.b),
   );
-  // both runs by their four signals, as each session's header has them, and their profiles (the two over time)
+  // both runs by their four signals, as each run's header has them, and their profiles (the two over time)
   const views = resource(
     () => `${props.a}\n${props.b}`,
     async () => {
       try {
-        const [a, b] = await Promise.all([api.sessions.view(props.a), api.sessions.view(props.b)]);
+        const [a, b] = await Promise.all([api.runs.view(props.a), api.runs.view(props.b)]);
         const [x, y] = [signalsOf(a), signalsOf(b)];
         return { signals: x && y ? ([x, y] as [Signals, Signals]) : null, profiles: a.profile && b.profile ? ([a.profile, b.profile] as [Profile, Profile]) : null };
       } catch {
@@ -191,7 +191,7 @@ interface ReplayPlan {
   url: string;
 }
 
-/** One session replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
+/** One run replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
 interface StoreRun {
   endpoint: string;
   path: string;
@@ -262,7 +262,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
   );
 }
 
-/** Replays a session on an endpoint the user picks; `onDone` gets the replay's session. */
+/** Replays a run on an endpoint the user picks; `onDone` gets the replay's run. */
 export function ReplayDialog(props: { path: string; open: boolean; onClose: () => void; onDone: (replay: string) => void }) {
   const target = signal<string | null>(endpoint());
   const busy = signal(false);
@@ -279,12 +279,12 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         runs.set(null);
       });
   });
-  // the plan reads the session once per store chosen, not once per redraw
+  // the plan reads the run once per store chosen, not once per redraw
   const plan = computed((): ReplayPlan | null => {
     const ep = target();
     if (!ep || !props.open) return null;
     try {
-      return untracked(() => api.sessions.replayPlan(props.path, ep) as ReplayPlan);
+      return untracked(() => api.runs.replayPlan(props.path, ep) as ReplayPlan);
     } catch (e) {
       report(e);
       return null;
@@ -298,8 +298,8 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     try {
       const stores = [ep, ...also().filter((x) => x !== ep)];
       if (stores.length === 1) {
-        const r = (await api.sessions.replay(props.path, ep, p.prefix)) as { path: string };
-        sessionsChanged();
+        const r = (await api.runs.replay(props.path, ep, p.prefix)) as { path: string };
+        runsChanged();
         props.onClose();
         props.onDone(r.path);
         return;
@@ -307,16 +307,16 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       // each store's replay on its own: one that fails leaves the others' results
       const settled = await Promise.allSettled(
         stores.map(async (id) => {
-          const r = (await api.sessions.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] } };
-          const c = (await api.sessions.compare(props.path, r.path)) as { latency?: LatencyChange[] };
+          const r = (await api.runs.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] } };
+          const c = (await api.runs.compare(props.path, r.path)) as { latency?: LatencyChange[] };
           return { endpoint: endpoints().find((e) => e.id === id)?.name ?? id, path: r.path, compared: r.comparison.compared, differ: r.comparison.differences.reduce((s, d) => s + d.count, 0), latency: c.latency ?? [] };
         }),
       );
       for (const x of settled) if (x.status === "rejected") report(x.reason);
       const done = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
       runs.set(done);
-      // the replays are sessions: the list shows them
-      sessionsChanged();
+      // the replays are runs: the list shows them
+      runsChanged();
     } catch (e) {
       report(e);
     } finally {

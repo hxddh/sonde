@@ -7,7 +7,7 @@ import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from 
 import { change, count, day, duration, factor, percent } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
-import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
+import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, runSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
 import { prefixNames } from "./where";
 import { Figure, terminal, textual, SimpleTable, SURFACE, TONE } from "../kit";
 
@@ -35,8 +35,8 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
   // one axis for both: the longer of the two runs, or the stretch chosen
   const span = (): [number, number] => {
     if (props.domainMs) return props.domainMs;
-    const a = sessionSpan(props.trial, props.trial.rate.length);
-    const b = sessionSpan(props.clean, props.clean.rate.length);
+    const a = runSpan(props.trial, props.trial.rate.length);
+    const b = runSpan(props.clean, props.clean.rate.length);
     return [0, Math.max(a[1], b[1])];
   };
   const sentTop = () => Math.max(1, ...trial().map((r) => r.sent), ...clean().map((r) => r.sent));

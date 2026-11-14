@@ -1,4 +1,4 @@
-// What sonde says about a session, in the reader's language. Rust gives each
+// What sonde says about a run, in the reader's language. Rust gives each
 // title, note and observation as phrases (a key and its arguments) beside
 // its English text (crates/proxy/src/phrase.rs); English shows that text,
 // other languages say the phrases from their templates here. A phrase with

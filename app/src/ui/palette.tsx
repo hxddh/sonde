@@ -10,11 +10,11 @@ import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { lastRun, openLastRun, running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openSession, openSessionFile, refreshSettings, SETTINGS_TABS, sessionsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
-import type { BucketEntry, SessionInfo } from "../types";
+import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
+import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row, TEXT } from "./kit";
-import { programOf, scrubCommand } from "./sessionview";
+import { programOf, scrubCommand } from "./runview";
 
 export const paletteOpen = signal(false);
 
@@ -34,9 +34,9 @@ interface Action {
   run: () => void;
 }
 
-const AREA_ICON = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
+const AREA_ICON = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
 
-/** What is typed in the palette: with a word, every session is searched. */
+/** What is typed in the palette: with a word, every run is searched. */
 const typed = signal("");
 /** Whether a word is typed: the list is rebuilt when that changes, not at every key. */
 const searching = computed(() => typed().trim() !== "");
@@ -54,25 +54,25 @@ function actions(buckets: BucketEntry[]): Action[] {
   // on Run, the run that ended in the Runs place, where it sits among the others
   if (area() === "run" && lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
   // the newest runs; every one once a word is typed (by its command, title or endpoint)
-  sessionsTick();
-  let sessions: SessionInfo[] = [];
+  runsTick();
+  let runs: RunInfo[] = [];
   try {
-    sessions = api.sessions.list().slice(0, searching() ? 1000 : 6);
+    runs = api.runs.list().slice(0, searching() ? 1000 : 6);
   } catch {
     // none yet
   }
-  sessions.forEach((s) =>
+  runs.forEach((s) =>
     list.push({
-      id: `session:${s.path}`,
+      id: `run:${s.path}`,
       // by its title, else its program, and when it ran: the command itself is searched, not shown
       label: s.title || programOf(s.command) || s.name,
-      group: t("palette.sessions"),
+      group: t("palette.runs"),
       icon: "list-clock",
       keywords: [s.endpoint, s.name, ...(s.command ? [scrubCommand(s.command)] : [])],
       hint: `${date(s.created)} · ${s.endpoint} · ${t("run.bandRequests", { n: s.requests })}`,
       run: () => {
-        openSession.set(s.path);
-        go("sessions");
+        openRun.set(s.path);
+        go("runs");
       },
     }),
   );
@@ -108,7 +108,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   // the example and the demo: their one door after the welcome
   list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", run: openExample });
   if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", run: () => void startDemo() });
-  if (!terminal()) list.push({ id: "open-file", label: t("sessions.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "session", "import"], run: () => void openSessionFile() });
+  if (!terminal()) list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   const theme = settings()?.theme ?? "system";
   (["light", "dark", "system"] as const).forEach((m) =>

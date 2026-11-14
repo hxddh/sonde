@@ -155,7 +155,7 @@ for p in files:
                 say(p, n, "a treemap of its own height: class={TREEMAP}")
         for name in CHARTS:
             if re.search(rf"<{name}\b", line) and p not in SYSTEM and name not in FRAMED:
-                strip = name == "SessionShape" and " strip" in line
+                strip = name == "RunShape" and " strip" in line
                 if n not in framed and "body:" not in line and not strip and not re.search(r"body: \(\) =>", "\n".join(lines[max(0, n - 4) : n])):
                     say(p, n, f"<{name}> outside the frame: put it in a <Chart> (or a chart descriptor's body)")
         # time's ticks are TimeAxis's: another bottom axis has its own name
