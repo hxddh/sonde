@@ -85,6 +85,11 @@ its dot (`dot`), its icon (`icon`) and a quiet wash with words (`badge`). The to
 `client`, `fail`, `refused`, `injected`; then `warn`, `info`, `live` (at work now), `plain`, `quiet`. `Stat`, `Figure`,
 `Badge`, `Dot`, `Notice`, toasts and a request's status all read it; there is no other.
 
+**Colour marks, it does not paint.** A status's colour is on its dot, its icon or a 2 pt rule, never on a row's text
+or a tile's figure (both stay in the text's colour, a quiet one muted). A verdict or a state ("Broke", "Latest",
+"Missing") is a `Badge`: a quiet word in its tone, no pill. What is merely done says nothing (Activity has no
+"Finished"). The one coloured words are a finding's saving ("↘ 10 fewer requests", `info`).
+
 Theme tokens only (`theme.json`, light and dark). Status has its own roles —
 `status-ok`, `status-miss`, `status-client`, `status-server`, `status-refused`,
 `status-injected` (a fault scenario's answer, never the store's), `warn`, `info` — and formats theirs (`fmt-*`); never a palette color in a page. The
@@ -183,20 +188,22 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     its own quantity and drawn as that kind: counts as bars, latency as a line, in flight as steps, on a baseline;
   - *then columns by rank* (`fitColumns`): a table shows its always-columns, then the ranked ones while the column
     that takes the rest keeps its room; the first that does not fit goes with every one ranked after it. The
-    operations: the outcome, the operation and Took stay; then requests, time, when, format, notes. The objects: name
+    operations: the outcome, the operation and Took stay; then requests, time, format, notes (no "when" bar: the time
+    says when, the strip over them where; Format only where rows differ). The objects: name
     and size stay; then Modified, Class, Parts. Ranked columns stand last, in rank order, because DataTable keeps a
     column's state by its place;
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
   - tiles (`Tiles`) go in rows of equal count, each as high as its row: four are four abreast or two and two,
-    never three and one; five that do not fit are a line each, never three and two, nor tight enough to cut a
-    label; where not even two fit as they read (a bucket's tiles beside an inspector) each takes a line of its own
-    — what it counts at its start, the figure at its end — before any label or figure would be cut. That one-line
+    never three and one; five that do not fit go as many abreast as fit, the last row the shorter. They never stand
+    one per row in a pane 560 pt wide or more; under it each takes a line of its own — what it counts at its start,
+    the figure at its end — before any label or figure would be cut. That one-line
     tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
     no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
     goes to the next line;
   - a session's header **folds to one line** while the pane under it is scrolled from its top: what ran, its first
-    three figures (each still opens its chart), its commands; at the top again it opens;
+    three figures said with what they count ("172 requests · 0% errors · 1.4 ms", quiet words, each still opens its
+    chart), its commands; at the top again it opens;
   - Run's output yields to its result once the program has ended (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯` by their words — never a row of unlabelled icons (a session's header narrower than
@@ -210,7 +217,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
-- **Nothing appears and goes.** What a place may show has its room from the start: a bucket's four tiles, the
+- **Nothing appears and goes.** What a place may show has its room from the start: the
   sessions' search field, a pane's four tabs (With output and Runs are dimmed for a session that has none, they
   do not go). A value arrives in its place; the layout does not change to make it.
 - **One settings width.** Settings and Endpoints are `FORM` wide, so their edges line up across the tabs.
@@ -228,13 +235,13 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 
 | Concept | Rule |
 |---|---|
-| HTTP status | `StatusMark`: a dot and the code in mono; success quiet, anything else in its tone; a request a fault scenario answered in the injected tone, and said so in words beside it |
+| HTTP status | `StatusMark`: a dot in its tone and the code in mono (a success muted); a request a fault scenario answered has the injected dot, and says so in words beside it |
 | Count | `count()`, tabular, never mono; a section's count is "Title · n" |
 | Size | `bytes()`, tabular, at the end of its column |
 | Duration | `duration()` (0.4 ms, 840 ms, 2.35 s, 3 min 05 s). One word per meaning: **Took** for how long an operation or a run lasted, **Waiting** for a program's time on the store, **Latency** for one request |
 | Time | clock time in lists (`14:02:11.204`), `date()` in headers, never raw ISO |
 | Cost | `cost()` with its currency; one cost one writing on a pane (a column's small figures as `costParts` writes them, "0.0072", never "<0.01" beside it) |
-| Key or path | mono, cut in the middle, once |
+| Key or path | `Path`: mono, on one line, cut in its middle with no space against the cut, never cut and wrapped; keys listed together share their prefix as `…/` (`shortKeys`), each keeping its folder and what tells it apart |
 | Command | mono, `$ ` before it, variables' values hidden |
 | Opening | "Open …", a chevron on rows |
 | Removing | "Delete" for data (a session, a version, objects), "Remove" for configuration (an endpoint); the trash icon, a confirmation, so both end with `…` |
@@ -254,7 +261,15 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   card in place over the list, which stays under it (a sheet in the Settings window
   would cover its tabs); while it is open its Save is the page's one primary.
 - **Dialogs**: short decisions only (a typed confirmation, the replay target), over
-  the scrim.
+  the scrim, in two widths: 480, and 640 for one that lists. A dialog with states (the trial's plan, progress and
+  verdicts) is `steady`: one frame throughout, its body scrolling inside with its edges fading, and its foot always
+  has a primary (done: Close). A dialog's intro is set at the body's leading; a command in it is one line.
+- **Inside a card or the inspector, nothing is boxed again**: a `KeyValue` or a `SimpleTable bare` has hairlines
+  between its rows only, no outer border and no rules between columns; names are sans and muted, mono is for
+  identifiers. Twin cards stand apart by their gap, with no rule between them.
+- **Chrome on hover or selection** (`REVEAL`): a row's pencil, trash or Decode and a tile's chevron show under the
+  pointer, on the selected row, or while the keyboard is inside the row; a table's sort mark shows on its sorted
+  column and under the pointer, right after its title.
 
 ## Spacing and size
 
@@ -276,6 +291,10 @@ nowhere else.
   code change). A state has its verb as its label ("Clear baseline", not "Baseline ✓ — clear").
 - Secondary commands live in a visible menu (`⋯`) or a context menu, and every one has
   another path (the palette, a shortcut, the inspector).
+- **One header pattern.** A session's header is its command (one line, regular mono, cut in its middle), a meta
+  line, then one primary (Run again) and `⋯` — Try under faults…, Replay on… and Compare… are there and in the
+  palette's "This session". Every Buckets section opens on the same head (`ToolBar`): its title, its scope (the
+  bucket and prefix), its actions at the end; the title bar says the place only, and nothing repeats it.
 - Destructive actions are read-only by default and go through a dry run and a typed
   confirmation; the result is in the audit log (Activity › Changes).
 

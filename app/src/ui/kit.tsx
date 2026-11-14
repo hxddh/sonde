@@ -267,7 +267,7 @@ export const READING = "w-full max-w-[560px]";
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
  * (a session's signal, a comparison's fact with its two lines, a bucket's
- * figure), how high a dialog's scrolling part grows before it scrolls, a
+ * size), how high a dialog's scrolling part grows before it scrolls, a
  * terminal's matrix, and the findings' room over a session's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
@@ -277,7 +277,6 @@ export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as
 export const SIZES = {
   signalTile: 168,
   compareTile: 176,
-  bucketTile: 200,
   capacityTile: 128,
   dialogScroll: 480,
   terminalMatrix: 640,
@@ -616,7 +615,13 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
+export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a session's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
+  if (props.command !== undefined)
+    return (
+      <Text testID={props.testID} role="header" accessibilityLabel={props.command} class={`font-mono ${TEXT.body} line-clamp-1 ${props.class ?? ""}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+        {props.command}
+      </Text>
+    );
   return (
     <Text
       testID={props.testID}

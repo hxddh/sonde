@@ -110,16 +110,6 @@ export function gitText(g: SessionView["header"]["git"]): string {
   return `${g.commit.slice(0, 7)}${g.branch ? ` (${g.branch})` : ""}${g.dirty ? ` · ${t("git.dirty")}` : ""}`;
 }
 
-/** A session's title: the command on one line, in regular-weight mono at the
- * body's size, cut in its middle (its program and its last arguments stay),
- * never wrapped through an argument. Heard whole. */
-function CommandTitle(props: { text: string }) {
-  return (
-    <Text role="header" accessibilityLabel={props.text} class={`font-mono ${TEXT.body} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
-      {props.text}
-    </Text>
-  );
-}
 
 /** The command and where it ran, then the session's figures. */
 export function SessionHeader(props: { view: SessionView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
@@ -177,7 +167,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
   const folded = () => (
     <View testID="session-folded" class="flex-row items-center gap-3">
       <View selectable class="min-w-0 flex-1">
-        <CommandTitle text={command() ? commandLine(command()!) : props.view.header.endpoint} />
+        <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
       </View>
       {/* (the session's figures, folded: the same summary in a line, quiet words, no buttons' look) */}
       <View testID="session-summary" class="shrink-0 flex-row items-center" accessibilityLabel={line()}>
@@ -202,7 +192,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
-          <CommandTitle text={command() ? commandLine(command()!) : props.view.header.endpoint} />
+          <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
           <Text testID="session-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
         </View>
         {acts()}
