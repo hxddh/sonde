@@ -22,7 +22,7 @@ public class Smoke {
 
     public static void main(String[] args) throws Exception {
         String bucket = System.getenv().getOrDefault("SMOKE_BUCKET", "sonde-smoke");
-        S3Client s3 = S3Client.builder().forcePathStyle(true).build();
+        S3Client s3 = S3Client.create();
         try {
             s3.createBucket(b -> b.bucket(bucket));
         } catch (BucketAlreadyOwnedByYouException | BucketAlreadyExistsException e) {
@@ -49,9 +49,7 @@ public class Smoke {
         check(s3.headObject(b -> b.bucket(bucket).key(p + "big.bin")).contentLength() == big.length, "HEAD length");
         check(s3.listObjectsV2(b -> b.bucket(bucket).prefix(p)).contents().size() >= 2, "LIST");
         s3.copyObject(b -> b.sourceBucket(bucket).sourceKey(p + "small.txt").destinationBucket(bucket).destinationKey(p + "copy.txt"));
-        try (S3Presigner presigner = S3Presigner.builder()
-                .serviceConfiguration(software.amazon.awssdk.services.s3.S3Configuration.builder().pathStyleAccessEnabled(true).build())
-                .build()) {
+        try (S3Presigner presigner = S3Presigner.create()) {
             URI url = presigner.presignGetObject(b -> b.signatureDuration(Duration.ofMinutes(1))
                     .getObjectRequest(g -> g.bucket(bucket).key(p + "copy.txt"))).url().toURI();
             try (InputStream in = url.toURL().openStream()) {

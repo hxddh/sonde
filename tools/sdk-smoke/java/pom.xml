@@ -13,12 +13,12 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
-      <version>2.29.52</version>
+      <version>2.59.1</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-nop</artifactId>
-      <version>2.0.16</version>
+      <version>2.0.20</version>
     </dependency>
   </dependencies>
   <build>
@@ -26,7 +26,7 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
-        <version>3.5.0</version>
+        <version>3.7.0</version>
         <configuration><mainClass>smoke.Smoke</mainClass></configuration>
       </plugin>
     </plugins>

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Runs the SDK smoke programs (tools/sdk-smoke) through `sonde run` and checks
-# each session: the program must succeed and sonde must have recorded no
-# failed request (lookups answered 404 are fine).
+# each run: the program must succeed and sonde must have recorded requests,
+# none of them failed (lookups answered 404 are fine).
 #
 #   scripts/sdk-smoke.sh [sonde options, e.g. --url http://127.0.0.1:9100] [-- sdk...]
 #
-# SDKs: python node go java (default: every one whose toolchain is installed).
-# Sessions go to $SMOKE_SESSIONS (default: a temporary directory).
+# SDKs: python node go java aws polars, and tls (boto3 again, through `run
+# --tls`: https and the unsigned streaming trailer). Default: every one whose
+# toolchain is installed. Runs go to $SMOKE_SESSIONS (default: a temporary
+# directory).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 sonde="${SONDE:-$root/target/debug/sonde}"
@@ -14,18 +16,26 @@ opts=()
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do opts+=("$1"); shift; done
 [ "${1:-}" = "--" ] && shift
 sdks=("$@")
-[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java)
+[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars tls)
 out="${SMOKE_SESSIONS:-$(mktemp -d)}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"   # the builds below change directory
 smoke="$root/tools/sdk-smoke"
 fail=0
+py="${SMOKE_PYTHON:-python3}"
 for sdk in "${sdks[@]}"; do
+  run=(run --policy allow)
   case "$sdk" in
-    python)
-      py="${SMOKE_PYTHON:-python3}"
-      "$py" -c "import boto3" 2>/dev/null || { echo "skip python (no boto3 for $py)"; continue; }
+    python|tls)
+      "$py" -c "import boto3" 2>/dev/null || { echo "skip $sdk (no boto3 for $py)"; continue; }
+      [ "$sdk" = tls ] && run+=(--tls)
       cmd=("$py" "$smoke/python/smoke.py") ;;
+    polars)
+      "$py" -c "import boto3, polars" 2>/dev/null || { echo "skip polars (no polars for $py)"; continue; }
+      cmd=("$py" "$smoke/polars/smoke.py") ;;
+    aws)
+      command -v aws >/dev/null || { echo "skip aws"; continue; }
+      cmd=(bash "$smoke/aws/smoke.sh") ;;
     node)
       [ -d "$smoke/node/node_modules" ] || (cd "$smoke/node" && npm install --silent --no-audit --no-fund) || { echo "skip node"; continue; }
       cmd=(node "$smoke/node/smoke.mjs") ;;
@@ -42,11 +52,13 @@ for sdk in "${sdks[@]}"; do
   session="$out/$sdk.sonde"
   echo "== $sdk"
   # (each program removes what it wrote: deletes are asked for)
-  if ! "$sonde" "${opts[@]}" run --policy allow -o "$session" -- "${cmd[@]}"; then
+  if ! "$sonde" "${opts[@]}" "${run[@]}" -o "$session" -- "${cmd[@]}"; then
     echo "!! $sdk: the program failed (session: $session)"; fail=1; continue
   fi
-  errors="$("$sonde" show "$session" --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["summary"]["errors"])')"
-  if [ "$errors" != "0" ]; then
+  read -r requests errors < <("$sonde" show "$session" --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["summary"]; print(s["requests"], s["errors"])')
+  if [ "${requests:-0}" = "0" ]; then
+    echo "!! $sdk: nothing reached sonde"; fail=1
+  elif [ "$errors" != "0" ]; then
     echo "!! $sdk: $errors failed requests"; "$sonde" show "$session" --errors; fail=1
   fi
 done

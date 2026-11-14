@@ -2,10 +2,9 @@
 import io, os, sys, urllib.request
 import boto3
 from boto3.s3.transfer import TransferConfig
-from botocore.config import Config
 
 bucket = os.environ.get("SMOKE_BUCKET", "sonde-smoke")
-s3 = boto3.client("s3", config=Config(s3={"addressing_style": "path"}))
+s3 = boto3.client("s3")
 try:
     s3.create_bucket(Bucket=bucket)
 except s3.exceptions.BucketAlreadyOwnedByYou:

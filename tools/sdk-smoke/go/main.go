@@ -32,7 +32,7 @@ func main() {
 	}
 	cfg, err := config.LoadDefaultConfig(ctx)
 	check(err, "config")
-	c := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
+	c := s3.NewFromConfig(cfg)
 	if _, err := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &bucket}); err != nil {
 		var owned *types.BucketAlreadyOwnedByYou
 		var exists *types.BucketAlreadyExists
