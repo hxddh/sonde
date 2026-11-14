@@ -8,7 +8,8 @@ import { Area, Bar, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Cell } fro
 import { bytes, cost, count, duration, percent, transfer } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
+import { FEW } from "../../signals";
+import { AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable, TEXT } from "../kit";
 import { scatterSaid } from "./answers";
 
@@ -16,30 +17,48 @@ import { scatterSaid } from "./answers";
  * p95) and their tail (p95 to p99). */
 export const LATENCY_FILL = { body: "fill-latency-body", tail: "fill-latency-tail" } as const;
 /** What the bands stand for, for a frame's legend. */
-/** Whether any slice has a tail to draw: with few requests in each, a slice's p95 is its p99 and the band between them is nothing. */
-export const hasTail = (profile: Profile): boolean => profile.rate.some((b) => b.p99Ms > b.p95Ms + 1e-9);
+/** Requests in a slice of the profile. */
+const inSlice = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server;
+/** Whether a slice's p95 and p99 are drawn: of `FEW` requests or more (in a slice of two, its "p95" is its slower
+ * request, and a spike of it says nothing of a tail). */
+const tells = (b: Profile["rate"][number]) => inSlice(b) >= FEW;
+/** Whether any slice has a tail to draw: enough requests, and a p99 past its p95. */
+export const hasTail = (profile: Profile): boolean => profile.rate.some((b) => tells(b) && b.p99Ms > b.p95Ms + 1e-9);
 /** The bands' legend: the tail is named where one is drawn; where no slice has one, that is said in its place. */
 export const latencyLegend = (profile?: Profile): LegendItem[] => [
   { label: t("latencyTime.p50"), swatch: "border-foreground", line: "solid" },
-  { label: t("latencyTime.p95"), swatch: "bg-latency-body" },
+  ...(!profile || profile.rate.some(tells) ? [{ label: t("latencyTime.p95"), swatch: "bg-latency-body" }] : []),
   ...(!profile || hasTail(profile) ? [{ label: t("latencyTime.p99"), swatch: "bg-latency-tail" }] : []),
 ];
 
-/** How long requests took over the session: the band from median to p95,
- * the p99 a line above it; slices without requests leave a gap. */
+/** How long requests took over the session, on a log scale (a decade a step, as the scatter's): the median a line,
+ * the band from it to p95 and the band on to p99 where a slice has `FEW` requests or more; slices without requests
+ * leave a gap. */
 export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean; /** the project's `max-p95`, in ms: its line */ budgetMs?: number | null }) {
   // every slice, so one without requests leaves a gap rather than a line across it
   const rows = () => props.profile.rate;
-  const has = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server > 0;
+  const has = (b: Profile["rate"][number]) => inSlice(b) > 0;
   const answered = () => rows().filter(has);
-  const gap = (f: (b: Profile["rate"][number]) => number) => (b: Profile["rate"][number]) => (has(b) ? f(b) : (undefined as unknown as number));
+  const lg = (ms: number) => log10(Math.max(ms, 0.01));
+  const gap = (ok: (b: Profile["rate"][number]) => boolean, f: (b: Profile["rate"][number]) => number) => (b: Profile["rate"][number]) => (ok(b) ? lg(f(b)) : (undefined as unknown as number));
   // the scale of what is shown: the zoomed stretch's slices only
   const inView = () => {
     const d = props.domainMs;
     return d ? answered().filter((b) => b.tMs >= d[0] && b.tMs < d[1]) : answered();
   };
-  // over the slowest p99, a little room: the scale's words are outside the plot, in its room
-  const top = () => budgetTop(Math.max(...inView().map((b) => b.p99Ms), 1) * 1.1, props.budgetMs);
+  // from under the fastest median to over the slowest drawn (and the budget's line): a decade at least
+  const yRange = (): [number, number] => {
+    const v = inView();
+    const lo = lg(Math.min(...v.map((b) => b.p50Ms), props.budgetMs ?? Infinity, 1e9));
+    const hi = lg(Math.max(...v.map((b) => (tells(b) ? b.p99Ms : b.p50Ms)), props.budgetMs ?? 0, 0.01));
+    const spare = Math.max(0, 1 - (hi - lo)) / 2;
+    return [lo - spare - 0.1, hi + spare + 0.15];
+  };
+  // a decade's line and its words (1 ms, 10 ms…); a scale under a decade wide names its two ends
+  const ticks = () => {
+    const [a, b] = yRange();
+    return decades(Math.ceil(a - 1e-9), b).filter((d) => d >= a && d <= b);
+  };
   const hovered = signal<number | null>(null);
   const domain = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
   const label = () => {
@@ -48,7 +67,9 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
   };
   const tip = () => {
     const b = hovered() === null ? null : rows()[hovered()!];
-    return b && has(b) ? { title: `+${duration(b.tMs)}`, lines: [t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) })] } : null;
+    if (!b || !has(b)) return null;
+    // a slice of a few: its median, and how many (no tail to tell)
+    return { title: `+${duration(b.tMs)}`, lines: [tells(b) ? t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) }) : t("band.lineFew", { p50: duration(b.p50Ms) }), t("sessions.requestsN", { n: inSlice(b) })] };
   };
   return (
     <If when={!terminal() && answered().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
@@ -57,7 +78,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         data={rows()}
         x="tMs"
         xScale={{ type: "linear", domain: domain() }}
-        yScale={{ type: "linear", domain: [0, top()] }}
+        yScale={{ type: "linear", domain: yRange() }}
         accessibilityLabel={label()}
         accessibilityValue={tipValue(tip())}
         motion={MOTION}
@@ -72,15 +93,16 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         // the scale's room at its start: bands and the heat map beside it (one card) start at one edge
         class={`${GUTTER_SCALE} ${props.class ?? STRIP}`}
       >
+        <Grid y={ticks()} class={GRID} />
         {/* straight between slices: a curve would show values no request had */}
         {/* two tones that tell apart from each other and from the card, in light and in dark
             (lint-charts checks their contrast): the body of the requests, and their tail */}
-        <Area y0={gap((b) => b.p95Ms)} y1={gap((b) => b.p99Ms)} curve="linear" class={LATENCY_FILL.tail} />
-        <Area y0={gap((b) => b.p50Ms)} y1={gap((b) => b.p95Ms)} curve="linear" class={LATENCY_FILL.body} />
-        <Line y={gap((b) => b.p50Ms)} curve="linear" class={`stroke-foreground ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-foreground" />
-        <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), props.focus?.() ?? null) ? top() : (undefined as unknown as number))} class={FOCUS_RULE} />
-        <ValueAxis outside peak={Math.max(...inView().map((b) => b.p99Ms), 1)} say={duration} />
-        <Budget value={props.budgetMs} say={duration} />
+        <Area y0={gap(tells, (b) => b.p95Ms)} y1={gap(tells, (b) => b.p99Ms)} curve="linear" class={LATENCY_FILL.tail} />
+        <Area y0={gap(tells, (b) => b.p50Ms)} y1={gap(tells, (b) => b.p95Ms)} curve="linear" class={LATENCY_FILL.body} />
+        <Line y={gap(has, (b) => b.p50Ms)} curve="linear" class={`stroke-foreground ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-foreground" />
+        <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), props.focus?.() ?? null) ? yRange()[1] : (undefined as unknown as number))} class={FOCUS_RULE} />
+        <PlotAxis placement="left" tickValues={ticks()} format={(v) => duration(10 ** v)} labelClass={LABEL.scale} />
+        <Budget value={props.budgetMs ? lg(props.budgetMs) : null} say={(v) => duration(10 ** v)} />
         <If when={props.axis}>
           <TimeAxis domain={domain()} />
         </If>
@@ -95,26 +117,13 @@ const PER_DECADE = 3;
 /** Latency over the session as a grid: a column a slice of time, a row a
  * bucket of latency on a log scale, a cell's tone how many requests fell in
  * it. What bands average away shows here: two modes, a slow few, a shift.
- * Counted from the requests the session keeps (`samples`). */
+ * Counted by Rust over every request (`latencyHeat`), never from a sample. */
 export function LatencyHeat(props: { profile: Profile; range?: [number, number] | null; focus?: Focus }) {
   const p = () => props.profile;
   const from = () => props.range?.[0] ?? 0;
   const to = () => props.range?.[1] ?? p().rate.length - 1;
   const bins = () => p().rate.map((_, i) => `${i}`).slice(from(), to() + 1);
-  const bucketOf = (ms: number) => Math.ceil(log10(Math.max(ms, 0.1)) * PER_DECADE - 1e-9);
-  const cells = computed(() => {
-    const m = new Map<string, { bin: number; bucket: number; n: number }>();
-    for (const x of p().samples) {
-      const bin = Math.min(p().rate.length - 1, Math.floor(x.tMs / Math.max(p().binMs, 1e-9)));
-      if (bin < from() || bin > to()) continue;
-      const bucket = bucketOf(x.ms);
-      const key = `${bin}:${bucket}`;
-      const c = m.get(key);
-      if (c) c.n += 1;
-      else m.set(key, { bin, bucket, n: 1 });
-    }
-    return [...m.values()];
-  });
+  const cells = computed(() => p().latencyHeat.filter((c) => c.bin >= from() && c.bin <= to()));
   // every bucket from the slowest seen down to the fastest, slowest on top: a gap in latency is a gap in rows
   const buckets = () => {
     const all = cells().map((c) => c.bucket);
@@ -129,7 +138,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: `${sinceTick(r.bin * p().binMs)} – ${sinceTick((r.bin + 1) * p().binMs)}`, lines: [`${duration(edge(r.bucket - 1))} – ${duration(edge(r.bucket))}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: `${sinceTick(slotMs(p(), r.bin))} – ${sinceTick(slotMs(p(), r.bin + 1))}`, lines: [`${duration(edge(r.bucket - 1))} – ${duration(edge(r.bucket))}`, t("sessions.requestsN", { n: r.n })] } : null;
   };
   const label = () => t("latencyHeat.text", { p50: duration(p().p50Ms ?? 0), p99: duration(p().p99Ms ?? 0) });
   // a decade's edge is named on the scale; the buckets between are not
@@ -155,14 +164,14 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
           tooltipContent={<ChartTip tip={tip()} />}
           onHoverChange={({ index }) => {
             hovered.set(index);
-            props.focus?.set(index === null ? null : (rows()[index].bin + 0.5) * p().binMs);
+            props.focus?.set(index === null ? null : slotMs(p(), rows()[index].bin + 0.5));
           }}
           // its scale outside, in the room bands have too (the two share a card): never on a cell
           class={`${TICK_ROOM} ${GUTTER_SCALE} ${PLOT}`}
         >
           <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={TIP.cell} inactiveOpacity={INACTIVE} hoverCellClass={HOVER} />
           <PlotAxis placement="left" format={decade} labelClass={LABEL.scale} />
-          <TimeAxis domain={[from() * p().binMs, (to() + 1) * p().binMs]} slices={bins().length} />
+          <TimeAxis domain={[slotMs(p(), from()), slotMs(p(), to() + 1)]} slices={bins().length} />
         </Plot>
       </If>
     </If>
@@ -435,7 +444,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
           <Grid y={[p95()]} class={`stroke-muted-foreground/60 ${STROKE.hair}`} style={{ strokeDasharray: DASH.reference }} />
           <Dot value="y" r={2.5} hitRadius={6} color="tone" inactiveOpacity={INACTIVE} hoverDotClass="size-2 rounded-full border border-card bg-foreground" />
           <PlotAxis placement="left" tickValues={ticks()} format={(v) => duration(10 ** v)} labelClass={LABEL.scale} />
-          <If when={props.by === "time"} else={<PlotAxis ticks={3} format={(v) => (v < 0 ? "" : bytes(10 ** v))} labelClass={LABEL.bucket} />}>
+          <If when={props.by === "time"} else={<PlotAxis tickValues={sizeTicks(xDomain())} format={(v) => bytes(Math.round(10 ** v))} labelClass={LABEL.bucket} />}>
             <TimeAxis domain={span()} />
           </If>
         </Plot>
@@ -444,6 +453,18 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
       </BaseButton>
     </If>
   );
+}
+
+/** The ticks of a scale of sizes (as logs of bytes): at powers of 1024 (1 KiB, 1 MiB…), each a round figure in its
+ * unit; a scale under two of them wide is ticked at powers of 32 (32 KiB, 1 MiB, 32 MiB). */
+export function sizeTicks([a, b]: [number, number]): number[] {
+  const at = (step: number) => {
+    const out: number[] = [];
+    for (let k = Math.ceil(Math.max(a, 0) / step - 1e-9); k * step <= b + 1e-9; k++) out.push(k * step);
+    return out;
+  };
+  const kib = at(Math.log10(1024));
+  return kib.length >= 2 ? kib : at(Math.log10(32));
 }
 
 /** The wait for an answer's first byte against the rest of the request, by

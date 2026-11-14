@@ -6,7 +6,7 @@ import { bytes, cost, count, duration, percent, rate } from "../../format";
 import { t } from "../../i18n";
 import { FEW, sizeLabel } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { groupName } from "./system";
+import { groupName, slotMs } from "./system";
 
 /** A stretch of slices (a zoom), or every one: the indexes it covers. */
 const within = (n: number, range?: [number, number] | null): [number, number] => (range ? [Math.max(0, range[0]), Math.min(n - 1, range[1])] : [0, n - 1]);
@@ -15,6 +15,10 @@ const requests = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.se
 /** The mark a sentence that states a percentile carries when it is of fewer than `FEW` requests ("· of only 9
  * requests"), as the tile beside it does: a p95 of eight is one of eight, not a tail. Nothing for enough. */
 const few = (n: number): string => (n > 0 && n < FEW ? ` · ${t("plots.fewOf", { n: count(n) })}` : "");
+
+/** The busiest slice's requests as a rate, with its unit: "15 in 5 ms" in slices under a second, "120/s" from
+ * slices of a second up (a count of a slice whose length is not said is no rate). */
+export const slicePeak = (n: number, binMs: number) => (binMs >= 1000 ? t("shape.peakRate", { n: rate((n * 1000) / binMs) }) : t("shape.peakIn", { n: count(n), t: duration(binMs) }));
 
 /** Whether any request began in slices `a` to `b`: a stretch of none is no stretch to reckon. */
 export const began = (p: Profile, a: number, b: number) => p.rate.slice(a, b + 1).some((x) => requests(x) > 0);
@@ -35,7 +39,7 @@ export function timelineSaid(p: Profile, range?: [number, number] | null): strin
     const at = p.rate.slice(a, b + 1).filter((x) => requests(x) > 0);
     return t("timeline.textApart", { n: count(n), a: duration(at[0].tMs), b: duration(at[at.length - 1].tMs) });
   }
-  return t("timeline.text", { n: count(n), peak: count(requests(p.rate[peak])), at: duration(p.rate[peak].tMs) });
+  return t("timeline.text", { n: count(n), peak: slicePeak(requests(p.rate[peak]), p.binMs), at: duration(p.rate[peak].tMs) });
 }
 
 /** What ran at once: the most in flight, and when (of the stretch shown). */
@@ -74,7 +78,7 @@ export function bytesSaid(s: Signals, range?: [number, number] | null): string {
   // the series are rates (a second's worth): a slice moved its rate times its length
   const per = s.binMs / 1000;
   const total = range ? [sent * per, got * per] : [s.bytes.upBytes, s.bytes.downBytes];
-  return t("bytesTime.text", { up: bytes(total[0]), down: bytes(total[1]), at: duration(peak * s.binMs) });
+  return t("bytesTime.text", { up: bytes(total[0]), down: bytes(total[1]), at: duration(slotMs(s, peak)) });
 }
 
 /** A group of requests a table or chart reads (a kind of request, a prefix…). */
@@ -121,7 +125,9 @@ export function latencySaid(p: Profile, range?: [number, number] | null): string
   const rows = p.rate.slice(a, b + 1);
   const has = rows.filter((x) => requests(x) > 0);
   if (has.length === 0) return "";
-  const worst = has.reduce((m, x) => (x.p95Ms > m.p95Ms ? x : m), has[0]);
+  // the slowest p95 of a slice of enough requests to have one (else of any: the sentence is then marked few)
+  const told = has.filter((x) => requests(x) >= FEW);
+  const worst = (told.length ? told : has).reduce((m, x) => (x.p95Ms > m.p95Ms ? x : m), (told.length ? told : has)[0]);
   const tail = { p95: duration(worst.p95Ms), at: duration(worst.tMs) };
   const mid = Math.floor(rows.length / 2);
   const first = medianOf(rows.slice(0, mid));
@@ -133,19 +139,22 @@ export function latencySaid(p: Profile, range?: [number, number] | null): string
   return (held ? t("latencyTime.textHeld", { p50: duration(medianOf(rows) ?? 0), ...tail }) : t(second > first ? "latencyTime.textSlower" : "latencyTime.textFaster", { a: duration(first), b: duration(second), ...tail })) + mark;
 }
 
-/** A percentile of times, sorted: the one at `q` (0 to 1). */
-const at = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))];
-
-/** How the latencies spread over the stretch shown: its median and p99, of the requests that ran in it (the
- * session's own figures over the whole). */
+/** How the latencies spread over the stretch shown: its median and p99, of every request that ran in it. A
+ * stretch reckoned on its own (the app's) is a profile of its own, with its own figures; a zoom into the session's
+ * slices (a shared page's) reads them off the latencies' grid, to its buckets' edges ("up to"). */
 export function heatLatencySaid(p: Profile, range?: [number, number] | null): string {
   const [a, b] = within(p.rate.length, range);
   const n = p.rate.slice(a, b + 1).reduce((k, x) => k + requests(x), 0);
-  if (!range) return p.p50Ms == null ? "" : t("latencyHeat.text", { p50: duration(p.p50Ms), p99: duration(p.p99Ms ?? p.p50Ms) }) + few(n);
-  const from = a * p.binMs;
-  const to = (b + 1) * p.binMs;
-  const ms = p.samples.filter((x) => x.tMs >= from && x.tMs < to).map((x) => x.ms).sort((x, y) => x - y);
-  return ms.length ? t("latencyHeat.text", { p50: duration(at(ms, 0.5)), p99: duration(at(ms, 0.99)) }) + few(n) : "";
+  if (!range) return p.p50Ms == null || n === 0 ? "" : t("latencyHeat.text", { p50: duration(p.p50Ms), p99: duration(p.p99Ms ?? p.p50Ms) }) + few(n);
+  const cells = p.latencyHeat.filter((c) => c.bin >= a && c.bin <= b).sort((x, y) => x.bucket - y.bucket);
+  const all = cells.reduce((k, c) => k + c.n, 0);
+  // the upper edge of the bucket the request at share `q` is in (three buckets a decade, as Rust counts them)
+  const upTo = (q: number) => {
+    let run = 0;
+    for (const c of cells) if ((run += c.n) >= q * all) return 10 ** (c.bucket / 3);
+    return 0;
+  };
+  return all ? t("latencyHeat.textUpTo", { p50: duration(upTo(0.5)), p99: duration(upTo(0.99)) }) + few(all) : "";
 }
 
 /** Which requests were slow: how many are drawn, and the slowest of them. */
@@ -192,7 +201,7 @@ export function failuresSaid(s: Signals, range?: [number, number] | null, of: Si
   let first = -1;
   let last = -1;
   for (let i = a; i <= b; i++) {
-    const k = (e.server[i] ?? 0) + (e.client[i] ?? 0) + (e.transport[i] ?? 0) + (e.injected[i] ?? 0);
+    const k = (e.series[i] ?? 0);
     retries += e.retries[i] ?? 0;
     if (k > 0) {
       n += k;
@@ -202,7 +211,7 @@ export function failuresSaid(s: Signals, range?: [number, number] | null, of: Si
   }
   const again = retries > 0 ? t("failures.retried", { n: count(retries) }) : "";
   if (n === 0) return [t("signal.noErrors"), again].filter(Boolean).join("; ");
-  const when = first === last ? t("failures.at", { t: duration(first * s.binMs) }) : t("failures.between", { a: duration(first * s.binMs), b: duration((last + 1) * s.binMs) });
+  const when = first === last ? t("failures.at", { t: duration(slotMs(s, first)) }) : t("failures.between", { a: duration(slotMs(s, first)), b: duration(slotMs(s, last + 1)) });
   // what they were: one answer, or every one sonde's own (the statuses are of the whole, or of the stretch reckoned)
   const failing = of.statuses.filter((x) => x.status === null || (x.status >= 400 && x.status !== 404));
   const all = of.errors;
@@ -220,14 +229,14 @@ export function errorRateSaid(s: Signals, range?: [number, number] | null): stri
   let failed = 0;
   let worst = { share: 0, i: a };
   for (let i = a; i <= b; i++) {
-    const f = (e.server[i] ?? 0) + (e.client[i] ?? 0) + (e.transport[i] ?? 0) + (e.injected[i] ?? 0);
+    const f = (e.series[i] ?? 0);
     const n = Math.max(Math.round(((s.rate.series[i] ?? 0) * s.binMs) / 1000), f);
     all += n;
     failed += f;
     if (n > 0 && f / n > worst.share) worst = { share: f / n, i };
   }
   if (failed === 0) return t("signal.noErrors");
-  return t("errorRate.text", { pct: percent(failed / Math.max(all, 1)), peak: percent(worst.share), at: duration(worst.i * s.binMs) });
+  return t("errorRate.text", { pct: percent(failed / Math.max(all, 1)), peak: percent(worst.share), at: duration(slotMs(s, worst.i)) });
 }
 
 /** What the store answered: the most frequent answer, and the next. */
@@ -254,7 +263,7 @@ export function heatSaid(p: Profile, range?: [number, number] | null): string {
   }
   const cell = p.heat.filter((c) => c.bin >= range[0] && c.bin <= range[1]).reduce<Profile["heat"][number] | null>((m, c) => (!m || c.n > m.n ? c : m), null);
   const prefix = cell ? p.prefixes[cell.prefix]?.prefix : null;
-  return cell && prefix ? t("heat.textAt", { prefix, n: count(cell.n), at: duration(cell.bin * p.binMs) }) : "";
+  return cell && prefix ? t("heat.textAt", { prefix, n: count(cell.n), at: duration(slotMs(p, cell.bin)) }) : "";
 }
 
 /** Where requests went: how many were answered, and the prefix most went to. */
@@ -282,13 +291,8 @@ export function chainsSaid(p: Profile): string {
   return c ? t("chains.text", { n: count(c.requests), time: duration(c.endMs - c.startMs), fast: duration(c.atOnceMs) }) : "";
 }
 
-/** Which prefixes were busiest: the first by requests, or by its busiest second. */
-export function prefixSaid(p: Profile, measure: "requests" | "peak"): string {
-  const value = (x: Profile["prefixes"][number]) => (measure === "peak" ? x.peakPerSecond : x.requests);
-  const top = p.prefixes.filter((x) => x.prefix !== "other").sort((a, b) => value(b) - value(a))[0];
-  if (!top) return "";
-  const v = value(top);
-  const shown = measure === "peak" ? t("prefixUse.perSecond", { n: count(Math.round(v)) }) : t("prefixUse.requests", { n: count(v) });
-  return t("prefixUse.text", { prefix: top.prefix, value: shown });
+/** Which prefixes were busiest: the first by requests, and its busiest second. */
+export function prefixSaid(p: Profile): string {
+  const top = p.prefixes.filter((x) => x.prefix !== "other").sort((a, b) => b.requests - a.requests)[0];
+  return top ? t("prefixUse.text", { prefix: top.prefix, value: t("prefixUse.requests", { n: count(top.requests) }), peak: count(top.peakPerSecond) }) : "";
 }
-

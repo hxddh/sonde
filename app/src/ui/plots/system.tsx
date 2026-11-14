@@ -4,7 +4,7 @@
 
 import { type JSX, signal, Text, token, View } from "nsh";
 import { Grid, PlotAxis } from "nsh/base/plot";
-import { duration, middle, percent } from "../../format";
+import { count, duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
 import { Card, EMPHASIS, Empty, Heading, IconButton, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TRANSITION, TYPE } from "../kit";
@@ -227,7 +227,13 @@ export const sinceTick = (ms: number) => `+${duration(ms)}`;
 /** The whole of a session on a time axis, in ms: its slices' extent (never
  * less than its wall time), the one stretch every chart over a session shows
  * until a zoom picks another — so their ticks are the same ticks. */
-export const sessionSpan = (x: { binMs: number; wallMs: number }, slices: number): [number, number] => [0, Math.max(slices * x.binMs, x.wallMs, 1)];
+export const sessionSpan = (x: { startMs: number; binMs: number; wallMs: number }, slices: number): [number, number] => [x.startMs, x.startMs + Math.max(slices * x.binMs, x.wallMs, 1)];
+
+/** Where slice `i` of a profile or of signals begins, from the session's start (a stretch's own slices begin at
+ * its `startMs`). */
+export const slotMs = (x: { startMs: number; binMs: number }, i: number) => x.startMs + i * x.binMs;
+/** The slice a moment (from the session's start) falls in, of a profile or of signals (not past their last). */
+export const sliceAt = (x: { startMs: number; binMs: number }, ms: number) => Math.max(0, Math.floor((ms - x.startMs) / Math.max(x.binMs, 1e-9)));
 
 /** The moments a time axis names over `[a, b]` ms: round ones (1, 2 or 5 of a
  * power of ten apart), three or four of them, the same for every chart over
@@ -599,6 +605,11 @@ export const ZERO_SLIVER = 0.006;
 /** A heat map's ramp, from a cell of one request to the busiest: its own two tones, so a few
  * requests read on the card in dark too (bar-track to chart-1 was navy on near-black there). */
 export const HEAT_RAMP = (): [string, string] => [token("heat-low" as never) as unknown as string, token("heat-high" as never) as unknown as string];
+
+/** A heat map's legend: its ramp's two ends, each with the count of a cell in that tone (the fewest and the most
+ * requests a cell holds), so a tone reads as a number. */
+export const heatLegend = (cells: number[]): LegendItem[] =>
+  cells.length ? [{ label: t("heat.fewest", { n: count(Math.min(...cells)) }), swatch: "bg-heat-low" }, { label: t("heat.most", { n: count(Math.max(...cells)) }), swatch: "bg-heat-high" }] : [];
 
 /** The fewest slices a chart fitted to its marks shows (`fitted`). */
 const FIT_LEAST = 12;

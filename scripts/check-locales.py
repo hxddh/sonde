@@ -37,7 +37,7 @@ FAMILIES = {
     "board.": "traffic latency errors where",
     "byGroup.": "prefix size caller sdk status",
     "costBy.": "write list read free",
-    "failures.": "server client transport injected",
+    "failures.": "throttled server client transport injected",
     "flows.": "ok notfound clienterror servererror",
     "jobs.state.": "running finished failed cancelled",
     "layouts.kind.": "commit fence gap manifest object seal segment snapshot wal writes",

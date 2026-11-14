@@ -567,10 +567,12 @@ fn stretch_of(
         })
         .cloned()
         .collect();
+    // the stretch on the session's axis: its times from the session's start, its slices its own
+    let origin = Some(t0);
     let (summary, signals, profile) = std::thread::scope(|scope| {
         let summary = scope.spawn(|| sonde_proxy::summary::summarize(&held));
-        let signals = scope.spawn(|| sonde_proxy::signals::signals(&held, prices));
-        let profile = sonde_proxy::profile::profile(&held, prices);
+        let signals = scope.spawn(|| sonde_proxy::signals::signals_from(&held, prices, origin));
+        let profile = sonde_proxy::profile::profile_from(&held, prices, origin);
         (
             summary
                 .join()
@@ -581,13 +583,7 @@ fn stretch_of(
             profile,
         )
     });
-    // where the stretch's own first request started, from the session's: its times are from there
-    let offset_ms = held
-        .iter()
-        .map(|r| r.time.timestamp_micros())
-        .min()
-        .map_or(0.0, |at| (at - t0) as f64 / 1000.0);
-    json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals), "offsetMs": offset_ms })
+    json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals) })
 }
 
 /// A page's query as the interface sends it.
@@ -1445,9 +1441,9 @@ impl Sessions {
 
     /// The requests that started in a stretch of a session (`from_ms` to
     /// `to_ms` after its first request's start), reckoned as a session of
-    /// their own: `{ summary, profile, signals, offsetMs }` (its times are
-    /// from its own first request, `offsetMs` after the session's) — what the Time pane's
-    /// charts that are not drawn over time read while a stretch is chosen,
+    /// their own: `{ summary, profile, signals }`, its slices its own and its
+    /// times the session's (`startMs`) — what the Time pane draws while a
+    /// stretch is chosen, its charts over time in the stretch's own detail,
     /// so every chart follows the selection. Off the interface's thread.
     pub async fn stretch(path: String, from_ms: f64, to_ms: f64) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
@@ -2939,9 +2935,11 @@ mod tests {
         let v = stretch_of(&s.records, &prices, 1000.0, 2000.0);
         assert_eq!(v["summary"]["requests"], 10);
         assert_eq!(
-            v["offsetMs"], 1000.0,
-            "its times are from its own first request"
+            v["profile"]["startMs"], 1000.0,
+            "its times are the session's"
         );
+        assert_eq!(v["profile"]["rate"][0]["tMs"], 1000.0);
+        assert_eq!(v["signals"]["startMs"], 1000.0);
         assert!(
             v["profile"]["groups"]
                 .as_array()

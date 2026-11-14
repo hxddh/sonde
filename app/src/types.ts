@@ -657,6 +657,9 @@ export interface ProfileGroup {
 
 /** Where a session's time went, its rate and concurrency, its requests' cost. */
 export interface Profile {
+  /** Where its first slice begins, from the session's start: 0 for a session, a stretch's start for a stretch's
+   * own profile. Every time in it is from the session's start. */
+  startMs: number;
   wallMs: number;
   waitingMs: number;
   peakInFlight: number;
@@ -664,11 +667,12 @@ export interface Profile {
   meanInFlight: number;
   groups: ProfileGroup[];
   binMs: number;
-  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled?: number; retried?: number; bytesUp?: number; bytesDown?: number }[];
+  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled: number; bytesUp?: number; bytesDown?: number }[];
   inFlight: { tMs: number; n: number }[];
   samples: { id: number; group: number; ms: number; tMs: number; status?: number | null; bytes?: number }[];
-  /** The busiest kinds' latency, slice by slice. */
-  groupRate?: { group: number; bin: number; n: number; p50Ms: number; p95Ms: number }[];
+  /** The latencies over time, every request counted: a slice, a bucket on a log scale (three a decade: bucket `b`
+   * holds the requests over 10^((b-1)/3) ms and up to 10^(b/3) ms), and how many. */
+  latencyHeat: { bin: number; bucket: number; n: number }[];
   /** The places in the program's code that sent requests (x-sonde-caller). */
   callers?: { place: string; requests: number; waitedMs: number; errors: number; cost: number }[];
   /** Whether the requests' times are known (a CloudTrail file has none); absent in older shares. */
@@ -890,6 +894,8 @@ export interface SizeBucket {
 export interface Signals {
   /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. */
   short: boolean;
+  /** The profile's `startMs`: where its first slice begins, from the session's start. */
+  startMs: number;
   timed: boolean;
   wallMs: number;
   binMs: number;
@@ -899,9 +905,11 @@ export interface Signals {
     value: number | null;
     series: number[];
     count: number;
-    counts: { client: number; server: number; transport: number; injected: number };
+    counts: { client: number; server: number; throttled: number; transport: number; injected: number };
     client: number[];
     server: number[];
+    /** The store asked the program to slow down (503 SlowDown, 429): neither in `client` nor in `server`. */
+    throttled: number[];
     transport: number[];
     injected: number[];
     retries: number[];
@@ -996,5 +1004,5 @@ export interface RunResult {
 }
 
 /** The requests that started in a stretch of a session, reckoned as a session of their own
- * (`sessions.stretch`): its times are from its own first request, `offsetMs` after the session's. */
-export type Stretch = Pick<SessionView, "summary" | "profile"> & { signals: Signals; offsetMs: number };
+ * (`sessions.stretch`): its slices its own, its times the session's (`startMs`). */
+export type Stretch = Pick<SessionView, "summary" | "profile"> & { signals: Signals };

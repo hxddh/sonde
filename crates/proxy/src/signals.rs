@@ -37,10 +37,12 @@ pub struct Rate {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorCounts {
-    /// 4xx.
+    /// 4xx, but a throttle.
     pub client: usize,
-    /// 5xx.
+    /// 5xx, but a throttle.
     pub server: usize,
+    /// The store asked the program to slow down (503 SlowDown, 429).
+    pub throttled: usize,
     /// No answer, or one cut short.
     pub transport: usize,
     /// A fault scenario's doing, whatever it looked like: not the store's.
@@ -53,13 +55,14 @@ pub struct Errors {
     /// The failed requests' share of all (0 to 1; none without a request).
     pub value: Option<f64>,
     pub unit: &'static str,
-    /// Failed requests, slice by slice (the four kinds added up).
+    /// Failed requests, slice by slice (the five kinds added up).
     pub series: Vec<f64>,
     pub count: usize,
     pub counts: ErrorCounts,
     /// Each kind, slice by slice.
     pub client: Vec<f64>,
     pub server: Vec<f64>,
+    pub throttled: Vec<f64>,
     pub transport: Vec<f64>,
     pub injected: Vec<f64>,
     /// Times a request was sent again, slice by slice, and in all.
@@ -231,6 +234,10 @@ pub struct PrefixRate {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Signals {
+    /// Where its first slice begins, from the session's start (the profile's
+    /// `startMs`: 0 but for a stretch). The statuses' and the peak's times
+    /// are from the session's start too.
+    pub start_ms: f64,
     /// Whether the requests' times are known (the profile's rule).
     pub timed: bool,
     pub wall_ms: f64,
@@ -528,7 +535,14 @@ fn median(v: &mut [f64]) -> f64 {
 }
 
 pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
-    let tl = Timeline::of(records);
+    signals_from(records, prices, None)
+}
+
+/// [`signals`] of a stretch of a session whose first request started at
+/// `origin_us`: on the session's axis, as [`crate::profile::profile_from`].
+pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Option<i64>) -> Signals {
+    let tl = Timeline::from_origin(records, origin_us);
+    let start_ms = tl.map_or(0.0, |t| t.start_ms);
     let bins = tl.map_or(0, |t| t.bins);
     let bin_ms = tl.map_or(1.0, |t| t.bin_ms);
     let bin_s = bin_ms / 1000.0;
@@ -539,8 +553,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
 
     let zeros = || vec![0f64; bins];
     let (mut n, mut up, mut down) = (zeros(), zeros(), zeros());
-    let (mut client, mut server, mut transport, mut injected) =
-        (zeros(), zeros(), zeros(), zeros());
+    let (mut client, mut server, mut throttled, mut transport, mut injected) =
+        (zeros(), zeros(), zeros(), zeros(), zeros());
     let mut retries = zeros();
     let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
     let mut all: Vec<f64> = Vec::with_capacity(records.len());
@@ -590,6 +604,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
                 (&mut injected, &mut counts.injected)
             } else if r.status.is_none() || r.transport_error.is_some() {
                 (&mut transport, &mut counts.transport)
+            } else if crate::profile::throttled(r) {
+                (&mut throttled, &mut counts.throttled)
             } else if r.status.is_some_and(|s| s >= 500) {
                 (&mut server, &mut counts.server)
             } else {
@@ -644,7 +660,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             moved_all.push(rate);
         }
 
-        let at = (s - t0) as f64 / 1000.0;
+        let at = (s - t0) as f64 / 1000.0 + start_ms;
         let code = r.error_body.as_deref().and_then(s3_code);
         let row = statuses
             .entry((r.status, code))
@@ -713,7 +729,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         level += 1;
         if level > peak {
             peak = level;
-            peak_at = (s - t0) as f64 / 1000.0;
+            peak_at = (s - t0) as f64 / 1000.0 + start_ms;
         }
         in_flight[at] = in_flight[at].max(level as f64);
         running.push(Reverse(e));
@@ -727,7 +743,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let short = wall_ms < SHORT_MS;
     let seconds = (!short).then_some(wall_ms / 1000.0);
     let per_bin = |v: &[f64]| v.iter().map(|x| x / bin_s).collect::<Vec<f64>>();
-    let failed = counts.client + counts.server + counts.transport + counts.injected;
+    let failed =
+        counts.client + counts.server + counts.throttled + counts.transport + counts.injected;
 
     let fb_count: usize = ops.values().map(|o| o.first_byte.len()).sum();
     let mut cost_rows = Vec::with_capacity(ops.len());
@@ -785,6 +802,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     };
 
     Signals {
+        start_ms,
         timed,
         wall_ms,
         short,
@@ -800,12 +818,13 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             value: (!records.is_empty()).then(|| failed as f64 / records.len() as f64),
             unit: "share",
             series: (0..bins)
-                .map(|i| client[i] + server[i] + transport[i] + injected[i])
+                .map(|i| client[i] + server[i] + throttled[i] + transport[i] + injected[i])
                 .collect(),
             count: failed,
             counts,
             client,
             server,
+            throttled,
             transport,
             injected,
             retries,
@@ -1048,6 +1067,7 @@ pub fn text(s: &Signals, color: bool) -> String {
     let mut kinds: Vec<String> = [
         (c.client, "client"),
         (c.server, "server"),
+        (c.throttled, "throttled"),
         (c.transport, "no answer"),
         (c.injected, "injected"),
     ]

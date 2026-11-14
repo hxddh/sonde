@@ -104,8 +104,6 @@ pub struct Bin {
     pub p99_ms: f64,
     /// Of them, the store asked to slow down (503 SlowDown, 429).
     pub throttled: usize,
-    /// Of them, sent more than once (retried by the SDK).
-    pub retried: usize,
     /// Bytes sent and received by them.
     pub bytes_up: u64,
     pub bytes_down: u64,
@@ -140,7 +138,7 @@ pub const LATENCY_EDGES: [f64; 15] = [
 ];
 
 /// The store asked the program to slow down.
-fn throttled(r: &Record) -> bool {
+pub(crate) fn throttled(r: &Record) -> bool {
     matches!(r.status, Some(503 | 429))
         || r.error_body
             .as_deref()
@@ -170,18 +168,28 @@ pub struct Sample {
     pub bytes: u64,
 }
 
-/// One kind of request's latency in one slice of the session: how many,
-/// and their median and p95 (the busiest kinds only).
+/// How many requests that started in one slice took about as long: a cell
+/// of the latency's grid over time, counted over every request.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GroupBin {
-    /// The group, by index into `groups`.
-    pub group: usize,
+pub struct LatencyCell {
     /// The slice, by index into `rate`.
     pub bin: usize,
+    /// The latency's bucket on a log scale, [`HEAT_PER_DECADE`] to a decade:
+    /// it holds the requests over `10^((bucket - 1) / 3)` ms and up to
+    /// `10^(bucket / 3)` ms (bucket 0: up to 1 ms; the fastest, under 0.1 ms,
+    /// are in bucket -3).
+    pub bucket: i32,
     pub n: usize,
-    pub p50_ms: f64,
-    pub p95_ms: f64,
+}
+
+/// How many buckets of [`LatencyCell`] a decade of latency is cut in (each
+/// about 2.15× the last).
+pub const HEAT_PER_DECADE: f64 = 3.0;
+
+/// The bucket of [`LatencyCell`] a latency falls in.
+pub fn latency_bucket(ms: f64) -> i32 {
+    (ms.max(0.1).log10() * HEAT_PER_DECADE - 1e-9).ceil() as i32
 }
 
 /// The requests one place in the program's code sent (`x-sonde-caller`):
@@ -209,6 +217,11 @@ pub struct Cost {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
+    /// Where its first slice begins, from the session's start: 0 for a
+    /// session, a stretch's own start for a stretch of it. Every time below
+    /// (`rate`, `inFlight`, `samples`, `chains`, `peakAtMs`) is from the
+    /// session's start too, so a stretch's charts draw on the session's axis.
+    pub start_ms: f64,
     /// From the first request's start to the last one's end.
     pub wall_ms: f64,
     /// Time with a request in flight.
@@ -242,8 +255,8 @@ pub struct Profile {
     pub p50_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
-    /// The busiest kinds' latency over the session, slice by slice.
-    pub group_rate: Vec<GroupBin>,
+    /// The latencies over time, every request counted (not a sample).
+    pub latency_heat: Vec<LatencyCell>,
     /// The places in the program's code that sent requests, most waiting first.
     pub callers: Vec<CallerStat>,
     /// Whether the requests' times are known: a CloudTrail file has none, and
@@ -644,8 +657,6 @@ const MAX_STEPS: usize = 480;
 /// smaller; of a larger one, the slowest and an even spread of the rest.
 const MAX_SAMPLES: usize = 4000;
 const SLOWEST: usize = 400;
-/// The kinds of request whose latency is drawn over time.
-const GROUP_RATES: usize = 5;
 
 pub(crate) fn start_us(r: &Record) -> i64 {
     r.time.timestamp_micros()
@@ -742,6 +753,8 @@ fn nice(ms: f64) -> f64 {
 pub struct Timeline {
     /// The first request's start, in µs.
     pub t0_us: i64,
+    /// Where that is from the session's start, in ms (0 but for a stretch).
+    pub start_ms: f64,
     /// From there to the last request's end (1 at least).
     pub wall_us: i64,
     pub bin_ms: f64,
@@ -751,6 +764,13 @@ pub struct Timeline {
 impl Timeline {
     /// None without a request.
     pub fn of(records: &[Record]) -> Option<Timeline> {
+        Timeline::from_origin(records, None)
+    }
+
+    /// [`Timeline::of`] for a stretch of a session whose first request
+    /// started at `origin_us`: its slices are its own, its times the
+    /// session's (`start_ms` on).
+    pub fn from_origin(records: &[Record], origin_us: Option<i64>) -> Option<Timeline> {
         let t0_us = records.iter().map(start_us).min()?;
         let t1 = records.iter().map(end_us).max().unwrap_or(t0_us);
         let wall_us = (t1 - t0_us).max(1);
@@ -758,6 +778,7 @@ impl Timeline {
         let bin_ms = nice(wall_ms / MAX_BINS);
         Some(Timeline {
             t0_us,
+            start_ms: origin_us.map_or(0.0, |o| (t0_us - o) as f64 / 1000.0),
             wall_us,
             bin_ms,
             bins: ((wall_ms / bin_ms).ceil() as usize).max(1),
@@ -938,7 +959,14 @@ pub fn prefix_stats(
 }
 
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
+    profile_from(records, prices, None)
+}
+
+/// [`profile`] of a stretch of a session whose first request started at
+/// `origin_us`: its times on the session's axis ([`Profile::start_ms`]).
+pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Option<i64>) -> Profile {
     let empty = Profile {
+        start_ms: 0.0,
         wall_ms: 0.0,
         waiting_ms: 0.0,
         peak_in_flight: 0,
@@ -965,16 +993,18 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         p50_ms: 0.0,
         p95_ms: 0.0,
         p99_ms: 0.0,
-        group_rate: Vec::new(),
+        latency_heat: Vec::new(),
         callers: Vec::new(),
         timed: false,
     };
-    let Some(tl) = Timeline::of(records) else {
+    let Some(tl) = Timeline::from_origin(records, origin_us) else {
         return empty;
     };
-    let (t0, wall_us) = (tl.t0_us, tl.wall_us);
+    let (t0, wall_us, start) = (tl.t0_us, tl.wall_us, tl.start_ms);
     let busy_us = union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect());
     let ms = |us: i64| us as f64 / 1000.0;
+    // an instant, from the session's start
+    let at_ms = |us: i64| ms(us - t0) + start;
     let price = |r: &Record| price(r, prices);
 
     // groups
@@ -1026,7 +1056,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let (bin, bins) = (tl.bin_ms, tl.bins);
     let mut rate: Vec<Bin> = (0..bins)
         .map(|i| Bin {
-            t_ms: i as f64 * bin,
+            t_ms: start + i as f64 * bin,
             ok: 0,
             miss: 0,
             client: 0,
@@ -1035,18 +1065,21 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             p95_ms: 0.0,
             p99_ms: 0.0,
             throttled: 0,
-            retried: 0,
             bytes_up: 0,
             bytes_down: 0,
         })
         .collect();
     let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
+    // the latencies' grid: every request in its slice and bucket
+    let mut grid: BTreeMap<(usize, i32), usize> = BTreeMap::new();
     for r in records {
         let i = tl.bin_of(r);
         took[i].push(r.latency_ms);
+        *grid
+            .entry((i, latency_bucket(r.latency_ms.max(0.0))))
+            .or_default() += 1;
         let b = &mut rate[i];
         b.throttled += usize::from(throttled(r));
-        b.retried += usize::from(r.retries > 0);
         b.bytes_up += r.request_bytes.unwrap_or(0);
         b.bytes_down += r.response_bytes.unwrap_or(0);
         match tone(r) {
@@ -1081,7 +1114,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let (mut peak, mut peak_at) = (0usize, 0.0);
     for (t, d) in events {
         n = (n + d as i64).max(0);
-        let at = ms(t - t0);
+        let at = at_ms(t);
         if n as usize > peak {
             peak = n as usize;
             peak_at = at;
@@ -1100,7 +1133,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         let slice = ms(wall_us) / MAX_STEPS as f64;
         let mut per: Vec<(f64, usize, usize)> = Vec::with_capacity(MAX_STEPS + 1);
         for s in steps {
-            let at = (s.t_ms / slice).floor() * slice;
+            let at = start + ((s.t_ms - start) / slice).floor() * slice;
             match per.last_mut() {
                 Some(k) if k.0 == at => {
                     k.1 = k.1.max(s.n);
@@ -1127,7 +1160,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         id: r.id,
         group: group_of[&r.id],
         ms: r.latency_ms.max(0.0),
-        t_ms: ms(start_us(r) - t0),
+        t_ms: at_ms(start_us(r)),
         status: r.status,
         bytes: r.request_bytes.unwrap_or(0) + r.response_bytes.unwrap_or(0),
     };
@@ -1148,26 +1181,6 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             .collect()
     };
     samples.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
-
-    // the busiest kinds' latency, slice by slice
-    let mut group_rate = Vec::new();
-    for (gi, (_, rs)) in groups.iter().enumerate().take(GROUP_RATES) {
-        let mut per: BTreeMap<usize, Vec<f64>> = BTreeMap::new();
-        for r in rs {
-            let i = tl.bin_of(r);
-            per.entry(i).or_default().push(r.latency_ms.max(0.0));
-        }
-        for (i, mut lat) in per {
-            lat.sort_by(f64::total_cmp);
-            group_rate.push(GroupBin {
-                group: gi,
-                bin: i,
-                n: lat.len(),
-                p50_ms: percentile(&lat, 0.5),
-                p95_ms: percentile(&lat, 0.95),
-            });
-        }
-    }
 
     // the places in the program's code that sent them, when it says
     let mut by_place: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
@@ -1295,7 +1308,17 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     // a log without times (CloudTrail) says what was asked and when, not how
     // long it took: no chains, no distribution
     let timed = records.iter().any(|r| r.latency_ms > 0.0);
+    let chains = if timed {
+        let mut c = chains(records);
+        for x in &mut c {
+            (x.start_ms, x.end_ms) = (x.start_ms + start, x.end_ms + start);
+        }
+        c
+    } else {
+        Vec::new()
+    };
     Profile {
+        start_ms: start,
         wall_ms: ms(wall_us),
         waiting_ms: ms(busy_us),
         peak_in_flight: peak,
@@ -1310,14 +1333,20 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         rate,
         in_flight: steps,
         samples,
-        group_rate,
+        latency_heat: if timed {
+            grid.into_iter()
+                .map(|((bin, bucket), n)| LatencyCell { bin, bucket, n })
+                .collect()
+        } else {
+            Vec::new()
+        },
         callers,
         cost,
         prices: prices.clone(),
         prefixes,
         heat,
         flows,
-        chains: if timed { chains(records) } else { Vec::new() },
+        chains,
         latency: if timed { latency } else { Vec::new() },
         p50_ms: q(0.5),
         p95_ms: q(0.95),
@@ -2195,7 +2224,13 @@ mod tests {
             "no empty buckets before the first request"
         );
         assert_eq!(p.rate.iter().map(|b| b.throttled).sum::<usize>(), 1);
-        assert_eq!(p.rate.iter().map(|b| b.retried).sum::<usize>(), 1);
+        // every request in the latencies' grid, in the bucket of its latency
+        assert_eq!(p.latency_heat.iter().map(|c| c.n).sum::<usize>(), 21);
+        assert!(
+            p.latency_heat
+                .iter()
+                .any(|c| c.bucket == latency_bucket(400.0) && c.n == 1)
+        );
         assert!(p.p50_ms >= 12.0 && p.p50_ms <= 14.0, "{}", p.p50_ms);
         assert_eq!(p.p99_ms, 400.0);
     }
@@ -2298,10 +2333,6 @@ mod tests {
         // each sample says its answer; every request is drawn in a session this small
         assert_eq!(p.samples.len(), 6);
         assert!(p.samples.iter().all(|s| s.status == Some(200)));
-        // the kinds' latency over time: both kinds, each in the slices it ran
-        assert!(p.group_rate.iter().any(|g| g.group == 0));
-        assert!(p.group_rate.iter().any(|g| g.group == 1));
-        assert_eq!(p.group_rate.iter().map(|g| g.n).sum::<usize>(), 6);
     }
 
     #[test]
@@ -2369,6 +2400,65 @@ mod tests {
     }
 
     #[test]
+    fn the_latencies_grid_counts_every_request_on_three_buckets_a_decade() {
+        assert_eq!(latency_bucket(1.0), 0);
+        assert_eq!(latency_bucket(1.5), 1);
+        assert_eq!(latency_bucket(10.0), 3);
+        assert_eq!(latency_bucket(0.0), -3);
+        // past what is drawn one by one: the grid still holds every request
+        let rs: Vec<Record> = (0..5000)
+            .map(|i| {
+                rec(
+                    i,
+                    i as i64,
+                    "GetObject",
+                    200,
+                    if i % 100 == 0 { 900.0 } else { 3.0 },
+                )
+            })
+            .collect();
+        let p = profile(&rs, &RequestPrices::default());
+        assert!(p.samples.len() < rs.len());
+        assert_eq!(p.latency_heat.iter().map(|c| c.n).sum::<usize>(), 5000);
+        let slow: usize = p
+            .latency_heat
+            .iter()
+            .filter(|c| c.bucket == latency_bucket(900.0))
+            .map(|c| c.n)
+            .sum();
+        assert_eq!(
+            slow, 50,
+            "the slow ones as many as there were, not as the sample has them"
+        );
+    }
+
+    #[test]
+    fn a_stretchs_profile_is_on_the_sessions_axis_with_slices_of_its_own() {
+        let rs: Vec<Record> = (0..100)
+            .map(|i| rec(i, i as i64 * 100, "GetObject", 200, 5.0))
+            .collect();
+        let whole = profile(&rs, &RequestPrices::default());
+        let origin = rs.iter().map(start_us).min();
+        // the requests of 2 s to 3 s
+        let held: Vec<Record> = rs
+            .iter()
+            .filter(|r| (2000..3000).contains(&((start_us(r) - origin.unwrap()) / 1000)))
+            .cloned()
+            .collect();
+        let p = profile_from(&held, &RequestPrices::default(), origin);
+        assert_eq!((whole.start_ms, p.start_ms), (0.0, 2000.0));
+        assert!(
+            p.bin_ms < whole.bin_ms,
+            "finer slices: {} against {}",
+            p.bin_ms,
+            whole.bin_ms
+        );
+        assert_eq!(p.rate[0].t_ms, 2000.0);
+        assert!(p.samples.iter().all(|s| (2000.0..3000.0).contains(&s.t_ms)));
+        assert!(p.peak_at_ms >= 2000.0);
+    }
+
+    #[test]
     fn a_percentile_is_the_same_number_wherever_it_is_shown() {
         assert_eq!(percentile(&[], 0.5), 0.0);
         assert_eq!(percentile(&[10.0, 30.0], 0.5), 10.0);
@@ -2383,7 +2473,6 @@ mod tests {
         assert_eq!(p.p50_ms, 10.0);
         assert_eq!(p.groups[0].p50_ms, 10.0);
         assert_eq!(p.rate[0].p50_ms, 10.0);
-        assert_eq!(p.group_rate[0].p50_ms, 10.0);
         let s = crate::summary::summarize(&rs);
         assert_eq!(s.operations[0].p50_ms, 10.0);
     }

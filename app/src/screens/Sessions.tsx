@@ -168,10 +168,13 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (binMs !== undefined && b !== binMs) untracked(() => stretch.set(null));
     binMs = b;
   });
-  /** The stretch as the time it covers, from the session's start. */
+  /** A failure bar pressed on the Time pane: the operations that failed in its slice (ms from the session's start). */
+  const failedIn = signal<[number, number] | null>(null);
+  /** The stretch as the time it covers, from the session's start (a failure bar's slice, while one is pressed). */
   const window = (): [number, number] | null => {
     const v = view();
     const z = stretch();
+    if (failedIn()) return failedIn();
     if (!v || z === null || !v.profile) return null;
     const a = v.profile.rate[z[0]]?.tMs ?? 0;
     return [a, (v.profile.rate[z[1]]?.tMs ?? a) + v.profile.binMs];
@@ -187,11 +190,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const f = filter();
     const w = window();
     const k = kind();
+    const failed = failedIn() !== null;
     // a finding, a slice or a kind chosen narrows the operations: they show, not their groups
     if (f !== null || w || k !== null) untracked(() => groupBy.set("none"));
     untracked(() => {
-      const { finding: _, slice: __, kind: ___, ...kept } = source.query();
-      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}), ...(k === null ? {} : { kind: k }) });
+      const { finding: _, slice: __, kind: ___, failed: ____, ...kept } = source.query();
+      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}), ...(k === null ? {} : { kind: k }), ...(failed ? { failed: true } : {}) });
     });
   });
 
@@ -445,7 +449,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -514,14 +518,14 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const n = source.total();
     // what narrows them first, then how many of how many
     const of = t("sessions.filtered", { n: count(n), of: count(v.operationsTotal) });
-    return [k, w ? `+${duration(w[0])} – +${duration(w[1])}` : null, of].filter(Boolean).join(" · ");
+    return [k, failedIn() ? t("sessions.failedOnly") : null, w ? `+${duration(w[0])} – +${duration(w[1])}` : null, of].filter(Boolean).join(" · ");
   };
 
   const chip = () => (
     <If when={filterNote()}>
       {(n) => (
         // what narrows the operations, and the press that lets it go
-        <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), stretch.set(null), kind.set(null)))} testID="clear-filter" />
+        <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), stretch.set(null), kind.set(null), failedIn.set(null)))} testID="clear-filter" />
       )}
     </If>
   );
