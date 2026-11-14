@@ -222,27 +222,13 @@ const READS_PER_S = 5500;
 const WRITES_PER_S = 3500;
 
 
-/** Where a session's requests went by prefix, one map for three questions:
- * how many, what they cost, and how near the busiest second came to S3's
+/** Where a session's requests went by prefix, a map for each of two questions
+ * (two cards): how many, and how near the busiest second came to S3's
  * per-prefix limit (5,500 reads, 3,500 writes a second). A rectangle per
- * prefix under its bucket, its area the measure chosen; a prefix past half
- * its limit in the warning color. */
-export type PrefixMeasureKind = "requests" | "cost" | "peak";
-
-/** What the prefix map's areas stand for: requests, cost, or the busiest second. */
-export function PrefixMeasure(props: { profile: Profile; value: PrefixMeasureKind; onChange: (m: PrefixMeasureKind) => void }) {
-  const hasCost = () => props.profile.prefixes.some((x) => (x.cost ?? 0) > 0);
-  return (
-    <If when={!textual()}>
-      <Options
-        testID="prefix-measure"
-        value={props.value}
-        items={[{ value: "requests", title: t("prefixUse.byRequests") }, ...(hasCost() ? [{ value: "cost", title: t("prefixUse.byCost") }] : []), { value: "peak", title: t("prefixUse.byPeak") }]}
-        onChange={(v) => props.onChange(v as PrefixMeasureKind)}
-      />
-    </If>
-  );
-}
+ * prefix under its bucket, its area the measure; a prefix past half its
+ * limit in the warning color. (What they cost is "What did the requests
+ * cost?".) */
+export type PrefixMeasureKind = "requests" | "peak";
 
 export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind; /** each prefix's busiest second against S3's limit, as the signals count it */ rates?: Signals["prefixes"] }) {
   const measure = () => props.measure ?? "requests";
@@ -251,8 +237,8 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
   const limit = (x: Profile["prefixes"][number]) => nearestLimit(props.rates?.find((r) => r.prefix === x.prefix) ?? { readShare: x.peakReads / READS_PER_S, writeShare: x.peakWrites / WRITES_PER_S });
   const share = (x: Profile["prefixes"][number]) => limit(x).share;
   const nearest = () => [...items()].sort((a, b) => share(b) - share(a))[0];
-  const value = (x: Profile["prefixes"][number]) => (measure() === "cost" ? (x.cost ?? 0) : measure() === "peak" ? x.peakPerSecond : x.requests);
-  const shown = (v: number) => (measure() === "cost" ? cost(v, props.profile.cost.currency) : measure() === "peak" ? t("prefixUse.perSecond", { n: Math.round(v) }) : t("prefixUse.requests", { n: v }));
+  const value = (x: Profile["prefixes"][number]) => (measure() === "peak" ? x.peakPerSecond : x.requests);
+  const shown = (v: number) => (measure() === "peak" ? t("prefixUse.perSecond", { n: Math.round(v) }) : t("prefixUse.requests", { n: v }));
   const bucketOf = (p: string) => p.split("/")[0] || p;
   const buckets = () => [...new Set(items().map((x) => bucketOf(x.prefix)))];
   const nested = () => buckets().length > 1;

@@ -4,13 +4,17 @@
 
 import { bytes, cost, count, duration, percent, rate } from "../../format";
 import { t } from "../../i18n";
-import { sizeLabel } from "../../signals";
+import { FEW, sizeLabel } from "../../signals";
 import type { Profile, Signals } from "../../types";
 import { groupName } from "./system";
 
 /** A stretch of slices (a zoom), or every one: the indexes it covers. */
 const within = (n: number, range?: [number, number] | null): [number, number] => (range ? [Math.max(0, range[0]), Math.min(n - 1, range[1])] : [0, n - 1]);
 const requests = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server;
+
+/** The mark a sentence that states a percentile carries when it is of fewer than `FEW` requests ("· of only 9
+ * requests"), as the tile beside it does: a p95 of eight is one of eight, not a tail. Nothing for enough. */
+const few = (n: number): string => (n > 0 && n < FEW ? ` · ${t("plots.fewOf", { n: count(n) })}` : "");
 
 /** Whether any request began in slices `a` to `b`: a stretch of none is no stretch to reckon. */
 export const began = (p: Profile, a: number, b: number) => p.rate.slice(a, b + 1).some((x) => requests(x) > 0);
@@ -122,10 +126,26 @@ export function latencySaid(p: Profile, range?: [number, number] | null): string
   const mid = Math.floor(rows.length / 2);
   const first = medianOf(rows.slice(0, mid));
   const second = medianOf(rows.slice(mid));
-  if (has.length < 4 || first == null || second == null) return t("latencyTime.textFew", { p50: duration(medianOf(rows) ?? 0), ...tail });
+  const mark = few(rows.reduce((n, x) => n + requests(x), 0));
+  if (has.length < 4 || first == null || second == null) return t("latencyTime.textFew", { p50: duration(medianOf(rows) ?? 0), ...tail }) + mark;
   // within a fifth of each other: held
   const held = Math.abs(second - first) <= 0.2 * Math.max(first, second);
-  return held ? t("latencyTime.textHeld", { p50: duration(medianOf(rows) ?? 0), ...tail }) : t(second > first ? "latencyTime.textSlower" : "latencyTime.textFaster", { a: duration(first), b: duration(second), ...tail });
+  return (held ? t("latencyTime.textHeld", { p50: duration(medianOf(rows) ?? 0), ...tail }) : t(second > first ? "latencyTime.textSlower" : "latencyTime.textFaster", { a: duration(first), b: duration(second), ...tail })) + mark;
+}
+
+/** A percentile of times, sorted: the one at `q` (0 to 1). */
+const at = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))];
+
+/** How the latencies spread over the stretch shown: its median and p99, of the requests that ran in it (the
+ * session's own figures over the whole). */
+export function heatLatencySaid(p: Profile, range?: [number, number] | null): string {
+  const [a, b] = within(p.rate.length, range);
+  const n = p.rate.slice(a, b + 1).reduce((k, x) => k + requests(x), 0);
+  if (!range) return p.p50Ms == null ? "" : t("latencyHeat.text", { p50: duration(p.p50Ms), p99: duration(p.p99Ms ?? p.p50Ms) }) + few(n);
+  const from = a * p.binMs;
+  const to = (b + 1) * p.binMs;
+  const ms = p.samples.filter((x) => x.tMs >= from && x.tMs < to).map((x) => x.ms).sort((x, y) => x - y);
+  return ms.length ? t("latencyHeat.text", { p50: duration(at(ms, 0.5)), p99: duration(at(ms, 0.99)) }) + few(n) : "";
 }
 
 /** Which requests were slow: how many are drawn, and the slowest of them. */
@@ -137,29 +157,23 @@ export function scatterSaid(p: Profile, domainMs?: [number, number] | null): str
   return t("scatter.text", { n: count(rows.length), kind: g ? groupName(g) : "—", ms: duration(slow.ms), at: duration(slow.tMs) });
 }
 
-/** The busiest kinds over time: the one whose p95 rose highest, and when. */
-export function kindsSaid(p: Profile, domainMs?: [number, number] | null): string {
-  let best: { group: number; p95Ms: number; tMs: number } | null = null;
-  for (const g of p.groupRate ?? []) {
-    const tMs = g.bin * p.binMs;
-    if (domainMs && (tMs < domainMs[0] || tMs >= domainMs[1])) continue;
-    if (!best || g.p95Ms > best.p95Ms) best = { group: g.group, p95Ms: g.p95Ms, tMs };
-  }
-  const g = best ? p.groups[best.group] : null;
-  return best && g ? t("kinds.text", { kind: groupName(g), p95: duration(best.p95Ms), at: duration(best.tMs) }) : "";
+/** Whether larger requests took longer: how many are drawn, and how long the largest of them took. */
+export function sizeSaid(p: Profile, domainMs?: [number, number] | null): string {
+  const rows = (domainMs ? p.samples.filter((x) => x.tMs >= domainMs[0] && x.tMs < domainMs[1]) : p.samples).filter((x) => (x.bytes ?? 0) > 0);
+  if (rows.length === 0) return "";
+  const big = rows.reduce((m, x) => ((x.bytes ?? 0) > (m.bytes ?? 0) ? x : m), rows[0]);
+  return rows.length === 1 ? t("scatterSize.text.one", { size: bytes(big.bytes ?? 0), ms: duration(big.ms) }) : t("scatterSize.text", { n: count(rows.length), size: bytes(big.bytes ?? 0), ms: duration(big.ms) });
 }
 
-/** Where the waiting went: the kind (or the line of the program) that waited most. */
-export function spentSaid(p: Profile, by: "kind" | "code"): string {
-  const top =
-    by === "code"
-      ? [...(p.callers ?? [])].sort((a, b) => b.waitedMs - a.waitedMs).map((c) => ({ name: c.place, share: c.waitedMs / Math.max(p.waitingMs, 1e-9), waitedMs: c.waitedMs }))[0]
-      : p.groups.map((g) => ({ name: groupName(g), share: g.share, waitedMs: g.waitedMs }))[0];
-  return top ? t("profile.spentText", { what: top.name, pct: percent(top.share), time: duration(top.waitedMs) }) : "";
+/** Where the waiting went: the kind of request that waited most. */
+export function spentSaid(p: Profile): string {
+  const top = p.groups[0];
+  return top ? t("profile.spentText", { what: groupName(top), pct: percent(top.share), time: duration(top.waitedMs) }) : "";
 }
 
-/** How long most took: the median, p95 and p99 as shares done by then. */
-export const distSaid = (p: Profile): string => (p.p50Ms == null ? "" : t("dist.text", { p50: duration(p.p50Ms), p95: duration(p.p95Ms ?? 0), p99: duration(p.p99Ms ?? 0) }));
+/** How long most took: the median, p95 and p99 as shares done by then, of the requests the profile holds (the
+ * stretch's, when one is chosen), marked when they are few. */
+export const distSaid = (p: Profile): string => (p.p50Ms == null ? "" : t("dist.text", { p50: duration(p.p50Ms), p95: duration(p.p95Ms ?? 0), p99: duration(p.p99Ms ?? 0) }) + few(p.rate.reduce((n, b) => n + requests(b), 0)));
 
 /** What a status is called when S3 gave no code of its own for it: its HTTP name. */
 export const REASON: Record<number, string> = { 200: "OK", 201: "Created", 204: "No Content", 206: "Partial Content", 301: "Moved Permanently", 304: "Not Modified", 307: "Temporary Redirect", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 411: "Length Required", 412: "Precondition Failed", 416: "Range Not Satisfiable", 429: "Too Many Requests", 500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
@@ -268,13 +282,13 @@ export function chainsSaid(p: Profile): string {
   return c ? t("chains.text", { n: count(c.requests), time: duration(c.endMs - c.startMs), fast: duration(c.atOnceMs) }) : "";
 }
 
-/** Which prefixes were busiest: the first by the measure chosen. */
-export function prefixSaid(p: Profile, measure: "requests" | "cost" | "peak"): string {
-  const value = (x: Profile["prefixes"][number]) => (measure === "cost" ? (x.cost ?? 0) : measure === "peak" ? x.peakPerSecond : x.requests);
+/** Which prefixes were busiest: the first by requests, or by its busiest second. */
+export function prefixSaid(p: Profile, measure: "requests" | "peak"): string {
+  const value = (x: Profile["prefixes"][number]) => (measure === "peak" ? x.peakPerSecond : x.requests);
   const top = p.prefixes.filter((x) => x.prefix !== "other").sort((a, b) => value(b) - value(a))[0];
   if (!top) return "";
   const v = value(top);
-  const shown = measure === "cost" ? cost(v, p.cost.currency) : measure === "peak" ? t("prefixUse.perSecond", { n: count(Math.round(v)) }) : t("prefixUse.requests", { n: count(v) });
+  const shown = measure === "peak" ? t("prefixUse.perSecond", { n: count(Math.round(v)) }) : t("prefixUse.requests", { n: count(v) });
   return t("prefixUse.text", { prefix: top.prefix, value: shown });
 }
 

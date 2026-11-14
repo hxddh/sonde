@@ -21,11 +21,11 @@ export const pct = percent;
 /** The chart components: each draws its `Plot`s as the body of a `Chart`
  * frame. lint-charts fails a `Plot` outside these, and one of these used
  * outside a frame. */
-export const CHARTS = ["Lanes", "SessionShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "KindsOverTime", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy"] as const;
+export const CHARTS = ["Lanes", "SessionShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy"] as const;
 /** The charts drawn over time: each has the one time axis (`TimeAxis`), so
  * they name the same moments at the same places. lint-charts fails one
  * without it, and a time axis made any other way. */
-export const OVER_TIME = ["Lanes", "SessionShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "KindsOverTime", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
+export const OVER_TIME = ["Lanes", "SessionShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
 /** The charts of counts: each has the one value scale (`ValueAxis`: zero and the peak, with its unit). */
 export const COUNTS = ["SessionShape", "LatencyBand", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
 /** Marks that are not charts and stand in no frame: a session's requests a
