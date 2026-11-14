@@ -515,9 +515,13 @@ pub(super) fn print_summary_of(
         say(line);
     }
     for (what, n) in &s.error_codes {
-        match refused_line(s, *n).filter(|_| what == "refused by sonde") {
-            Some(line) => say(paint(&line, "33", color)),
-            None => say(format!("  {} × {what}", output::grouped(*n))),
+        let refused = refused_lines(s, *n);
+        if what == "refused by sonde" && !refused.is_empty() {
+            for line in refused {
+                say(paint(&line, "33", color));
+            }
+        } else {
+            say(format!("  {} × {what}", output::grouped(*n)));
         }
     }
     if all {
@@ -549,31 +553,50 @@ pub(super) fn refuse_existing(out: &Path, force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The requests the recording's policy refused, named, with the policy and
-/// the flag that lifts it: `1 × refused by sonde's no-delete policy:
-/// DeleteObject demo/old/report.csv (--policy allow lets it through)`.
-fn refused_line(s: &sonde_proxy::summary::Summary, n: u64) -> Option<String> {
-    let first = s.refusals.first()?;
-    let named: Vec<&str> = s.refusals.iter().map(|r| r.request.as_str()).collect();
-    let more = (n as usize).saturating_sub(named.len());
-    let more = if more > 0 {
-        format!(" and {} more", output::grouped(more as u64))
-    } else {
-        String::new()
-    };
-    let it = if n == 1 { "it" } else { "them" };
-    Some(match first.policy.as_str() {
-        "" => format!(
-            "  {} × refused by sonde: {}{more}",
-            output::grouped(n),
-            named.join(", ")
-        ),
-        policy => format!(
-            "  {} × refused by sonde's {policy} policy: {}{more} (--policy allow lets {it} through)",
-            output::grouped(n),
-            named.join(", ")
-        ),
-    })
+/// The requests sonde refused, named, a line for each reason: a policy's
+/// with the flag that lifts it (`1 × refused by sonde's no-delete policy:
+/// DeleteObject demo/old/report.csv (--policy allow lets it through)`), and
+/// the rest (S3 Express, a path that names no bucket), which no flag lifts.
+fn refused_lines(s: &sonde_proxy::summary::Summary, n: u64) -> Vec<String> {
+    let mut reasons: Vec<(&str, Vec<&str>)> = Vec::new();
+    for r in &s.refusals {
+        match reasons.iter_mut().find(|(p, _)| *p == r.policy) {
+            Some((_, named)) => named.push(&r.request),
+            None => reasons.push((&r.policy, vec![&r.request])),
+        }
+    }
+    let named = s.refusals.len() as u64;
+    let last = reasons.len().saturating_sub(1);
+    reasons
+        .iter()
+        .enumerate()
+        .map(|(i, (policy, requests))| {
+            // the requests past those named are counted on the last line
+            let more = if i == last && n > named {
+                format!(" and {} more", output::grouped(n - named))
+            } else {
+                String::new()
+            };
+            let count = if i == last {
+                requests.len() as u64 + n.saturating_sub(named)
+            } else {
+                requests.len() as u64
+            };
+            let it = if count == 1 { "it" } else { "them" };
+            match *policy {
+                "" => format!(
+                    "  {} × refused by sonde: {}{more}",
+                    output::grouped(count),
+                    requests.join(", ")
+                ),
+                policy => format!(
+                    "  {} × refused by sonde's {policy} policy: {}{more} (--policy allow lets {it} through)",
+                    output::grouped(count),
+                    requests.join(", ")
+                ),
+            }
+        })
+        .collect()
 }
 
 /// A share as a percentage: `0.4%`, `12%` ([`sonde_fmt::percent`]).
@@ -703,38 +726,41 @@ mod tests {
     use super::*;
 
     /// 20.0 said `1 × refused by sonde` and nothing of what, why or how to
-    /// let it through.
+    /// let it through; 21.0 blamed an S3 Express refusal on the policy.
     #[test]
-    fn a_refused_request_is_named_with_its_policy_and_the_flag_that_lifts_it() {
+    fn refused_requests_are_named_a_line_for_each_reason() {
         use sonde_proxy::summary::{Refusal, Summary};
-        let refusal = |request: &str| Refusal {
-            policy: "no-delete".into(),
+        let refusal = |policy: &str, request: &str| Refusal {
+            policy: policy.into(),
             request: request.into(),
         };
         let mut s = Summary {
             refused: 1,
-            refusals: vec![refusal("DeleteObject demo/old/report.csv")],
+            refusals: vec![refusal("no-delete", "DeleteObject demo/old/report.csv")],
             ..Default::default()
         };
         assert_eq!(
-            refused_line(&s, 1).unwrap(),
-            "  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"
+            refused_lines(&s, 1),
+            ["  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"]
         );
-        s.refusals.push(refusal("DeleteObject demo/a"));
-        s.refusals.push(refusal("DeleteObject demo/b"));
+        s.refusals.push(refusal("no-delete", "DeleteObject demo/a"));
+        s.refusals.push(refusal("no-delete", "DeleteObject demo/b"));
+        let lines = refused_lines(&s, 7);
         assert!(
-            refused_line(&s, 7)
-                .unwrap()
-                .ends_with("demo/b and 4 more (--policy allow lets them through)")
+            lines[0].ends_with("demo/b and 4 more (--policy allow lets them through)"),
+            "{lines:?}"
         );
-        // refused for what no policy lifts (a path naming no bucket)
-        s.refusals = vec![Refusal {
-            policy: String::new(),
-            request: "GetObject".into(),
-        }];
+        // S3 Express is no policy's: its own line, with no flag
+        s.refusals = vec![
+            refusal("no-delete", "DeleteObject demo/a"),
+            refusal("", "CreateSession b--use1-az4--x-s3"),
+        ];
         assert_eq!(
-            refused_line(&s, 1).unwrap(),
-            "  1 × refused by sonde: GetObject"
+            refused_lines(&s, 2),
+            [
+                "  1 × refused by sonde's no-delete policy: DeleteObject demo/a (--policy allow lets it through)",
+                "  1 × refused by sonde: CreateSession b--use1-az4--x-s3"
+            ]
         );
     }
 

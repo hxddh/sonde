@@ -692,6 +692,15 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
+    // what a container is given: the recording's own variables, by name,
+    // and the files they name (a --tls certificate)
+    let for_container: (Vec<String>, Vec<String>) = (
+        set.iter().map(|(k, _)| k.clone()).collect(),
+        set.iter()
+            .filter(|(_, v)| std::path::Path::new(v).is_file())
+            .map(|(_, v)| v.clone())
+            .collect(),
+    );
     if ctx.callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
@@ -734,6 +743,20 @@ async fn run_once(
         Some((engine, argv)) => {
             if under.is_none() {
                 eprintln!("{}", engine_note(engine, &words));
+            }
+            argv
+        }
+        None => words,
+    };
+    // a container reaches sonde on the host's network
+    let words = match sonde_proxy::container::with_settings(
+        &words,
+        &for_container.0,
+        &for_container.1,
+    ) {
+        Some(argv) => {
+            if under.is_none() {
+                eprintln!("{}", container_note(&words));
             }
             argv
         }
@@ -913,7 +936,7 @@ async fn run_once(
         // (nor as one that sent nothing)
         match stopped_text(signal) {
             Some(why) => eprintln!("{}", paint(&why, "33", color)),
-            None if session.records.is_empty() => eprintln!("{}", NO_REQUESTS),
+            None if session.records.is_empty() => eprintln!("{}", no_requests(&a.command)),
             None => {}
         }
     }
@@ -1000,6 +1023,20 @@ fn engine_note(engine: sonde_proxy::jvm::Engine, command: &[String]) -> String {
     }
 }
 
+/// What sonde added to a container's command line, and whether the
+/// command's own network keeps the container from reaching sonde.
+fn container_note(command: &[String]) -> String {
+    match sonde_proxy::container::own_network(command) {
+        Some(net) if net != "host" => format!(
+            "warning: the container is on network {net}: sonde listens on the host's 127.0.0.1, which it may not reach (`--network host` does)"
+        ),
+        _ => format!(
+            "sonde: {} is given the host's network and the recording's variables by name (--network host -e …)",
+            command[0]
+        ),
+    }
+}
+
 /// Signals the process group `child` leads: an interrupt, or (`kill`) its
 /// end. Whether it was sent.
 #[cfg(unix)]
@@ -1037,22 +1074,98 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(1)
 }
 
-/// What to try when a program sent sonde nothing: most SDKs read
-/// AWS_ENDPOINT_URL, some need the endpoint said their own way.
-const NO_REQUESTS: &str = "\nNothing reached sonde: the program sent it no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
-  boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
-  AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
-  Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
-  Java SDK v2         2.21 or newer
-  Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)
-  Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)
-  DuckDB              SET s3_endpoint='127.0.0.1:PORT'; SET s3_url_style='path'; SET s3_use_ssl=false
-  Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })
-Credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them.";
+/// How each client is pointed at sonde when it does not read
+/// AWS_ENDPOINT_URL: the words of a command that name it, and the line.
+const POINTED: &[(&[&str], &str)] = &[
+    (
+        &["docker", "podman"],
+        "a container         sonde gives `docker run` / `podman run` --network host and the variables; with a network of its own it cannot reach 127.0.0.1 (Docker Desktop: turn on host networking)",
+    ),
+    (
+        &["s5cmd"],
+        "s5cmd               reads S3_ENDPOINT_URL (sonde sets it), or --endpoint-url \"$AWS_ENDPOINT_URL\"",
+    ),
+    (
+        &["duckdb"],
+        "DuckDB              con.execute(f\"SET s3_endpoint='{urlparse(os.environ['AWS_ENDPOINT_URL']).netloc}'; SET s3_url_style='path'; SET s3_use_ssl=false\")",
+    ),
+    (
+        &["rclone"],
+        "rclone              a remote of the environment's: rclone ls :s3,env_auth=true:bucket (a named remote keeps its own endpoint)",
+    ),
+    (
+        &["pyarrow"],
+        "pyarrow             S3FileSystem(endpoint_override=os.environ[\"AWS_ENDPOINT_URL\"]), or FileSystem.from_uri, which reads it",
+    ),
+    (
+        &["aws"],
+        "AWS CLI             v1.29 / v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"",
+    ),
+    (
+        &["python", "python3", "boto3"],
+        "boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])",
+    ),
+    (&["go"], "Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)"),
+    (&["java", "mvn", "gradle"], "Java SDK v2         2.21 or newer"),
+    (
+        &["spark-submit", "pyspark", "hadoop", "flink"],
+        "Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)",
+    ),
+    (
+        &["trino"],
+        "Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)",
+    ),
+    (
+        &["node", "npx", "npm", "bun", "deno"],
+        "Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })",
+    ),
+];
+
+/// What to try when a program sent sonde nothing: most clients read
+/// AWS_ENDPOINT_URL, some need the endpoint said their own way; the line of
+/// the client the command names comes first.
+fn no_requests(command: &[String]) -> String {
+    let words: Vec<String> = command
+        .iter()
+        .flat_map(|w| w.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+        .map(|w| {
+            let w = w.rsplit(['/', '\\']).next().unwrap_or(&w).to_string();
+            w.split('.').next().unwrap_or(&w).to_ascii_lowercase()
+        })
+        .collect();
+    let names = |(ws, _): &&(&[&str], &str)| ws.iter().any(|n| words.iter().any(|w| w == n));
+    let mut lines: Vec<&str> = POINTED.iter().filter(names).map(|(_, l)| *l).collect();
+    lines.extend(POINTED.iter().filter(|p| !names(p)).map(|(_, l)| *l));
+    format!(
+        "\nNothing reached sonde: the program sent it no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:\n  {}\nCredentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them. An error that names a SONDE… key came from a store sonde was not in front of.",
+        lines.join("\n  ")
+    )
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_reached_names_the_programs_own_way_first() {
+        let first = |c: &str| {
+            let words: Vec<String> = c.split_whitespace().map(String::from).collect();
+            no_requests(&words)
+                .lines()
+                .nth(2)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        assert!(first("s5cmd ls s3://b").starts_with("s5cmd"));
+        assert!(first("docker run amazon/aws-cli s3 ls").starts_with("a container"));
+        assert!(first("python3 job_with_duckdb.py").starts_with("boto3"));
+        assert!(first("/usr/bin/rclone ls remote:b").starts_with("rclone"));
+        // every way is said, whatever the program
+        let all = no_requests(&["./job".into()]);
+        assert_eq!(all.lines().filter(|l| l.starts_with("  ")).count(), POINTED.len());
+        assert!(all.contains("SONDE"));
+    }
 
     #[test]
     fn an_input_past_its_limit_is_kept_in_a_file_and_read_again_whole() {

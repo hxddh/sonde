@@ -10,6 +10,7 @@
 mod asis;
 pub mod callers;
 pub mod chunked;
+pub mod container;
 pub mod episode;
 pub mod fault;
 pub mod fixes;
@@ -393,6 +394,9 @@ struct Shared {
     cfg: ProxyConfig,
     /// The buffering budget, in MiB (`max_buffered_total`).
     buffered: Arc<tokio::sync::Semaphore>,
+    /// The region each bucket the store said is elsewhere is in
+    /// (`x-amz-bucket-region`): its requests are signed for it, as an SDK's.
+    regions: parking_lot::Mutex<std::collections::HashMap<String, String>>,
 }
 
 const MIB: usize = 1 << 20;
@@ -447,6 +451,7 @@ impl Proxy {
             log,
             cfg,
             buffered,
+            regions: Default::default(),
         });
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
@@ -533,6 +538,8 @@ impl Proxy {
         let set = [
             ("AWS_ENDPOINT_URL", url.as_str()),
             ("AWS_ENDPOINT_URL_S3", url.as_str()),
+            // s5cmd reads this one, not AWS_ENDPOINT_URL
+            ("S3_ENDPOINT_URL", url.as_str()),
             ("AWS_ACCESS_KEY_ID", self.keys.0.as_str()),
             ("AWS_SECRET_ACCESS_KEY", self.keys.1.as_str()),
             ("AWS_REGION", region.as_str()),
@@ -566,6 +573,48 @@ impl Proxy {
         .collect();
         (set, unset)
     }
+}
+
+/// The region a store's answer says a bucket is in, when it is not the one
+/// the request was signed for: AWS's redirect (301, 307) or refusal of the
+/// signature's region (400), each with `x-amz-bucket-region`.
+fn bucket_region(status: u16, headers: &http::HeaderMap, signed: &str) -> Option<String> {
+    if !matches!(status, 301 | 307 | 400) {
+        return None;
+    }
+    let region = headers.get("x-amz-bucket-region")?.to_str().ok()?.trim();
+    (!region.is_empty() && region != signed).then(|| region.to_string())
+}
+
+/// The endpoint for `region` when the store is AWS's (`s3.amazonaws.com`,
+/// `s3.<region>.amazonaws.com`, its dual-stack name): the same host in that
+/// region. Any other store's endpoint is its own, whatever the region.
+fn in_region(endpoint: &reqwest::Url, configured: &str, region: &str) -> reqwest::Url {
+    if region == configured {
+        return endpoint.clone();
+    }
+    let Some(host) = endpoint.host_str() else {
+        return endpoint.clone();
+    };
+    let moved = if host == "s3.amazonaws.com" || host == "s3-external-1.amazonaws.com" {
+        Some(format!("s3.{region}.amazonaws.com"))
+    } else {
+        [
+            ("s3.", ".amazonaws.com"),
+            ("s3.dualstack.", ".amazonaws.com"),
+            ("s3.", ".amazonaws.com.cn"),
+        ]
+        .iter()
+        .find_map(|(pre, post)| {
+            let mid = host.strip_prefix(pre)?.strip_suffix(post)?;
+            (mid == configured || !mid.contains('.')).then(|| format!("{pre}{region}{post}"))
+        })
+    };
+    let mut url = endpoint.clone();
+    if let Some(h) = moved {
+        let _ = url.set_host(Some(&h));
+    }
+    url
 }
 
 /// Serves one connection until it closes, or until the proxy stops: then
@@ -1158,8 +1207,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     let client = &shared.client;
     let cfg = client.config();
+    // a bucket the store said is in another region is signed for it
+    let region = bucket
+        .as_deref()
+        .and_then(|b| shared.regions.lock().get(b).cloned())
+        .unwrap_or_else(|| cfg.region.clone());
+    let endpoint = in_region(&cfg.endpoint, &cfg.region, &region);
     let (origin, path, upstream_host) =
-        client.address(&cfg.endpoint, bucket.as_deref(), key.as_deref());
+        client.address(&endpoint, bucket.as_deref(), key.as_deref());
     let qs = sigv4::canonical_query(&query);
     let url = if qs.is_empty() {
         format!("{origin}{path}")
@@ -1198,7 +1253,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         request_body: None,
         request_body_truncated: false,
         transport_error: None,
-        region: Some(cfg.region.as_str().into()),
+        region: Some(region.as_str().into()),
         job: shared.cfg.tag.clone(),
         first_byte_ms: None,
         requester: None,
@@ -1568,10 +1623,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.request_bytes = sent_len;
 
     out.push(("host".into(), upstream_host));
+    // as sent before it is signed: signed again for another region
+    let unsigned = out.clone();
     // signing's credentials may be fetched now (STS, IMDS): not the store's time
     let fetching = Instant::now();
     let credentials = client.credentials().await;
     let fetched = fetching.elapsed();
+    let mut signed_with = None;
     match credentials {
         Ok(Some(creds)) => {
             sigv4::sign_headers(
@@ -1580,11 +1638,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 &path,
                 &query,
                 &payload_hash,
-                &cfg.region,
+                &region,
                 "s3",
                 Utc::now(),
                 &creds,
             );
+            signed_with = Some(creds);
         }
         Ok(None) => {}
         Err(e) => {
@@ -1636,6 +1695,59 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         r = send => r,
         _ = moved.quiet_for(idle) => Err(stalled(idle)),
     };
+    let mut sent = sent;
+    // the bucket is in another region (AWS says which): kept for the
+    // bucket's next requests, and a request with no body is sent again,
+    // signed for it, as an SDK would
+    if let Ok(r) = &sent
+        && let Some(b) = bucket.as_deref()
+        && let Some(moved_to) = bucket_region(r.status().as_u16(), r.headers(), &region)
+    {
+        shared.regions.lock().insert(b.to_string(), moved_to.clone());
+        if sent_len == Some(0)
+            && !as_is
+            && let Some(creds) = &signed_with
+        {
+            let endpoint = in_region(&cfg.endpoint, &cfg.region, &moved_to);
+            let (origin, path, host) = client.address(&endpoint, Some(b), key.as_deref());
+            let url = if qs.is_empty() {
+                format!("{origin}{path}")
+            } else {
+                format!("{origin}{path}?{qs}")
+            };
+            let mut again: Vec<(String, String)> = unsigned
+                .iter()
+                .filter(|(k, _)| !k.eq_ignore_ascii_case("host"))
+                .cloned()
+                .collect();
+            again.push(("host".into(), host));
+            sigv4::sign_headers(
+                &mut again,
+                &method,
+                &path,
+                &query,
+                &payload_hash,
+                &moved_to,
+                "s3",
+                Utc::now(),
+                creds,
+            );
+            if method == "PUT" || method == "POST" {
+                again.push(("content-length".into(), "0".into()));
+            }
+            let mut rb = client.http_streaming().request(parts.method.clone(), &url);
+            for (k, v) in &again {
+                if !k.eq_ignore_ascii_case("host") {
+                    rb = rb.header(k.as_str(), v.as_str());
+                }
+            }
+            if let Ok(r) = rb.body(Bytes::new()).send().await {
+                record.url = url;
+                record.region = Some(moved_to.as_str().into());
+                sent = Ok(r);
+            }
+        }
+    }
     record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
     let resp = match sent {
         Ok(r) => r,
@@ -2190,6 +2302,41 @@ impl Drop for Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bucket_elsewhere_is_reached_in_its_region() {
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        let moved = |u: &str, to: &str| in_region(&url(u), "us-east-1", to).to_string();
+        assert_eq!(
+            moved("https://s3.us-east-1.amazonaws.com/", "eu-west-1"),
+            "https://s3.eu-west-1.amazonaws.com/"
+        );
+        assert_eq!(
+            moved("https://s3.amazonaws.com", "ap-south-1"),
+            "https://s3.ap-south-1.amazonaws.com/"
+        );
+        assert_eq!(
+            moved("https://s3.dualstack.us-east-1.amazonaws.com", "eu-west-1"),
+            "https://s3.dualstack.eu-west-1.amazonaws.com/"
+        );
+        // another store is its own endpoint, whatever the region
+        assert_eq!(
+            moved("http://127.0.0.1:9000", "eu-west-1"),
+            "http://127.0.0.1:9000/"
+        );
+        assert_eq!(
+            moved("https://s3.us-east-1.amazonaws.com", "us-east-1"),
+            "https://s3.us-east-1.amazonaws.com/"
+        );
+        let mut h = http::HeaderMap::new();
+        h.insert("x-amz-bucket-region", "eu-west-1".parse().unwrap());
+        assert_eq!(bucket_region(301, &h, "us-east-1").as_deref(), Some("eu-west-1"));
+        assert_eq!(bucket_region(400, &h, "us-east-1").as_deref(), Some("eu-west-1"));
+        // the region it was signed for, or an answer that is no redirect
+        assert_eq!(bucket_region(301, &h, "eu-west-1"), None);
+        assert_eq!(bucket_region(200, &h, "us-east-1"), None);
+        assert_eq!(bucket_region(301, &http::HeaderMap::new(), "us-east-1"), None);
+    }
 
     #[test]
     fn targets() {

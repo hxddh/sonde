@@ -279,9 +279,8 @@ mod tests {
                 "  ✓ fixed  HEAD before GET · saved 20 requests (predicted 20)",
                 "  ↓ less   41 one after another",
                 "  ! back   listed 5 times",
-                "  2 still open:",
-                "    · small uploads",
-                "    · hot key",
+                // each listed above, with its line and fix
+                "  2 still open, as above",
             ]
         );
         // nothing moved: no "still open" alone

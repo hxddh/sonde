@@ -254,32 +254,69 @@ pub fn program_name(command: &str) -> Option<String> {
 }
 
 /// What a command runs, by a short name: the script an interpreter runs
-/// (`etl` of `python etl.py --day 2`), else the program itself (`load` of
-/// `./load --all`). Letters, digits, `-` and `_`: a program without a name
-/// of its own goes by it ([`program_key`]), and its session files are named
-/// by it.
+/// (`etl` of `python etl.py --day 2`, `pytest` of `python -m pytest`), the
+/// command a shell is given (`aws` of `sh -c 'aws s3 cp …'`), the image a
+/// container runs (`aws-cli` of `docker run amazon/aws-cli s3 ls`), else the
+/// program itself (`load` of `./load --all`). Letters, digits, `-` and `_`:
+/// a program without a name of its own goes by it ([`program_key`]), and its
+/// session files are named by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
-        "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
-        "uv", "poetry", "npx", "dotnet",
+        "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv",
+        "poetry", "npx", "dotnet",
     ];
+    const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash"];
     let program = program_name(command)?;
     let stem = |f: &str| {
         let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
         name.split('.').next().unwrap_or(name).to_string()
     };
     let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    // the words after the program's own, to the end of its part
+    let words: Vec<String> = shell_words(command).iter().map(|w| unquote(w)).collect();
+    let after: Vec<&str> = words
+        .iter()
+        .skip_while(|w| w.rsplit(['/', '\\']).next() != Some(program.as_str()))
+        .skip(1)
+        .take_while(|w| !is_separator(w))
+        .map(String::as_str)
+        .collect();
+    if SHELLS.contains(&base)
+        && let Some(at) = after.iter().position(|w| *w == "-c")
+        && let Some(inner) = after.get(at + 1)
+    {
+        return short_name(inner);
+    }
+    if matches!(base, "docker" | "podman")
+        && let Some(image) = crate::container::image(&after)
+    {
+        // `registry/amazon/aws-cli:2.40` is `aws-cli`
+        let last = image.rsplit('/').next().unwrap_or(image);
+        return safe_name(last.split([':', '@']).next().unwrap_or(last));
+    }
     let mut name = stem(&program);
-    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
-        // what it runs: the first word after it that is a file, not an option
-        let after = command
-            .split_whitespace()
-            .skip_while(|w| !w.ends_with(&program));
-        if let Some(script) = after
-            .skip(1)
-            .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
-        {
-            name = stem(script);
+    if INTERPRETERS.contains(&base)
+        || INTERPRETERS.contains(&program.as_str())
+        || SHELLS.contains(&base)
+    {
+        // what it runs: a module (-m), the first word after it that is a
+        // file, not an option; code given inline (-c, -e) has no name of its own
+        let mut it = after.iter();
+        while let Some(w) = it.next() {
+            match *w {
+                "-m" => {
+                    if let Some(m) = it.next() {
+                        name = m.to_string();
+                    }
+                    break;
+                }
+                "-c" | "-e" | "--eval" => break,
+                w if !w.starts_with('-') && w.contains('.') && !w.contains('=') => {
+                    name = stem(w);
+                    break;
+                }
+                _ => {}
+            }
         }
     }
     safe_name(&name)
@@ -1713,6 +1750,13 @@ mod tests {
             ("sh get.sh", "get"),
             ("aws s3 ls", "aws"),
             ("logs of s3://b/logs/", "logs of s3://b/logs/"),
+            // 21.0 named these `big`, `example` and `docker`
+            ("sh -c 'aws s3 cp big.bin s3://b/'", "aws"),
+            ("bash -c \"curl https://example.invalid\"", "curl"),
+            ("docker run --rm -e A amazon/aws-cli:2.40 s3 ls", "aws-cli"),
+            ("podman run -v a:b rclone/rclone ls", "rclone"),
+            ("python3 -m pytest tests/", "pytest"),
+            ("python3 -c 'import boto3; s3.get_object()'", "python3"),
         ] {
             assert_eq!(key(command).as_deref(), Some(program), "{command}");
         }
@@ -1918,7 +1962,7 @@ mod tests {
             "{md}"
         );
         assert!(
-            squeezed(&md).contains("| warn | slowdown |"),
+            squeezed(&md).contains("| degraded | slowdown |"),
             "degraded is not a pass: {md}"
         );
     }
