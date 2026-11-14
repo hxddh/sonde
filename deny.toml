@@ -54,5 +54,5 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Native Shell, pinned by commit (docs/dev/decisions.md D-002)
+# Native Shell, pinned by commit (docs/dev/decisions.md D-207)
 allow-git = ["https://github.com/longbridge/nsh"]
