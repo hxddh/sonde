@@ -212,7 +212,8 @@ Each becomes a session, read like a recording; the app opens them too (Open, or 
 
 **Findings** follow: uploads never completed, files written without a commit, keys read repeatedly and the same each
 time (not one written between its reads, nor one not found: a cache would answer those wrongly), prefixes listed
-repeatedly with nothing written under them between, HEAD before GET, small files sent as multipart, throttling,
+repeatedly with nothing written under them between, HEAD before GET, small files sent as multipart, throttling (a
+warning when a request gave up after its retries or a tenth of the requests were throttled, else a note),
 prefixes near S3's rate, requests one after another (not one that reads or lists what the one before wrote), commits
 by rename, directory markers. Notes common to nearly every step of a format are said once among the operations; a
 retry, a lost race (412) and a slow request are in the operation and the charts, not findings.

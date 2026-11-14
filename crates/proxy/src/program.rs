@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::episode::Observation;
 use crate::profile::Profile;
-use crate::summary::is_miss;
 use reqlog::Record;
 
 /// The program a session ran, as runs of it are grouped: its command's
@@ -492,6 +491,9 @@ pub struct RunPoint {
     pub wall_ms: f64,
     pub cost: f64,
     pub currency: String,
+    /// Requests that failed after their retries (a miss is no failure, and
+    /// an attempt retried until it succeeded is none): what `max-errors`
+    /// holds a run to ([`crate::signals::gave_up`]).
     pub errors: usize,
     pub warnings: usize,
     pub findings: usize,
@@ -519,9 +521,9 @@ pub fn run_point(
         p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
         currency: profile.cost.currency.clone(),
-        errors: records
-            .iter()
-            .filter(|r| r.is_error() && !is_miss(r))
+        errors: crate::signals::gave_up(records)
+            .into_iter()
+            .filter(|&g| g)
             .count(),
         warnings: findings.iter().filter(|o| o.level == "warn").count(),
         findings: findings.len(),
@@ -535,12 +537,18 @@ pub fn run_point(
 /// The figures a budget holds a run to, kept as its requests arrive: a
 /// proxy left running holds eight bytes a request (its latency, for the
 /// p95) and the stretches of time with a request in flight, not the records.
-/// The same figures as [`run_point`] of the same records.
+/// The same figures as [`run_point`] of the same records, but for a
+/// failure's retry, which is known here as it arrives: the next request of
+/// the failure's name once it was answered, within a minute (without the
+/// rule that tells a program's poll from an SDK's retries).
 #[derive(Debug, Clone)]
 pub struct RunFigures {
     prices: crate::profile::RequestPrices,
     requests: usize,
     errors: usize,
+    /// Failures a retry is owed for, by the request's name: when each was
+    /// answered (µs). Counted in `errors` until their retry comes.
+    owed: std::collections::HashMap<String, i64>,
     cost: f64,
     latencies: Vec<f64>,
     /// Disjoint stretches with a request in flight, start to end, in µs.
@@ -555,6 +563,7 @@ impl RunFigures {
             prices,
             requests: 0,
             errors: 0,
+            owed: Default::default(),
             cost: 0.0,
             latencies: Vec::new(),
             busy: Default::default(),
@@ -568,11 +577,26 @@ impl RunFigures {
 
     pub fn add(&mut self, r: &Record) {
         self.requests += 1;
-        self.errors += usize::from(r.is_error() && !is_miss(r));
-        self.cost += crate::profile::price(r, &self.prices);
-        self.latencies.push(r.latency_ms.max(0.0));
         let mut start = r.time.timestamp_micros();
         let mut end = start + r.latency_us();
+        // a failure retried is a request that went on: no longer one that failed
+        let name = crate::signals::request_name(r);
+        if let Some(&told) = self.owed.get(&name)
+            && start >= told
+        {
+            self.owed.remove(&name);
+            if start - told <= crate::signals::RETRY_WINDOW_US {
+                self.errors -= 1;
+            }
+        }
+        if crate::summary::is_failure(r) {
+            self.errors += 1;
+            if crate::episode::retryable(r) {
+                self.owed.insert(name, end);
+            }
+        }
+        self.cost += crate::profile::price(r, &self.prices);
+        self.latencies.push(r.latency_ms.max(0.0));
         self.span = Some(match self.span {
             Some((s, e)) => (s.min(start), e.max(end)),
             None => (start, end),
@@ -1492,6 +1516,51 @@ mod tests {
         (run_point("x", "", rs, &p, &o), p, o)
     }
 
+    /// `max-errors` counts the requests that failed after their retries:
+    /// one 503 retried into a 200 against real S3 fails no budget.
+    #[test]
+    fn an_error_is_a_request_that_failed_after_its_retries() {
+        let at = |id: u64, ms: i64, key: &str, status: u16| {
+            let mut r = rec(id, key);
+            r.time += chrono::Duration::milliseconds(ms);
+            r.status = Some(status);
+            r
+        };
+        let errors = |rs: &[Record]| {
+            let mut f = RunFigures::new(RequestPrices::default());
+            rs.iter().for_each(|r| f.add(r));
+            let p = point(rs).0;
+            assert_eq!(f.point().errors, p.errors, "kept as they arrive, the same");
+            p.errors
+        };
+        let mut rs: Vec<Record> = (0..20).map(|i| at(i, i as i64 * 100, "k", 200)).collect();
+        assert_eq!(errors(&rs), 0);
+        // a 503, sent again 50 ms later and answered
+        rs.push(at(30, 2500, "hot", 503));
+        rs.push(at(31, 2560, "hot", 200));
+        assert_eq!(errors(&rs), 0);
+        let c = check(
+            (&point(&rs).0, &rs, &point(&rs).1, &point(&rs).2),
+            None,
+            &Budget {
+                max_errors: Some(0),
+                ..Default::default()
+            },
+        );
+        assert!(c.passed, "{c:#?}");
+        // retried twice and failed again: one request lost, not three
+        rs.push(at(40, 4000, "lost", 503));
+        rs.push(at(41, 4100, "lost", 503));
+        rs.push(at(42, 4300, "lost", 503));
+        assert_eq!(errors(&rs), 1);
+        // a 403 is not sent again: it failed
+        rs.push(at(50, 5000, "secret", 403));
+        assert_eq!(errors(&rs), 2);
+        // a miss is no failure
+        rs.push(at(60, 6000, "none", 404));
+        assert_eq!(errors(&rs), 2);
+    }
+
     #[test]
     fn figures_kept_as_requests_arrive_are_those_of_the_records() {
         let mut rs = Vec::new();
@@ -1991,12 +2060,12 @@ mod tests {
     #[test]
     fn the_warnings_row_says_it_counts_the_new_ones() {
         let quiet: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
-        // a run with a warning its baseline has too
+        // a run with a warning its baseline has too: a request it gave up
+        // on after a 503
         let mut warned = quiet.clone();
         let mut failed = rec(50, "k0");
         failed.status = Some(503);
         warned.push(failed);
-        warned.push(rec(51, "k0"));
         let (p, pr, o) = point(&warned);
         assert!(o.iter().any(|f| f.level == "warn"), "{o:#?}");
         let c = check(

@@ -60,7 +60,7 @@
 
 | Option | |
 |---|---|
-| `--max-requests N`, `--max-waiting T`, `--max-cost X`, `--max-errors N`, `--max-p95 T` | Budget. Times as `2s`, `250ms` or ms. |
+| `--max-requests N`, `--max-waiting T`, `--max-cost X`, `--max-errors N`, `--max-p95 T` | Budget. Times as `2s`, `250ms` or ms. An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
 | `--baseline FILE\|auto\|https://…` | `auto`: the baseline set for the run's program (`sessions/baselines.json`, shared with the app). A URL is fetched (CI artifact, presigned). |
 | `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10). |

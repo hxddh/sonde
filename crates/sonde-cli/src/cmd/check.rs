@@ -42,7 +42,8 @@ pub struct CheckArgs {
     /// At most this request cost (in the settings' currency).
     #[arg(long)]
     max_cost: Option<f64>,
-    /// At most this many failed requests.
+    /// At most this many requests that failed after their retries (a miss
+    /// is no failure).
     #[arg(long)]
     max_errors: Option<usize>,
     /// 95% of the requests within this long: ms, or `250ms`, `2s`.
