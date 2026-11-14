@@ -8,9 +8,9 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER } from "./system";
+import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER, slotMs, sliceAt } from "./system";
 import { terminal, textual, SimpleTable, TEXT, TONE } from "../kit";
-import { bytesSaid, lanesSaid } from "./answers";
+import { bytesSaid, lanesSaid, slicePeak } from "./answers";
 
 // --- what ran at once ----------------------------------------------------------------
 
@@ -166,7 +166,7 @@ export function slices(p: Profile, injected?: number[]): Slice[] {
   if (marked.size)
     for (const x of p.samples) {
       if (!marked.has(x.id)) continue;
-      const i = Math.min(Math.floor(x.tMs / p.binMs), p.rate.length - 1);
+      const i = Math.min(sliceAt(p, x.tMs), p.rate.length - 1);
       const c = apart.get(i) ?? { ok: 0, miss: 0, client: 0, server: 0 };
       c[FIELD[statusTone(x.status ?? null) as Exclude<Outcome, "injected">]] += 1;
       apart.set(i, c);
@@ -218,7 +218,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     const near = Math.max(2, Math.round(rows().length / 40));
     const at = (props.marks ?? [])
       // a finding at the session's last instant is in its last slice
-      .map((k) => ({ n: k.n, i: Math.min(Math.floor(k.tMs / props.profile.binMs), slices(props.profile).length - 1) - from() }))
+      .map((k) => ({ n: k.n, i: Math.min(sliceAt(props.profile, k.tMs), slices(props.profile).length - 1) - from() }))
       .filter((k) => k.i >= 0 && k.i < rows().length)
       .sort((a, b) => a.i - b.i || a.n - b.n);
     let last = -Infinity;
@@ -233,11 +233,11 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   // the stretch shown, in ms: what the one time axis names
   const shownMs = (): [number, number] => [rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + props.profile.binMs];
   // the slices a fault scenario answered a request in
-  const faulted = () => new Set((props.faults ?? []).map((ms) => Math.min(Math.floor(ms / props.profile.binMs), slices(props.profile).length - 1) - from()).filter((i) => i >= 0 && i < rows().length));
+  const faulted = () => new Set((props.faults ?? []).map((ms) => Math.min(sliceAt(props.profile, ms), slices(props.profile).length - 1) - from()).filter((i) => i >= 0 && i < rows().length));
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   const peakBin = () => {
     const at = props.profile.peakAtMs;
-    const i = Math.floor(at / props.profile.binMs) - from();
+    const i = sliceAt(props.profile, at) - from();
     return props.profile.peakInFlight > 1 && i >= 0 && i < rows().length ? i : null;
   };
   // a slice pressed, or the stretch chosen (`picked`): what it leaves out turns quiet, it does not go
@@ -305,7 +305,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           {/* how many: zero and the busiest slice's requests; at the far edge, the most in flight in
               what is shown (the whole session's is the In flight tile's number) */}
           <If when={props.axis && !props.strip}>
-            <ValueAxis peak={top()} say={(v) => t("shape.peak", { n: count(v) })} />
+            <ValueAxis peak={top()} say={(v) => slicePeak(v, props.profile.binMs)} />
             <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={LABEL.peakEnd} />
           </If>
           {/* the moment another chart rests on */}
@@ -377,13 +377,29 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string; 
       </If>
     </Plot>
   );
+  // a terminal: the same shape in block characters, as `sonde show` prints it
+  const ink = () => (props.tone === "fail" ? "text-status-server" : props.tone === "client" ? "text-status-client" : props.tone === "injected" ? "text-status-injected" : props.tone === "quiet" ? "text-muted-foreground" : "text-chart-1");
   return (
-    <If when={!terminal() && props.shape.some((n) => n > 0)}>
-      <If when={!props.still} else={plot()}>
-        <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+    <If when={props.shape.some((n) => n > 0)}>
+      <If when={!terminal()} else={<Text class={ink()} accessibilityLabel="">{blocks(props.shape)}</Text>}>
+        <If when={!props.still} else={plot()}>
+          <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+        </If>
       </If>
     </If>
   );
+}
+
+/** The eight heights of a block character, lowest first. */
+const BLOCKS = "▁▂▃▄▅▆▇█";
+/** A shape in block characters, `columns` wide at most (each the most of the slices it stands for, so a burst is
+ * not averaged away); a slice of none is the lowest block, the baseline. */
+export function blocks(shape: number[], columns = 16): string {
+  if (shape.length === 0) return "";
+  const n = Math.min(columns, shape.length);
+  const cols = Array.from({ length: n }, (_, c) => Math.max(...shape.slice(Math.floor((c * shape.length) / n), Math.max(Math.floor(((c + 1) * shape.length) / n), Math.floor((c * shape.length) / n) + 1))));
+  const top = Math.max(...cols, 1e-12);
+  return cols.map((v) => BLOCKS[v <= 0 ? 0 : Math.min(7, Math.max(1, Math.round((v / top) * 7)))]).join("");
 }
 
 // --- how requests were answered ---------------------------------------------------
@@ -411,7 +427,7 @@ export function liveFigures(p: Profile, windowMs = 1000) {
  * below it, on the timeline's slices. */
 export function BytesOverTime(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {
   const s = () => props.signals;
-  const rows = () => stretch(s().bytes.up.map((up, i) => ({ tMs: i * s().binMs, up, down: -(s().bytes.down[i] ?? 0) })), props.range);
+  const rows = () => stretch(s().bytes.up.map((up, i) => ({ tMs: slotMs(s(), i), up, down: -(s().bytes.down[i] ?? 0) })), props.range);
   // room for the scale's words over the most sent and under the most received: each half a plot of its own
   const top = () => Math.max(1, ...rows().map((r) => r.up)) * HEADROOM.strip;
   const bottom = () => Math.min(-1, ...rows().map((r) => r.down)) * HEADROOM.strip;

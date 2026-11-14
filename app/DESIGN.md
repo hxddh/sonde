@@ -348,10 +348,11 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like: on the timeline's
   stack, an operation's row, the Errors tile and its line, never a store failure's red) — one failure one
   colour everywhere: errors all the program's own (4xx) are `status-client` on the tiles and figures too; a quantity in
-  `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
-  `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
-  `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
-  turns `bar-track`, it does not disappear.
+  `chart-1`, a second in `chart-4` (blue and orange: apart for every eye); tails and percentiles in a quiet
+  `muted-foreground` (dashed for a line), never an error's color; retries in `info`; a throttle in `warn`, lighter,
+  apart from the other 5xx; before is `muted-foreground/30`, after by how it moved (`chart-1` fewer, `chart-4` more:
+  never green against red). lint-charts holds these pairs apart under deuteranopia and protanopia. What a selection
+  leaves out turns `bar-track`, it does not disappear.
 - **One time axis** (`TimeAxis`), under every chart over time — the timeline and the strip on Operations, lanes,
   bytes, latency's bands and its grid, the scatter, errors and their rate, chains, the prefix heat
   map, a trial over its clean run (`OVER_TIME` names them): the same round moments (`timeTicks`: 1, 2 or 5 of a

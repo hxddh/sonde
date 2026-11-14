@@ -266,8 +266,27 @@ test("every chart over one stretch of time names the same round moments", async 
   expect(timeTicks([230, 460])).toEqual([300, 400]);
   expect(timeTicks([5, 5])).toEqual([5]);
   // slices and wall time give one span: a chart of slices and a chart of moments agree
-  expect(sessionSpan({ binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
-  expect(sessionSpan({ binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
+  expect(sessionSpan({ startMs: 0, binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
+  expect(sessionSpan({ startMs: 0, binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
+  // a stretch's own profile: on the session's axis, from where it starts
+  expect(sessionSpan({ startMs: 1000, binMs: 10, wallMs: 467 }, 40)).toEqual([1000, 1467]);
+});
+
+test("a shape in a terminal is block characters, a burst kept, never wider than its room", async () => {
+  const { blocks } = await import("../src/ui/plots");
+  expect(blocks([0, 1, 2, 4])).toBe("▁▃▅█");
+  // forty slices in sixteen columns: each column the most of its slices
+  const burst = Array.from({ length: 40 }, (_, i) => (i === 21 ? 9 : 1));
+  const said = blocks(burst);
+  expect(said.length).toBe(16);
+  expect([...said].filter((c) => c === "█").length).toBe(1);
+});
+
+test("a scale of sizes is ticked at powers of 1024, or of 32 where it is narrow", async () => {
+  const { sizeTicks } = await import("../src/ui/plots");
+  const said = (d: [number, number]) => sizeTicks(d).map((v) => Math.round(10 ** v));
+  expect(said([0, 7])).toEqual([1, 1024, 1024 ** 2]);
+  expect(said([3.2, 6.5])).toEqual([32 * 1024, 1024 ** 2]);
 });
 
 test("a table that narrows drops its columns by rank, whole, and clips none", async () => {

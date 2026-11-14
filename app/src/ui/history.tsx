@@ -440,7 +440,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
                   <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
                   <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
-                  <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="errors" title={t("trend.errors")} format={n} onOpen={props.onOpen} budget={budget()?.maxErrors} />
+                  <RunTrend history={shown(x())} measure="p95Ms" title={t("trend.p95")} format={duration} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="warnings" title={t("trend.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
               </If>
             </If>

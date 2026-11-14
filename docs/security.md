@@ -82,5 +82,6 @@ you would without sonde.
 
 ## Shared runs
 
-`sonde share` writes one HTML file holding only what the run's file holds (`--redact`: bucket and key names as
-tokens; headers, bodies, URLs, output and arguments dropped).
+`sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds (`--redact`:
+bucket and key names as tokens; headers, bodies, URLs, output and arguments dropped). It fetches nothing and runs no
+server.

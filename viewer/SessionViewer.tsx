@@ -1,15 +1,17 @@
-// A shared session: what `sonde share` publishes, read in a browser. The
-// app's own views — the figures, what stands out (each a filter), the
-// operations (each placed in time), the program's output lined up, and an
-// inspector from an operation to its requests to one request in full —
-// over the session's precomputed `session.json`.
+// A shared run: what `sonde share` writes, read in a browser. The app's own
+// views — the figures, what stands out (each a filter), the operations (each
+// placed in time), the program's output lined up, the Time pane, a
+// comparison with another run when it was shared against one, and an
+// inspector from an operation to its requests to one request in full — over
+// the run's precomputed document.
 
 import { batch, computed, effect, Scroll, signal, untracked, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { duration } from "../app/src/format";
 import { t } from "../app/src/i18n";
 import { viewOfWhole, wholeOperations } from "../app/src/operations";
-import type { EpisodeRow, LogLine, RecordSummary, RequestRecord, WholeSession } from "../app/src/types";
+import type { EpisodeRow, LogLine, Profile, RecordSummary, RequestRecord, RunChange, Signals, WholeSession } from "../app/src/types";
+import { RunChangeView } from "../app/src/ui/runchange";
 import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong, PANE, SIZES } from "../app/src/ui/kit";
 import { SessionShape, SHAPE_STRIP, TICK_ROOM } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
@@ -18,7 +20,24 @@ import { TimePane } from "../app/src/ui/profile";
 import { type Range, rangeOf, rangeParam } from "../app/src/range";
 
 /** The page's address, where the page has one (a browser): its hash keeps the stretch of time shown. */
-const place = () => (globalThis as { location?: { hash: string; pathname: string; search: string }; history?: { replaceState: (s: unknown, t: string, u: string) => void } });
+type Place = { location?: { hash: string; pathname: string; search: string }; history?: { replaceState: (s: unknown, t: string, u: string) => void }; parent?: Place };
+// (the viewer runs in a frame of the page, Native Shell's realm: the address is the page's, its parent's)
+const place = (): Place => {
+  const g = globalThis as Place;
+  try {
+    return g.parent?.location ? g.parent : g;
+  } catch {
+    return g;
+  }
+};
+/** Whether the address asks for the Time pane (`#time`, or a stretch of time), read once as the page opens. */
+const hashTime: boolean = (() => {
+  try {
+    return place().location?.hash === "#time";
+  } catch {
+    return false;
+  }
+})();
 /** The stretch the address names (`#range=120-480`), read once as the page opens. */
 const hashRange: Range | null = (() => {
   try {
@@ -39,15 +58,17 @@ function keepRange(r: Range | null) {
 }
 import type { SignalId } from "../app/src/signals";
 
-/** What `sonde share` writes: the session whole, every operation and request in the page. */
+/** What `sonde share` writes: the run whole, every operation and request in the page, and the run it was compared
+ * with (`--baseline`, or two runs), when it was. */
 export interface SharedSession extends WholeSession {
   format: "sonde-share";
   version: number;
   records: RequestRecord[];
   lines: LogLine[];
+  compare?: { name: string; change: RunChange; signals: [Signals, Signals]; profiles: [Profile, Profile] };
 }
 
-type Pane = "operations" | "aligned" | "time";
+type Pane = "compare" | "operations" | "aligned" | "time";
 
 export function SessionViewer(props: { data: SharedSession }) {
   // the page's session in the shape a view has, and its operations answered from the page as the
@@ -61,7 +82,8 @@ export function SessionViewer(props: { data: SharedSession }) {
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
   // an address that names a stretch of time opens on the Time pane, over it
-  const pane = signal<Pane>(hashRange && d.profile ? "time" : d.lines.length ? "aligned" : "operations");
+  // a run shared against another opens on what changed
+  const pane = signal<Pane>((hashRange || hashTime) && d.profile ? "time" : props.data.compare ? "compare" : d.lines.length ? "aligned" : "operations");
   // a signal pressed in the header: the Time pane, on its chart
   const reveal = signal<{ id: SignalId; n: number } | null>(null);
   const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
@@ -139,6 +161,14 @@ export function SessionViewer(props: { data: SharedSession }) {
     </If>
   );
   const body = () => {
+    const c = props.data.compare;
+    if (pane() === "compare" && c)
+      return (
+        <View class="min-h-0 flex-1 gap-2">
+          <Muted class="text-small">{t("viewer.against", { name: c.name })}</Muted>
+          <RunChangeView change={c.change} signals={c.signals} profiles={c.profiles} />
+        </View>
+      );
     if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} range={hashRange} onRange={keepRange} />;
     if (pane() === "operations" || !d.lines.length)
       return (
@@ -183,7 +213,8 @@ export function SessionViewer(props: { data: SharedSession }) {
           testID="session-pane-mode"
           value={pane()}
           items={[
-            { value: "operations", title: t("sessions.operations"), icon: "list-filter" },
+            ...(props.data.compare ? [{ value: "compare", title: t("viewer.compared"), icon: "git-compare-arrows" as const }] : []),
+            { value: "operations", title: t("sessions.operations"), icon: "list-filter" as const },
             // (as in the app: a tab with nothing to show is dimmed, it does not go)
             { value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const, disabled: !d.lines.length, why: t("sessions.noOutput") },
             { value: "time", title: t("profile.pane"), icon: "chart-pie" as const, disabled: !d.profile },
@@ -192,7 +223,7 @@ export function SessionViewer(props: { data: SharedSession }) {
         />
         <View class="flex-1" />
         {/* what narrows the operations, said where they are */}
-        <If when={pane() !== "time" ? filterNote() : null}>
+        <If when={pane() !== "time" && pane() !== "compare" ? filterNote() : null}>
           {(n) => <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} testID="clear-filter" />}
         </If>
       </View>

@@ -1,17 +1,13 @@
-//! A session as a web page anyone opens in a browser: sonde's viewer (built
-//! with Native Shell's web target, embedded at build time) and the session's
-//! `session.json`, everything already computed. `sonde share` and the app's
-//! Share both write it.
+//! A session as one HTML file anyone opens in a browser, from a disk or a
+//! web server alike: sonde's viewer (the app's own views and Time pane, built
+//! with Native Shell's web target and embedded at build time) and the
+//! session, everything already computed, all in the one file. `sonde share`
+//! and the app's Share both write it.
 
-use std::convert::Infallible;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::io::Write;
+use std::path::Path;
 
-use bytes::Bytes;
-use http_body_util::Full;
-use hyper::service::service_fn;
-use hyper::{Request, Response};
-use hyper_util::rt::TokioIo;
+use base64::Engine;
 use serde_json::Value;
 
 use crate::episode::{episodes, shared_notes};
@@ -19,12 +15,12 @@ use crate::session::Session;
 use crate::summary::summarize;
 
 mod embedded {
-    include!(concat!(env!("OUT_DIR"), "/viewer.rs"));
+    include!(concat!(env!("OUT_DIR"), "/viewer_files.rs"));
 }
 
 /// Whether this build carries the viewer (a development build may not).
 pub fn has_viewer() -> bool {
-    !embedded::VIEWER.is_empty()
+    embedded::VIEWER.iter().any(|(p, _, _)| *p == "index.html")
 }
 /// A JSON document written as it is made: a session of a million requests
 /// is never one tree in memory and then one string. Objects and arrays are
@@ -209,12 +205,26 @@ fn shared_record(r: &reqlog::Record) -> Value {
     v
 }
 
+/// A run compared with another (its baseline, the run before it): what the
+/// page shows first, as the app's Compare shows it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Compared {
+    /// The run before, as `check` names it.
+    pub name: String,
+    pub change: crate::profile::RunChange,
+    /// Both runs' signals and profiles, the run before first: the tiles'
+    /// lines and the two over time.
+    pub signals: [crate::signals::Signals; 2],
+    pub profiles: [crate::profile::Profile; 2],
+}
+
 /// Everything the viewer shows, computed: header, summary, operations,
 /// observations, records (with their short target) and output lines.
 pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Value {
     let mut doc = Vec::new();
     // (into memory: nothing to fail)
-    let _ = write_session_json(s, None, prices, &mut doc);
+    let _ = write_session_json(s, None, prices, None, &mut doc);
     serde_json::from_slice(&doc).unwrap_or(Value::Null)
 }
 
@@ -225,6 +235,7 @@ pub fn write_session_json(
     s: &Session,
     full: Option<&Path>,
     prices: &crate::profile::RequestPrices,
+    compared: Option<&Compared>,
     out: impl std::io::Write,
 ) -> std::io::Result<()> {
     let eps = episodes(&s.records);
@@ -236,6 +247,9 @@ pub fn write_session_json(
     header.cwd = None;
     let mut w = JsonOut::new(out, false);
     w.begin_object()?;
+    if let Some(c) = compared {
+        w.field("compare", c)?;
+    }
     w.array("operations", &eps)?;
     w.field("format", &"sonde-share")?;
     w.field("header", &header)?;
@@ -273,93 +287,191 @@ pub fn write_session_json(
     Ok(())
 }
 
-/// Writes the site to `dir`: the viewer's files and `doc` as `session.json`.
-/// Refused when this build has no viewer.
-pub fn write_site(dir: &Path, doc: &[u8]) -> std::io::Result<()> {
-    if !has_viewer() {
-        return Err(std::io::Error::other(
-            "this build of sonde has no web viewer: build it first (`cd viewer && nsh package App.tsx --target web`), or write the session as data with `sonde show FILE -f json`",
-        ));
-    }
-    for (rel, bytes) in embedded::VIEWER {
-        let p = dir.join(rel);
-        if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent)?;
+/// What a JSON document is written through inside the page's `<script>`:
+/// `</` becomes `<\/` (the same text to JSON), so no string in it closes the
+/// script.
+struct InScript<W: Write> {
+    out: W,
+    lt: bool,
+}
+
+impl<W: Write> Write for InScript<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut from = 0;
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'/' && (self.lt || (i > 0 && buf[i - 1] == b'<')) {
+                self.out.write_all(&buf[from..i])?;
+                self.out.write_all(b"\\")?;
+                from = i;
+            }
+            self.lt = false;
         }
-        std::fs::write(p, bytes)?;
+        self.out.write_all(&buf[from..])?;
+        self.lt = buf.last() == Some(&b'<');
+        Ok(buf.len())
     }
-    std::fs::write(dir.join("session.json"), doc)?;
-    Ok(())
-}
 
-fn content_type(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or("") {
-        "html" => "text/html; charset=utf-8",
-        "js" | "mjs" => "text/javascript; charset=utf-8",
-        "wasm" => "application/wasm",
-        "json" => "application/json",
-        "css" => "text/css",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "woff2" => "font/woff2",
-        "txt" => "text/plain; charset=utf-8",
-        _ => "application/octet-stream",
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.flush()
     }
 }
 
-/// Whether a request's path names a file inside the site: plain names only
-/// (no `..`, no root, and no drive or UNC prefix, which on Windows would
-/// replace the site's folder when joined).
-fn inside(path: &str) -> bool {
-    !path.contains('\\')
-        && !path.contains(':')
-        && Path::new(path)
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
+/// Text for the page's markup: `&`, `<`, `>` and `"` escaped.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
-/// Serves the files under `dir` (and nothing outside it) on `listener`,
-/// for as long as the future runs.
-pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
-    let dir = Arc::new(dir);
-    loop {
-        let Ok((stream, _)) = listener.accept().await else {
+/// The files of the viewer the page carries, by path, as `[how, base64]`:
+/// `"g"` gzipped (decompressed in the browser), `"r"` as they are. Native
+/// Shell's page, manifest and prefetch script are the page's own business,
+/// and its formula renderer is never used by the viewer: none is carried.
+fn files_json() -> String {
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let mut out = String::from("{");
+    for (path, gz, bytes) in embedded::VIEWER {
+        let skip = *path == "index.html"
+            || path.ends_with(".webmanifest")
+            || path.ends_with("LICENSES.txt")
+            || path.starts_with("nsh-prefetch.")
+            || path.starts_with("nsh-math.");
+        if skip {
             continue;
-        };
-        let dir = dir.clone();
-        tokio::spawn(async move {
-            let svc = service_fn(move |req: Request<hyper::body::Incoming>| {
-                let dir = dir.clone();
-                async move {
-                    let path = req.uri().path().trim_start_matches('/');
-                    let path = if path.is_empty() || path.ends_with('/') {
-                        format!("{path}index.html")
-                    } else {
-                        path.to_string()
-                    };
-                    // the site's own files only
-                    let resp = if !inside(&path) {
-                        Response::builder()
-                            .status(404)
-                            .body(Full::new(Bytes::new()))
-                    } else {
-                        match tokio::fs::read(dir.join(&path)).await {
-                            Ok(b) => Response::builder()
-                                .header("content-type", content_type(&path))
-                                .body(Full::new(Bytes::from(b))),
-                            Err(_) => Response::builder()
-                                .status(404)
-                                .body(Full::new(Bytes::new())),
-                        }
-                    };
-                    Ok::<_, Infallible>(resp.expect("a valid response"))
-                }
-            });
-            let _ = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), svc)
-                .await;
-        });
+        }
+        if out.len() > 1 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(path).unwrap_or_default());
+        out.push_str(":[\"");
+        out.push_str(if *gz { "g" } else { "r" });
+        out.push_str("\",\"");
+        out.push_str(&b64.encode(bytes));
+        out.push_str("\"]");
     }
+    out.push('}');
+    out
+}
+
+/// What the page runs first: each file of the viewer made a `blob:` URL (a
+/// module's relative imports pointed at its neighbours' URLs, its
+/// dependencies first), Native Shell's description of the app pointed at
+/// them, then Native Shell's own start script. Nothing is fetched from
+/// anywhere, so the page opens from a disk (`file://`) as from a server.
+const BOOT: &str = r#"(async () => {
+  const status = document.getElementById("status");
+  const files = JSON.parse(document.getElementById("sonde-files").textContent);
+  const TYPES = { js: "text/javascript", wasm: "application/wasm", css: "text/css", json: "application/json", woff2: "font/woff2", png: "image/png", svg: "image/svg+xml" };
+  const typeOf = (p) => TYPES[p.slice(p.lastIndexOf(".") + 1)] ?? "application/octet-stream";
+  const bytesOf = async ([how, b64]) => {
+    const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    if (how !== "g") return raw;
+    return new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+  };
+  const urls = {};
+  const text = {};
+  for (const [p, f] of Object.entries(files)) {
+    if (p.endsWith(".js")) text[p] = new TextDecoder().decode(await bytesOf(f));
+    else urls[p] = URL.createObjectURL(new Blob([await bytesOf(f)], { type: typeOf(p) }));
+  }
+  const dir = (p) => p.slice(0, p.lastIndexOf("/") + 1);
+  const resolve = (from, rel) => {
+    const out = [];
+    for (const x of (dir(from) + rel).split("/")) {
+      if (x === "" || x === ".") continue;
+      if (x === "..") out.pop();
+      else out.push(x);
+    }
+    return out.join("/");
+  };
+  const moduleUrl = (p, seen = new Set()) => {
+    if (urls[p]) return urls[p];
+    if (seen.has(p)) throw new Error(`a cycle of imports at ${p}`);
+    seen.add(p);
+    const src = text[p].replace(/(["'`])(\.{1,2}\/[^"'`\s$]+)\1/g, (whole, q, rel) => {
+      const to = resolve(p, rel);
+      return to in files ? q + (to.endsWith(".js") ? moduleUrl(to, seen) : urls[to]) + q : whole;
+    });
+    return (urls[p] = URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+  };
+  for (const p of Object.keys(text)) moduleUrl(p);
+  const blob = (v) => (typeof v === "string" ? (urls[v.replace(/^\.\//, "")] ?? v) : v);
+  const each = (o) => { for (const k in o ?? {}) o[k] = blob(o[k]); };
+  const node = document.getElementById("nsh-app");
+  const app = JSON.parse(node.textContent);
+  for (const k of ["wasm", "glue", "code", "host", "runtime"]) if (app[k]) app[k] = blob(app[k]);
+  each(app.assets); each(app.data); each(app.chunks);
+  for (const name in app.sides ?? {}) app.sides[name].url = blob(app.sides[name].url);
+  if (app.importMap) { const m = JSON.parse(app.importMap); each(m.imports); app.importMap = JSON.stringify(m); }
+  node.textContent = JSON.stringify(app);
+  // nothing was requested ahead: Native Shell's start script takes what it asks for
+  window.fetches = new Map();
+  const start = document.createElement("script");
+  start.type = "module";
+  start.src = urls[Object.keys(text).find((p) => /^nsh-start\.[^/]*\.js$/.test(p))];
+  document.body.append(start);
+})().catch((e) => {
+  const s = document.getElementById("status");
+  s.className = "failed";
+  s.textContent = `This page could not start: ${e?.message ?? e}`;
+});"#;
+
+/// Writes the page: one HTML file holding the viewer and the session
+/// ([`write_session_json`], given to the viewer as its parameters), titled
+/// by the run's program. Refused when this build has no viewer.
+pub fn write_page(
+    s: &Session,
+    full: Option<&Path>,
+    prices: &crate::profile::RequestPrices,
+    compared: Option<&Compared>,
+    out: impl Write,
+) -> std::io::Result<()> {
+    let index = embedded::VIEWER
+        .iter()
+        .find(|(p, _, _)| *p == "index.html")
+        .map(|(_, _, b)| String::from_utf8_lossy(b).into_owned())
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "this build of sonde has no web viewer: build it first (`cd viewer && nsh package App.tsx --target web`), or write the run as data with `sonde show FILE -f json`",
+            )
+        })?;
+    // Native Shell's page as it made it: its look while the viewer loads, and its description of the app
+    let between = |a: &str, b: &str| -> std::io::Result<String> {
+        let i = index
+            .find(a)
+            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {a}")))?;
+        let j = index[i..]
+            .find(b)
+            .map(|j| i + j + b.len())
+            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {b}")))?;
+        Ok(index[i..j].to_string())
+    };
+    let style = between("<style>", "</style>")?;
+    let app = between(
+        "<script type=\"application/json\" id=\"nsh-app\">",
+        "</script>",
+    )?;
+    let title = crate::program::key_of(&s.header).unwrap_or_else(|| "run".into());
+    let mut out = std::io::BufWriter::new(out);
+    write!(
+        out,
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<title>{} · sonde</title>\n<meta name=\"color-scheme\" content=\"light dark\">\n{style}\n</head>\n<body>\n<div id=\"app\"></div>\n<div id=\"status\" role=\"status\" aria-live=\"polite\"><div class=\"spinner\" aria-label=\"Loading\"></div></div>\n<noscript><div id=\"nojs\">This page needs JavaScript.</div></noscript>\n{app}\n<script type=\"application/json\" id=\"nsh-params\">",
+        esc(&title)
+    )?;
+    {
+        let mut inside = InScript {
+            out: &mut out,
+            lt: false,
+        };
+        write_session_json(s, full, prices, compared, &mut inside)?;
+    }
+    write!(
+        out,
+        "</script>\n<script type=\"application/json\" id=\"sonde-files\">{}</script>\n<script>{BOOT}</script>\n</body>\n</html>\n",
+        files_json()
+    )?;
+    out.flush()
 }
 
 #[cfg(test)]
@@ -407,10 +519,10 @@ mod tests {
         let prices = crate::profile::RequestPrices::default();
         let full = Session::open(&path).unwrap();
         let mut whole = Vec::new();
-        write_session_json(&full, None, &prices, &mut whole).unwrap();
+        write_session_json(&full, None, &prices, None, &mut whole).unwrap();
         let lean = Session::open_lean(&path).unwrap();
         let mut streamed = Vec::new();
-        write_session_json(&lean, Some(&path), &prices, &mut streamed).unwrap();
+        write_session_json(&lean, Some(&path), &prices, None, &mut streamed).unwrap();
         assert!(whole == streamed, "the two documents differ");
         let doc: Value = serde_json::from_slice(&streamed).unwrap();
         assert_eq!(doc["records"].as_array().unwrap().len(), full.records.len());
@@ -453,24 +565,10 @@ mod tests {
         let doc = super::session_json(&s, &Default::default()).to_string();
         assert!(!doc.contains("hunter2"), "{doc}");
         assert!(doc.contains("AWS_SECRET_ACCESS_KEY=… python etl.py"));
-        let page = crate::report::html(&s, &Default::default());
-        assert!(!page.contains("hunter2"));
-    }
-
-    #[test]
-    fn only_the_sites_own_files_are_served() {
-        assert!(inside("index.html"));
-        assert!(inside("assets/app.js"));
-        for bad in [
-            "../x",
-            "a/../../x",
-            "/etc/passwd",
-            "C:/Windows/win.ini",
-            "C:x",
-            "a\\b",
-            "//server/share",
-        ] {
-            assert!(!inside(bad), "{bad}");
+        let mut page = Vec::new();
+        // (a build without the viewer refuses the page: the document is what it holds)
+        if write_page(&s, None, &Default::default(), None, &mut page).is_ok() {
+            assert!(!String::from_utf8_lossy(&page).contains("hunter2"));
         }
     }
 }

@@ -212,6 +212,7 @@ fn template(key: &str) -> &'static str {
         "split.prefix" => "under {v}",
         "split.caller" => "from {v}",
         "split.sdk" => "from {v}",
+        "split.key" => "at {v}",
         "split.status" => "answered {v}",
         "split.status.none" => "without an answer",
         "split.size.none" => "without a body",

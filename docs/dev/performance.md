@@ -49,7 +49,7 @@ of JSON lines.
 | `sonde show -f json` | 36 s | 1.1 GiB |
 | `sonde check --baseline` (another million) | 14 s | 1.2 GiB |
 | `sonde compare` (two millions) | 19 s | 1.3 GiB |
-| `sonde share --html` | 9 s | 1.0 GiB |
+| `sonde share` | not yet measured | |
 
 Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
 peak memory (what is measured and about an eighth more), which is the same from run to run. Time moves with a shared
@@ -63,6 +63,7 @@ runner: it is said in the job's summary and fails only past several times what i
 | small multipart uploads, 300 thousand | 437 MiB, 2.3 s | 500 MiB | 30 s |
 | the app's first view of 100 thousand (629 KiB sent) | 236–243 MiB, 0.6–0.7 s | 280 MiB | 6 s |
 | a sorted page of operations | 55 ms | | 1.5 s |
+| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | not yet measured | 1,462 MiB | 45 s |
 
 How: the file is streamed and parsed on every core; records keep only the headers an analysis reads, with repeated
 text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app

@@ -4,7 +4,7 @@
 // over a band of live figures. When it ends, the run's own view takes the
 // place (its header and panes, opened on its Output), as Runs shows it.
 
-import { cleanup, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View } from "nsh";
+import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
@@ -13,12 +13,12 @@ import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { away, endpoint, endpoints, go, openSession, report, sessionsTick, showInSidebar } from "../store";
-import type { Profile, SessionInfo, SessionView } from "../types";
+import type { SessionInfo, SessionView, Stretch } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Card, CARD, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, OperationsTable, RecordPanel } from "../ui/session";
-import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, STRIP } from "../ui/plots";
+import { Chart, focusOf, LatencyBand, liveFigures, liveSaid, SessionShape, STRIP } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 import { SessionPane } from "./Sessions";
 
@@ -177,24 +177,18 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   );
 }
 
-/** What the live view shows: the last half minute. */
-const LIVE_WINDOW_MS = 30_000;
-const liveRange = (p: Profile): [number, number] | null => {
-  const n = p.rate.length;
-  const keep = Math.ceil(LIVE_WINDOW_MS / Math.max(p.binMs, 1));
-  return n > keep ? [n - keep, n - 1] : null;
-};
-
-/** The run as it goes: requests a second, failures, in flight and the p95 now; requests over time beside how
- * long they take. */
-function LivePanel(props: { profile: Profile }) {
-  const f = () => liveFigures(props.profile);
+/** The run as it goes, from its last half minute alone (`live`: the requests that started in it, reckoned by
+ * themselves, never the whole run at each tick): requests a second, failures, in flight and the p95 now; requests
+ * over time beside how long they take, in the window's own slices. */
+function LivePanel(props: { live: Stretch }) {
+  const p = () => props.live.profile;
+  const f = () => liveFigures(p());
   // the first requests have no shape yet: the figures alone, the charts once there is one
-  const shaped = () => props.profile.rate.length > 1 && props.profile.samples.length >= 12;
+  const shaped = () => p().rate.length > 1 && p().samples.length >= 12;
   // the moment the pointer rests on in one of the two, marked in the other
   const focus = focusOf();
   return (
-    <Chart testID="live" class="shrink-0" title={t("live.title")} text={t("live.latency")}>
+    <Chart testID="live" class="shrink-0" title={t("live.title")} text={liveSaid(props.live.signals)} how={t("live.hint")}>
       <View class="flex-row items-center gap-6">
         <Figure small testID="live-rate" value={rate(f().perSecond)} label={t("live.perSecond")} />
         <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "fail" : "plain"} />
@@ -203,10 +197,9 @@ function LivePanel(props: { profile: Profile }) {
       </View>
       <If when={shaped()}>
         <View class="flex-row gap-4">
-          {/* the last 30 seconds, sliding as the run goes */}
-          <SessionShape profile={props.profile} range={liveRange(props.profile)} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="run-shape" />
+          <SessionShape profile={p()} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="run-shape" />
           <View class="min-w-0 flex-1">
-            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} focus={focus} class={STRIP} testID="run-band" />
+            <LatencyBand profile={p()} focus={focus} class={STRIP} testID="run-band" />
           </View>
         </View>
       </If>
@@ -232,6 +225,16 @@ function LiveOperations() {
   const path = () => running()?.path ?? lastRun()?.path ?? null;
   // read again as the program's requests arrive, and once more as it ends
   const view = analysis(path, () => (tick(), lastRun())).view;
+  // the live panel's half minute, read with each tick while the program runs (the last reading kept meanwhile)
+  const lastHalf = resource(
+    () => (running() ? `${path()}\n${tick()}` : null),
+    async () => {
+      const p = path();
+      return p ? await api.sessions.live(p) : null;
+    },
+  );
+  let held: Stretch | null = null;
+  const live = () => (lastHalf() ? (held = lastHalf()!) : held);
   // its operations, in pages: the first of them as they arrive
   const operations = pagedOperations(() => path() ?? "", view);
   return (
@@ -250,9 +253,7 @@ function LiveOperations() {
       >
         <View class="min-h-0 flex-1 gap-2">
           {/* while it runs: its requests over time, growing as they arrive */}
-          <If when={!terminal() && !lastRun() && view()!.profile}>
-            <LivePanel profile={view()!.profile} />
-          </If>
+          <If when={!terminal() && !lastRun() ? live() : null}>{(l) => <LivePanel live={l()} />}</If>
           <OperationsTable view={view()!} source={operations} onSelect={() => {}} compact follow={!!running()} />
         </View>
       </If>

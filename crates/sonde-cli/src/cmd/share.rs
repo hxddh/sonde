@@ -1,5 +1,7 @@
-//! `sonde share`: a run as one HTML file anyone opens in a browser, with
-//! nothing to install: what `show` says of it, drawn.
+//! `sonde share`: a run as one HTML file anyone opens in a browser — the
+//! app's own views (findings, operations, output lined up, requests, the
+//! Time pane, and a comparison with another run first), with nothing to
+//! install and nothing to serve.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,11 +19,11 @@ pub struct ShareArgs {
     /// `auto` for its program's baseline, or an https URL).
     #[arg(long, value_name = "FILE|auto|URL")]
     baseline: Option<String>,
-    /// The file to write (default: stdout).
+    /// The file to write (default: `<run>.html` here).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    /// With -o: write over the file if it is there (else it is refused).
-    #[arg(long, requires = "out")]
+    /// Write over the file if it is there (else it is refused).
+    #[arg(long)]
     force: bool,
     /// Replace bucket and key names with tokens and drop headers, bodies, URLs,
     /// the program's output and arguments: safe to send outside.
@@ -67,9 +69,6 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     if a.files.len() == 2 && a.baseline.is_some() {
         return Err(super::usage("two runs, or --baseline: not both"));
     }
-    if let Some(out) = &a.out {
-        super::record::refuse_existing(out, a.force)?;
-    }
     let file = match a.files.last() {
         Some(f) => super::runs::resolve(s, f),
         None => super::record::which_run(s, super::record::project_name().as_deref())?.0,
@@ -81,8 +80,24 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
             s.paths().runs().display()
         )));
     }
+    // the page: -o, else the run's name here; a file that is there is not written over unasked
+    let out = a.out.clone().unwrap_or_else(|| {
+        let stem = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "run".into());
+        let stem = stem
+            .strip_suffix(".gz")
+            .unwrap_or(&stem)
+            .strip_suffix(".sonde")
+            .unwrap_or(&stem)
+            .to_string();
+        PathBuf::from(format!("{stem}.html"))
+    });
+    super::record::refuse_existing(&out, a.force)?;
     // redacting changes every record, so all are read in full; otherwise
-    // the session is read for what it amounts to
+    // the run is read for what it amounts to, and each request is
+    // written from the file as its turn comes
     let keep = if a.redact {
         sonde_proxy::session::Keep::All
     } else {
@@ -91,19 +106,20 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     let mut session = super::runs::read(&file, keep)?;
     // priced before redaction hides the endpoint
     let prices = super::record::request_prices_for(s, &session.header.endpoint);
-    if a.redact {
-        sonde_proxy::report::redact(&mut session);
-    }
+    let full = (!a.redact).then_some(file.as_path());
     let base = baseline_of(s, a, &file).await?;
-    let page = match &base {
-        None => sonde_proxy::report::html(&session, &prices),
+    let compare = match &base {
+        None => {
+            if a.redact {
+                sonde_proxy::report::redact(&mut session);
+            }
+            None
+        }
         Some((path, _)) => {
-            // both read whole when redacted: their names become the same tokens
             let mut before = super::runs::read(path, keep)?;
             let name = super::check::session_line(path, Some(&before.header));
             if a.redact {
-                // (the run was redacted alone above: read it again, for one salt)
-                session = super::runs::read(&file, keep)?;
+                // both together: their names become the same tokens
                 sonde_proxy::report::redact_all(&mut [&mut before, &mut session]);
             }
             let run_of = |x: &sonde_proxy::session::Session| {
@@ -114,23 +130,34 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
                     sonde_proxy::program::key_of(&before.header).as_deref(),
                     sonde_proxy::program::key_of(&session.header).as_deref(),
                 );
+            let signals = |x: &sonde_proxy::session::Session| {
+                sonde_proxy::signals::signals(&x.records, &prices)
+            };
+            let profile = |x: &sonde_proxy::session::Session| {
+                sonde_proxy::profile::profile(&x.records, &prices)
+            };
+            let compared = sonde_proxy::share::Compared {
+                name,
+                change,
+                signals: [signals(&before), signals(&session)],
+                profiles: [profile(&before), profile(&session)],
+            };
             drop(before);
-            sonde_proxy::report::html_against(
-                &session,
-                &prices,
-                Some(&sonde_proxy::report::Against {
-                    change: &change,
-                    name,
-                }),
-            )
+            Some(compared)
         }
     };
-    match &a.out {
-        Some(p) => {
-            std::fs::write(p, page)?;
-            eprintln!("{}", p.display());
-        }
-        None => print!("{page}"),
+    // written whole beside it, then put in its place: a page that could not be made leaves nothing
+    let part = PathBuf::from(format!("{}.part", out.display()));
+    let written = std::fs::File::create(&part).and_then(|page| {
+        sonde_proxy::share::write_page(&session, full, &prices, compare.as_ref(), page)
+    });
+    if let Err(e) = written.and_then(|()| std::fs::rename(&part, &out)) {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.into());
     }
+    eprintln!(
+        "Wrote {} — one file: open it in a browser, or send it as you would the run",
+        out.display()
+    );
     Ok(0)
 }

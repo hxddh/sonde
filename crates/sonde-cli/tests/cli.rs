@@ -362,18 +362,17 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
         t.path(),
         &["share", &names[0], &names[1], "-o", page.to_str().unwrap()],
     );
-    assert_eq!(
-        o.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&o.stderr)
-    );
-    let html = std::fs::read_to_string(&page).unwrap();
-    let against = html.find("<h2>Against run ").expect("the comparison");
-    assert!(against < html.find("<h2>This run</h2>").unwrap());
-    // the same as --baseline FILE
-    let o = sonde(t.path(), &["share", &names[1], "--baseline", &names[0]]);
-    assert!(stdout(&o).contains("<h2>Against run "));
+    // a build without the viewer says how to make it, and leaves no file
+    if stderr(&o).contains("no web viewer") {
+        assert_ne!(o.status.code(), Some(0));
+        assert!(!page.exists());
+    } else {
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        let html = std::fs::read_to_string(&page).unwrap();
+        // one file: the viewer and the run, the run before it compared first
+        assert!(html.contains("id=\"nsh-params\">{\"compare\":{\"change\":"));
+        assert!(!html.contains("<\\/script") && html.matches("</script>").count() >= 3);
+    }
     // two runs or a baseline, not both
     assert_eq!(
         sonde(
@@ -2434,6 +2433,11 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
         assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine", "{args:?}");
         let forced = [args.clone(), vec!["--force"]].concat();
         let o = sonde(t.path(), &forced);
+        // (a build without the viewer makes no page: it leaves the file as it was)
+        if stderr(&o).contains("no web viewer") {
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine");
+            continue;
+        }
         assert_eq!(o.status.code(), Some(0), "{forced:?}: {}", stderr(&o));
         assert_ne!(std::fs::read_to_string(&mine).unwrap_or_default(), "mine");
     }

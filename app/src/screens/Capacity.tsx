@@ -2,7 +2,7 @@
 // markers, incomplete uploads, by storage class, prefix and size.
 
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { bytes, count, day, money } from "../format";
+import { bytes, count, day, money, percent } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
@@ -14,6 +14,41 @@ import { Row, Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Sta
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
+
+/** How many months the growth chart names, the latest; the rest are one row before them. */
+const MONTHS = 12;
+
+/** The growth chart's rows: the last `MONTHS` months with bytes, and every earlier one as one row. */
+function monthRows(r: DuReport): { label: string; value: number }[] {
+  const all = r.byMonth;
+  const recent = all.slice(-MONTHS).map((m) => ({ label: m.month, value: m.bytes }));
+  const earlier = all.slice(0, -MONTHS).reduce((n, m) => n + m.bytes, 0);
+  return [...recent.reverse(), ...(earlier > 0 ? [{ label: t("du.before", { month: all[all.length - MONTHS].month }), value: earlier }] : [])];
+}
+
+/** What each of the bucket's charts answers, in a sentence of its figures. */
+const share = (part: number, whole: number) => percent(whole > 0 ? part / whole : 0);
+const partsSaid = (r: DuReport) => t("du.partsText", { pct: share(r.current.bytes, r.totalBytes), size: bytes(r.current.bytes) });
+const biggest = <T,>(xs: T[], v: (x: T) => number) => [...xs].sort((a, b) => v(b) - v(a))[0];
+function classSaid(r: DuReport) {
+  const top = biggest(r.byClass, (c) => c.current.bytes + c.noncurrent.bytes);
+  return top ? t("du.byClassText", { name: top.name, pct: share(top.current.bytes + top.noncurrent.bytes, r.current.bytes + r.noncurrent.bytes) }) : "";
+}
+function sizeSaid(r: DuReport) {
+  const top = biggest(r.bySize, (b) => b.objects);
+  return top && top.objects > 0 ? t("du.bySizeText", { label: top.label, pct: share(top.objects, r.current.objects) }) : "";
+}
+function prefixSaid(r: DuReport) {
+  const top = r.byPrefix[0];
+  return top ? t("du.byPrefixText", { name: top.name, pct: share(top.current.bytes + top.noncurrent.bytes, r.current.bytes + r.noncurrent.bytes) }) : "";
+}
+function monthSaid(r: DuReport) {
+  const all = r.byMonth.reduce((n, m) => n + m.bytes, 0);
+  const top = biggest(r.byMonth, (m) => m.bytes);
+  if (!top || all === 0) return "";
+  const recent = r.byMonth.slice(-MONTHS).reduce((n, m) => n + m.bytes, 0);
+  return t("du.byMonthText", { pct: share(recent, all), n: MONTHS, month: top.month, size: bytes(top.bytes) });
+}
 
 export function Capacity() {
   const pfx = terminal() ? signal("") : prefix;
@@ -146,7 +181,7 @@ export function Capacity() {
                   <Stat label={t("du.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("du.cost")} · ${t("du.requests", { n: count(r().requests) })}`} />,
                 ]}
               />
-              <Chart title={t("du.parts")}>
+              <Chart title={t("du.parts")} text={partsSaid(r())}>
                 <StackBar
                   testID="du-stack"
                   // versions that could not be listed are not a part of nothing: left out, and said
@@ -172,14 +207,18 @@ export function Capacity() {
                 </Each>
               </Card>
               <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
-                <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>
+                <Chart class={HALF} title={t("du.byClass")} text={classSaid(r())} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
                 </Chart>
-                <Chart class={HALF} title={t("du.bySize")} empty={r().bySize.length === 0 && t("common.empty")}>
+                <Chart class={HALF} title={t("du.bySize")} text={sizeSaid(r())} empty={r().bySize.length === 0 && t("common.empty")}>
                   <BarChart unit="count" items={r().bySize.map((b) => ({ label: b.label, value: b.objects }))} />
                 </Chart>
               </View>
-              <Chart title={t("du.byPrefix")} empty={r().byPrefix.length === 0 && t("common.empty")}>
+              {/* how the bucket grew: the bytes by the month they were written, from the listing alone */}
+              <Chart testID="du-months" title={t("du.byMonth")} text={monthSaid(r())} how={t("du.byMonthHint")} empty={r().byMonth.length === 0 && t("common.empty")}>
+                <BarChart testID="du-months-bars" items={monthRows(r())} />
+              </Chart>
+              <Chart title={t("du.byPrefix")} text={prefixSaid(r())} empty={r().byPrefix.length === 0 && t("common.empty")}>
                 <PrefixMap testID="du-prefixes" items={r().byPrefix.slice(0, 24).map((p) => ({ label: p.name, value: p.current.bytes + p.noncurrent.bytes }))} />
               </Chart>
             </View>

@@ -80,6 +80,7 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             &sig.errors.series,
             &sig.errors.client,
             &sig.errors.server,
+            &sig.errors.throttled,
             &sig.errors.transport,
             &sig.errors.injected,
             &sig.errors.retries,
@@ -114,18 +115,28 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
         let c = &sig.errors.counts;
         assert_eq!(sig.errors.count as u64, sum_.errors, "{name}");
         assert_eq!(
-            c.client + c.server + c.transport + c.injected,
+            c.client + c.server + c.throttled + c.transport + c.injected,
             sig.errors.count,
             "{name}"
         );
         assert_eq!(sum(&sig.errors.series), sig.errors.count as f64, "{name}");
         assert_eq!(sum(&sig.errors.client), c.client as f64, "{name}");
         assert_eq!(sum(&sig.errors.server), c.server as f64, "{name}");
+        assert_eq!(sum(&sig.errors.throttled), c.throttled as f64, "{name}");
         assert_eq!(sum(&sig.errors.transport), c.transport as f64, "{name}");
         assert_eq!(sum(&sig.errors.injected), c.injected as f64, "{name}");
         assert_eq!(
             sum(&sig.errors.retries),
             sig.errors.retries_total as f64,
+            "{name}"
+        );
+        // the requests given up on: the failures no retry followed, as check counts them
+        assert_eq!(
+            sig.errors.gave_up,
+            sonde_proxy::signals::gave_up(recs)
+                .iter()
+                .filter(|g| **g)
+                .count(),
             "{name}"
         );
         assert!(
@@ -371,12 +382,16 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
 
     let s = signals(&recs, &RequestPrices::default());
     let c = &s.errors.counts;
-    assert_eq!((c.injected, c.server, c.client, c.transport), (2, 1, 1, 1));
+    // the store's own 503 SlowDown is a throttle, not a 5xx of its own
+    assert_eq!(
+        (c.injected, c.server, c.throttled, c.client, c.transport),
+        (2, 0, 1, 1, 1)
+    );
     assert_eq!(s.errors.count, 5);
     assert_eq!(s.errors.value, Some(0.5));
     assert_eq!(s.errors.retries_total, 3);
     assert_eq!(s.errors.injected.iter().sum::<f64>(), 2.0);
-    assert_eq!(s.errors.server.iter().sum::<f64>(), 1.0);
+    assert_eq!(s.errors.throttled.iter().sum::<f64>(), 1.0);
 
     // each answer with its code, the injected ones marked
     let row = |status: Option<u16>, code: Option<&str>| {
@@ -399,7 +414,7 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
     let t = text(&s, false);
     assert!(
         t.contains("50% (5)")
-            && t.contains("1 client, 1 server, 1 no answer, 2 injected, 3 retries"),
+            && t.contains("1 client, 1 throttled, 1 no answer, 2 injected, 3 retries"),
         "{t}"
     );
     assert!(text(&s, true).contains("\x1b[31m50% (5)\x1b[0m"));
@@ -685,7 +700,7 @@ fn million() -> Vec<Record> {
 fn check_million(s: &Signals, n: usize) {
     assert_eq!(s.rate.requests, n);
     assert!(near(sum(&s.rate.series) * s.bin_ms / 1000.0, n as f64));
-    assert_eq!(s.errors.counts.server, n.div_ceil(97));
+    assert_eq!(s.errors.counts.throttled, n.div_ceil(97));
     assert!(s.bins <= 91 && s.in_flight.peak > 1);
     assert!(text(s, false).lines().count() <= 20);
 }

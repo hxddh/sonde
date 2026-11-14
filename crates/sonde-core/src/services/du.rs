@@ -60,6 +60,16 @@ pub struct SizeBand {
     pub bytes: u64,
 }
 
+/// The bytes last written in one month (`2026-03`), every version counted:
+/// how the bucket grew, from the listing alone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthAgg {
+    pub month: String,
+    pub objects: u64,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuReport {
@@ -76,6 +86,9 @@ pub struct DuReport {
     pub by_class: Vec<Slice>,
     pub by_prefix: Vec<Slice>,
     pub by_size: Vec<SizeBand>,
+    /// The bytes by the month they were last written (`LastModified`), the
+    /// oldest first; versions without a date are left out.
+    pub by_month: Vec<MonthAgg>,
     /// Findings, the largest contributor first.
     pub findings: Vec<String>,
     /// The findings as phrases, one text each, in the same order.
@@ -147,6 +160,7 @@ pub struct Accumulator {
     pub classes: BTreeMap<String, Slice>,
     pub prefixes: BTreeMap<String, Slice>,
     pub bands: Vec<SizeBand>,
+    pub months: BTreeMap<String, Agg>,
 }
 
 impl Accumulator {
@@ -166,7 +180,19 @@ impl Accumulator {
         }
     }
 
-    pub fn object(&mut self, key: &str, size: u64, class: Option<&str>, current: bool) {
+    /// A version listed: its key, size, storage class, whether it is the
+    /// current one, and when it was last written (`LastModified`).
+    pub fn object(
+        &mut self,
+        key: &str,
+        size: u64,
+        class: Option<&str>,
+        current: bool,
+        modified: Option<&str>,
+    ) {
+        if let Some(month) = modified.and_then(|m| m.get(..7)) {
+            self.months.entry(month.to_string()).or_default().add(size);
+        }
         let class = class.unwrap_or("STANDARD").to_string();
         let top = self.top(key);
         let c = self.classes.entry(class.clone()).or_insert_with(|| Slice {
@@ -243,6 +269,15 @@ impl Accumulator {
             by_class,
             by_prefix,
             by_size: self.bands,
+            by_month: self
+                .months
+                .into_iter()
+                .map(|(month, a)| MonthAgg {
+                    month,
+                    objects: a.objects,
+                    bytes: a.bytes,
+                })
+                .collect(),
             findings: vec![],
             findings_text: vec![],
             cost_per_month,
@@ -469,7 +504,13 @@ pub async fn scan_inner(
         };
         requests += 1;
         for v in &page.version {
-            acc.object(&v.key, v.size, v.storage_class.as_deref(), v.is_latest);
+            acc.object(
+                &v.key,
+                v.size,
+                v.storage_class.as_deref(),
+                v.is_latest,
+                v.last_modified.as_deref(),
+            );
         }
         for d in &page.delete_marker {
             acc.delete_marker(&d.key);
@@ -507,7 +548,13 @@ pub async fn scan_inner(
                 .await?;
             requests += 1;
             for o in &page.contents {
-                acc.object(&o.key, o.size, o.storage_class.as_deref(), true);
+                acc.object(
+                    &o.key,
+                    o.size,
+                    o.storage_class.as_deref(),
+                    true,
+                    o.last_modified.as_deref(),
+                );
             }
             ctx.progress(Progress::say(
                 acc.current.objects,
@@ -604,10 +651,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
         let mut a = Accumulator::new("");
-        a.object("logs/a", 10 * MIB, Some("STANDARD"), true);
-        a.object("logs/a", 30 * MIB, Some("STANDARD"), false);
-        a.object("img/x", 100, Some("STANDARD_IA"), true);
-        a.object("top", 5, None, true);
+        a.object(
+            "logs/a",
+            10 * MIB,
+            Some("STANDARD"),
+            true,
+            Some("2026-03-02T10:00:00.000Z"),
+        );
+        a.object(
+            "logs/a",
+            30 * MIB,
+            Some("STANDARD"),
+            false,
+            Some("2026-01-20T10:00:00.000Z"),
+        );
+        a.object("img/x", 100, Some("STANDARD_IA"), true, Some("2026-03-09"));
+        a.object("top", 5, None, true, None);
         a.delete_marker("logs/b");
         let r = a.finish(
             &s,
@@ -622,6 +681,14 @@ mod tests {
         );
         assert_eq!(r.current.objects, 3);
         assert_eq!(r.noncurrent.bytes, 30 * MIB);
+        // the bytes by the month they were written, every version, the oldest first; one without a date left out
+        assert_eq!(
+            r.by_month
+                .iter()
+                .map(|m| (m.month.as_str(), m.objects, m.bytes))
+                .collect::<Vec<_>>(),
+            vec![("2026-01", 1, 30 * MIB), ("2026-03", 2, 10 * MIB + 100)]
+        );
         assert_eq!(r.by_prefix[0].name, "logs/");
         assert_eq!(r.by_prefix[0].delete_markers, 1);
         assert_eq!(r.by_class[0].name, "STANDARD");
@@ -760,8 +827,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
         let mut acc = Accumulator::new("");
-        acc.object("a/x", 10, None, true);
-        acc.object("b/y", 5, Some("GLACIER"), false);
+        acc.object("a/x", 10, None, true, None);
+        acc.object("b/y", 5, Some("GLACIER"), false, None);
         let mut r = acc.finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
         let v = serde_json::to_value(&r).unwrap();
         assert!(v["byClass"][0].get("versionsUnknown").is_none(), "{v}");
@@ -788,9 +855,9 @@ mod tests {
         let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
         let mut acc = Accumulator::new("");
         for i in 0..1200 {
-            acc.object(&format!("logs/{i}"), 100, None, true);
+            acc.object(&format!("logs/{i}"), 100, None, true, None);
         }
-        acc.object("big/old", 900_000, Some("GLACIER"), false);
+        acc.object("big/old", 900_000, Some("GLACIER"), false, None);
         for i in 0..1300 {
             acc.delete_marker(&format!("gone/{i}"));
         }

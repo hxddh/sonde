@@ -149,7 +149,7 @@ report() {
     *) args+=(--baseline "$SONDE_BASELINE") ;;
   esac
   [ "${SONDE_REDACT:-false}" != true ] || args+=(--redact)
-  if sonde share "${args[@]}" -o "$file"; then
+  if sonde share "${args[@]}" -o "$file" --force; then
     out file "$file"
   else
     warn "no report: sonde share failed"

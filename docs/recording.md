@@ -259,12 +259,14 @@ and both runs as transcripts (`Op bucket/key [conditions] → outcome`). Compare
 ## Share a run
 
 ```sh
-sonde share -o run.html                  # the newest run, one HTML file anyone opens
+sonde share                              # newest run → ./<run>.html
 sonde share --redact -o run.html         # names replaced
+sonde share run.sonde --baseline auto    # what changed against the baseline, first
 ```
 
-One self-contained file; nothing runs server-side. It holds what the run holds (unless `--redact`): share it as you
-would the file ([cli](cli.md#read-a-run)).
+One HTML file: the app's own views (figures, findings, operations, output, the Time pane with every chart) and the
+run, everything computed. Nothing is fetched: it opens from a disk as from any web server. It holds what the run
+holds: share it as you would the file. `--redact`: [cli](cli.md#read-a-run).
 
 ## Limits
 

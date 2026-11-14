@@ -546,10 +546,12 @@ fn stretch_of(
         })
         .cloned()
         .collect();
+    // the stretch on the session's axis: its times from the session's start, its slices its own
+    let origin = Some(t0);
     let (summary, signals, profile) = std::thread::scope(|scope| {
         let summary = scope.spawn(|| sonde_proxy::summary::summarize(&held));
-        let signals = scope.spawn(|| sonde_proxy::signals::signals(&held, prices));
-        let profile = sonde_proxy::profile::profile(&held, prices);
+        let signals = scope.spawn(|| sonde_proxy::signals::signals_from(&held, prices, origin));
+        let profile = sonde_proxy::profile::profile_from(&held, prices, origin);
         (
             summary
                 .join()
@@ -560,13 +562,43 @@ fn stretch_of(
             profile,
         )
     });
-    // where the stretch's own first request started, from the session's: its times are from there
-    let offset_ms = held
-        .iter()
-        .map(|r| r.time.timestamp_micros())
-        .min()
-        .map_or(0.0, |at| (at - t0) as f64 / 1000.0);
-    json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals), "offsetMs": offset_ms })
+    json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals) })
+}
+
+/// A file's `file://` address: its path with `/` between its parts (a
+/// Windows drive after a third slash), each other byte that is not plain
+/// written `%XX`.
+fn file_url(abs: &Path) -> String {
+    let text = abs.to_string_lossy().replace('\\', "/");
+    let lead = if text.starts_with('/') { "" } else { "/" };
+    let mut out = format!("file://{lead}");
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// What the live panel shows of a run: its last half minute.
+pub const LIVE_WINDOW_MS: f64 = 30_000.0;
+
+/// [`Sessions::live`] over `records`: those that started in the last
+/// [`LIVE_WINDOW_MS`] before the latest one did.
+fn live_of(records: &[reqlog::Record], prices: &sonde_proxy::profile::RequestPrices) -> JsonValue {
+    let starts = records.iter().map(|r| r.time.timestamp_micros());
+    let (Some(t0), Some(last)) = (starts.clone().min(), starts.max()) else {
+        return stretch_of(records, prices, 0.0, 0.0);
+    };
+    let latest_ms = (last - t0) as f64 / 1000.0;
+    stretch_of(
+        records,
+        prices,
+        (latest_ms - LIVE_WINDOW_MS).max(0.0),
+        latest_ms + 1.0,
+    )
 }
 
 /// A page's query as the interface sends it.
@@ -1020,10 +1052,6 @@ fn baselines() -> std::collections::BTreeMap<String, String> {
     sonde_proxy::program::baselines(&sonde().paths().runs())
 }
 
-/// The sites shared from the app, each served on its own local port.
-static SHARED: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
 /// The requests in a session file: its record lines (not the header, not the
 /// program's output). Counted once and then only over what was appended, so
 /// listing sessions does not read every file whole each time.
@@ -1413,9 +1441,9 @@ impl Sessions {
 
     /// The requests that started in a stretch of a session (`from_ms` to
     /// `to_ms` after its first request's start), reckoned as a session of
-    /// their own: `{ summary, profile, signals, offsetMs }` (its times are
-    /// from its own first request, `offsetMs` after the session's) — what the Time pane's
-    /// charts that are not drawn over time read while a stretch is chosen,
+    /// their own: `{ summary, profile, signals }`, its slices its own and its
+    /// times the session's (`startMs`) — what the Time pane draws while a
+    /// stretch is chosen, its charts over time in the stretch's own detail,
     /// so every chart follows the selection. Off the interface's thread.
     pub async fn stretch(path: String, from_ms: f64, to_ms: f64) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
@@ -1425,6 +1453,23 @@ impl Sessions {
                 &crate::state::request_prices_for(&s.header.endpoint),
                 from_ms,
                 to_ms,
+            ))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
+    /// A run as it goes: the requests that started in its last
+    /// [`LIVE_WINDOW_MS`], reckoned alone as [`Sessions::stretch`] reckons a
+    /// stretch — the live panel's figures and charts, worked out from those
+    /// requests and not from the whole run at each tick. Off the interface's
+    /// thread.
+    pub async fn live(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let s = open_session(&path)?;
+            Ok(live_of(
+                &s.records,
+                &crate::state::request_prices_for(&s.header.endpoint),
             ))
         })
         .await
@@ -2305,59 +2350,50 @@ impl Sessions {
         nsh_core::element::reveal_path(abs).await
     }
 
-    /// Writes a session as a web page (`sonde share`'s site) under the data
-    /// directory and serves it on 127.0.0.1: `{ dir, url }`. The page is
-    /// the same views as the app, read-only, for anyone it is sent to.
+    /// Writes a run as one web page (what `sonde share` writes) under the
+    /// data directory: `{ file, url }`, the page and its `file://` address,
+    /// for the browser to open. The page is the same views as the app,
+    /// read-only, for anyone it is sent to.
     pub async fn share(path: String) -> Result<JsonValue, String> {
         if !sonde_proxy::share::has_viewer() {
             return Err(err_msg(
                 "this build has no web viewer: `sonde share` makes the page",
             ));
         }
-        let session = full_session(&path)?;
         let stem = Path::new(&path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "session".into());
-        // the stem and where the file is: two sessions of one name never share a page
-        // FNV-1a of the path: the same folder from one version of sonde to the next
+            .unwrap_or_else(|| "run".into());
+        // the stem and where the file is: two runs of one name never share a page
+        // FNV-1a of the path: the same file from one version of sonde to the next
         let hash = path.bytes().fold(0x811c_9dc5u32, |h, b| {
             (h ^ b as u32).wrapping_mul(0x0100_0193)
         });
-        let dir = sonde().paths().shared().join(format!("{stem}-{hash:08x}"));
-        let doc = serde_json::to_vec(&sonde_proxy::share::session_json(
-            &session,
-            &crate::state::request_prices_for(&session.header.endpoint),
-        ))
-        .map_err(err_msg)?;
-        let site = dir.clone();
+        let file = sonde()
+            .paths()
+            .shared()
+            .join(format!("{stem}-{hash:08x}.html"));
+        let page = file.clone();
         tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(&site)?;
-            sonde_proxy::share::write_site(&site, &doc)
+            let session = full_session(&path).map_err(std::io::Error::other)?;
+            let prices = crate::state::request_prices_for(&session.header.endpoint);
+            std::fs::create_dir_all(page.parent().expect("a folder"))?;
+            // written whole beside it, then put in its place: a page half written is never opened
+            let part = page.with_extension("html.part");
+            let written = std::fs::File::create(&part)
+                .and_then(|f| sonde_proxy::share::write_page(&session, None, &prices, None, f));
+            written
+                .and_then(|()| std::fs::rename(&part, &page))
+                .inspect_err(|_| {
+                    let _ = std::fs::remove_file(&part);
+                })
         })
         .await
         .map_err(err_msg)?
         .map_err(err_msg)?;
-        let served = SHARED.lock().get(&dir).cloned();
-        let url = match served {
-            Some(u) => u,
-            None => {
-                let root = dir.clone();
-                let addr = background(async move {
-                    let l = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
-                    let addr = l.local_addr()?;
-                    tokio::spawn(sonde_proxy::share::serve(l, root));
-                    Ok::<_, std::io::Error>(addr)
-                })
-                .await
-                .map_err(err_msg)?
-                .map_err(err_msg)?;
-                let u = format!("http://{addr}/");
-                SHARED.lock().insert(dir.clone(), u.clone());
-                u
-            }
-        };
-        Ok(json!({ "dir": dir.to_string_lossy(), "url": url }))
+        let abs = std::path::absolute(&file).map_err(err_msg)?;
+        let url = file_url(&abs);
+        Ok(json!({ "file": abs.to_string_lossy(), "url": url }))
     }
 
     /// The app is quitting: ends the program being recorded and a running
@@ -2875,6 +2911,32 @@ mod tests {
     }
 
     #[test]
+    fn a_page_is_opened_by_its_file_address() {
+        assert_eq!(
+            file_url(Path::new("/home/a b/run#1.html")),
+            "file:///home/a%20b/run%231.html"
+        );
+        assert_eq!(
+            file_url(Path::new("C:\\Users\\a\\run.html")),
+            "file:///C:/Users/a/run.html"
+        );
+    }
+
+    #[test]
+    fn the_live_panel_reckons_the_last_half_minute_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.sonde");
+        // a minute: one request every 100 ms
+        many(&path, 600);
+        let s = open_session(&path.to_string_lossy()).unwrap();
+        let prices = sonde_proxy::profile::RequestPrices::default();
+        let v = live_of(&s.records, &prices);
+        // the half minute up to the latest request, both ends in, on the run's axis
+        assert_eq!(v["summary"]["requests"], 301);
+        assert_eq!(v["profile"]["startMs"], 29_900.0);
+    }
+
+    #[test]
     fn a_stretch_is_the_requests_that_started_in_it_reckoned_alone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("many.sonde");
@@ -2886,9 +2948,11 @@ mod tests {
         let v = stretch_of(&s.records, &prices, 1000.0, 2000.0);
         assert_eq!(v["summary"]["requests"], 10);
         assert_eq!(
-            v["offsetMs"], 1000.0,
-            "its times are from its own first request"
+            v["profile"]["startMs"], 1000.0,
+            "its times are the session's"
         );
+        assert_eq!(v["profile"]["rate"][0]["tMs"], 1000.0);
+        assert_eq!(v["signals"]["startMs"], 1000.0);
         assert!(
             v["profile"]["groups"]
                 .as_array()
