@@ -13,4 +13,4 @@
 | **turbopuffer**, **WarpStream** | Name patterns (`tpuf/`, `turbopuffer/`, `warpstream/`, `…/_segments/`) | **Not decoded: the formats are not published.** Prefix statistics and write cadence from the listing only. | — |
 | **Generic** | Any prefix (on request) | Objects and bytes by sub-prefix, writes per interval, median and p99 intervals, longest pause. | — |
 
-Delta Lake has no decoder; its `_delta_log` commits are recognized in recorded sessions ([recording](recording.md#operations-not-requests)).
+Delta Lake has no decoder; its `_delta_log` commits are recognized in recorded runs ([recording](recording.md#operations-not-requests)).

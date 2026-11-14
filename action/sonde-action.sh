@@ -52,19 +52,19 @@ install() {
   echo "$dir" >>"${GITHUB_PATH:-/dev/null}"
 }
 
-# The program under `sonde run`, its session kept apart; its exit status is
+# The program under `sonde run`, its run kept apart; its exit status is
 # the verdict's, after the report and the comment.
 record() {
   [ -n "${SONDE_RUN:-}" ] || fail "the run input is empty"
-  local session="$work/run.sonde" args=() status=0
+  local file="$work/run.sonde" args=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
   eval "set -- $SONDE_RUN"
-  rm -f "$session"
-  sonde run -o "$session" ${args[@]+"${args[@]}"} -- "$@" || status=$?
+  rm -f "$file"
+  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "$@" || status=$?
   out exit "$status"
-  [ -f "$session" ] || fail "sonde run wrote no session (exit $status)"
-  out session "$session"
+  [ -f "$file" ] || fail "sonde run wrote no run (exit $status)"
+  out file "$file"
 }
 
 # The workflow file this run is of: `.github/workflows/ci.yml` of
@@ -75,7 +75,7 @@ workflow_file() {
   echo "${ref##*/}"
 }
 
-# The session the latest earlier run of this workflow kept on the base
+# The run the latest earlier run of this workflow kept on the base
 # branch (a pull request's) or on this branch (a push); `auto` (said as "no
 # baseline yet" by every format of `check`) when there is none. Another input
 # is passed on as it is.
@@ -120,7 +120,7 @@ baseline() {
 
 # `sonde check`'s flags, as the step's inputs give them, in ARGS.
 check_args() {
-  ARGS=("$SONDE_SESSION")
+  ARGS=("$SONDE_FILE")
   [ -z "${SONDE_BASELINE:-}" ] || ARGS+=(--baseline "$SONDE_BASELINE")
   [ -z "${SONDE_CONFIG:-}" ] || ARGS+=(--config "$SONDE_CONFIG")
   local more=()
@@ -142,7 +142,7 @@ check() {
 
 # The HTML report: the run against its baseline when there is one.
 report() {
-  local args=("$SONDE_SESSION") file="$work/report/sonde-report.html"
+  local args=("$SONDE_FILE") file="$work/report/sonde-report.html"
   mkdir -p "$(dirname "$file")"
   case "${SONDE_BASELINE:-}" in
     "" | auto) ;;

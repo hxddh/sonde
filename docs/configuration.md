@@ -29,7 +29,7 @@ in the contract ([contract](contract.md)).
 | | Linux | macOS |
 |---|---|---|
 | Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` |
-| Data (scans, probe runs, audit log, sessions) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
+| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
 | Exports | `<data>/exports` unless `exports-dir` | same |
 | Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
 
@@ -89,7 +89,7 @@ credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-v
 `credentials.kind`: `default`, `profile`, `env`, `imds`, `web-identity`, `process`, `static`, `anonymous`
 ([credentials](credentials.md)).
 
-sonde's own destructive acts are each a dry run, done on a confirmation and kept in the audit log; uploads are
+sonde's own destructive acts are each a dry run, done with `--yes` and kept in the audit log; uploads are
 stale past 7 days.
 
 ### One-off endpoint
@@ -115,7 +115,7 @@ max-errors = 0
 baseline = "auto"
 
 [record]
-policy = "no-delete"      # what the program may do: no-delete (default), read-only, allow
+policy = "no-delete"      # what the program may do: allow (default; a trial: no-delete), no-delete, read-only
 name-callers = true       # name the code that sent each request (Python, Node.js, Java); false: off
 tls = false               # also serve TLS, with a certificate the program is told to trust
 
@@ -128,5 +128,5 @@ on = ["PutObject"]
 - `[program]`: both keys or neither; without it, a program is what its command runs ([cli](cli.md)).
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
 - `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
-  app, Run's own choice starts at `no-delete`; the project's policy may narrow it, never widen it.
+  app, the project's policy may narrow Run's own choice, never widen it.
 - `[[scenario]]`: [trials](trials.md#a-projects-own-scenarios).

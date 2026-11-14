@@ -636,7 +636,7 @@ impl Program {
 }
 
 /// The folder a run's program keeps its state in: the run's own, as its
-/// verdicts (`verdicts.json`) and its baseline are kept.
+/// verdicts and its baseline are kept (its index).
 pub fn folder_of(run: &Path) -> PathBuf {
     run.parent()
         .filter(|d| !d.as_os_str().is_empty())
