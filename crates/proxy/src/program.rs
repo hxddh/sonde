@@ -998,7 +998,7 @@ pub fn md_text(t: &str) -> String {
 /// sentence whose backticks do not pair is all text.
 pub fn md_said(t: &str) -> String {
     let parts: Vec<&str> = t.split('`').collect();
-    if parts.len() % 2 == 0 {
+    if parts.len().is_multiple_of(2) {
         return md_text(t);
     }
     parts
@@ -1673,6 +1673,24 @@ mod tests {
     }
 
     #[test]
+    fn a_session_file_is_named_by_its_program_not_its_interpreter() {
+        // 20.0 named every Python run `…-python3.sonde`
+        assert_eq!(
+            file_stem(None, Some("python3 etl.py --day 1")).as_deref(),
+            Some("etl")
+        );
+        assert_eq!(
+            file_stem(Some("nightly etl"), Some("python3 etl.py")).as_deref(),
+            Some("nightly-etl")
+        );
+        assert_eq!(
+            file_stem(None, Some("./load --all")).as_deref(),
+            Some("load")
+        );
+        assert_eq!(file_stem(None, None), None);
+    }
+
+    #[test]
     fn programs_are_their_commands_and_replays_are_none() {
         assert_eq!(
             program_key(Some("  python3  etl.py  --day 1 ")).as_deref(),
@@ -2087,7 +2105,7 @@ mod tests {
             },
         );
         assert!(
-            md.contains("> ⚠️ no baseline yet for program \\`etl\\`: nothing was compared"),
+            md.contains("> ⚠️ no baseline yet for program `etl`: nothing was compared"),
             "{md}"
         );
         // a note of the baseline's that is a warning now is not new: the
