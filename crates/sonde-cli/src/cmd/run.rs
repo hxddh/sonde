@@ -61,6 +61,9 @@ pub struct RunArgs {
     /// in sonde.toml, else the command itself).
     #[arg(long)]
     name: Option<String>,
+    /// With -o: write over the file if it is there (else a run refuses it).
+    #[arg(long, requires = "out")]
+    force: bool,
     /// The command, after `--`.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
@@ -247,6 +250,22 @@ fn names_its_place(command: &[String]) -> bool {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+    // a word like a flag where the command starts is a flag of run's
+    // mistyped, not a program (none is named `--typo`)
+    if let Some(first) = a.command.first().filter(|w| w.starts_with('-') && *w != "-") {
+        return Err(super::usage(format!(
+            "run: unknown option {first} (the command goes after `--`: sonde run [OPTIONS] -- COMMAND)"
+        )));
+    }
+    if let Some(out) = &a.rec.out
+        && !a.force
+        && out.symlink_metadata().is_ok()
+    {
+        return Err(super::usage(format!(
+            "-o {}: the file is there; --force writes over it",
+            out.display()
+        )));
+    }
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
     let project = load_project(None)?;
@@ -538,7 +557,8 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -
         words.push(format!("--name {}", q(n)));
     }
     if let Some(out) = &a.rec.out {
-        words.push(format!("-o {}", q(&out.to_string_lossy())));
+        // (the file is there now: written over, as asked)
+        words.push(format!("-o {} --force", q(&out.to_string_lossy())));
     }
     if a.demo {
         words.push("--demo".into());
@@ -627,9 +647,24 @@ async fn run_once(
 ) -> anyhow::Result<Ran> {
     use tokio::io::AsyncWriteExt;
     let command = sonde_proxy::program::shell_join(&a.command);
+    // `-o FILE` is recorded beside it under a name of its own and put in
+    // its place at the end: two runs given one file never write into, or
+    // print, each other's
+    let target = ctx.rec.out.clone().filter(|_| under.is_none());
+    let rec = match &target {
+        Some(t) => {
+            // (its earlier verdicts go now, as a session recorded again)
+            sonde_proxy::trial::remove(t);
+            Recording {
+                out: Some(recording_path(t)),
+                ..ctx.rec.clone()
+            }
+        }
+        None => ctx.rec.clone(),
+    };
     let mut started = start_under(
         s,
-        &ctx.rec,
+        &rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
@@ -727,9 +762,20 @@ async fn run_once(
     }
     let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
     let began = std::time::Instant::now();
-    let mut child = child
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("cannot start {program}: {e}"))?;
+    let mut child = match child.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            // nothing ran: no session of it
+            if let Some(p) = printer {
+                p.abort();
+            }
+            shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
+            let path = started.path.clone();
+            drop(started);
+            let _ = std::fs::remove_file(&path);
+            return Err(anyhow::anyhow!("cannot start {program}: {e}"));
+        }
+    };
     let feeder = match (&ctx.input, child.stdin.take()) {
         (Some(kept), Some(mut to)) if under.is_none() => {
             // sonde's input, to the program and kept: read on a thread of
@@ -807,16 +853,26 @@ async fn run_once(
     if let Some(p) = printer {
         p.abort();
     }
+    // a run sonde ended on SIGTERM ended as sonde does (143), whatever
+    // signal took its processes down
+    let code = match signal {
+        Some(15) => 143,
+        _ => exit_code(status),
+    };
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
+        // read before it is put in its place: this run's, whatever another does
+        let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        if let Some(t) = &target {
+            started.path = place(&started.path, t, a.force)?;
+        }
         // kept as the app keeps it: a run that failed is compared with none
         sonde_proxy::index::set(
             &started.path,
-            sonde_proxy::index::Change::Exit(exit_code(status)),
+            sonde_proxy::index::Change::Exit(code),
         );
-        let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &session.header.endpoint);
         let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
@@ -851,10 +907,61 @@ async fn run_once(
     let _ = sonde_proxy::session::compress(&file);
     Ok(Ran {
         file,
-        code: exit_code(status),
+        code,
         wall_ms,
         signal,
     })
+}
+
+/// Where `-o FILE` is recorded until the run ends: beside it, a name of
+/// this run's own that no listing takes for a session.
+fn recording_path(target: &std::path::Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "run.sonde".into());
+    target.with_file_name(format!(
+        ".{name}.{}.{}.recording",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}
+
+/// Puts a finished recording at `target`: over a file there only with
+/// `--force`. One another run put there meanwhile is kept, and this one
+/// goes beside it under a fresh name, said.
+fn place(recorded: &std::path::Path, target: &std::path::Path, force: bool) -> anyhow::Result<PathBuf> {
+    if force {
+        std::fs::rename(recorded, target)?;
+        return Ok(target.to_path_buf());
+    }
+    // a link made new is refused when the name is taken, as a rename is not
+    match std::fs::hard_link(recorded, target) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(recorded);
+            Ok(target.to_path_buf())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let stem = target
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "run".into());
+            let fresh = sonde_proxy::session::fresh_path(&runs_dir(target), &stem);
+            std::fs::rename(recorded, &fresh)?;
+            eprintln!(
+                "sonde: {} was written by another run meanwhile: this run's session is {}",
+                target.display(),
+                fresh.display()
+            );
+            Ok(fresh)
+        }
+        // a file system without links: the name is looked at, then taken
+        Err(_) if target.symlink_metadata().is_err() => {
+            std::fs::rename(recorded, target)?;
+            Ok(target.to_path_buf())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// What sonde wrote on an engine's command line, and whether the program's

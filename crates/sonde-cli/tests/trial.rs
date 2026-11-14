@@ -453,6 +453,10 @@ impl Bench {
     async fn run(&self, program: Option<&str>, args: &[&str]) -> Out {
         let mut c = self.sonde(program);
         c.args(args);
+        // a session path recorded again, as these tests do, is written over
+        if args.first() == Some(&"run") && args.contains(&"-o") && !args.contains(&"--force") {
+            c.arg("--force");
+        }
         if program.is_some() {
             c.arg("--").args(the_program_command());
         }
@@ -652,7 +656,7 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     // the way to try again keeps the trial's flags
     assert!(
         o.stderr.contains(&format!(
-            "sonde run --fault slowdown -o {} --url {} --path-style --allow-writes -- ",
+            "sonde run --fault slowdown -o {} --force --url {} --path-style --allow-writes -- ",
             session.display(),
             b.store.url
         )),
@@ -1227,8 +1231,11 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
 /// `sonde run <args> -- <the program> E2E_KEY=<key>`.
 async fn run_keyed(b: &Bench, program: &str, key: &str, args: &[&str]) -> Out {
     let mut c = b.sonde(Some(program));
-    c.args(args)
-        .arg("--")
+    c.args(args);
+    if args.contains(&"-o") {
+        c.arg("--force");
+    }
+    c.arg("--")
         .args(the_program_command())
         .arg(format!("E2E_KEY={key}"));
     out(c.output().await.unwrap())
@@ -2295,7 +2302,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert_eq!(o.code, Some(1), "{}", o.stderr);
     assert!(
         o.stderr
-            .contains("sonde run --trial --again --name etl -o run.sonde --url "),
+            .contains("sonde run --trial --again --name etl -o run.sonde --force --url "),
         "the way to try again is said: {}",
         o.stderr
     );

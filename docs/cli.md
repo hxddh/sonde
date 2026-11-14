@@ -21,7 +21,8 @@
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour on the built-in store; `--app` opens the session in the app. |
-| `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); how to point each SDK at sonde when nothing was sent. Exits with the command's status (128 + signal). |
+| `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); how to point each SDK at sonde when nothing was sent. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). An unknown option before `--`, or no endpoint, is a usage error (64); a command that cannot start leaves no session (70). |
+| ↳ `-o FILE` | The session there. A file there is refused (64) unless `--force`. Recorded beside it and put in place at the end: two runs given one file each keep their own (the second under a fresh name, said). |
 | ↳ `--demo` | The built-in store `sonde demo` uses (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). |
 | ↳ `--policy no-delete\|read-only\|allow` | Default `[record] policy` in `sonde.toml`, else `no-delete` ([what it refuses](recording.md#what-a-recorded-program-may-do)). One short form: `--allow-writes`. |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
@@ -110,6 +111,9 @@
 | 70 | The operation failed (connection, credentials, permission); a replay could not remove what it wrote |
 | 77 | Refused: the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
+
+Keys, commands and other text sonde did not write reach the terminal with their control characters written out
+(`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor.
 
 A failed request prints its error, request id and the request line from the log. A closed standard output
 (`sonde check | head`) ends the output, not the command: the exit code is the command's own.

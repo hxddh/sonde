@@ -2008,3 +2008,115 @@ fn a_keys_control_characters_are_written_out_never_sent() {
     }
     assert!(written_out, "the key is shown, written out");
 }
+
+fn sessions_in(dirs: &Path) -> usize {
+    std::fs::read_dir(dirs.join("data/sessions"))
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".sonde"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// What `run` cannot do is a usage error before anything runs: a flag of
+/// its own mistyped is never taken for the program, and no endpoint is the
+/// configuration's mistake. A command that cannot start leaves no session.
+#[test]
+fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_run() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "--typo", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("unknown option --typo"), "{}", stderr(&o));
+    let o = sonde(t.path(), &["run", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("no endpoint configured"), "{}", stderr(&o));
+    let o = sonde(t.path(), &["run", "--demo", "--", "/no/such/program"]);
+    assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
+    assert!(stderr(&o).contains("cannot start"), "{}", stderr(&o));
+    assert_eq!(sessions_in(t.path()), 0, "no session of what never ran");
+    // a program's own flags after its name are its own
+    let o = sonde(t.path(), &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+}
+
+/// `-o FILE` refuses a file that is there unless `--force`, and two runs
+/// given one file each print their own report and keep their own session.
+#[test]
+fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
+    let t = tempfile::tempdir().unwrap();
+    let out = t.path().join("run.sonde");
+    std::fs::write(&out, "mine").unwrap();
+    let o_ = out.to_str().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "-o", o_, "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("--force"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "mine");
+    let o = sonde(t.path(), &["run", "--demo", "-o", o_, "--force", "--", "true"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_ne!(std::fs::read(&out).unwrap(), b"mine");
+    // two at once, one file
+    let both = t.path().join("both.sonde");
+    let b_ = both.to_str().unwrap().to_string();
+    let runs: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|word| {
+            let b_ = b_.clone();
+            let dirs = t.path().to_path_buf();
+            std::thread::spawn(move || {
+                let script = format!("sleep 0.5; echo {word}");
+                sonde(&dirs, &["run", "--demo", "-o", &b_, "--", "sh", "-c", &script])
+            })
+        })
+        .collect();
+    let seen: Vec<String> = runs
+        .into_iter()
+        .map(|r| {
+            let o = r.join().unwrap();
+            assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+            let err = stderr(&o);
+            err.lines()
+                .find_map(|l| l.strip_prefix("session: "))
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_ne!(seen[0], seen[1], "each its own session: {seen:?}");
+    for s in &seen {
+        assert!(Path::new(s).is_file(), "{s}");
+    }
+    let left: Vec<String> = std::fs::read_dir(t.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".recording"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+/// sonde told to end (SIGTERM) ends its program and says the code it exits
+/// with: one code, 143, in the message and the exit.
+#[cfg(unix)]
+#[test]
+fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
+    let t = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--demo", "--", "sleep", "30"])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(143), "{}", stderr(&o));
+    assert!(stderr(&o).contains("(exit 143)"), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
+}
