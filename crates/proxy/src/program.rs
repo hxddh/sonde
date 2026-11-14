@@ -10,16 +10,42 @@ use crate::profile::Profile;
 use crate::summary::is_miss;
 use reqlog::Record;
 
-/// The program a session ran, as runs of it are grouped: its command with
-/// spaces collapsed. A replay, an imported log or a recording without a
-/// command has none.
+/// The program a session ran, as runs of it are grouped: its command's
+/// words (quotes undone, spaces collapsed) with what changes from run to run
+/// said as what it is ([`crate::profile::stable`]: `etl.py --date
+/// 2026-11-14` and `--date 2026-11-13` are one program), and a trial's place
+/// left out (`{trial}`, `$SONDE_TRIAL`: adding one keeps the program's
+/// history). A replay, an imported log or a recording without a command has
+/// none.
 pub fn program_key(command: Option<&str>) -> Option<String> {
-    let c = command?.split_whitespace().collect::<Vec<_>>().join(" ");
+    let c = command?.trim();
     if c.is_empty() || c.starts_with("replay of ") || c.starts_with("imported from ") {
-        None
-    } else {
-        Some(c)
+        return None;
     }
+    let words: Vec<String> = shell_words(c)
+        .iter()
+        .map(|w| without_trial(&unquote(w)))
+        .collect();
+    let words: Vec<&str> = words.iter().flat_map(|w| w.split_whitespace()).collect();
+    Some(crate::profile::stable(&words.join(" ")))
+}
+
+/// A word without the trial's place in it (`{trial}`, `$SONDE_TRIAL`,
+/// `${SONDE_TRIAL}`, `%SONDE_TRIAL%`) and the one separator before it:
+/// `s3://b/etl-{trial}/` is `s3://b/etl/`.
+fn without_trial(word: &str) -> String {
+    let mut w = word.to_string();
+    for place in ["{trial}", "${SONDE_TRIAL}", "$SONDE_TRIAL", "%SONDE_TRIAL%"] {
+        while let Some(at) = w.find(place) {
+            let from = w[..at]
+                .char_indices()
+                .next_back()
+                .filter(|(_, c)| "-_./=:".contains(*c))
+                .map_or(at, |(i, _)| i);
+            w.replace_range(from..at + place.len(), "");
+        }
+    }
+    w
 }
 
 /// The program a session is a run of: the name it was given, else its
@@ -1506,6 +1532,43 @@ mod tests {
         assert_eq!(program_key(Some("replay of etl")), None);
         assert_eq!(program_key(Some("imported from CloudTrail")), None);
         assert_eq!(program_key(None), None);
+    }
+
+    /// What changes from one run of a command to the next is not another
+    /// program: a date, a scratch folder's id, a trial's place.
+    #[test]
+    fn a_program_is_its_command_with_what_changes_between_runs_left_out() {
+        let key = |c: &str| program_key(Some(c)).unwrap();
+        assert_eq!(
+            key("python etl.py --date 2026-11-14"),
+            key("python etl.py --date 2026-11-13")
+        );
+        assert_eq!(
+            key("python etl.py --date 2026-11-14"),
+            "python etl.py --date {date}"
+        );
+        assert_eq!(
+            key("./load --run 3fa2b1c9-58cc-4372-a567-0e02b2c3d479"),
+            key("./load --run 0e02b2c3-58cc-4372-a567-3fa2b1c9d479")
+        );
+        // a trial's place, in the command or by its variable: the program
+        // it was before one was added
+        assert_eq!(
+            key("python etl.py 's3://scratch/etl-{trial}/'"),
+            key("python etl.py s3://scratch/etl/")
+        );
+        assert_eq!(
+            key("python etl.py --prefix={trial}"),
+            key("python etl.py --prefix")
+        );
+        assert_eq!(key("sh -c 'etl $SONDE_TRIAL'"), key("sh -c etl"));
+        assert_eq!(key("python etl.py {trial}"), key("python etl.py"));
+        // what does not change stays: two programs stay two
+        assert_ne!(
+            key("python etl.py --day mon"),
+            key("python etl.py --day tue")
+        );
+        assert_ne!(key("python load.py"), key("python etl.py"));
     }
 
     #[test]

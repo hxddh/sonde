@@ -1213,6 +1213,37 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     );
 }
 
+/// A program without a name is its command with what changes between runs
+/// left out: run with another date it is the same program, so under
+/// `no-delete` it writes over what it wrote, and its runs are one history.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
+    let b = Bench::new().await;
+    let run = |date: &'static str| {
+        let mut c = b.sonde(Some("key"));
+        c.args(["run", "--"])
+            .args(the_program_command())
+            .arg("E2E_KEY=out/latest")
+            .arg(date);
+        async move { out(c.output().await.unwrap()) }
+    };
+    let first = run("2026-11-13").await;
+    assert_eq!(first.code, Some(0), "{}", first.stderr);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let second = run("2026-11-14").await;
+    assert_eq!(second.code, Some(0), "refused: {}", second.stderr);
+    let list = b.run(None, &["sessions", "-f", "json"]).await;
+    let rows: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
+    assert_eq!(rows[0]["program"], rows[1]["program"], "{rows:#}");
+    assert!(
+        rows[0]["program"]
+            .as_str()
+            .unwrap()
+            .ends_with("E2E_KEY=out/latest {date}"),
+        "{rows:#}"
+    );
+}
+
 /// `sonde run <args> -- <the program> E2E_KEY=<key>`.
 async fn run_keyed(b: &Bench, program: &str, key: &str, args: &[&str]) -> Out {
     let mut c = b.sonde(Some(program));

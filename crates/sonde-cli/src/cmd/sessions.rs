@@ -43,6 +43,9 @@ struct Row {
     path: String,
     created: String,
     program: Option<String>,
+    /// The command it ran, as it ran it: what tells two runs of a program apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
     /// The program's name, when it was given one.
     #[serde(skip)]
     named: Option<String>,
@@ -82,6 +85,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 path: p.to_string_lossy().into_owned(),
                 created: c.created.to_rfc3339(),
                 program: c.program,
+                command: c.command,
                 named: c.name.filter(|n| !n.trim().is_empty()),
                 endpoint: c.endpoint,
                 bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
@@ -252,8 +256,12 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     vec![
                         r.name.clone(),
                         local(&r.created),
-                        // its name, when it has one; else its command
-                        r.named.clone().or(r.program.clone()).unwrap_or_default(),
+                        // its name, when it has one; else its command as it ran
+                        r.named
+                            .clone()
+                            .or(r.command.clone())
+                            .or(r.program.clone())
+                            .unwrap_or_default(),
                         r.endpoint.clone(),
                         if r.unreadable.is_some() {
                             format!("{} !", output::grouped(r.requests))

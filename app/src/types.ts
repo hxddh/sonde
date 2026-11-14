@@ -474,6 +474,8 @@ export interface SessionInfo {
   created: string;
   endpoint: string;
   command: string | null;
+  /** The program it is a run of: its name, else its command with what changes between runs left out (crates/proxy/src/program.rs `key_of`). */
+  program?: string | null;
   requests: number;
   live: boolean;
   /** A title the user gave it. */

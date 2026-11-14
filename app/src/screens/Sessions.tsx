@@ -295,9 +295,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const others = props.others().filter((s) => s.path !== props.path);
     if (!isAvailable) return;
     // runs of this program first; another program's under its own heading
-    const key = (c: string | null | undefined) => (c ?? "").trim().split(/\s+/).join(" ");
-    const mine = key(info()?.command);
-    const same = others.filter((s) => mine && key(s.command) === mine);
+    const mine = info()?.program;
+    const same = others.filter((s) => mine && s.program === mine);
     const rest = others.filter((s) => !same.includes(s));
     const item = (s: SessionInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${count(s.requests)}`, onSelect: () => compareWith.set(s.path) });
     void Menu.popup(

@@ -1519,6 +1519,7 @@ impl Sessions {
                             "command": h.command,
                             "requests": count_records(&p),
                             "shape": shape_of(&p),
+                            "program": h.name.clone().or_else(|| sonde_proxy::program::key_of(&h)),
                         })
                     }
                 };

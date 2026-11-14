@@ -213,7 +213,7 @@ pub struct Figures {
     pub warnings: Vec<String>,
 }
 
-pub const COUNTED_VERSION: u32 = 2;
+pub const COUNTED_VERSION: u32 = 3;
 
 /// The analysis a run's [`Figures`] are of: sonde's version, and a number
 /// raised whenever what they hold changes between versions (a finding, a
