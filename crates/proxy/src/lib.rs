@@ -33,6 +33,7 @@ pub mod split;
 pub mod summary;
 pub mod tls;
 pub mod trial;
+pub mod trial_plan;
 pub mod view;
 
 use std::convert::Infallible;

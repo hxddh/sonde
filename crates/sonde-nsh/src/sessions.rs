@@ -679,18 +679,12 @@ fn own_session_in(dir: &Path, path: &str) -> Result<String, String> {
     Ok(name)
 }
 
-/// Keeps the exit code a run ended with, in its folder's index: a trial
-/// judges the program's exit under faults against it.
-fn write_exit(session: &Path, code: Option<i32>) {
+/// Keeps the exit code a run ended with in its folder's index (a killed
+/// program has none to keep).
+fn keep_exit(session: &str, code: Option<i32>) {
     if let Some(c) = code {
-        sonde_proxy::index::set(session, sonde_proxy::index::Change::Exit(c));
+        sonde_proxy::index::set(Path::new(session), sonde_proxy::index::Change::Exit(c));
     }
-}
-
-/// The exit code the run ended with; `None` when it was not kept (a run of
-/// the CLI's).
-fn read_exit(session: &Path) -> Option<i32> {
-    sonde_proxy::index::get(session).exit
 }
 
 /// A run's verdicts for the app: each with the path of its trial's session
@@ -761,16 +755,6 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
     v
 }
 
-/// The scenarios a project names: the `[[scenario]]` tables of the
-/// `sonde.toml` found from `dir` upwards (to the repository's root), read
-/// as `sonde run --trial` reads them ([`sonde_proxy::project`]). None when
-/// there is no such file.
-fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
-    Ok(sonde_proxy::project::of(dir)?
-        .map(|p| p.scenarios)
-        .unwrap_or_default())
-}
-
 /// The budget a project gives its program in the `[check]` of the
 /// `sonde.toml` found from `dir` upwards, read as `sonde check` reads it
 /// ([`sonde_proxy::project`]): what the app draws on a chart as a line —
@@ -782,85 +766,6 @@ pub(crate) fn project_budget(dir: &Path) -> Option<(Option<f64>, Option<u64>, Op
     let waiting = check.max_waiting_ms().ok()?;
     let errors = check.max_errors.map(|n| n as u64);
     (p95.is_some() || waiting.is_some() || errors.is_some()).then_some((p95, errors, waiting))
-}
-
-/// What a trial of a session would run: the project's scenarios when its
-/// `sonde.toml` names some, else the ones chosen from what the clean run
-/// did; and whether every run would write to the same place.
-#[derive(Debug)]
-struct TrialPlan {
-    command: String,
-    cwd: Option<String>,
-    scenarios: Vec<sonde_proxy::fault::Scenario>,
-    /// The scenarios are the project's own.
-    project: bool,
-    /// The command names no place of its own for each run (`{trial}` or
-    /// `SONDE_TRIAL`): a trial writes where the clean run wrote.
-    shares_place: bool,
-}
-
-fn trial_plan_of(s: &Session) -> Result<TrialPlan, String> {
-    if s.header.scenario.is_some() {
-        return Err(err_msg(
-            "this session is a trial itself: try the run it is a trial of",
-        ));
-    }
-    let command = s
-        .header
-        .command
-        .clone()
-        .filter(|c| sonde_proxy::program::program_key(Some(c)).is_some())
-        .ok_or_else(|| err_msg("only a run of a command can be tried under faults"))?;
-    if s.records.is_empty() {
-        return Err(err_msg("no trial: the run sent no requests to fail"));
-    }
-    let cwd = s.header.cwd.clone();
-    let project = match &cwd {
-        Some(d) => project_scenarios(Path::new(d)).map_err(err_msg)?,
-        None => Vec::new(),
-    };
-    let own = !project.is_empty();
-    Ok(TrialPlan {
-        shares_place: !command.contains("{trial}") && !command.contains("SONDE_TRIAL"),
-        command,
-        cwd,
-        scenarios: if own {
-            project
-        } else {
-            sonde_proxy::trial::choose(&s.records)
-        },
-        project: own,
-    })
-}
-
-/// The scenarios asked for by name, from the plan's and the built-in ones
-/// (`slowdown:3`: pressed harder, see [`sonde_proxy::fault::scenario_asked`]);
-/// all of the plan's when none is named.
-fn scenarios_named(
-    plan: &TrialPlan,
-    names: &[String],
-) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
-    if names.is_empty() {
-        return Ok(plan.scenarios.clone());
-    }
-    names
-        .iter()
-        .map(|n| {
-            if let Some(s) = plan.scenarios.iter().find(|s| &s.name == n) {
-                return Ok(s.clone());
-            }
-            // a project's own scenario of the name says its times itself
-            let name = n.split_once(':').map_or(n.as_str(), |(name, _)| name);
-            if plan.project && plan.scenarios.iter().any(|s| s.name == name) {
-                return Err(err_msg(format!(
-                    "{n}: {name} is the project's own scenario (sonde.toml says its times)"
-                )));
-            }
-            sonde_proxy::fault::scenario_asked(n)
-                .map_err(err_msg)?
-                .ok_or_else(|| err_msg(format!("{n}: no such scenario")))
-        })
-        .collect()
 }
 
 /// A trial's progress as the app hears it: `{ scenario, state }`, with the
@@ -1377,7 +1282,7 @@ async fn try_under(
     of: &str,
     clean: &Session,
     clean_exit: i32,
-    plan: &TrialPlan,
+    plan: &sonde_proxy::trial_plan::Plan,
     chosen: Vec<sonde_proxy::fault::Scenario>,
     policy: &str,
     cols: f64,
@@ -1733,8 +1638,8 @@ impl Sessions {
             true,
         )
         .await?;
-        // kept beside the session: a later trial judges against it
-        write_exit(Path::new(&path), code);
+        // kept in its folder's index: a later trial judges against it
+        keep_exit(&path, code);
         Ok(json!({ "exit": code, "path": path }))
     }
 
@@ -1787,7 +1692,7 @@ impl Sessions {
     /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
     pub fn trial_plan(path: String) -> Result<JsonValue, String> {
         let s = open_session(&path)?;
-        let plan = trial_plan_of(&s)?;
+        let plan = sonde_proxy::trial_plan::of(&s).map_err(err_msg)?;
         Ok(json!({
             "command": plan.command,
             "cwd": plan.cwd,
@@ -1805,7 +1710,7 @@ impl Sessions {
                 .collect::<Vec<_>>(),
             "project": plan.project,
             "sharesPlace": plan.shares_place,
-            "cleanExit": read_exit(Path::new(&path)),
+            "cleanExit": sonde_proxy::index::get(Path::new(&path)).exit,
         }))
     }
 
@@ -1830,10 +1735,10 @@ impl Sessions {
         // a run of the sessions directory: its trials are kept beside it
         let (file, of) = own_session(&path)?;
         let clean = open_session(&path)?;
-        let plan = trial_plan_of(&clean)?;
-        let chosen = scenarios_named(&plan, &scenarios)?;
+        let plan = sonde_proxy::trial_plan::of(&clean).map_err(err_msg)?;
+        let chosen = plan.named(&scenarios).map_err(err_msg)?;
         policy_of(&policy)?;
-        let clean_exit = read_exit(&file).unwrap_or(0);
+        let clean_exit = sonde_proxy::index::get(&file).exit.unwrap_or(0);
         try_under(
             &file, &of, &clean, clean_exit, &plan, chosen, &policy, cols, rows, &output,
         )
@@ -1856,7 +1761,7 @@ impl Sessions {
     ) -> Result<JsonValue, String> {
         let (file, _) = own_session(&path)?;
         let last = open_session(&path)?;
-        let plan = trial_plan_of(&last)?;
+        let plan = sonde_proxy::trial_plan::of(&last).map_err(err_msg)?;
         let program = sonde_proxy::program::key_of(&last.header)
             .ok_or_else(|| err_msg("only a run of a command can be tried again"))?;
         let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -1866,7 +1771,7 @@ impl Sessions {
                 "nothing to try again: every scenario survived the program's last trial",
             ));
         }
-        let chosen = scenarios_named(&plan, &names)?;
+        let chosen = plan.named(&names).map_err(err_msg)?;
         policy_of(&policy)?;
         // the clean run, afresh
         let (code, fresh) = run_recorded(
@@ -1881,7 +1786,7 @@ impl Sessions {
             false,
         )
         .await?;
-        write_exit(Path::new(&fresh), code);
+        keep_exit(&fresh, code);
         if code != Some(0) {
             return Ok(
                 json!({ "path": fresh, "trials": [], "cancelled": false, "cleanExit": code }),
@@ -3363,71 +3268,6 @@ mod tests {
         assert!(e.contains("is not one of sonde's sessions"), "{e}");
     }
 
-    #[test]
-    fn a_trial_plan_is_the_scenarios_chosen_from_what_the_run_did() {
-        let dir = tempfile::tempdir().unwrap();
-        let (clean, trial, _) = run_and_trial(dir.path(), "python job.py --out s3://b/x", None);
-        let s = Session::open(Path::new(&clean)).unwrap();
-        let plan = trial_plan_of(&s).unwrap();
-        let chosen: Vec<String> = sonde_proxy::trial::choose(&s.records)
-            .into_iter()
-            .map(|x| x.name)
-            .collect();
-        let names: Vec<String> = plan.scenarios.iter().map(|x| x.name.clone()).collect();
-        assert_eq!(names, chosen);
-        assert!(names.contains(&"lost-answer".to_string()), "{names:?}");
-        assert!(!plan.project);
-        assert_eq!(plan.command, "python job.py --out s3://b/x");
-        assert!(
-            plan.shares_place,
-            "no {{trial}}: every run writes one place"
-        );
-        // by name: of the plan's or built in; an unknown one is refused
-        let one = scenarios_named(&plan, &["error".into()]).unwrap();
-        assert_eq!(one.len(), 1);
-        assert_eq!(scenarios_named(&plan, &[]).unwrap().len(), names.len());
-        assert!(scenarios_named(&plan, &["nope".into()]).is_err());
-        // pressed harder: the two that fail a request's first attempt, by a count
-        let hard = scenarios_named(&plan, &["slowdown:3".into(), "error".into()]).unwrap();
-        assert_eq!(
-            (hard[0].name.as_str(), hard[0].rules[0].times),
-            ("slowdown", 3)
-        );
-        assert_eq!(
-            hard[0].about,
-            "503 SlowDown on each request's first 3 attempts"
-        );
-        assert_eq!(hard[1].rules[0].times, 1);
-        for (spec, says) in [
-            ("slowdown:0", "from 1 to 5"),
-            ("slowdown:9", "from 1 to 5"),
-            ("slowdown:x", "from 1 to 5"),
-            ("cut-body:2", "only slowdown and error"),
-            ("nope:2", "no such scenario"),
-        ] {
-            let e = scenarios_named(&plan, &[spec.into()]).unwrap_err();
-            assert!(e.contains(says), "{spec}: {e}");
-        }
-        // a trial is not tried again
-        let t = Session::open(Path::new(&trial)).unwrap();
-        assert!(trial_plan_of(&t).unwrap_err().contains("a trial itself"));
-    }
-
-    #[test]
-    fn a_command_with_a_place_of_its_own_per_run_does_not_share_it() {
-        for command in [
-            "python job.py --out s3://b/{trial}/",
-            "sh -c 'python job.py --out s3://b/$SONDE_TRIAL/'",
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let (clean, _, _) = run_and_trial(dir.path(), command, None);
-            let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
-            assert!(!plan.shares_place, "{command}");
-            // the session keeps the command as written, to run it again
-            assert_eq!(plan.command, command);
-        }
-    }
-
     /// The bridge's own path for a large session, timed: what a window
     /// asks for when it opens one (`view`), again (kept), a later page of
     /// its operations, and the size of what crosses to the interface.
@@ -3465,7 +3305,7 @@ mod tests {
         let command = "cd etl; A='x y' python load.py \"s3://b/{trial}/in put\" | tee log-{trial}.txt && curl -s $AWS_ENDPOINT_URL/demo/missing.txt\ncurl -s x\\ y || true";
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), command, None);
-        let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        let plan = sonde_proxy::trial_plan::of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
         assert_eq!(plan.command, command, "kept as written");
         assert_eq!(
             command_under(&plan.command, Some("slowdown")),
@@ -3524,97 +3364,15 @@ mod tests {
     }
 
     #[test]
-    fn a_projects_own_scenarios_are_the_plan_when_its_sonde_toml_names_some() {
-        let project = tempfile::tempdir().unwrap();
-        let sub = project.path().join("etl");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::create_dir_all(project.path().join(".git")).unwrap();
-        std::fs::write(
-            project.path().join("sonde.toml"),
-            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"lag\"\nfault = \"delay 200ms\"\n",
-        )
-        .unwrap();
-        // found from the folder the command ran in, upwards
-        let found = project_scenarios(&sub).unwrap();
-        assert_eq!(found.len(), 2);
-        assert_eq!(found[0].name, "flaky-puts");
-        assert_eq!(found[0].about, "503 SlowDown on PutObject under out/");
-        assert_eq!(found[0].rules[0].times, 2);
-        assert_eq!(found[1].rules[0].times, 0, "a delay meets every attempt");
-        let dir = tempfile::tempdir().unwrap();
-        let (clean, _, _) = run_and_trial(dir.path(), "python job.py", Some(&sub));
-        let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
-        assert!(plan.project);
-        let names: Vec<_> = plan.scenarios.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["flaky-puts", "lag"]);
-        // (its own times are sonde.toml's: not asked for here)
-        assert!(
-            scenarios_named(&plan, &["flaky-puts:3".into()])
-                .unwrap_err()
-                .contains("the project's own")
-        );
-        // a built-in one can still be asked for by name
-        assert_eq!(
-            scenarios_named(&plan, &["flaky-puts".into(), "error".into()])
-                .unwrap()
-                .len(),
-            2
-        );
-        // what the command line refuses is refused here: one reading
-        for (toml, says) in [
-            (
-                "[[scenario]]\nname = \"clean\"\nfault = \"500\"\n",
-                "run without faults",
-            ),
-            (
-                "[[scenario]]\nname = \"slow\"\nfault = \"500\"\n",
-                "one of sonde's own",
-            ),
-            ("[program]\nname = \"\"\n", "a program's name"),
-        ] {
-            std::fs::write(project.path().join("sonde.toml"), toml).unwrap();
-            let e = project_scenarios(&sub).unwrap_err();
-            assert!(e.contains(says), "{e}");
-        }
-        // a scenario that does not read is said, not skipped
-        std::fs::write(
-            project.path().join("sonde.toml"),
-            "[[scenario]]\nname = \"bad name\"\nfault = \"500\"\n",
-        )
-        .unwrap();
-        let e = project_scenarios(&sub).unwrap_err();
-        assert!(e.contains("a name is letters, digits"), "{e}");
-        std::fs::write(
-            project.path().join("sonde.toml"),
-            "[[scenario]]\nname = \"x\"\nfault = \"500\"\nwhen = 1\n",
-        )
-        .unwrap();
-        assert!(
-            project_scenarios(&sub)
-                .unwrap_err()
-                .contains("unknown field `when`")
-        );
-        // and no file above the repository's root is read
-        let outside = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(outside.path().join("repo/.git")).unwrap();
-        std::fs::write(outside.path().join("sonde.toml"), "[[scenario]]\n").unwrap();
-        assert!(
-            project_scenarios(&outside.path().join("repo"))
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn a_runs_exit_code_is_kept_in_the_index_for_a_later_trial() {
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), "python job.py", None);
-        let p = Path::new(&clean);
-        assert_eq!(read_exit(p), None, "not kept: a run of the CLI's");
-        write_exit(p, None);
-        assert_eq!(read_exit(p), None, "a killed program has no code to keep");
-        write_exit(p, Some(3));
-        assert_eq!(read_exit(p), Some(3));
+        let exit = || sonde_proxy::index::get(Path::new(&clean)).exit;
+        assert_eq!(exit(), None, "not kept: a run of the CLI's");
+        keep_exit(&clean, None);
+        assert_eq!(exit(), None, "a killed program has no code to keep");
+        keep_exit(&clean, Some(3));
+        assert_eq!(exit(), Some(3));
     }
 
     #[test]

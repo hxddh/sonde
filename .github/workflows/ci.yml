@@ -36,6 +36,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       - run: cargo fmt --all --check
@@ -46,6 +47,7 @@ jobs:
         run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
       - name: nsh build reports no warnings
         run: |
+          set -o pipefail
           cd app && nsh build App.tsx 2>&1 | tee build.log
           ! grep -E "^warn" build.log
 
@@ -63,19 +65,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
       # the default members: the CLI, the proxy and what is under them (the
       # app's bridge, sonde-nsh, is built by the lint, ui and shots jobs)
       - run: cargo test --workspace --locked
-      # sessions of any size, held (optimised, as released): each test's
-      # peak memory, the same from run to run, against its budget; its time,
-      # which a shared runner moves, said and held only past several times
-      # what it takes (crates/proxy/tests/budgets.rs, docs/performance.md).
-      # Each test is a process of its own, so its peak is its own.
+
+  budgets:
+    # sessions of any size, held (optimised, as released): each test's
+    # peak memory, the same from run to run, against its budget; its time,
+    # which a shared runner moves, said and held only past several times
+    # what it takes (crates/proxy/tests/budgets.rs, docs/performance.md).
+    # Each test is a process of its own, so its peak is its own. A job of
+    # its own beside the unit tests: its release build and its sessions of
+    # a million take longer than they do.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: budgets }
       - name: Budgets of a large session
-        if: runner.os == 'Linux'
         run: |
           set -o pipefail
-          for t in $(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p'); do
+          # (listed first: a build that fails, or lists none, fails the step)
+          tests=$(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p')
+          [ -n "$tests" ] || { echo "::error title=Budgets::no budget test was listed"; exit 1; }
+          for t in $tests; do
             cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
           done
           { echo '```'; grep -h "^budget " budgets.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -118,6 +134,7 @@ jobs:
       - run: bash scripts/release-wait.test.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
       - run: cargo build -p sonde-cli && echo "$PWD/target/debug" >> "$GITHUB_PATH"
       - uses: ./
         id: sonde
@@ -141,7 +158,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { workspaces: ". -> target\ntools/gen-slatedb -> target" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", workspaces: ". -> target\ntools/gen-slatedb -> target" }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.12" }
       - run: pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
@@ -160,6 +177,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.12" }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -191,7 +209,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       - run: scripts/ui-tests.sh
@@ -201,12 +219,14 @@ jobs:
     # wide and at the least size, light and dark, English and Chinese — kept
     # as an artifact, the visual record of each build. Linux on every change;
     # macOS and Windows on main's runs too (a release waits for them), the
-    # nightly and by hand.
+    # nightly and by hand. The tour's variants run side by side (a job each
+    # on Linux, two halves on macOS and Windows); shots-check holds them.
     if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name != 'pull_request' && '[{"os":"ubuntu-24.04","name":"linux"},{"os":"macos-15","name":"macos"},{"os":"windows-latest","name":"windows"}]' || '[{"os":"ubuntu-24.04","name":"linux"}]') }}
+        include: ${{ fromJSON(github.event_name != 'pull_request' && '[{"os":"ubuntu-24.04","name":"linux","part":"wide","filter":"shots wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","filter":"shots min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","filter":"shots dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","filter":"shots zh"},{"os":"macos-15","name":"macos","part":"1","filter":"part 1"},{"os":"macos-15","name":"macos","part":"2","filter":"part 2"},{"os":"windows-latest","name":"windows","part":"1","filter":"part 1"},{"os":"windows-latest","name":"windows","part":"2","filter":"part 2"}]' || '[{"os":"ubuntu-24.04","name":"linux","part":"wide","filter":"shots wide"},{"os":"ubuntu-24.04","name":"linux","part":"min","filter":"shots min"},{"os":"ubuntu-24.04","name":"linux","part":"dark","filter":"shots dark"},{"os":"ubuntu-24.04","name":"linux","part":"zh","filter":"shots zh"}]') }}
+    name: shots (${{ matrix.name }}, ${{ matrix.part }})
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
@@ -214,7 +234,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: "shots-${{ matrix.name }}", workspaces: "app/.nsh/rust -> ../../target" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: "shots-${{ matrix.name }}", workspaces: "app/.nsh/rust -> ../../target" }
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang xvfb openbox fonts-noto-cjk
       - uses: ./.github/actions/nsh
@@ -224,39 +244,59 @@ jobs:
         # window is cut off, and system_profiler does not say so there
         env:
           SONDE_SHOT_MAX: ${{ runner.os == 'macOS' && '1024x688' || '' }}
+          SHOTS_FILTER: ${{ matrix.filter }}
         run: scripts/shots.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          name: sonde-shots-${{ matrix.name }}-part-${{ matrix.part }}
+          path: app/shots/*.png
+          if-no-files-found: warn
+
+  shots-check:
+    # the tour gates a merge: a platform's pictures, its variants' together
+    # (the sonde-shots-<platform> artifact), against the last green run of
+    # this workflow on the default branch, in the job summary with
+    # before | after | difference images; a screen that changed (past 0.5%
+    # of its pixels, font smoothing aside) or is new must match the picture
+    # approved for it in app/shots.approved.json, or the job fails. Approving
+    # is committing that file (scripts/shots-diff.py approve, on this run's
+    # sonde-shots-<platform> artifact). A platform with no approved pictures
+    # is reported, not held. (A variant that failed has failed its own job.)
+    needs: shots
+    if: ${{ !cancelled() && needs.shots.result != 'skipped' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJSON(github.event_name != 'pull_request' && '["linux","macos","windows"]' || '["linux"]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sonde-shots-${{ matrix.name }}-part-*
+          merge-multiple: true
+          path: app/shots
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
           name: sonde-shots-${{ matrix.name }}
           path: app/shots/*.png
           if-no-files-found: warn
-      # the tour gates a merge: what changed on screen since the last green run
-      # of this workflow on the default branch, in the job summary with
-      # before | after | difference images; a screen that changed (past 0.5%
-      # of its pixels, font smoothing aside) or is new must match the picture
-      # approved for it in app/shots.approved.json, or the job fails. Approving
-      # is committing that file (scripts/shots-diff.py approve, on this run's
-      # sonde-shots-<platform> artifact). A platform with no approved pictures
-      # is reported, not held.
       - name: Screens against the last green run, held to the approved ones
-        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p shots-before
+          mkdir -p shots-before app/shots
           prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}&per_page=1" --jq '.workflow_runs[0].id' || true)
           if [ -n "$prev" ]; then
             gh run download "$prev" -R "${{ github.repository }}" -n "sonde-shots-${{ matrix.name }}" -D shots-before || echo "no screenshots in run $prev: every screen is held to the approved ones"
           else
             echo "no green run to compare with: every screen is held to the approved ones"
           fi
-          # a venv of its own: macOS's Python takes no packages system-wide (PEP 668)
           python3 -m venv "$RUNNER_TEMP/diff"
-          py="$RUNNER_TEMP/diff/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/diff/Scripts/python"
-          "$py" -m pip install -q pillow
+          "$RUNNER_TEMP/diff/bin/python" -m pip install -q pillow
           status=0
-          "$py" scripts/shots-diff.py shots-before app/shots shots-diff --approved app/shots.approved.json --platform ${{ matrix.name }} > shots-report.md || status=$?
+          "$RUNNER_TEMP/diff/bin/python" scripts/shots-diff.py shots-before app/shots shots-diff --approved app/shots.approved.json --platform ${{ matrix.name }} > shots-report.md || status=$?
           cat shots-report.md >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" != 0 ]; then
             echo "::error title=Screenshots::a screen changed and is not approved: see the job summary and the sonde-shots-diff-${{ matrix.name }} artifact; approve with scripts/shots-diff.py approve"

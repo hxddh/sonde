@@ -66,25 +66,24 @@ runner: it is said in the job's summary and fails only past several times what i
 
 How: the file is streamed and parsed on every core; records keep only the headers an analysis reads, with repeated
 text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app
-gets a page of operations at a time; `compare` and `diff` read one session at a time. The app also caches each
+gets a page of operations at a time; `compare` reads one session at a time. The app also caches each
 finished run's figures in `sessions/.index.jsonl` and reads a live recording incrementally.
 
 ## Terminal binary
 
-`scripts/perf.py`, 120×40 pty (v0.1.0):
+`scripts/perf.py`, 120×40 pty, 20.0.0's `sonde-linux-x86_64` (CI's build), two runs:
 
 | Measure | Result |
 | --- | --- |
 | CLI start (`sonde --version`), mean of 10 | 5 ms |
-| TUI start to first frame (`sonde tui --demo`), 3 runs | 66, 59, 68 ms |
-| Load 100 000 rows in Browse (flat, *Load all*: 100 ListObjectsV2 pages) | 0.51 s |
-| Memory (VmRSS): idle / 100 000 rows loaded / after paging | 36 / 91 / 95 MiB |
-| Page Down presses in 10 s, each answered with a frame | 163 (≈ 5 300 rows) |
-| `--fps` while paging | 49–50 fps (bounded by the script's key rate), frame 1.15 ms, p95 1.66 ms, ≈ 140 of 4 800 cells written |
+| TUI start to first frame (`sonde tui --demo`) | 110–180 ms |
+| Load 100 000 rows in Buckets (flat, *Load all*: 100 ListObjectsV2 pages) | 0.57–0.63 s |
+| Memory (VmRSS): idle / 100 000 rows loaded / after paging | 51 / 106 / 109 MiB |
+| Page Down presses in 10 s, each answered with a frame | 151–154 (≈ 5 000 rows) |
+| `--fps` while paging | 46 fps (bounded by the script's key rate), frame 2.0 ms, p95 3.0 ms, ≈ 160 cells written |
 
-Binary: 79.0 MB (19.0.0's `sonde-linux-x86_64`: LTO thin, JS engine, the app's bundle and the viewer included; the CLI
-alone, without them, 18.7 MB), linking only `libgcc_s`, `libm`, `libc`
-([packaging](packaging.md#the-terminal-binary-has-no-gui-dependency)).
+Binary: 79.7 MB (LTO thin, JS engine, the app's bundle and the viewer included), linking only `libgcc_s`, `libm`,
+`libc` ([packaging](packaging.md#the-terminal-binary-has-no-gui-dependency)).
 
 ## Headless UI
 

@@ -1,6 +1,6 @@
 # Decisions
 
-Newest last.
+Newest last; the decisions in force. Those a later one replaced: [history](history/decisions-superseded.md).
 
 | # | Decision | Options | Choice and reason |
 |---|---|---|---|
@@ -14,8 +14,6 @@ Newest last.
 | D-008 | Destructive confirmation | a checkbox; typed text | **Typed text** (the item count, or the bucket name); plans expire in 10 minutes and run once. |
 | D-009 | Hermetic UI tests | mock in TSX; a server | **A demo S3 server (`sonde-core::demo`)**: real HTTP through the real client; also `sonde tui --demo`. |
 | D-010 | The terminal host | `nsh-tui-host`; our own loop | **Our own loop on `nsh-platform-tui`** (FINDINGS #2): one binary with the bundle and sonde's CLI. |
-| D-011 | Plugin views in the macOS app | a custom AppKit host; degrade | *(Superseded by D-031.)* **Degrade**: views opened in `sonde tui`. |
-| D-012 | Plugin capability policy | trust the package; check | *(Superseded by D-031.)* **Check at install and on open**: only `sonde.read.*`. |
 | D-013 | Second S3 implementation for CI | Ceph RGW; Garage; SeaweedFS | **Ceph RGW and RustFS**: the spec asks for Ceph; RustFS starts in seconds. MinIO optional (D-023). |
 | D-014 | Iceberg sample | hand-written; pyiceberg | **pyiceberg 0.9.1** (`tools/gen_iceberg.py`): a real table with every kind of change. |
 | D-015 | Woodpecker sample | a running Woodpecker; its codec | **Its own codec** (`tools/gen-woodpecker`, commit 3a8ce69): running it needs etcd and MinIO. |
@@ -33,7 +31,6 @@ Newest last.
 | D-027 | 404 on GET/HEAD | errors; their own count | **"not found"**: formats probe for keys that do not exist yet (116 of SlateDB's 172 requests). |
 | D-028 | Replay | re-send bytes; re-enact | **Re-enact** (synthetic payloads, mapped ids, a fresh prefix): sessions hold no object data, and stores issue their own ids. |
 | D-029 | Direction for 2.0 | more sections; one place to start | **Run is the home**: a command beside its operations is the shortest path to the point. |
-| D-030 | Navigation | nine sections; a few places and a palette | **Four places and a command palette** (⌘K, `:` in the terminal). |
 | D-031 | Plugins | keep; remove | **Remove**: their cost (signing, trust, sandbox) outweighed views that opened only in the terminal. Supersedes D-011, D-012. |
 | D-032 | The program's output | a log file; in the session | **In the session** (`{"log": …}` lines): one file, one clock. |
 | D-033 | Sharing a session | a hosted service; a static site | **A static site** (`sonde share`): nothing to run, any host. |
@@ -47,7 +44,6 @@ Newest last.
 | D-041 | Bucket tools | tabs with forms; an overview | **An overview**: cheap facts fetched on open, costly ones when asked; the terminal keeps tabs. |
 | D-042 | sonde's own requests, jobs, audit | three pages; one sheet | **Activity, one sheet**: one question, rarely why the app is opened. |
 | D-043 | Localising the analysis | translate strings; phrases | **Phrases** (key + arguments): the CLI's English comes from the same templates, so they cannot drift. |
-| D-044 | Compatibility | a Buckets tab; from the endpoints | **Its own window, from the endpoints**: it runs on several endpoints for minutes. |
 | D-045 | Materials | opaque; glass | **Glass on floating surfaces, macOS only**: elsewhere an unblurred translucent card showed text through. |
 | D-046 | Direction for 4.0 | new features; the design guides | **The guides, throughout**, written down in `app/DESIGN.md`; no new feature. |
 | D-047 | Type | sizes per page; a scale | **Five roles** (11, 12, 13, 15, 20), tabular digits, the platform's monospace (FINDINGS 15): a desktop scale around a 13 pt body. |
@@ -65,7 +61,6 @@ Newest last.
 | D-059 | Charts | own canvases; Plot | **Plot**: native marks, hover, keyboard and accessibility; the canvas redrew on every mouse move. |
 | D-060 | Comparing two sessions | answers only; before and after | **Before and after**, unless one is a replay: most comparisons are of a change. |
 | D-061 | Direction for 7.0 | one session deeper; a program over its runs | **A program over its runs**, with a baseline, in the app and CI: most questions are about a change. |
-| D-062 | What a program is | a given name; the command | **The command, spaces collapsed** (named later: D-110): nothing to set up. Baselines in `baselines.json`. |
 | D-063 | Gating CI | a new tool; `sonde check` | **`sonde check`**: budgets and a baseline (10% tolerance), exit 1 when over; the same check as the app. |
 | D-064 | Prefix rates | documented; measured | **S3's 5,500 reads / 3,500 writes per second per prefix**: a finding at half, a warning past 80% or throttled; the finding names its figure. |
 | D-065 | The flow chart | per request; per kind and prefix | **Operation → prefix → outcome**, top 6 and 8, the rest "other": a Sankey reads only with few nodes. |
@@ -79,13 +74,11 @@ Newest last.
 | D-073 | Which code sent a request | profilers; a header | **`x-sonde-caller`**, read and never forwarded; opt-in hooks set it. Nothing injected unless asked. |
 | D-074 | A project's budget | CI flags; a file | **`sonde.toml` `[check]`**, found up to the repository root; flags win. |
 | D-075 | Sharing of the time | busy time per kind; split | **Split among requests in flight**: shares add up to the waiting. |
-| D-076 | Activity's requests | an inspector; a session | **Both**: an inspector, and "Open as a session". |
 | D-077 | The run history field | Combobox; the system's menu | Kept from D-070: Return runs what was typed. |
 | D-078 | The look of the app | nsh's look; the app's kit | **The app's kit** (`ui/kit.tsx`): nsh base components have no look; `scripts/lint-kit.py` keeps pages from styling them. |
 | D-079 | Disclosure | Button + Collapsible; Accordion | **Accordion**: a real heading and an expanded state a Button cannot say. |
 | D-080 | Requests drawn one by one | the slowest 400; all up to 4000 | **All up to 4000, else the slowest 400 and a spread**: the tail alone looks like a slow program. |
 | D-081 | A run and its commit | none; git, then CI | **`git`, else `GITHUB_SHA`**, with branch and dirty flag: ties a regression to a change. |
-| D-082 | Production from logs | a daemon; `watch --logs` | **`sonde watch --logs`**: each pass a run with a baseline and `check`. |
 | D-083 | Prices per view | the settings'; the endpoint's | **The session's endpoint's**: one price per session everywhere. |
 | D-084 | Callers beyond Python | none; a hook per SDK | **A hook per SDK** via `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS`; Java only when the SDK is on the class path, never breaking the program. |
 | D-085 | Latency | to the headers; the whole exchange | **The whole exchange, first byte beside it**: a program waits for the body too. |
@@ -94,7 +87,6 @@ Newest last.
 | D-088 | Sizes | per control; tokens | **Tokens (`CONTROL`, `ROW`, `FORM`) and a lint**: 12.0 had five of each. |
 | D-089 | The window's columns | four; two and an inspector | **Two columns and an inspector**: the sidebar holds places and the current list. |
 | D-090 | A session's page | findings above tabs; tabs and the pane | **The pane takes the room under its tabs**: findings belong with operations. |
-| D-091 | The Time pane | charts stacked; a board | **A board** under one timeline: nine stacked sections were a scroll, not a view. |
 | D-092 | Requests in flight | a step line; lanes | **Both**: the line says how many, the lanes which (96 slices × up to 24 lanes). |
 | D-093 | A config that does not load | start empty; refuse to save | **Refuse to save, and say so**; a save re-reads the file and applies only its change. |
 | D-094 | Read-only and probes | exempt; refused | **Refused**: probes write, delete and create buckets. |
@@ -113,12 +105,10 @@ Newest last.
 | D-107 | Charts | each its own; a registry and a lint | **One frame (`Chart`) and registries** checked by `scripts/lint-charts.py`. |
 | D-108 | A narrow pane | wrap and clip; rank | **Rank**: the lowest figures and columns leave first; nothing clipped mid-word. |
 | D-109 | Rust's sentences in Chinese | translate in Rust; phrases | **Phrases** (`decoders::phrase`, `corephrases.ts`); a test fails on a key without a template. The CLI stays English. |
-| D-110 | A program's identity | the command line; a name | **`[program] name` or `--name`, else the command**: no existing baseline is lost. |
 | D-111 | A trial in the app | a row of verdicts; a marked session | **A marked session**, in no list (D-099); refused on a read-only endpoint. |
 | D-112 | "Acting on N findings" | an estimate; the requests named | **The named requests, subtracted**: the estimate overstated tiny HEADs. |
 | D-113 | Moving the Native Shell pin | with UI work; last | **Last, alone**: a moved pixel has one cause. |
 | D-114 | A trial's name in a key | as written; taken out | **Taken out as a whole word**: `etl-{trial}` differs per run. |
-| D-115 | Which answers owe a retry | each its own list; one | **One function** (`status_owes_retry`: 408, 429, 500, 502, 503, 504); 501 owes none. |
 | D-116 | A lost conditional write | sonde writes a competitor; 412 to the program's own | **The program's write goes through and is answered 412**: sonde writes nothing of its own into a user's bucket. |
 | D-117 | What a conditional-write fault counts | attempts per key; per commit | **Per commit (`commit_family`)**: a retry of version 7 is version 8, a new key. |
 | D-118 | A body cut short | Range in identity; out | **Out**: the resume is a ranged GET and must not be cut again. |
@@ -143,7 +133,6 @@ Newest last.
 | D-137 | Where the policy is widened | flag, sonde.toml, setting | **CLI: flag, then `[record] policy`, then no-delete. App: the setting; a project only narrows it.** |
 | D-138 | When the major changes | every release; when a stable thing breaks | **When a stable thing breaks** ([contract.md](contract.md)): session format, JSON outputs, `sonde.toml`, flags, exit codes. |
 | D-139 | JSON schemas | closed; open; a `schema` field | **Open objects, no field**, checked by a small validator in a test: adding a field is a minor. |
-| D-140 | Session format version | 2; 1 | **1**, with an optional `sonde` field; a newer format is refused by name. |
 | D-141 | Files at rest | umask; 0600 | **0600 when made** (Unix): sessions, caches, verdicts, baselines, audit log. |
 | D-142 | What a request costs in memory | keep everything; keep what analysis reads | **A keep-list of headers, shared text (`reqlog::Text`), keys interned**: 1.1 KB a request (1.75). |
 | D-143 | `compare` | both runs whole; one at a time | **One at a time** (`profile::Run`); a kind's waiting is its share, as in `show`. |
@@ -158,7 +147,6 @@ Newest last.
 | D-152 | The Java hook's jars | built at release; committed | **Committed, rebuilt in CI and compared byte for byte**; packed with zip so any JDK makes the same bytes. |
 | D-153 | Writing figures | per crate; one | **One crate (`sonde-fmt`), the app's rounding**, checked against the app's cases. |
 | D-154 | Windows | app only; tests and a CLI | **Tests in CI and a `.zip` CLI**; shell-specific tests stay Unix. |
-| D-155 | Timed tests | every push; nightly | **Nightly**; a missed memory budget runs once more. |
 | D-156 | Supply chain | tags; commits | **Actions pinned by commit, Dependabot, cargo-deny (ignores with reasons), provenance attestations**; an unsigned release warns. |
 | D-157 | Fuzzing | every push; weekly | **Weekly**, ten targets. |
 | D-158 | Chinese for a broke trial | 失败; 未通过 | **未通过**: 失败 is also a failed request, job and budget. |
@@ -171,7 +159,6 @@ Newest last.
 | D-165 | A dialog taller than the window | fixed height; its body scrolls | **`ModalBody` scrolls; the title and actions stay.** |
 | D-166 | `record.rs` | one file; a module per command | **A module per command**; shared start code in `record.rs`. |
 | D-167 | Read-only mode and the recording policy | both; one | **The recording policy only.** sonde's own destructive acts keep the dry run, typed confirmation and audit log. |
-| D-168 | A folded command | remove; alias for one version | **An alias for 18.0** that says its new form; gone in 19.0. |
 | D-169 | `watch --logs` | `proxy`; `import` | **`import s3://… [--follow]`**: one verb reads logs. |
 | D-170 | `mpu` under `bucket` | nested; flat | **`size`, `uploads`, `abort-uploads`, `lifecycle`**, flat. |
 | D-171 | What sonde keeps of each session | files beside it; one index per folder | **`.index.jsonl` per folder**, append-only, compacted when mostly stale. |
@@ -196,11 +183,8 @@ Newest last.
 | D-190 | sonde's own requests | a list in Activity; nowhere | **Nowhere**: an error says its code, status and request id. |
 | D-191 | Compare's order | as opened; earlier first | **Earlier first**, from every door. |
 | D-192 | Compatibility | keep shims; none | **None from 19.0**: old names, flags, files and the folded commands are gone; the contract starts at 19.0. |
-| D-193 | A finding across runs | its text; a normalised identity | **A normalised identity** (numbers, ids and dates stripped from keys and paths), so a fix is seen as one. |
 | D-194 | Distribution | Homebrew too; release assets | **Release assets, `install.sh` and the Action** (`@v19`); Homebrew dropped. |
-| D-195 | CI | every OS each change; Linux, others nightly | **Linux per change, macOS/Windows/Intel nightly and at release**; the release reuses CI's builds. |
 | D-196 | tui, bucket, probe | remove; keep | **Kept** as they are. |
-| D-197 | Breaking in 20.0 | announce in 19.x; break now | **Break now**, by the owner's decision; 20.0 reads format 1; the announcement rule holds from 20.0. |
 | D-198 | A finding's identity | 19.0's rules; v2 | **Rules v2** (`key=value` values, digit runs, hex ids), versioned; where two findings collide, they stay apart. |
 | D-199 | A program | its command; its command less what changes | **Its name, else its command with whole-word values left out**: `python3` and `job1.py` stay. |
 | D-200 | An S3 call's name | operation; kind | **`kind`** everywhere; session format 2. |
@@ -208,3 +192,5 @@ Newest last.
 | D-202 | Display text | in the contract; not | **Not**: figures, ids, fields and exit codes are promised. |
 | D-203 | A release | builds its own; CI's | **CI's green build of the same commit**; main tours every platform. Supersedes D-195. |
 | D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |
+| D-205 | Timed tests | nightly with a retry; every change, held | **Every change, held at peak memory with no retry** (each test optimised, in a process of its own); time is said, and held only past several times what it takes ([performance](performance.md)). Supersedes D-155. |
+| D-206 | Breaking a stable thing | announce one version ahead; break in the major that makes it | **In the major that makes it**, without notice, by the owner's decision (21.0): no aliases, shims or "deprecated". Supersedes D-197. |
