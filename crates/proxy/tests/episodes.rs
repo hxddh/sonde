@@ -88,7 +88,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
         .unwrap();
     assert!(manifest.notes().iter().any(|n| n.contains("If-None-Match")));
     assert!(manifest.notes().iter().any(|n| n.starts_with("after ")));
-    assert!(eps.iter().all(|e| e.outcome == Outcome::Ok));
+    assert!(eps.iter().all(|e| *e.outcome() == Outcome::Ok));
     // a format's shared habit is said once, among the operations' notes (no finding)
     let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
         .into_iter()
@@ -177,7 +177,7 @@ fn delta_rs_run_reads_as_commits() {
     assert!(
         eps[..4]
             .iter()
-            .all(|e| e.format == Some(Format::Delta) && e.outcome == Outcome::Ok)
+            .all(|e| e.format == Some(Format::Delta) && *e.outcome() == Outcome::Ok)
     );
     // a format's shared habit is said once, among the operations' notes (no finding)
     let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
@@ -222,7 +222,7 @@ fn lance_run_reads_as_versions() {
     );
     assert!(
         eps.iter()
-            .all(|e| e.format == Some(Format::Lance) && e.outcome == Outcome::Ok)
+            .all(|e| e.format == Some(Format::Lance) && *e.outcome() == Outcome::Ok)
     );
     // a format's shared habit is said once, among the operations' notes (no finding)
     let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
@@ -257,7 +257,7 @@ fn every_text_is_phrases() {
             let title = e.title_text();
             assert!(!title.is_empty(), "{name}: {}", e.title());
             assert_eq!(en(&title), e.title(), "{name}");
-            for t in title.iter().chain(&e.notes_text) {
+            for t in title.iter().chain(e.notes_text()) {
                 assert!(
                     !t.en().is_empty() || t.args.is_empty(),
                     "{name}: no template for {}",

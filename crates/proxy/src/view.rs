@@ -274,7 +274,7 @@ impl Analysis {
                 });
         let keep = |i: &u32| {
             let e = &eps[*i as usize];
-            if key.failed && e.outcome == Outcome::Ok {
+            if key.failed && *e.outcome() == Outcome::Ok {
                 return false;
             }
             if let Some(bit) = kind_bit

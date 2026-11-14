@@ -499,8 +499,8 @@ pub enum Outcome {
 /// One operation: requests that belong together. Its title is its phrases
 /// ([`Episode::title_text`], and [`Episode::title`] the English of them),
 /// made when they are asked for: a session may have a million operations,
-/// most of them one request, and each is held in 128 bytes
-/// ([`Ids`] and [`Title`] hold one request's in place).
+/// most of them one request, and each is held in 88 bytes ([`Ids`] and
+/// [`Said::Request`] hold one request's in place).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
     pub shape: Shape,
@@ -511,26 +511,32 @@ pub struct Episode {
     pub records: Ids,
     pub bytes_up: u64,
     pub bytes_down: u64,
-    pub outcome: Outcome,
     /// Its lookups (GET, HEAD) answered 404: not errors, and worth telling apart.
     pub not_found: u32,
-    title: Title,
-    /// The notes as phrases ([`Episode::notes`] in English).
-    pub notes_text: Box<[Phrase]>,
+    said: Said,
 }
 
-/// An operation's title, as it is held.
+/// What an operation says: its title, its notes and how it ended.
 #[derive(Debug, Clone, PartialEq)]
-enum Title {
-    /// One request: `{op} {bucket}/{key}`, of its record's own names, and
-    /// the size it wrote (the operation's bytes up) when `sized`.
+enum Said {
+    /// One request that went through and says nothing more: `{op}
+    /// {bucket}/{key}`, of its record's own names, and the size it wrote
+    /// (the operation's bytes up) when `sized`.
     Request {
         op: reqlog::Name,
         bucket: Option<reqlog::Name>,
         key: Option<reqlog::Text>,
         sized: bool,
     },
-    Phrases(Box<[Phrase]>),
+    /// Any other, behind a pointer.
+    More(Box<More>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct More {
+    title: Box<[Phrase]>,
+    notes: Vec<Phrase>,
+    outcome: Outcome,
 }
 
 /// An operation's record ids: one is held in place, more in a list of their own.
@@ -621,11 +627,11 @@ impl Serialize for Episode {
             records: &self.records,
             bytes_up: self.bytes_up,
             bytes_down: self.bytes_down,
-            outcome: &self.outcome,
+            outcome: self.outcome(),
             notes: self.notes(),
             not_found: self.not_found,
             title_text,
-            notes_text: &self.notes_text,
+            notes_text: self.notes_text(),
         }
         .serialize(s)
     }
@@ -634,8 +640,8 @@ impl Serialize for Episode {
 impl Episode {
     /// Its title, as phrases.
     pub fn title_text(&self) -> Vec<Phrase> {
-        match &self.title {
-            Title::Request {
+        match &self.said {
+            Said::Request {
                 op,
                 bucket,
                 key,
@@ -647,15 +653,15 @@ impl Episode {
                 }
                 t
             }
-            Title::Phrases(t) => t.to_vec(),
+            Said::More(m) => m.title.to_vec(),
         }
     }
 
     /// Whether its title says the phrase `key` (asked without making it).
     pub fn title_says(&self, key: &str) -> bool {
-        match &self.title {
-            Title::Request { .. } => key == "request",
-            Title::Phrases(t) => t.iter().any(|p| p.key == key),
+        match &self.said {
+            Said::Request { .. } => key == "request",
+            Said::More(m) => m.title.iter().any(|p| p.key == key),
         }
     }
 
@@ -664,16 +670,46 @@ impl Episode {
         crate::phrase::en(&self.title_text())
     }
 
+    /// How it ended.
+    pub fn outcome(&self) -> &Outcome {
+        match &self.said {
+            Said::Request { .. } => &Outcome::Ok,
+            Said::More(m) => &m.outcome,
+        }
+    }
+
+    /// Its notes, as phrases.
+    pub fn notes_text(&self) -> &[Phrase] {
+        match &self.said {
+            Said::Request { .. } => &[],
+            Said::More(m) => &m.notes,
+        }
+    }
+
     /// Its notes in English.
     pub fn notes(&self) -> Vec<String> {
-        self.notes_text.iter().map(Phrase::en).collect()
+        self.notes_text().iter().map(Phrase::en).collect()
+    }
+
+    /// What it says, to change: behind its pointer.
+    fn more(&mut self) -> &mut More {
+        if let Said::Request { .. } = self.said {
+            let title = self.title_text().into();
+            self.said = Said::More(Box::new(More {
+                title,
+                notes: Vec::new(),
+                outcome: Outcome::Ok,
+            }));
+        }
+        match &mut self.said {
+            Said::More(m) => m,
+            Said::Request { .. } => unreachable!("made above"),
+        }
     }
 
     /// Adds a note.
     fn note(&mut self, phrase: Phrase) {
-        let mut notes = std::mem::take(&mut self.notes_text).into_vec();
-        notes.push(phrase);
-        self.notes_text = notes.into();
+        self.more().notes.push(phrase);
     }
 
     pub fn requests(&self) -> usize {
@@ -789,10 +825,10 @@ fn parent(key: &str) -> &str {
 
 /// Builds an episode from records (any order).
 fn build(shape: Shape, format: Option<Format>, title: Vec<Phrase>, rs: Vec<&Record>) -> Episode {
-    built(shape, format, Title::Phrases(title.into()), rs)
+    built(shape, format, Said::phrases(title), rs)
 }
 
-fn built(shape: Shape, format: Option<Format>, title: Title, mut rs: Vec<&Record>) -> Episode {
+fn built(shape: Shape, format: Option<Format>, said: Said, mut rs: Vec<&Record>) -> Episode {
     rs.sort_by_key(|r| (r.time, r.id));
     let start = rs.first().map(|r| r.time).unwrap_or_default();
     let end = rs.iter().map(|r| end_of(r)).max().unwrap_or(start);
@@ -802,10 +838,10 @@ fn built(shape: Shape, format: Option<Format>, title: Title, mut rs: Vec<&Record
         Some(r) => failure(r).map_or(Outcome::Ok, Outcome::Failed),
         None => Outcome::Ok,
     };
-    Episode {
+    let mut e = Episode {
         shape,
         format,
-        title,
+        said,
         start,
         end,
         records: rs.iter().map(|r| r.id).collect::<Vec<u64>>().into(),
@@ -815,9 +851,21 @@ fn built(shape: Shape, format: Option<Format>, title: Title, mut rs: Vec<&Record
             .filter(|r| !r.is_error())
             .map(|r| r.response_bytes.get().unwrap_or(0))
             .sum(),
-        outcome,
-        notes_text: Box::default(),
         not_found: rs.iter().filter(|r| crate::summary::is_miss(r)).count() as u32,
+    };
+    if outcome != Outcome::Ok {
+        e.more().outcome = outcome;
+    }
+    e
+}
+
+impl Said {
+    fn phrases(title: Vec<Phrase>) -> Said {
+        Said::More(Box::new(More {
+            title: title.into(),
+            notes: Vec::new(),
+            outcome: Outcome::Ok,
+        }))
     }
 }
 
@@ -965,11 +1013,11 @@ fn request_phrase(op: reqlog::Name, bucket: Option<reqlog::Name>, key: Option<&s
 
 /// A request that is nothing more, an operation of its own: most of a large
 /// session, so its title is held as the request's own words
-/// ([`Title::Request`]) when they are all it says.
+/// ([`Said::Request`]) when they are all it says.
 fn single(r: &Record) -> Episode {
     let sized =
         matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.get().unwrap_or(0) > 0;
-    let mut title = Title::Request {
+    let mut title = Said::Request {
         op: r.kind,
         bucket: r.bucket,
         key: r.key.clone(),
@@ -986,7 +1034,7 @@ fn single(r: &Record) -> Episode {
                 &[("size", human(r.request_bytes.get().unwrap_or(0)))],
             ));
         }
-        title = Title::Phrases(said.into());
+        title = Said::phrases(said);
     }
     let mut e = built(Shape::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
@@ -2718,7 +2766,7 @@ mod tests {
 
     #[test]
     fn an_operation_of_one_request_is_small_and_titled_as_ever() {
-        assert_eq!(std::mem::size_of::<Episode>(), 128);
+        assert_eq!(std::mem::size_of::<Episode>(), 88);
         let r = Record {
             id: 4,
             kind: "PutObject".into(),
@@ -2858,7 +2906,7 @@ mod tests {
         let retry = eps.iter().find(|e| e.shape == Shape::Retry).unwrap();
         assert_eq!(retry.records, vec![1, 2, 3]);
         assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
-        assert_eq!(retry.outcome, Outcome::Ok);
+        assert_eq!(*retry.outcome(), Outcome::Ok);
         // retrying is right: no finding of its own (18.0)
         assert!(observations(&[], &eps).is_empty());
     }
@@ -3239,11 +3287,11 @@ mod tests {
             vec!["conditional create (If-None-Match: *)"]
         );
         assert_eq!(
-            eps[1].outcome,
+            *eps[1].outcome(),
             Outcome::Failed("412 PreconditionFailed".into())
         );
         assert!(eps[1].notes().iter().any(|n| n.starts_with("lost a race")));
-        assert_eq!(eps[2].outcome, Outcome::Refused);
+        assert_eq!(*eps[2].outcome(), Outcome::Refused);
         // the operation says the race; a writer that lost one is no finding (18.0)
         assert!(observations(&records, &eps).is_empty());
     }
