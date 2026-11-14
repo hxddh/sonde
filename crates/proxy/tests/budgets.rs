@@ -1,8 +1,9 @@
 //! What reading a large session may cost, held by a test: sessions of any
 //! size are a promise only while something fails when it is broken.
 //!
-//! Each test holds its peak memory to a budget: the same from run to run of
-//! the same code, so a miss is a change, never the runner. Its time, which a
+//! Each test holds its peak memory to a budget: within a few percent from run
+//! to run of the same code (the reading's threads place memory a little
+//! differently each time), so a miss is a change, never the runner. Its time, which a
 //! shared runner moves by half and more, is said (a `budget` line each) and
 //! held only at several times what it takes, so a test fails on a time
 //! that is wrong, not on a slow machine. docs/dev/performance.md has the figures.
