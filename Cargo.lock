@@ -1100,7 +1100,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "decoders"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "apache-avro",
  "async-trait",
@@ -3592,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "probes"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "reqlog"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -4428,7 +4428,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s3raw"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4870,7 +4870,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-cli"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4910,7 +4910,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-core"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4942,14 +4942,14 @@ dependencies = [
 
 [[package]]
 name = "sonde-fmt"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "sonde-nsh"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4973,7 +4973,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-proxy"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",

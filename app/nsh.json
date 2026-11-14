@@ -1,8 +1,8 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "20.0.0",
-  "build": 21,
+  "version": "21.0.0",
+  "build": 22,
   "icon": {
     "macos": "assets/icon-macos.png",
     "windows": "assets/icon-fill.png",

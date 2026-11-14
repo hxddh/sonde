@@ -73,13 +73,13 @@ and daily.
    build, test and tour — and publishes that run's files (`scripts/release-wait.sh`). The release has the changelog
    section, what it skipped for want of secrets (signing, notarization, the signed package, Windows' Authenticode),
    `SHA256SUMS` and a `.sha256` per file; each file is attested.
-3. `action-tag.yml` then moves the major tag (`v20`) to the release, so `uses: hxddh/sonde@v20` installs it (a
+3. `action-tag.yml` then moves the major tag (`v21`) to the release, so `uses: hxddh/sonde@v21` installs it (a
    pre-release does not move it; to repair one: Actions › Action tag › Run workflow with `x.y.z`), and
    `action-live.yml` runs the Action against it.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`20.0.0`, or `20`: the newest 20.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`21.0.0`, or `21`: the newest 21.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed sessions (`app/tests/fixtures`). |
 
 ## Signed packages of the app's code
