@@ -139,7 +139,7 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     // and at least two findings to act on
     for finding in [
         "1 request throttled (503 SlowDown or 429)",
-        "3 objects were checked with HEAD and then read with GET",
+        "3 objects under demo/reports/ were checked with HEAD and then read with GET",
     ] {
         assert!(out.contains(finding), "no {finding:?} in:\n{out}");
     }
@@ -1685,7 +1685,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(shown[1].contains("since the run before (etl-1-base)"));
     let third = &shown[2];
     assert!(
-        third.contains("✓ fixed  20 objects were checked with HEAD and then read with GET: the GET alone answers both · saved 20 requests (predicted 20)"),
+        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · saved 20 requests (predicted 20)"),
         "{third}"
     );
     assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
@@ -1695,7 +1695,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         shown[3]
     );
     assert!(
-        shown[4].contains("! back   20 objects were checked"),
+        shown[4].contains("! back   20 objects under etl-bucket/run/in/ were checked"),
         "{}",
         shown[4]
     );
@@ -1967,4 +1967,193 @@ fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
         "{}",
         stderr(&o)
     );
+}
+
+/// `sonde` run from the folder `cwd`, its data and settings in `dirs`.
+fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(args)
+        .current_dir(cwd)
+        .env("SONDE_CONFIG_DIR", dirs.join("config"))
+        .env("SONDE_DATA_DIR", dirs.join("data"))
+        .env("AWS_EC2_METADATA_DISABLED", "true")
+        .output()
+        .unwrap()
+}
+
+/// 19.0 passed `check --program-exit 3` "within budget": a run whose
+/// program failed fails its check in every format, by the exit CI passes or
+/// the one the run kept; and it is no baseline, nor `--init`'s source.
+#[test]
+fn check_fails_a_run_whose_program_failed() {
+    let t = tempfile::tempdir().unwrap();
+    let w = t.path().join("w");
+    std::fs::create_dir_all(&w).unwrap();
+    let ok = sonde_in(t.path(), &w, &["run", "--demo", "--", "true"]);
+    assert_eq!(ok.status.code(), Some(0), "{}", stderr(&ok));
+    let budget = ["--max-requests", "100"];
+    // CI says the program failed: the run did not
+    let c = sonde_in(
+        t.path(),
+        &w,
+        &[&["check", "--program-exit", "3"][..], &budget].concat(),
+    );
+    assert_eq!(c.status.code(), Some(1), "{}", stdout(&c));
+    assert!(
+        stdout(&c).contains("the program failed (exit 3)"),
+        "{}",
+        stdout(&c)
+    );
+    // the run kept that its program failed
+    let failed = sonde_in(t.path(), &w, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
+    assert_eq!(failed.status.code(), Some(3), "{}", stderr(&failed));
+    for format in ["table", "json", "markdown", "github"] {
+        let c = sonde_in(
+            t.path(),
+            &w,
+            &[&["check", "-f", format][..], &budget].concat(),
+        );
+        assert_eq!(c.status.code(), Some(1), "{format}: {}", stdout(&c));
+        assert!(
+            stdout(&c).contains("the program failed (exit 3)"),
+            "{format}: {}",
+            stdout(&c)
+        );
+        if format == "json" {
+            let j: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
+            assert_eq!(j["passed"], false);
+            assert_eq!(j["programExit"], 3);
+            assert!(j["reason"].as_str().unwrap().contains("exit 3"), "{j}");
+        }
+    }
+    // without a budget too: the exit is what it is held to
+    let c = sonde_in(t.path(), &w, &["check"]);
+    assert_eq!(c.status.code(), Some(1), "{}{}", stdout(&c), stderr(&c));
+    for refused in [&["check", "--set-baseline"][..], &["check", "--init"]] {
+        let c = sonde_in(t.path(), &w, refused);
+        assert_eq!(c.status.code(), Some(64), "{refused:?}: {}", stderr(&c));
+        assert!(
+            stderr(&c).contains("the run failed (exit 3)"),
+            "{}",
+            stderr(&c)
+        );
+    }
+    assert!(!w.join("sonde.toml").exists());
+}
+
+/// 19.0's `check` alone took the newest session of any program: another
+/// program's run passed this one's budget. It takes the newest run of
+/// `[program] name`, else of a program recorded in this folder, and says
+/// which; never another's.
+#[test]
+fn check_alone_takes_this_programs_newest_run_never_anothers() {
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, c) = (t.path().join("a"), t.path().join("b"), t.path().join("c"));
+    for d in [&a, &b, &c] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let r = sonde_in(t.path(), &a, &["run", "--demo", "--", "true"]);
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    // another program, later, elsewhere
+    let r = sonde_in(t.path(), &b, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
+    assert_eq!(r.status.code(), Some(3));
+    let ck = sonde_in(t.path(), &a, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(0), "{}{}", stdout(&ck), stderr(&ck));
+    assert!(
+        stderr(&ck).contains("the newest run of program `true` recorded in this folder"),
+        "{}",
+        stderr(&ck)
+    );
+    // nothing recorded here: refused, not another's
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(64), "{}", stdout(&ck));
+    assert!(
+        stderr(&ck).contains("no program was recorded in this folder"),
+        "{}",
+        stderr(&ck)
+    );
+    // a project's program by its name, wherever it ran
+    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"true\"\n").unwrap();
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(0), "{}", stderr(&ck));
+    assert!(
+        stderr(&ck).contains("the newest run of program \"true\" ([program] name in sonde.toml)"),
+        "{}",
+        stderr(&ck)
+    );
+    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"etl\"\n").unwrap();
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(64));
+    assert!(
+        stderr(&ck).contains("no run of program \"etl\""),
+        "{}",
+        stderr(&ck)
+    );
+}
+
+/// `--init` names the action at this sonde's major version.
+#[test]
+fn check_init_names_the_action_at_this_major_version() {
+    let t = tempfile::tempdir().unwrap();
+    let r = sonde_in(t.path(), t.path(), &["run", "--demo", "--", "true"]);
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let c = sonde_in(t.path(), t.path(), &["check", "--init"]);
+    assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
+    let major = env!("CARGO_PKG_VERSION").split('.').next().unwrap();
+    assert!(
+        stderr(&c).contains(&format!("uses: hxddh/sonde@v{major}\n")),
+        "{}",
+        stderr(&c)
+    );
+}
+
+/// The program that reads one hour's partition, as an hourly job does.
+const HOURLY: &str = r#"
+import os, boto3
+s3 = boto3.client("s3")
+hour = os.environ["H"]
+key = f"in/year=2026/month=11/day=13/hour={hour}/conf.json"
+s3.put_object(Bucket="demo", Key=key, Body=b"{}")
+for _ in range(20):
+    s3.get_object(Bucket="demo", Key=key)["Body"].read()
+"#;
+
+/// An hourly job run twice, unchanged but for its hour: "no change", no
+/// finding fixed or new.
+#[test]
+fn an_hourly_job_run_twice_unchanged_reads_no_change() {
+    let has_boto3 = Command::new("python3")
+        .args(["-c", "import boto3"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has_boto3 {
+        eprintln!("skipped: no python3 with boto3");
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("hourly.py"), HOURLY).unwrap();
+    let run = |hour: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(["run", "--demo", "--", "python3", "hourly.py"])
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .env("AWS_EC2_METADATA_DISABLED", "true")
+            .env("H", hour)
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        format!("{}{}", stdout(&o), stderr(&o))
+    };
+    let first = run("10");
+    assert!(
+        first.contains("hour=10/conf.json was read 20 times"),
+        "{first}"
+    );
+    let second = run("11");
+    assert!(second.contains("since the run before"), "{second}");
+    assert!(second.contains("requests 21 (no change)"), "{second}");
+    for not in ["✓ fixed", "! new", "↓ less", "↑ more"] {
+        assert!(!second.contains(not), "{not} in:\n{second}");
+    }
 }

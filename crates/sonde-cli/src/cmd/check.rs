@@ -98,6 +98,64 @@ fn duration_arg(text: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
 }
 
+/// The run `check` judges when none is named: the newest run of the
+/// project's program (`[program] name`; a run without a name of its own
+/// whose command `--init` names so is one), else the newest run of a program
+/// recorded in this folder (the session's `cwd`); never another program's.
+/// The run, and which it is in words.
+fn newest_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
+    let dir = s.paths().sessions();
+    let here = std::env::current_dir().ok();
+    let here = here.as_ref().map(|h| h.canonicalize().unwrap_or(h.clone()));
+    let mut newest: Option<(chrono::DateTime<chrono::Utc>, PathBuf, String)> = None;
+    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
+            continue;
+        }
+        let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
+            continue;
+        };
+        let Some(key) = sonde_proxy::program::key_of(&h) else {
+            continue;
+        };
+        let ours = match name {
+            // named so, or recorded before it had the name `--init` gave it
+            Some(n) => {
+                key == n
+                    || (h.name.as_deref().is_none_or(|x| x.trim().is_empty())
+                        && h.command.as_deref().and_then(name_for).as_deref() == Some(n))
+            }
+            None => {
+                let cwd = h.cwd.as_deref().map(PathBuf::from);
+                let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
+                cwd.is_some() && cwd == here
+            }
+        };
+        if ours && newest.as_ref().is_none_or(|(n, ..)| h.created > *n) {
+            newest = Some((h.created, p, key));
+        }
+    }
+    match (newest, name) {
+        (Some((_, p, _)), Some(n)) => Ok((
+            p,
+            format!("the newest run of program \"{n}\" ([program] name in sonde.toml)"),
+        )),
+        (Some((_, p, key)), None) => Ok((
+            p,
+            format!("the newest run of program `{key}` recorded in this folder"),
+        )),
+        (None, Some(n)) => Err(super::usage(format!(
+            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the session to check",
+            dir.display()
+        ))),
+        (None, None) => Err(super::usage(format!(
+            "no program was recorded in this folder ({}): name the session to check, or give the program a name (`name` under [program] in sonde.toml); another program's run is not checked",
+            here.as_deref().unwrap_or(Path::new(".")).display()
+        ))),
+    }
+}
+
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
 /// with room to grow, and the CI step that holds every run to it.
 fn init_project(
@@ -197,6 +255,7 @@ fn init_project(
         }
     }
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
+    let uses = action_line();
     eprintln!(
         "{}",
         [
@@ -204,7 +263,7 @@ fn init_project(
             "In GitHub Actions, the sonde action records the program, checks it against",
             "the base branch's run and keeps one comment on the pull request (docs/ci.md):",
             "",
-            "      - uses: hxddh/sonde@v18",
+            uses.as_str(),
             "        with:",
             "          run: <your command>",
             "          run-args: --url <the S3 endpoint>",
@@ -214,6 +273,16 @@ fn init_project(
         .join("\n")
     );
     Ok(0)
+}
+
+/// The workflow step's `uses:` line: the action at this sonde's major
+/// version (`hxddh/sonde@v20` for 20.x), the tag each release moves.
+fn action_line() -> String {
+    let major = env!("CARGO_PKG_VERSION")
+        .split('.')
+        .next()
+        .unwrap_or_default();
+    format!("      - uses: hxddh/sonde@v{major}")
 }
 
 /// A name for a program from its command: the script an interpreter runs
@@ -448,6 +517,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         load_project(a.config.as_ref())?
     };
     let project_path = loaded.path.clone();
+    let project_name = loaded
+        .file
+        .program
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty());
     let project = loaded.file.check;
     // a path in sonde.toml is the project's: relative to the file, not to
     // the folder `sonde check` runs in
@@ -475,7 +550,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     let file = match &a.file {
         Some(f) => super::sessions::resolve(s, f),
-        None => newest_session(s)?,
+        None => {
+            let (file, why) = newest_run(s, project_name.as_deref())?;
+            eprintln!("checking {why}: {}", file.display());
+            file
+        }
     };
     // against a baseline its findings are said as `run` and `compare` say
     // them: at any threshold too (less, not fixed)
@@ -519,6 +598,24 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let header = run.3.clone();
     let program = sonde_proxy::program::key_of(&header);
     let dir = s.paths().sessions();
+    // the program failed: as CI says (`--program-exit`), or as the run's
+    // folder kept it when the program ended
+    let failed = a
+        .program_exit
+        .filter(|&c| c != 0)
+        .or_else(|| sonde_proxy::fixloop::failed(&file));
+    // a run that failed holds nothing to: what it did not get to is not there
+    if let Some(x) = failed.filter(|_| a.init || a.set_baseline) {
+        eprintln!(
+            "the run failed (exit {x}): it is no {}; record one that succeeds",
+            if a.init {
+                "budget's source"
+            } else {
+                "baseline"
+            }
+        );
+        return Ok(64);
+    }
     if a.init {
         // the run's folder, and the data directory's when it is another
         let mut dirs = vec![sonde_proxy::fixloop::folder_of(&file)];
@@ -651,24 +748,26 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     );
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
-    use sonde_proxy::program::{check_closing, check_passed, trial_mark};
+    use sonde_proxy::program::{run_closing, run_passed, trial_mark};
     // each scenario with what it was before ("broke on 12 Nov, survived since")
     let trials = sonde_proxy::trial::load_with_history(&file, program.as_deref());
-    // `c.passed` is of its rows; the whole check also fails on a trial that broke
-    let passed = check_passed(&c, &trials);
+    // `c.passed` is of its rows; the whole check also fails on a trial that
+    // broke, and on a program that failed
+    let passed = run_passed(&c, &trials, failed);
     let closing = match &no_baseline {
         // said in every format: the rows held to a baseline are not there
         Some(_) => {
-            format!("{} (no baseline yet)", check_closing(&c, &trials))
+            format!("{} (no baseline yet)", run_closing(&c, &trials, failed))
         }
-        _ => check_closing(&c, &trials),
+        _ => run_closing(&c, &trials, failed),
     };
     // setting a baseline alone is a whole command
     if c.verdicts.is_empty() && trials.is_empty() && a.set_baseline {
         return Ok(0);
     }
-    // nothing to hold the run to is a mistake in the command, in every format
-    if c.verdicts.is_empty() && trials.is_empty() {
+    // nothing to hold the run to is a mistake in the command, in every
+    // format; a program that failed is held to its exit
+    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() {
         // with `baseline = "auto"` and no baseline yet there is nothing to
         // hold the run to, and nothing wrong with it: the first run passes
         // (the other formats say it below, as they say any verdict: a
@@ -714,7 +813,6 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }),
         _ => None,
     };
-    let failed = a.program_exit.filter(|&c| c != 0);
     if matches!(a.format, Format::Json) {
         let mut doc = serde_json::json!({
             "run": run.0,
@@ -726,6 +824,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             "verdict": closing,
             "since": since,
         });
+        // why it failed, in words: the verdict of a check that did not pass
+        if !passed {
+            doc["reason"] = serde_json::json!(closing);
+        }
         if let Some(ch) = &change {
             doc["change"] = serde_json::json!(ch);
         }
@@ -753,6 +855,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // pass in silence
         if let Some(why) = &no_baseline {
             println!("::warning title=sonde check::{}", gh_escape(why));
+        }
+        if let Some(x) = failed {
+            println!(
+                "::error title=sonde check::{}",
+                gh_escape(&match run.0.refused.as_deref() {
+                    Some(w) => format!("the program failed (exit {x}): {w}"),
+                    None => format!("the program failed (exit {x})"),
+                })
+            );
         }
         // since when it is past its baseline: said once, on the first row
         // the baseline failed

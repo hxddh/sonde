@@ -327,8 +327,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         && c.errors.0 == c.errors.1
         && ms_text(c.waiting_ms.0) == ms_text(c.waiting_ms.1)
         && c.cost.0 == c.cost.1
-        && c.resolved.is_empty()
-        && c.appeared.is_empty()
+        && c.findings
+            .iter()
+            .all(|f| f.state == sonde_proxy::fixloop::State::Open)
         && c.groups.iter().all(|g| g.requests.0 == g.requests.1);
     if unchanged {
         println!(
