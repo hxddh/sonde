@@ -1,23 +1,24 @@
 name: Action live
 
 # The Action (action.yml) as a user's workflow runs it, with nothing stood
-# in: the released sonde installed and its provenance checked; each push to
-# main keeps a run; daily, the run a push kept is fetched as the baseline
-# and the comment written, edited in place, on one issue kept for it.
+# in: the released sonde of this code's version installed (never an older
+# one) and its provenance checked. release.yml runs it once a release is
+# published; daily, the run is checked against the schedule's run before it
+# (a real baseline) and the comment written, edited in place, on one issue
+# kept for it. Main ahead of its last release is not tested until released.
 # (CI's action job runs it against stand-ins, on every pull request.)
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      after-release:
+        type: boolean
+        default: false
   schedule:
     - cron: "37 5 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: action-live
-  cancel-in-progress: false
 
 env:
   TITLE: "The Action's live test (kept open by action-live.yml)"
@@ -26,6 +27,9 @@ jobs:
   live:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    concurrency:
+      group: action-live
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: read
@@ -33,25 +37,38 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./
+      - name: This code's release
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Not released::this code is $v, not released yet: the Action is tested once it is (release.yml runs this workflow after publishing)"
+          fi
+      # no version: the Action at a commit installs the newest release of its own major
+      - if: steps.released.outputs.ok == 'true'
+        uses: ./
         id: sonde
         with:
-          version: latest
           run: python3 -c 'print(1)'
           run-args: --url http://127.0.0.1:9 --path-style
           artifact: sonde-live
-      - name: A real baseline, from the run a push to main kept
-        if: github.event_name != 'push'
+      - name: A real baseline, from the schedule's run before this one
+        if: steps.released.outputs.ok == 'true' && !inputs.after-release
         env:
           GH_TOKEN: ${{ github.token }}
           SONDE_ARTIFACT: sonde-live
         run: |
-          GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
+          # (a run by hand takes the schedule's too)
+          GITHUB_EVENT_NAME=schedule GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
           base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/baseline.out")
-          case "$base" in "" | auto) echo "::error::no baseline: no push run of this workflow on main kept sonde-live"; exit 1 ;; esac
+          case "$base" in "" | auto) echo "::error::no baseline: no scheduled run of this workflow on main kept sonde-live"; exit 1 ;; esac
           echo "BASELINE=$base" >> "$GITHUB_ENV"
       - name: A real comment, on the issue kept for it
-        if: github.event_name != 'push'
+        if: steps.released.outputs.ok == 'true' && !inputs.after-release
         env:
           GH_TOKEN: ${{ github.token }}
           SONDE_SESSION: ${{ steps.sonde.outputs.session }}

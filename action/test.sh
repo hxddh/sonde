@@ -34,6 +34,8 @@ esac
 EOF
 chmod +x "$t/bin/gh" "$t/bin/sonde"
 
+# (none of the runner's own: CI runs this in a workflow of its own)
+unset GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_NAME GITHUB_RUN_ID GITHUB_ACTION_REF SONDE_VERSION
 export PATH="$t/bin:$PATH" FAKE="$t" RUNNER_TEMP="$t/runner" GITHUB_OUTPUT="$t/out"
 export GITHUB_REPOSITORY=o/r GITHUB_WORKFLOW_REF="o/r/.github/workflows/ci.yml@refs/pull/7/merge"
 export GITHUB_STEP_SUMMARY="$t/summary"
@@ -60,16 +62,34 @@ case "$url" in
 esac
 EOF
 chmod +x "$t/net/curl"
+# the action as checked out at a ref: its scripts beside a Cargo.toml of its version
+mkdir -p "$t/at/action"
+cp "$here/sonde-action.sh" "$t/at/action/"
+cp "$here/../install.sh" "$t/at/"
+# what was downloaded (the release's path) for the action at REF with VERSION;
+# what it said in $t/said
 fetched() {
   : >"$t/curl.log"
-  PATH="$t/net:$PATH" GITHUB_ACTION_REF="$1" step install >/dev/null 2>&1 || true
+  printf '[workspace.package]\nversion = "%s"\n' "${OWN:-19.1.0}" >"$t/at/Cargo.toml"
+  PATH="$t/net:$PATH" GITHUB_ACTION_REF="$1" SONDE_VERSION="${2:-}" bash "$t/at/action/sonde-action.sh" install >"$t/said" 2>&1 || true
   sed -n 's|.*/releases/\(.*\)/sonde-.*|\1|p' "$t/curl.log" | head -n 1
 }
 is "install @v19: the newest 19.x" "$(fetched v19)" download/v19.2.10
 is "install @v18: the newest 18.x" "$(fetched v18)" download/v18.4.0
 is "install @v19.0.0: that release" "$(fetched v19.0.0)" download/v19.0.0
-is "install @main: the latest" "$(fetched main)" latest/download
+is "install @v19 with a version: that version" "$(fetched v19 19.0.0)" download/v19.0.0
+is "install @v19 with latest: the latest" "$(fetched v19 latest)" latest/download
 is "install of a major with no release fails before downloading" "$(fetched v7)" ""
+# a branch, a commit, a local checkout: the newest release of its own major, never `latest`
+is "install @main of 19.1.0: the newest 19.x" "$(fetched main)" download/v19.2.10
+is "it says why" "$(grep -c 'is sonde 19.1.0.s: installing the newest 19.x' "$t/said")" 1
+is "install @<sha> of 18.0.0: the newest 18.x" "$(OWN=18.0.0 fetched 0123abc)" download/v18.4.0
+is "install from ./ of 19.1.0: the newest 19.x" "$(fetched "")" download/v19.2.10
+is "install @main of an unreleased 21.0.0 fails before downloading" "$(OWN=21.0.0 fetched main)" ""
+is "it says so" "$(grep -c '^::error title=sonde::sonde 21 could not be installed' "$t/said")" 1
+is "install @main with latest is refused" "$(fetched main latest)" ""
+is "it says what to set" "$(grep -c 'set version: 19, or use the action at a release.s tag (@v19)' "$t/said")" 1
+is "install @a-branch-like-v2-fix is a branch" "$(fetched v2-fix)" download/v19.2.10
 
 # a pull request: the newest of the base branch's runs that kept the artifact
 export GITHUB_BASE_REF=main
@@ -90,6 +110,12 @@ unset GITHUB_BASE_REF
 GITHUB_REF_NAME=main GITHUB_RUN_ID=11 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >/dev/null
 is "a push takes the run before it" "$(output baseline)" "$t/runner/sonde/baseline/run.sonde"
 is "and never downloads its own" "$(grep -c 'download 11' "$t/gh.log")" 0
+is "of the pushes" "$(grep -c -- '--branch main --event push' "$t/gh.log")" 1
+# a scheduled run: the schedule's run before it
+: >"$t/gh.log"
+GITHUB_EVENT_NAME=schedule GITHUB_REF_NAME=main GITHUB_RUN_ID=11 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >/dev/null
+is "a scheduled run takes the schedule's run before it" "$(output baseline)" "$t/runner/sonde/baseline/run.sonde"
+is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/gh.log")" 1
 
 # the program's command as typed; its status kept for the verdict
 SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --allow-writes" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
