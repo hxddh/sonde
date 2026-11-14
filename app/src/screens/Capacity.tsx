@@ -9,7 +9,8 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
-import { Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
+import { sectionLabel } from "../labels";
+import { Row, Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
@@ -92,6 +93,7 @@ export function Capacity() {
   return (
     <Scroll testID="screen-capacity" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
+        title={terminal() ? undefined : sectionLabel("capacity")}
         scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
         end={
           <If when={result()}>
@@ -146,9 +148,18 @@ export function Capacity() {
                   note={r().versionsUnknown ? t("du.versionsNotCounted") : undefined}
                 />
               </Chart>
-              <Card testID="du-findings">
-                <Heading>{t("du.why")}</Heading>
-                <Each of={r().findings}>{(f, i) => <Text class={TEXT.body}>{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
+              {/* each reason a line of its own under a hairline: no bullets */}
+              <Card pad="none" testID="du-findings">
+                <Row first>
+                  <Heading>{t("du.why")}</Heading>
+                </Row>
+                <Each of={r().findings}>
+                  {(f, i) => (
+                    <Row>
+                      <Text class={TEXT.body}>{core(r().findingsText?.[i()], f())}</Text>
+                    </Row>
+                  )}
+                </Each>
               </Card>
               <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
                 <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>

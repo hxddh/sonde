@@ -9,11 +9,11 @@ import { DataTable } from "nsh/base";
 import { count, date, duration } from "../format";
 import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
-import { SYMBOL, verdictLabel, verdictTone } from "../labels";
+import { sectionLabel, SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, report } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
+import { ToolBar, Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -35,7 +35,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
         <Muted>{duration(props.result.durationMs)}</Muted>
       </Card>
       <Heading>{t("probes.exchanges")}</Heading>
-      {/* each request as the inspector draws one: its status mark, its headers boxed, its error body as a document */}
+      {/* each request as the inspector draws one: its status mark, its headers listed, its error body as a document */}
       <Each of={props.result.exchanges} key={(r) => r.id}>
         {(r, i) => (
           <View selectable class={`gap-2 ${i() > 0 ? "pt-2" : ""}`}>
@@ -46,10 +46,10 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
             <Text class={TEXT.codeQuiet}>{`${r().method} ${r().url}`}</Text>
             <If when={r().errorBody}>{(b) => <Document text={b()} mark />}</If>
             <Disclosure title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
-              <KeyValue boxed rows={r().requestHeaders.map((h) => [h.name, h.value])} />
+              <KeyValue dense mono rows={r().requestHeaders.map((h) => [h.name, h.value])} />
             </Disclosure>
             <Disclosure title={t("requests.responseHeaders")} count={r().responseHeaders.length} open>
-              <KeyValue boxed rows={r().responseHeaders.map((h) => [h.name, h.value])} />
+              <KeyValue dense mono rows={r().responseHeaders.map((h) => [h.name, h.value])} />
             </Disclosure>
           </View>
         )}
@@ -216,16 +216,22 @@ export function Probes() {
         when={detail()}
         else={
           <Scroll testID="screen-probes" class="flex-1" contentClass="gap-4 p-4">
-            {/* its title is the window's (a terminal: the tab's): said once */}
-            <PageHeader subtitle={t("compat.hint")}>
-              <More
-                testID="probe-more"
-                actions={() => [
-                  { label: t("probes.exportMd"), icon: "download", run: () => exportAs("markdown"), disabled: matrix().columns.length === 0 },
-                  { label: t("probes.exportJson"), icon: "download", run: () => exportAs("json"), disabled: matrix().columns.length === 0 },
-                ]}
+            {/* the head every section has: its title (a terminal's tab says it), what it looks at, what else it offers */}
+            <View class="gap-1">
+              <ToolBar
+                title={terminal() ? undefined : sectionLabel("probes")}
+                end={
+                  <More
+                    testID="probe-more"
+                    actions={() => [
+                      { label: t("probes.exportMd"), icon: "download", run: () => exportAs("markdown"), disabled: matrix().columns.length === 0 },
+                      { label: t("probes.exportJson"), icon: "download", run: () => exportAs("json"), disabled: matrix().columns.length === 0 },
+                    ]}
+                  />
+                }
               />
-            </PageHeader>
+              <Text class={TEXT.note}>{t("compat.hint")}</Text>
+            </View>
             <Card>
               {/* one considered head: what the card does, and at its end the one command that does it */}
               <View class="flex-row items-center gap-3">
@@ -259,6 +265,8 @@ export function Probes() {
                 <MatrixView matrix={matrix()} maxRows={Math.max(4, Math.floor((height() - 96) / rowPoints()) - 1)} onOpen={(probe, col) => open.set({ probe, col })} />
               </If>
             </Card>
+            {/* two runs to compare, or no card that offers it */}
+            <If when={runItems().length > 1}>
             <Card>
               <Heading>{t("probes.diff")}</Heading>
               <View class="flex-row flex-wrap items-center gap-2">
@@ -272,6 +280,7 @@ export function Probes() {
                 {(d) => (
                   <If when={d().length > 0} else={<Empty compact text={t("probes.noChange")} />}>
                     <SimpleTable
+                      bare
                       columns={[t("probes.probe"), t("probes.earlier"), t("probes.later"), t("probes.now")]}
                       rows={d().map((c) => [c.probe, c.before ? verdictLabel(c.before) : "—", c.after ? verdictLabel(c.after) : "—", `${core(c.afterSummaryText, c.afterSummary)}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])}
                     />
@@ -279,6 +288,7 @@ export function Probes() {
                 )}
               </If>
             </Card>
+            </If>
           </Scroll>
         }
       >

@@ -388,7 +388,7 @@ for (const v of variants) {
     await app.waitFor("id:object-detail");
     await app.wait(600);
     await shot("04c-object");
-    await app.press("id:overview-multipart");
+    await app.press("id:store-section-multipart");
     await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
     await shot("04d-uploads");
     // a change to the store: the plan, and the typed confirmation
@@ -409,12 +409,12 @@ for (const v of variants) {
     await app.waitFor("id:du-findings", { timeout: 15000 });
     await app.wait(600);
     await charts("04g-capacity");
-    // a table format's layout, decoded (from the objects' tile, which says one was recognised)
+    // a table format's layout, decoded (the bucket that holds some, then its Layouts section)
     await app.press("id:store-section-browse");
     if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
     await app.press("id:bucket-demo-layouts");
-    await app.waitFor("id:overview-layouts", { timeout: 15000 });
-    await app.press("id:overview-layouts");
+    await app.waitFor("text:slatedb/", { timeout: 15000 });
+    await app.press("id:store-section-layouts");
     await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
     await app.press("id:analyze-slatedb");
     await app.waitFor("id:layout-report", { timeout: 15000 });

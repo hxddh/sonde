@@ -68,10 +68,11 @@ function Jobs() {
             {(j, i) => (
               <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
-                  <View class="shrink-0">
-                    <Badge tone={JOB_TONE[j().state] ?? "quiet"} label={t(`jobs.state.${j().state}` as never)} />
-                  </View>
                   <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{core(j().titleText, j().title)}</Text>
+                  {/* a job done says nothing more: only one at work, failed or cancelled says how it stands */}
+                  <If when={j().state !== "finished"}>
+                    <Badge tone={JOB_TONE[j().state] ?? "quiet"} label={t(`jobs.state.${j().state}` as never)} />
+                  </If>
                   <Text class={`shrink-0 ${TEXT.meta}`}>{age(j().started)}</Text>
                   <If when={j().state === "running"}>
                     <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
@@ -114,10 +115,11 @@ function Changes() {
             {(e, i) => (
               <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
-                  <View class="shrink-0">
-                    <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
-                  </View>
                   <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
+                  {/* a change done says nothing more: only one under way or failed says how it stands */}
+                  <If when={e().stage === "started" || e().failed > 0}>
+                    <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
+                  </If>
                   <If when={e().stage !== "started"}>
                     <Text class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("matrix.of", { n: count(e().succeeded), of: count(e().items) })}</Text>
                   </If>

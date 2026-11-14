@@ -79,3 +79,18 @@ export async function runAction(app: App, id: "run-open-session" | "run-try" | "
   if (!item) throw new Error(`${id}: not in the band, not behind its menu`);
   await app.chooseMenuItem(item);
 }
+
+/** A session's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
+ * by its words. */
+export async function sessionAction(app: App, label: string) {
+  await app.press("id:session-more");
+  await app.chooseMenuItem(label);
+}
+
+/** The words of the session header's `⋯` menu, the menu closed again. */
+export async function sessionMenu(app: App): Promise<string[]> {
+  await app.press("id:session-more");
+  const labels = app.menu()?.map((m) => m.label) ?? [];
+  await app.closeMenu();
+  return labels;
+}

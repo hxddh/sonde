@@ -16,7 +16,7 @@ import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Back, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH } from "./src/ui/kit";
+import { Back, BREAK, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH } from "./src/ui/kit";
 import { count } from "./src/format";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
@@ -105,7 +105,7 @@ function DesktopShell() {
       <Toolbar open={open} />
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
-        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={PANE.sidebarLeast} maxSize={PANE.sidebarMost} onResize={sidebarWidth.onResize}>
+        <ResizablePanel fixed visible={sidebarOpen()} size={shellWidth() < BREAK.toolbar ? Math.min(sidebarWidth.size(), PANE.sidebarNarrow) : sidebarWidth.size()} minSize={PANE.sidebarLeast} maxSize={PANE.sidebarMost} onResize={sidebarWidth.onResize}>
           <Sidebar open={open} />
         </ResizablePanel>
         <ResizablePanel minSize={PANE.mainLeast} class="min-w-0 bg-background">

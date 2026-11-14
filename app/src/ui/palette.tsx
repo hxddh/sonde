@@ -10,11 +10,11 @@ import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, shellHeight, STORE_TABS, useEndpoint } from "../store";
+import { area, shownSessionCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, shellHeight, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row, TEXT } from "./kit";
-import { scrubCommand } from "./sessionview";
+import { programOf, scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
 
@@ -45,6 +45,8 @@ function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
   AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
+  // the session on screen: what its ⋯ offers besides running it again
+  if (area() === "sessions") shownSessionCommands().forEach((c) => list.push({ id: `session-cmd:${c.id}`, label: c.label, group: t("palette.session"), icon: c.icon, run: () => c.run() }));
   if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
 
   // the commands run before: the field filled, ready to run again
@@ -53,12 +55,14 @@ function actions(buckets: BucketEntry[]): Action[] {
     .forEach((c, i) =>
       list.push({
         id: `cmd:${i}`,
-        // as it is shown everywhere: its variables' values hidden
-        label: scrubCommand(c),
+        // by its program, the command itself beside it (its variables' values hidden): rows that began alike
+        // ("sleep 1.5 && curl …") no longer read the same
+        label: programOf(c) ?? scrubCommand(c),
+        hint: scrubCommand(c),
+        commandHint: true,
         group: t("palette.commands"),
         icon: "square-terminal",
-        command: true,
-        keywords: ["run", "command"],
+        keywords: ["run", "command", scrubCommand(c)],
         run: () => {
           command.set(c);
           go("run");
@@ -76,13 +80,12 @@ function actions(buckets: BucketEntry[]): Action[] {
   sessions.forEach((s) =>
     list.push({
       id: `session:${s.path}`,
-      label: s.title || (s.command ? scrubCommand(s.command) : s.name),
-      // a session called by its command reads as one
-      command: !s.title && !!s.command,
+      // by its title, else its program, and when it ran: the command itself is searched, not shown
+      label: s.title || programOf(s.command) || s.name,
       group: t("palette.sessions"),
       icon: "list-clock",
-      keywords: [s.endpoint, s.name, ...(s.title && s.command ? [scrubCommand(s.command)] : [])],
-      hint: `${date(s.created)} · ${t("run.bandRequests", { n: s.requests })}`,
+      keywords: [s.endpoint, s.name, ...(s.command ? [scrubCommand(s.command)] : [])],
+      hint: `${date(s.created)} · ${s.endpoint} · ${t("run.bandRequests", { n: s.requests })}`,
       run: () => {
         openSession.set(s.path);
         go("sessions");
@@ -170,6 +173,25 @@ function actions(buckets: BucketEntry[]): Action[] {
   return list;
 }
 
+/** A row's words with what is typed marked in them (bold, at its first place): why the row is there. */
+function Marked(props: { text: string }) {
+  const at = () => {
+    const q = typed().trim().toLowerCase();
+    return q ? props.text.toLowerCase().indexOf(q) : -1;
+  };
+  const n = () => typed().trim().length;
+  return (
+    <If when={at() >= 0} else={props.text}>
+      <>
+        {props.text.slice(0, at())}
+        {/* emphasis: the part of the row that matches what is typed */}
+        <Text class={EMPHASIS}>{props.text.slice(at(), at() + n())}</Text>
+        {props.text.slice(at() + n())}
+      </>
+    </If>
+  );
+}
+
 export function Palette() {
   const close = () => {
     typed.set("");
@@ -231,7 +253,9 @@ export function Palette() {
                 return (
                   <View class={`${CONTROL.field} flex-row items-center gap-2`}>
                     <Icon name={a?.icon ?? "chevron-right"} tint={a?.checked ? "primary" : "muted-foreground"} />
-                    <Text class={`min-w-0 shrink line-clamp-1 ${a?.command ? "font-mono text-small" : "text-body"} ${a?.checked ? "text-primary" : "text-popover-foreground"}`}>{a?.command ? `$ ${entry.label}` : entry.label}</Text>
+                    <Text class={`min-w-0 shrink line-clamp-1 ${a?.command ? "font-mono text-small" : "text-body"} ${a?.checked ? "text-primary" : "text-popover-foreground"}`}>
+                      <Marked text={a?.command ? `$ ${entry.label}` : entry.label} />
+                    </Text>
                     <If when={a?.hint}>
                       <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1 ${a?.commandHint ? "font-mono" : ""}`}>{a?.commandHint ? `$ ${a.hint}` : a!.hint!}</Text>
                     </If>

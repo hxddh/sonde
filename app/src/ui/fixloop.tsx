@@ -102,7 +102,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
                     {(v) => (
                       <View class="flex-row items-center gap-1">
                         <Icon name="trending-down" size={ICON.small} tint="status-ok" />
-                        <Text testID={`since-saved-${i()}`} class="tabular-nums text-small text-status-ok">{v()}</Text>
+                        <Text testID={`since-saved-${i()}`} class={`tabular-nums ${TEXT.note}`}>{v()}</Text>
                       </View>
                     )}
                   </If>

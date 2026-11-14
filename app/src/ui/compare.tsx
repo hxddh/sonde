@@ -3,14 +3,14 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, clock, count, date, day, duration, hm, percent, rate, costParts } from "../format";
+import { change, clock, count, date, day, dayRange, duration, hm, percent, rate, costParts } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
+import { DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { changedFindings, savedText } from "./fixloop";
 import { StateBadge } from "./sessionview";
 import { fileName, sessionName } from "./manage";
@@ -154,7 +154,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
                         {(v) => (
                           <View class="flex-row items-center gap-1">
                             <Icon name="trending-down" size={ICON.small} tint="status-ok" />
-                            <Text testID={`compare-saved-${i()}`} class="tabular-nums text-small text-status-ok">{v()}</Text>
+                            <Text testID={`compare-saved-${i()}`} class={`tabular-nums ${TEXT.note}`}>{v()}</Text>
                           </View>
                         )}
                       </If>
@@ -214,7 +214,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
     if (!a || !b) return `${a ? sessionName(a) : fileName(props.a)} → ${b ? sessionName(b) : fileName(props.b)}`;
     if (sessionName(a) !== sessionName(b)) return `${sessionName(a)} · ${date(a.created)} → ${sessionName(b)} · ${date(b.created)}`;
     // one program on one day: the day once, and the two times (to the second where they share a minute)
-    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${date(a.created)} → ${date(b.created)}`;
+    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${dayRange(a.created, b.created)}`;
     const fine = hm(a.created) === hm(b.created) ? "s" : "m";
     return `${sessionName(a)} · ${day(a.created)} · ${clock(a.created, fine)} → ${clock(b.created, fine)}`;
   };
@@ -383,9 +383,15 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
                 const k = c.row > 0 && c.key.startsWith("s") ? kinds()[c.row - 1] : null;
                 const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
                 const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
-                // emphasis: a figure much slower or much faster than the recording's stands out in its tone
-                const tone = r >= 1.5 ? `text-status-server ${EMPHASIS}` : r <= 0.67 ? `text-status-ok ${EMPHASIS}` : c.key === "what" ? "text-foreground" : "text-muted-foreground";
-                return <Text class={`flex-1 px-2 tabular-nums text-body ${c.key === "what" ? "" : "text-right"} ${tone}`}>{c.text}</Text>;
+                // a figure much slower or much faster than the recording's: read at full colour, its dot in its tone
+                const mark = r >= 1.5 ? TONE.fail.dot : r <= 0.67 ? TONE.ok.dot : null;
+                if (c.key === "what") return <Text class={`flex-1 px-2 ${TEXT.body}`}>{c.text}</Text>;
+                return (
+                  <View class="flex-1 flex-row items-center justify-end gap-1 px-2">
+                    <If when={mark}>{(m) => <View class={`${DOT} ${m()}`} />}</If>
+                    <Text class={`tabular-nums text-body ${mark ? "text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>
+                  </View>
+                );
               }
         }
         classes={terminal() ? undefined : { ...TABLE, cell: "px-0" }}

@@ -3,7 +3,7 @@
 
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { count, date, day, duration, factor, hm, money } from "../format";
+import { costColumn, count, date, day, duration, factor, hm, money } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
@@ -350,6 +350,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     }
   };
   const n = (v: number) => count(Math.round(v));
+  // the runs' costs in one unit, said once in the trend's name
+  const currencyOf = (h: ProgramHistory) => h.runs[0]?.currency ?? "USD";
+  const costs = (h: ProgramHistory) => costColumn(shown(h).runs.map((r) => r.cost), currencyOf(h));
   // a moment's day on the reader's calendar, as the picker's days are: YYYY-MM-DD
   const localDay = (at: string | number) => {
     const d = new Date(at);
@@ -438,10 +441,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                 else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.waitingMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
-                  <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
+                  {/* each named as a tile is (a capital, the thing counted), the cost's unit in its name so its figure is short */}
+                  <RunTrend history={shown(x())} measure="requests" title={t("trend.requests")} format={n} onOpen={props.onOpen} />
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
-                  <RunTrend history={shown(x())} measure="waitingMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
-                  <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
+                  <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
               </If>

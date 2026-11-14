@@ -53,6 +53,11 @@ export const activityTab = signal<ActivityTab>("jobs");
 export const area = () => areaOf(section());
 /** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
 export const openSession = signal<string | null>(null);
+/** What can be done to the session on screen besides running it again (Try under faults, Replay on…,
+ * Compare…): its header's ⋯ lists them, and so does the palette while it is shown. `run` is given the
+ * button a menu would open under, where there is one. */
+export type SessionCommand = { id: string; label: string; icon: import("./ui/lucide").IconName; disabled?: boolean; run: (anchor?: import("nsh").ViewRef) => void };
+export const shownSessionCommands = signal<SessionCommand[]>([]);
 /** The sessions read since launch, whatever way led to them (the Sessions
  * place, a window of their own, a comparison): every reader says so here. */
 const read = new Set<string>();

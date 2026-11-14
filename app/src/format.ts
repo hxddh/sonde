@@ -39,6 +39,21 @@ export function day(s: string | null | undefined): string {
   return dateFormat("day")?.format(d) ?? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
+/** Two days as one stretch, what they share said once: "Nov 2 → Nov 3, 2026" (another year each: both whole). */
+export function dayRange(a: string, b: string): string {
+  const x = new Date(a);
+  const y = new Date(b);
+  if (Number.isNaN(x.getTime()) || Number.isNaN(y.getTime()) || x.getFullYear() !== y.getFullYear()) return `${day(a)} → ${day(b)}`;
+  try {
+    const { timeZone } = localeSettings();
+    const md = new Intl.DateTimeFormat(locale(), { month: "short", day: "numeric", timeZone });
+    const year = new Intl.DateTimeFormat(locale(), { year: "numeric", timeZone }).format(x);
+    return lang() === "zh" ? `${year} ${md.format(x)} → ${md.format(y)}` : `${md.format(x)} → ${md.format(y)}, ${year}`;
+  } catch {
+    return `${day(a)} → ${day(b)}`;
+  }
+}
+
 /** A time of day as the reader's clock writes it: "14:05" or "2:05 PM". */
 export function hm(s: string | null | undefined): string {
   if (!s) return "—";
@@ -235,7 +250,25 @@ export function clock(iso: string, precision: "m" | "s" | "ms" = "ms"): string {
 export function middle(text: string, max = 48): string {
   if (text.length <= max) return text;
   const tail = Math.ceil((max - 1) * 0.55);
-  return `${text.slice(0, max - 1 - tail)}…${text.slice(-tail)}`;
+  // no space left against the cut: "curl …$AWS", never "curl  … $AWS"
+  return `${text.slice(0, max - 1 - tail).trimEnd()}…${text.slice(-tail).trimStart()}`;
+}
+
+/** Keys listed together, what they share said short: where they share a
+ * long prefix and differ only at their end, the shared folders go to "…/"
+ * and each keeps the folder it is in and what tells it apart
+ * (`slate/db/wal/001.sst`, `slate/db/wal/002.sst` → `…/wal/001.sst`,
+ * `…/wal/002.sst`). Keys that differ early, or one key, stay whole. */
+export function shortKeys(keys: string[]): string[] {
+  if (keys.length < 2) return keys;
+  const split = keys.map((k) => k.split("/"));
+  let shared = 0;
+  const least = Math.min(...split.map((s) => s.length - 1));
+  while (shared < least && split.every((s) => s[shared] === split[0][shared])) shared++;
+  // keep the last shared folder: the place the keys are in
+  const drop = shared - 1;
+  if (drop < 1) return keys;
+  return split.map((s) => `…/${s.slice(drop).join("/")}`);
 }
 
 /** The characters this locale groups thousands with and marks decimals with. */

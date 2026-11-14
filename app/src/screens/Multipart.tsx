@@ -11,6 +11,7 @@ import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
+import { sectionLabel } from "../labels";
 import { Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
@@ -100,7 +101,7 @@ export function Multipart() {
   if (!terminal() && !report_()) void scan();
   return (
     <Sheet>
-      <ToolBar scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
+      <ToolBar title={terminal() ? undefined : sectionLabel("multipart")} scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />

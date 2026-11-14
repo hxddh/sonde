@@ -182,8 +182,8 @@ export function SettingsScreen() {
             <Updates />
 
             {/* the one place sonde says it sends nothing anywhere */}
-            <Section plain title={t("settings.paths")} description={t("settings.telemetry")}>
-              <KeyValue boxed rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), `${v}`])} />
+            <Section title={t("settings.paths")} description={t("settings.telemetry")}>
+              <KeyValue dense mono rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), `${v}`])} />
             </Section>
           </View>
         )}

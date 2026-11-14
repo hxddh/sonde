@@ -15,7 +15,7 @@ import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
-import { Await, Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
+import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
 import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, scatterSaid, kindsSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
 
@@ -68,6 +68,7 @@ function Statuses(props: { signals: Signals; /** where the requests it counts be
   return (
     <View testID="statuses">
       <SimpleTable
+        bare
         columns={columns()}
         rows={rows()}
         max={8}
@@ -77,8 +78,11 @@ function Statuses(props: { signals: Signals; /** where the requests it counts be
           c.column === 0 ? (
             <StatusMark status={c.text === "—" ? null : Number(c.text)} code={c.cells[1]} />
           ) : injected() && c.column === 3 && c.text !== count(0) ? (
-            // emphasis: answers that were sonde's own, not the store's
-            <Text class={`tabular-nums text-small ${EMPHASIS} text-status-injected`}>{c.text}</Text>
+            // answers that were sonde's own, not the store's: marked by their tone's dot
+            <View class="flex-1 flex-row items-center justify-end gap-1">
+              <View class={`${DOT} ${TONE.injected.dot}`} />
+              <Text class={`tabular-nums ${TEXT.small}`}>{c.text}</Text>
+            </View>
           ) : undefined
         }
       />
@@ -129,6 +133,7 @@ export function GroupTable(props: { rows: GroupRow[]; title: string; currency: s
   return (
     <View class="gap-2">
       <SimpleTable
+        bare
         testID={props.testID}
         label={props.title}
         columns={columns()}
@@ -139,7 +144,15 @@ export function GroupTable(props: { rows: GroupRow[]; title: string; currency: s
         ranked={2}
         selected={at()}
         onSelect={props.onSelect ? (i) => props.onSelect!(i === null ? null : (props.rows[i]?.name ?? null)) : undefined}
-        cell={(c) => (c.column === 2 && c.text !== "0%" && c.text !== "—" ? <Text class="tabular-nums text-small text-status-server">{c.text}</Text> : undefined)}
+        // a share that failed: its dot in the failure's tone, the figure read as every other
+        cell={(c) =>
+          c.column === 2 && c.text !== "0%" && c.text !== "—" ? (
+            <View class="flex-1 flex-row items-center justify-end gap-1">
+              <View class={`${DOT} ${TONE.fail.dot}`} />
+              <Text class={`tabular-nums ${TEXT.small}`}>{c.text}</Text>
+            </View>
+          ) : undefined
+        }
       />
       <If when={props.rows.some((o) => o.few)}>
         <ChartNote testID={props.testID ? `${props.testID}-few` : undefined}>{t("byOp.few", { n: FEW })}</ChartNote>

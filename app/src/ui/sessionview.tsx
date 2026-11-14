@@ -6,7 +6,7 @@
 
 import { Clipboard, computed, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
-import { change, clock, count, date, duration, middle, transfer } from "../format";
+import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
@@ -77,8 +77,8 @@ export function StatusMark(props: { status: number | null; text?: string; inject
   return (
     <View class="flex-row items-center gap-2" accessibilityLabel={props.injected ? `${code()}, ${t("plots.injected")}` : undefined}>
       <Dot tone={props.injected ? "injected" : tone()} />
-      {/* emphasis: a status that is not a success stands out in its tone */}
-      <Text class={`font-mono ${TEXT.captionSize} tabular-nums ${props.injected ? `${EMPHASIS} text-status-injected` : tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE[tone()].text}`}`}>{code()}</Text>
+      {/* the dot says how it went; the code is read, a success quieter than the rest */}
+      <Text class={`font-mono ${TEXT.captionSize} tabular-nums ${!props.injected && tone() === "ok" ? "text-muted-foreground" : "text-foreground"}`}>{code()}</Text>
     </View>
   );
 }
@@ -108,6 +108,17 @@ export function span(v: SessionView): [number, number] {
 export function gitText(g: SessionView["header"]["git"]): string {
   if (!g) return "";
   return `${g.commit.slice(0, 7)}${g.branch ? ` (${g.branch})` : ""}${g.dirty ? ` · ${t("git.dirty")}` : ""}`;
+}
+
+/** A session's title: the command on one line, in regular-weight mono at the
+ * body's size, cut in its middle (its program and its last arguments stay),
+ * never wrapped through an argument. Heard whole. */
+function CommandTitle(props: { text: string }) {
+  return (
+    <Text role="header" accessibilityLabel={props.text} class={`font-mono ${TEXT.body} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+      {props.text}
+    </Text>
+  );
 }
 
 /** The command and where it ran, then the session's figures. */
@@ -158,23 +169,28 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
       </If>
     );
   };
-  // folded: one line, what it ran and its first figures (each still opens its chart), then the commands
+  // folded: one line, what it ran and its first figures said with what they count (each still opens its
+  // chart), then the commands
   const FOLDED = 3;
-  const tint = (tone: SignalTile["tone"]) => TONE[tone].text;
+  const said = (i: number, x: SignalTile) =>
+    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("session.foldedErrors", { v: x.value }) : x.value;
   const folded = () => (
     <View testID="session-folded" class="flex-row items-center gap-3">
       <View selectable class="min-w-0 flex-1">
-        <Title mono small lines={1}>
-          {command() ? commandLine(command()!) : props.view.header.endpoint}
-        </Title>
+        <CommandTitle text={command() ? commandLine(command()!) : props.view.header.endpoint} />
       </View>
-      {/* (the session's figures, folded: the same summary in a line) */}
-      <View testID="session-summary" class="shrink-0 flex-row items-center gap-1" accessibilityLabel={line()}>
+      {/* (the session's figures, folded: the same summary in a line, quiet words, no buttons' look) */}
+      <View testID="session-summary" class="shrink-0 flex-row items-center" accessibilityLabel={line()}>
         <Each of={tiles().slice(0, FOLDED)}>
           {(x, i) => (
-            <Pressable label={`${x().label}: ${x().value}`} onPress={() => props.onSignal?.(SIGNALS[i()])} testID={`signal-${SIGNALS[i()]}`}>
-              <Text class={`tabular-nums text-small ${tint(x().tone)}`}>{x().value}</Text>
-            </Pressable>
+            <>
+              <If when={i() > 0}>
+                <Text class={TEXT.note}>·</Text>
+              </If>
+              <Pressable label={`${x().label}: ${x().value}`} onPress={() => props.onSignal?.(SIGNALS[i()])} testID={`signal-${SIGNALS[i()]}`}>
+                <Text class={`tabular-nums ${TEXT.note}`}>{said(i(), x())}</Text>
+              </Pressable>
+            </>
           )}
         </Each>
       </View>
@@ -186,9 +202,7 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
-          <Title mono small lines={2}>
-            {command() ? commandLine(command()!) : props.view.header.endpoint}
-          </Title>
+          <CommandTitle text={command() ? commandLine(command()!) : props.view.header.endpoint} />
           <Text testID="session-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
         </View>
         {acts()}
@@ -651,7 +665,15 @@ export function OperationsTable(props: {
   });
   const held = () => props.source.rows();
   const start = () => props.source.start();
-  const formats = () => Object.keys(props.view.families.formats).length > 0 || ["multipart", "retry", "listing", "probe"].some((k) => (props.view.families.kinds[k] ?? 0) > 0);
+  // a column of tags only where they tell rows apart: none where no row has one, nor where every row has the same
+  const formats = () => {
+    const total = props.view.operationsTotal;
+    const f = Object.entries(props.view.families.formats).filter(([, n]) => n > 0);
+    const k = ["multipart", "retry", "listing", "probe"].map((x) => [x, props.view.families.kinds[x] ?? 0] as const).filter(([, n]) => n > 0);
+    if (!f.length && !k.length) return false;
+    const same = (f.length === 1 && f[0][1] >= total) || (!f.length && k.length === 1 && k[0][1] >= total);
+    return !same;
+  };
   const range = () => span(props.view);
   // a row of the table (counted from the first of them all) as the operation it shows, once its page is held
   const ep = (row: number): EpisodeRow | undefined => held()[row - start()];
@@ -661,7 +683,8 @@ export function OperationsTable(props: {
     operationColumns(
       terminal() ? 0 : width(),
       // beside the output or a terminal there is no room for a tag most rows do not have
-      { format: formats() && !props.compact, bar: !terminal() && !props.compact, notes: !props.compact },
+      // (no "when" bar beside the time: the time says when, and the strip over the table where in the run)
+      { format: formats() && !props.compact, bar: false, notes: !props.compact },
       { bar: kept("bar", 150), notes: kept("notes", 320) },
     );
   const titleWidth = () => (terminal() || width() > 0 ? layout().title : props.compact ? COLUMN.titleCompact : COLUMN.title);
@@ -724,7 +747,7 @@ export function OperationsTable(props: {
       case "title":
         // cut in its middle, by the text itself: a name's end (a key's file, an id) is what tells two rows apart
         return (
-          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE[episodeTone(e, hurt())].text}`} style={{ textOverflow: "ellipsis-middle" }}>
+          <Text class={`${TEXT.body} line-clamp-1`} style={{ textOverflow: "ellipsis-middle" }}>
             {c.text}
           </Text>
         );
@@ -839,6 +862,8 @@ export function linesOf(lines: LogLine[], e: Pick<EpisodeRow, "start" | "end">):
 
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
 export function OperationView(props: { episode: EpisodeRow; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
+  // its requests' keys, their shared folders said short: what tells them apart stays in view
+  const short = computed(() => shortKeys(props.rows.map((r) => r.target)));
   // one request of the operation: its status (a scenario's answer marked), what it was, how long it took
   const request = (r: () => RecordSummary, i: () => number) => (
     <View style={{ height: rowHeight(ROW.twoLine) }}>
@@ -851,10 +876,10 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
             <Text class={`min-w-0 shrink ${TEXT.small} line-clamp-1`}>{r().kind}</Text>
             {/* a fault scenario answered it, not the store */}
             <If when={r().injected}>
-              <Text testID="op-request-injected" class={`shrink-0 ${TEXT.captionSize} text-status-injected`}>{t("plots.injected")}</Text>
+              <Text testID="op-request-injected" class={`shrink-0 ${TEXT.meta}`}>{t("plots.injected")}</Text>
             </If>
           </View>
-          <Path path={r().target} max={40} class="text-muted-foreground" />
+          <Path path={short()[i()] ?? r().target} whole={r().target} max={40} class="text-muted-foreground" />
         </View>
       </ListRow>
     </View>
@@ -876,8 +901,8 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
           <If when={e().outcome.kind !== "ok"}>
             <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e(), hurt())} />
-              {/* emphasis: how it failed, in its tone */}
-              <Text class={`text-small ${EMPHASIS} ${TONE[episodeTone(e(), hurt())].text}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              {/* how it failed, beside its dot */}
+              <Text class={TEXT.small}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>
