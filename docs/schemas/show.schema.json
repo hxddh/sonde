@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show.schema.json",
   "title": "sonde show -f json",
-  "description": "A session whole: its operations, findings and requests. `--errors` keeps the failed ones only.",
+  "description": "A run: its operations and findings, and with `--requests` its requests. `--errors` keeps the failed ones only.",
   "type": "object",
   "properties": {
     "operations": {
@@ -21,7 +21,7 @@
     },
     "requests": {
       "type": "array",
-      "description": "Every request, as the file has it.",
+      "description": "With `--requests`: every request, as the file has it.",
       "items": {
         "$ref": "#/$defs/record"
       }
@@ -61,7 +61,6 @@
   "required": [
     "operations",
     "findings",
-    "requests",
     "session",
     "summary",
     "whatIf",

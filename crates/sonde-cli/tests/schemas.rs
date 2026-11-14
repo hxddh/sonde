@@ -310,6 +310,10 @@ async fn every_json_output_is_as_its_schema_says() {
 
     // reading a session
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
+    holds(
+        "show",
+        &b.json(&["show", s, "--requests", "-f", "json"], 0).await,
+    );
     // one with nothing found: no what-if, as the schema says
     {
         let quiet = b.path("quiet.log");

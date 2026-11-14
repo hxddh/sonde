@@ -26,7 +26,8 @@ pub struct ShowArgs {
     /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
     pub(super) errors: bool,
-    /// Each request on its line, then the summary.
+    /// Each request on its line, then the summary (with `-f json`, the
+    /// requests whole).
     #[arg(long)]
     pub(super) requests: bool,
     /// Everything: each operation on its line, then the summary with every
@@ -302,21 +303,24 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
-            // one word each: operations, findings, requests
+            // one word each: operations, findings, requests (asked for: a
+            // million of them is a gigabyte of text)
             w.array(
                 "operations",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
             )?;
             w.field("findings", &analysis.observations)?;
-            w.key("requests")?;
-            w.begin_array()?;
-            sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
-                if !a.errors || sonde_proxy::summary::is_failure(&r) {
-                    w.value(&r)?;
-                }
-                Ok(())
-            })?;
-            w.end_array()?;
+            if a.requests {
+                w.key("requests")?;
+                w.begin_array()?;
+                sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
+                    if !a.errors || sonde_proxy::summary::is_failure(&r) {
+                        w.value(&r)?;
+                    }
+                    Ok(())
+                })?;
+                w.end_array()?;
+            }
             w.field("session", &session.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;

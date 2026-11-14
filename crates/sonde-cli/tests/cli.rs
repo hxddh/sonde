@@ -157,7 +157,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
     );
 
     // the newest run is the fixed one: no finding left
-    let json = sonde(t.path(), &["show", "-f", "json"]);
+    let json = sonde(t.path(), &["show", "--requests", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(v["requests"].as_array().unwrap().len(), 9);
     assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
@@ -1619,7 +1619,7 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
     // only what failed, in every format
     let failed: serde_json::Value = serde_json::from_str(&stdout(&sonde(
         t.path(),
-        &["show", out, "--errors", "-f", "json"],
+        &["show", out, "--errors", "--requests", "-f", "json"],
     )))
     .unwrap();
     assert_eq!(failed["requests"].as_array().unwrap().len(), 24);
@@ -1628,9 +1628,16 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
         failed["summary"]["requests"], 2400,
         "the summary is of the session"
     );
-    let all: serde_json::Value =
-        serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
+    let all: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", out, "--requests", "-f", "json"],
+    )))
+    .unwrap();
     assert_eq!(all["requests"].as_array().unwrap().len(), 2400);
+    // the requests only when asked for
+    let lean: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
+    assert!(lean.get("requests").is_none() && lean["operations"].is_array());
     assert_eq!(all["requests"][7]["status"], 403);
     // a long session: its first and last hundred, and how many are between
     let shown = stdout(&sonde(t.path(), &["show", out, "--requests"]));
