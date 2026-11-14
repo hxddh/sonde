@@ -90,9 +90,8 @@ pub struct Analysis {
     pub sdk: Option<String>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
-    /// Which operation each request belongs to, by request id (sorted: a
-    /// map's buckets would cost twice as much a request).
-    owner: Vec<(u64, u32)>,
+    /// Which operation each request belongs to.
+    owner: crate::episode::Owners,
     /// The kinds of request each operation sent, as bits of `kind_names`
     /// (the 64th holds every kind past the 63rd): what a query by kind reads.
     kinds: Vec<u64>,
@@ -105,14 +104,6 @@ pub struct Analysis {
 
 fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
     (b - a).num_microseconds().unwrap_or(0) as f64 / 1000.0
-}
-
-/// What a thread made, or its panic carried on.
-fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
-    match h.join() {
-        Ok(v) => v,
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
 }
 
 impl Analysis {
@@ -150,29 +141,20 @@ impl Analysis {
         Analysis::of_records(&s.header, &s.records, prices)
     }
 
-    /// Everything a session amounts to, worked out once: its operations and
-    /// findings on this thread while its counts, its signals and where its
-    /// time went are reckoned on others (each reads every record, none
-    /// needs another's answer).
+    /// Everything a session amounts to, worked out once: its counts, its
+    /// signals, where its time went, its operations and its findings.
     pub fn of_records(
         header: &crate::session::SessionHeader,
         records: &[reqlog::Record],
         prices: &RequestPrices,
     ) -> Analysis {
-        let (summary, signals, profile, episodes, observations) = std::thread::scope(|scope| {
-            let summary = scope.spawn(|| crate::summary::summarize(records));
-            let signals = scope.spawn(|| crate::signals::signals(records, prices));
-            let profile = scope.spawn(|| crate::profile::profile(records, prices));
-            let episodes = episodes(records);
-            let observations = observations_of(header, records, &episodes);
-            (
-                joined(summary),
-                joined(signals),
-                joined(profile),
-                episodes,
-                observations,
-            )
-        });
+        // (one after another: what each lets go the next uses, where threads
+        // would each keep what they let go, a third more memory at a million)
+        let summary = crate::summary::summarize(records);
+        let signals = crate::signals::signals(records, prices);
+        let profile = crate::profile::profile(records, prices);
+        let episodes = episodes(records);
+        let observations = observations_of(header, records, &episodes);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
@@ -180,38 +162,25 @@ impl Analysis {
         // (an imported log's times are to the second: its waiting is not known)
         let what_if =
             crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
-        let mut owner = Vec::with_capacity(records.len());
-        for (i, e) in episodes.iter().enumerate() {
-            for id in &e.records {
-                owner.push((*id, i as u32));
-            }
-        }
+        let owner = crate::episode::Owners::of(&episodes);
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
         let mut kinds = vec![0u64; episodes.len()];
-        {
-            let mut by_id: Vec<(u64, u32)> = owner.clone();
-            by_id.sort_unstable_by_key(|(id, _)| *id);
-            for r in records {
-                let mut k = by_id.partition_point(|(id, _)| *id < r.id);
-                while k < by_id.len() && by_id[k].0 == r.id {
-                    let name: &str = &r.kind;
-                    let bit = match kind_names.iter().position(|n| n == name) {
-                        Some(b) => b,
-                        None if kind_names.len() < 63 => {
-                            kind_names.push(name.to_string());
-                            kind_names.len() - 1
-                        }
-                        None => 63,
-                    };
-                    kinds[by_id[k].1 as usize] |= 1 << bit;
-                    k += 1;
-                }
+        let by_id = crate::episode::RecordsById::of(records);
+        for (e, bits) in episodes.iter().zip(&mut kinds) {
+            for r in e.records.iter().filter_map(|id| by_id.get(id)) {
+                let name: &str = &r.kind;
+                let bit = match kind_names.iter().position(|n| n == name) {
+                    Some(b) => b,
+                    None if kind_names.len() < 63 => {
+                        kind_names.push(name.to_string());
+                        kind_names.len() - 1
+                    }
+                    None => 63,
+                };
+                *bits |= 1 << bit;
             }
         }
-        // (a request two operations claim is the later's)
-        owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
-        owner.dedup_by_key(|(id, _)| *id);
         let span = episodes.iter().map(|e| e.start).min().and_then(|start| {
             let end = episodes.iter().map(|e| e.end).max()?;
             Some((start, end))
@@ -222,7 +191,7 @@ impl Analysis {
             signals,
             injected: records
                 .iter()
-                .filter(|r| r.injected.is_some())
+                .filter(|r| r.rare().injected.is_some())
                 .map(|r| r.id)
                 .collect(),
             episodes,
@@ -245,7 +214,7 @@ impl Analysis {
         let e = self.episodes.get(index)?;
         let mut v = serde_json::to_value(e).ok()?;
         let o = v.as_object_mut()?;
-        if !e.title_text.is_empty() {
+        if !o["titleText"].as_array().is_none_or(Vec::is_empty) {
             o.remove("title");
         }
         if e.records.len() > records {
@@ -266,11 +235,7 @@ impl Analysis {
 
     /// The operation a request belongs to.
     pub fn episode_of(&self, record: u64) -> Option<usize> {
-        let at = self
-            .owner
-            .binary_search_by_key(&record, |(id, _)| *id)
-            .ok()?;
-        Some(self.owner[at].1 as usize)
+        self.owner.get(record).map(|i| i as usize)
     }
 
     /// The operations a query shows, in its order.
@@ -294,7 +259,7 @@ impl Analysis {
                 });
         let keep = |i: &u32| {
             let e = &eps[*i as usize];
-            if key.failed && e.outcome == Outcome::Ok {
+            if key.failed && *e.outcome() == Outcome::Ok {
                 return false;
             }
             if let Some(bit) = kind_bit
@@ -309,7 +274,7 @@ impl Analysis {
             }
             if let Some(text) = &key.text {
                 let holds = |t: &str| t.to_lowercase().contains(text.as_str());
-                if !holds(&e.title()) && !e.notes.iter().any(|n| holds(n)) {
+                if !holds(&e.title()) && !e.notes().iter().any(|n| holds(n)) {
                     return false;
                 }
             }

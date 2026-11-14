@@ -2305,6 +2305,7 @@ async fn a_plain_run_allows_deletes_and_a_trial_refuses_them() {
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
+            .rare()
             .error_body
             .as_deref()
             .is_some_and(|e| e.contains("no-delete")),

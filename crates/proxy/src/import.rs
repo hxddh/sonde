@@ -187,8 +187,14 @@ impl Parts {
         let mut records = self.records;
         let mut sources = self.sources;
         for r in &mut records {
-            if let Some(source) = r.request_id.as_ref().and_then(|id| sources.remove(id)) {
-                r.request_headers
+            if let Some(source) = r
+                .rare()
+                .request_id
+                .as_ref()
+                .and_then(|id| sources.remove(id))
+            {
+                r.lists_mut()
+                    .request_headers
                     .push(reqlog::Header::new("x-amz-copy-source", source));
             }
         }
@@ -208,7 +214,7 @@ impl Parts {
             .unwrap_or_else(|| name.to_string());
         for (i, r) in records.iter_mut().enumerate() {
             r.id = i as u64 + 1;
-            r.endpoint = endpoint.as_str().into();
+            r.rare_mut().endpoint = endpoint.as_str().into();
         }
         let mut header = SessionHeader::new(
             &endpoint,
@@ -399,9 +405,13 @@ fn record(
         kind: operation.into(),
         bucket: bucket.map(Into::into),
         key: key.map(Into::into),
-        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: Some(status),
         latency_ms,
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            ..Default::default()
+        }
+        .into(),
         ..Default::default()
     }
 }
@@ -508,26 +518,27 @@ fn access_log(
             status,
             num(&f[13]).unwrap_or(0) as f64,
         );
-        r.request_id = (f[5] != "-").then(|| f[5].clone());
+        r.rare_mut().request_id = (f[5] != "-").then(|| f[5].clone());
         // the host the request named (the log's Host Header field)
         if let Some(h) = f.get(22).and_then(|h| store_host(h, r.bucket.as_deref())) {
             *hosts.entry(h).or_default() += 1;
         }
         // who sent it, how long S3 took to its first byte, and with what
-        r.requester = f.get(4).filter(|v| *v != "-").cloned();
-        r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok());
+        r.rare_mut().requester = f.get(4).filter(|v| *v != "-").cloned();
+        r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok()).into();
         if let Some(ua) = f.get(16).filter(|v| *v != "-" && !v.is_empty()) {
-            r.request_headers
+            r.lists_mut()
+                .request_headers
                 .push(reqlog::Header::new("user-agent", ua));
         }
-        r.response_bytes = num(&f[11]);
+        r.response_bytes = num(&f[11]).into();
         // the object's size is what was sent only where the object is the
         // body: a CompleteMultipartUpload's is its parts', sent already
         if matches!(f[6].as_str(), "REST.PUT.OBJECT" | "REST.PUT.PART") {
-            r.request_bytes = num(&f[12]);
+            r.request_bytes = num(&f[12]).into();
         }
         if f[10] != "-" {
-            r.error_body = Some(format!("<Error><Code>{}</Code></Error>", f[10]));
+            r.rare_mut().error_body = Some(format!("<Error><Code>{}</Code></Error>", f[10]));
         }
         // the access log has the operation itself: keep S3's word for a copy
         if f[6].contains("COPY") && !r.kind.contains("Copy") {
@@ -668,25 +679,32 @@ fn cloudtrail(
             *hosts
                 .entry(format!("s3.{region}.amazonaws.com"))
                 .or_default() += 1;
-            r.region = Some(region.into());
+            r.rare_mut().region = Some(region.into());
         }
         // CloudTrail names the operation itself
         r.kind = name.into();
-        r.request_id = e["requestID"].as_str().map(String::from);
+        r.rare_mut().request_id = e["requestID"].as_str().map(String::from);
         let who = &e["userIdentity"];
-        r.requester = who["arn"]
+        r.rare_mut().requester = who["arn"]
             .as_str()
             .or_else(|| who["principalId"].as_str())
             .map(String::from);
         if let Some(ua) = e["userAgent"].as_str().filter(|v| !v.is_empty()) {
-            r.request_headers
+            r.lists_mut()
+                .request_headers
                 .push(reqlog::Header::new("user-agent", ua));
         }
         let extra = &e["additionalEventData"];
-        r.request_bytes = extra["bytesTransferredIn"].as_f64().map(|v| v as u64);
-        r.response_bytes = extra["bytesTransferredOut"].as_f64().map(|v| v as u64);
+        r.request_bytes = extra["bytesTransferredIn"]
+            .as_f64()
+            .map(|v| v as u64)
+            .into();
+        r.response_bytes = extra["bytesTransferredOut"]
+            .as_f64()
+            .map(|v| v as u64)
+            .into();
         if !code.is_empty() {
-            r.error_body = Some(format!("<Error><Code>{code}</Code></Error>"));
+            r.rare_mut().error_body = Some(format!("<Error><Code>{code}</Code></Error>"));
         }
         out.push(r);
     }
@@ -792,13 +810,13 @@ fn har(
             method,
             r.bucket.as_deref(),
             r.key.as_deref(),
-            &r.query,
+            r.query(),
             &headers,
         )
         .into();
         // what the request carried: the SDK it names, its conditions, its
         // range (secrets masked here, as on every record)
-        r.request_headers = headers
+        r.lists_mut().request_headers = headers
             .iter()
             .filter(|(n, _)| !n.starts_with(':'))
             .map(|(n, v)| reqlog::Header::new(n, reqlog::redact::redact_header(n, v)))
@@ -821,16 +839,16 @@ fn har(
                 shown.query_pairs_mut().clear().extend_pairs(kept);
             }
         }
-        r.url = shown.to_string();
+        r.rare_mut().url = shown.to_string();
         let size = |v: &Value| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64);
-        r.request_bytes = size(&req["bodySize"]);
-        r.response_bytes = size(&e["response"]["bodySize"]);
+        r.request_bytes = size(&req["bodySize"]).into();
+        r.response_bytes = size(&e["response"]["bodySize"]).into();
         // the wait for the answer's first byte, as HAR times it
-        r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0);
+        r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0).into();
         if let Some(t) = e["response"]["content"]["text"].as_str()
             && status >= 300
         {
-            r.error_body = Some(t.to_string());
+            r.rare_mut().error_body = Some(t.to_string());
         }
         out.push(r);
     }
@@ -901,7 +919,7 @@ mod tests {
         );
         // named by the store, not by the file
         assert_eq!(s.header.endpoint, "s3.amazonaws.com");
-        assert_eq!(s.records[0].endpoint, "s3.amazonaws.com");
+        assert_eq!(s.records[0].rare().endpoint, "s3.amazonaws.com");
         // what depends on where in its second each began is not said:
         // requests "one after another", and how many were in flight when
         // the store throttled
@@ -963,18 +981,18 @@ mod tests {
         assert_eq!(s.records[0].response_bytes, Some(4096));
         // who, with what, and S3's own time to its first byte
         assert_eq!(
-            s.records[0].requester.as_deref(),
+            s.records[0].rare().requester.as_deref(),
             Some("arn:aws:iam::1:user/etl")
         );
         assert_eq!(s.records[0].first_byte_ms, Some(10.0));
         assert_eq!(s.records[1].first_byte_ms, None);
         let ua = s.records[0]
-            .request_headers
+            .request_headers()
             .iter()
             .find(|h| h.name == "user-agent");
         assert_eq!(ua.map(|h| h.value.as_str()), Some("aws-sdk-java/2.21"));
         assert!(crate::summary::is_miss(&s.records[1]));
-        assert_eq!(s.records[2].query[1], ("prefix".into(), "t/".into()));
+        assert_eq!(s.records[2].query()[1], ("prefix".into(), "t/".into()));
         assert_eq!(
             s.header.command.as_deref(),
             Some("imported from S3 server access log")
@@ -993,12 +1011,12 @@ mod tests {
         assert_eq!(s.records[0].kind, "GetObject");
         assert_eq!(s.records[0].status, Some(404));
         assert_eq!(
-            s.records[0].requester.as_deref(),
+            s.records[0].rare().requester.as_deref(),
             Some("arn:aws:iam::1:role/etl")
         );
         assert!(
             s.records[0]
-                .request_headers
+                .request_headers()
                 .iter()
                 .any(|h| h.name == "user-agent" && h.value == "[aws-cli/2.15]")
         );
@@ -1008,9 +1026,13 @@ mod tests {
             time: Utc::now(),
             method: "GET".into(),
             kind: "GetObject".into(),
-            url: "https://lake.s3.us-east-1.amazonaws.com/t/k%20x".into(),
             status: Some(200),
             latency_ms: 7.0,
+            rare: reqlog::Rare {
+                url: "https://lake.s3.us-east-1.amazonaws.com/t/k%20x".into(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }]))
         .unwrap();
@@ -1055,9 +1077,9 @@ mod tests {
             assert!(!text.contains(secret), "{secret} kept: {text}");
         }
         assert!(
-            s.records[2].url.ends_with("/k3?versionId=7"),
+            s.records[2].rare().url.ends_with("/k3?versionId=7"),
             "{}",
-            s.records[2].url
+            s.records[2].rare().url
         );
         let keys: Vec<_> = s
             .records
@@ -1100,7 +1122,7 @@ mod tests {
         assert_eq!(i.not_requests, 2);
         // what it read is kept on the copy, as the request's own header says it
         let source = |r: &Record| {
-            r.request_headers
+            r.request_headers()
                 .iter()
                 .find(|h| h.name == "x-amz-copy-source")
                 .map(|h| h.value.clone())
@@ -1178,7 +1200,7 @@ mod tests {
         let r = &d.imported.session.records;
         assert_eq!(r.len(), 1);
         assert_eq!(
-            r[0].request_headers
+            r[0].request_headers()
                 .iter()
                 .find(|h| h.name == "x-amz-copy-source")
                 .map(|h| h.value.as_str()),
@@ -1250,7 +1272,7 @@ mod tests {
         let (_, s) = import(ct, "trail").unwrap();
         let q = |i: usize, k: &str| {
             s.records[i]
-                .query
+                .query()
                 .iter()
                 .find(|(n, _)| n == k)
                 .map(|(_, v)| v.as_str())
@@ -1339,7 +1361,7 @@ mod tests {
         let (_, s) = import(har, "browser").unwrap();
         let r = &s.records[0];
         let h = |n: &str| {
-            r.request_headers
+            r.request_headers()
                 .iter()
                 .find(|h| h.name.eq_ignore_ascii_case(n))
                 .map(|h| h.value.as_str())

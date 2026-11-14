@@ -291,7 +291,7 @@ fn main() -> ExitCode {
                         eprintln!(
                             "  {} {} → {}",
                             r.method,
-                            r.url,
+                            r.rare().url,
                             r.status
                                 .map(|s| s.to_string())
                                 .unwrap_or_else(|| "no response".into())

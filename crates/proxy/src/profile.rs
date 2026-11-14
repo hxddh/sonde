@@ -140,7 +140,8 @@ pub const LATENCY_EDGES: [f64; 15] = [
 /// The store asked the program to slow down.
 pub(crate) fn throttled(r: &Record) -> bool {
     matches!(r.status, Some(503 | 429))
-        || r.error_body
+        || r.rare()
+            .error_body
             .as_deref()
             .is_some_and(|b| b.contains("<Code>SlowDown</Code>"))
 }
@@ -304,7 +305,7 @@ impl<'a> Depends<'a> {
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
         r.kind.starts_with("ListObjects").then(|| {
             let prefix = r
-                .query
+                .query()
                 .iter()
                 .find(|(k, _)| k == "prefix")
                 .map_or("", |(_, v)| v.as_str());
@@ -681,13 +682,14 @@ pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
 /// count once and the kinds add up to the time with a request in flight.
 pub(crate) fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTreeMap<K, f64> {
     let keys: Vec<&K> = by.keys().collect();
-    let mut events: Vec<(i64, i32, usize)> = Vec::new();
+    let mut events: Vec<(i64, i32, u32)> =
+        Vec::with_capacity(2 * by.values().map(Vec::len).sum::<usize>());
     for (k, rs) in by.values().enumerate() {
         for r in rs {
             let (s, e) = (start_us(r), end_us(r));
             if e > s {
-                events.push((s, 1, k));
-                events.push((e, -1, k));
+                events.push((s, 1, k as u32));
+                events.push((e, -1, k as u32));
             }
         }
     }
@@ -707,6 +709,7 @@ pub(crate) fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTree
             }
         }
         last = t;
+        let k = k as usize;
         active[k] += d as i64;
         total += d as i64;
     }
@@ -812,7 +815,7 @@ pub fn percentile(sorted: &[f64], q: f64) -> f64 {
 /// answer, a body cut short, a race the store had let the write win) is.
 pub fn reached_store(r: &Record) -> bool {
     let has = |name: &str| {
-        r.response_headers
+        r.response_headers()
             .iter()
             .any(|h| h.name.eq_ignore_ascii_case(name))
     };
@@ -844,12 +847,12 @@ fn tone(r: &Record) -> u8 {
 }
 
 /// A session's prefixes ([`prefix_groups`], the busiest [`MAX_PREFIXES`] and
-/// then "other"), each with its requests and its busiest second; and the
-/// groups they were counted by.
+/// then "other"), each with its requests and its busiest second; the
+/// groups they were counted by; and each request's prefix, by its place.
 pub fn prefix_stats(
     records: &[Record],
     prices: &RequestPrices,
-) -> (Vec<(String, usize)>, Vec<PrefixStat>) {
+) -> (Vec<(String, usize)>, Vec<PrefixStat>, Vec<u8>) {
     // each folder named once, however many requests went to it: a session
     // has far fewer folders than requests
     let mut ids: HashMap<(&str, &str), usize> = HashMap::new();
@@ -928,8 +931,10 @@ pub fn prefix_stats(
     let mut all: Vec<Vec<i64>> = vec![Vec::new(); slots];
     let mut reads: Vec<Vec<i64>> = vec![Vec::new(); slots];
     let mut writes: Vec<Vec<i64>> = vec![Vec::new(); slots];
+    let mut slots = Vec::with_capacity(records.len());
     for (r, id) in records.iter().zip(of) {
         let i = slot[id];
+        slots.push(i as u8);
         let p = &mut prefixes[i];
         p.requests += 1;
         p.errors += usize::from(r.is_error() && !is_miss(r));
@@ -955,7 +960,7 @@ pub fn prefix_stats(
         p.peak_reads = peak(&mut reads[i]);
         p.peak_writes = peak(&mut writes[i]);
     }
-    (shown, prefixes)
+    (shown, prefixes, slots)
 }
 
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
@@ -1034,8 +1039,8 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
                 p95_ms: percentile(&lat, 0.95),
                 max_ms: lat.last().copied().unwrap_or(0.0),
                 errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
-                bytes_up: rs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum(),
-                bytes_down: rs.iter().map(|r| r.response_bytes.unwrap_or(0)).sum(),
+                bytes_up: rs.iter().map(|r| r.request_bytes.get().unwrap_or(0)).sum(),
+                bytes_down: rs.iter().map(|r| r.response_bytes.get().unwrap_or(0)).sum(),
                 cost: rs.iter().map(|r| price(r)).sum(),
             };
             (g, rs)
@@ -1046,11 +1051,6 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             .total_cmp(&a.0.waited_ms)
             .then(b.0.requests.cmp(&a.0.requests))
     });
-    let group_of: HashMap<u64, usize> = groups
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (_, rs))| rs.iter().map(move |r| (r.id, i)))
-        .collect();
 
     // rate, by outcome
     let (bin, bins) = (tl.bin_ms, tl.bins);
@@ -1069,19 +1069,30 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             bytes_down: 0,
         })
         .collect();
-    let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
+    // each slice's latencies side by side in one list, made at its size:
+    // the slices' requests counted first
+    let mut slice_at = vec![0usize; bins + 1];
+    for r in records {
+        slice_at[tl.bin_of(r) + 1] += 1;
+    }
+    for i in 0..bins {
+        slice_at[i + 1] += slice_at[i];
+    }
+    let mut took = vec![0f64; records.len()];
+    let mut filled = slice_at.clone();
     // the latencies' grid: every request in its slice and bucket
     let mut grid: BTreeMap<(usize, i32), usize> = BTreeMap::new();
     for r in records {
         let i = tl.bin_of(r);
-        took[i].push(r.latency_ms);
+        took[filled[i]] = r.latency_ms;
+        filled[i] += 1;
         *grid
             .entry((i, latency_bucket(r.latency_ms.max(0.0))))
             .or_default() += 1;
         let b = &mut rate[i];
         b.throttled += usize::from(throttled(r));
-        b.bytes_up += r.request_bytes.unwrap_or(0);
-        b.bytes_down += r.response_bytes.unwrap_or(0);
+        b.bytes_up += r.request_bytes.get().unwrap_or(0);
+        b.bytes_down += r.response_bytes.get().unwrap_or(0);
         match tone(r) {
             0 => b.ok += 1,
             1 => b.miss += 1,
@@ -1091,12 +1102,13 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
 
     // how long requests took, slice by slice: the band the live view draws
-    for (b, mut l) in rate.iter_mut().zip(took) {
+    for (i, b) in rate.iter_mut().enumerate() {
+        let l = &mut took[slice_at[i]..slice_at[i + 1]];
         if l.is_empty() {
             continue;
         }
-        l.sort_by(f64::total_cmp);
-        let at = |q: f64| percentile(&l, q);
+        l.sort_unstable_by(f64::total_cmp);
+        let at = |q: f64| percentile(l, q);
         (b.p50_ms, b.p95_ms, b.p99_ms) = (at(0.5), at(0.95), at(0.99));
     }
 
@@ -1109,39 +1121,44 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         .collect();
     // ends before starts at one instant: a request answered as the next leaves
     events.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    // per slice its busiest moment, then where it ended (a burst's peak
+    // does not run on through the idle time after it), when every change
+    // would be more than the pane draws
+    let instants = events.chunk_by(|a, b| a.0 == b.0).count();
+    let slice = (instants > MAX_STEPS).then(|| ms(wall_us) / MAX_STEPS as f64);
     let mut n: i64 = 0;
     let mut steps: Vec<Step> = Vec::new();
+    let mut per: Vec<(f64, usize, usize)> = Vec::new();
     let (mut peak, mut peak_at) = (0usize, 0.0);
-    for (t, d) in events {
-        n = (n + d as i64).max(0);
-        let at = at_ms(t);
-        if n as usize > peak {
-            peak = n as usize;
-            peak_at = at;
-        }
-        match steps.last_mut() {
-            Some(s) if s.t_ms == at => s.n = n as usize,
-            _ => steps.push(Step {
-                t_ms: at,
-                n: n as usize,
-            }),
-        }
-    }
-    if steps.len() > MAX_STEPS {
-        // per slice its busiest moment, then where it ended: a burst's peak
-        // does not run on through the idle time after it
-        let slice = ms(wall_us) / MAX_STEPS as f64;
-        let mut per: Vec<(f64, usize, usize)> = Vec::with_capacity(MAX_STEPS + 1);
-        for s in steps {
-            let at = start + ((s.t_ms - start) / slice).floor() * slice;
-            match per.last_mut() {
-                Some(k) if k.0 == at => {
-                    k.1 = k.1.max(s.n);
-                    k.2 = s.n;
-                }
-                _ => per.push((at, s.n, s.n)),
+    for instant in events.chunk_by(|a, b| a.0 == b.0) {
+        let at = at_ms(instant[0].0);
+        for (_, d) in instant {
+            n = (n + *d as i64).max(0);
+            if n as usize > peak {
+                peak = n as usize;
+                peak_at = at;
             }
         }
+        // where the instant ends
+        let n = n as usize;
+        match slice {
+            None => match steps.last_mut() {
+                Some(s) if s.t_ms == at => s.n = n,
+                _ => steps.push(Step { t_ms: at, n }),
+            },
+            Some(slice) => {
+                let at = start + ((at - start) / slice).floor() * slice;
+                match per.last_mut() {
+                    Some(k) if k.0 == at => {
+                        k.1 = k.1.max(n);
+                        k.2 = n;
+                    }
+                    _ => per.push((at, n, n)),
+                }
+            }
+        }
+    }
+    if let Some(slice) = slice {
         steps = Vec::with_capacity(per.len() * 2);
         for (at, max, last) in per {
             steps.push(Step { t_ms: at, n: max });
@@ -1156,28 +1173,53 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
 
     // the requests one by one: all of them, or the slowest and an even
     // spread of the rest (in time order), so the picture is not only the tail
+    // (the group of each request sampled: what a request's group is asked for)
+    let group_of = |r: &Record| {
+        let key = (r.kind.as_str(), is_miss(r));
+        groups
+            .iter()
+            .position(|(g, _)| g.kind == key.0 && g.missed == key.1)
+            .unwrap_or(0)
+    };
     let sample = |r: &Record| Sample {
         id: r.id,
-        group: group_of[&r.id],
+        group: group_of(r),
         ms: r.latency_ms.max(0.0),
         t_ms: at_ms(start_us(r)),
         status: r.status,
-        bytes: r.request_bytes.unwrap_or(0) + r.response_bytes.unwrap_or(0),
+        bytes: r.request_bytes.get().unwrap_or(0) + r.response_bytes.get().unwrap_or(0),
     };
     let mut samples: Vec<Sample> = if records.len() <= MAX_SAMPLES {
         records.iter().map(sample).collect()
     } else {
-        let mut by_ms: Vec<&Record> = records.iter().collect();
-        by_ms.sort_by(|a, b| b.latency_ms.total_cmp(&a.latency_ms));
-        let slow: std::collections::HashSet<u64> = by_ms[..SLOWEST].iter().map(|r| r.id).collect();
-        let rest: Vec<&Record> = records.iter().filter(|r| !slow.contains(&r.id)).collect();
+        // the slowest first, the records' order among equals: picked, not
+        // all sorted
+        let slower = |a: &usize, b: &usize| {
+            records[*b]
+                .latency_ms
+                .total_cmp(&records[*a].latency_ms)
+                .then(a.cmp(b))
+        };
+        let mut by_ms: Vec<usize> = (0..records.len()).collect();
+        by_ms.select_nth_unstable_by(SLOWEST - 1, slower);
+        by_ms.truncate(SLOWEST);
+        by_ms.sort_unstable_by(slower);
+        let mut slow = vec![false; records.len()];
+        for &i in &by_ms {
+            slow[i] = true;
+        }
+        let rest: Vec<u32> = (0..records.len() as u32)
+            .filter(|i| !slow[*i as usize])
+            .collect();
         let want = MAX_SAMPLES - SLOWEST;
         let step = rest.len() as f64 / want as f64;
-        by_ms[..SLOWEST]
+        by_ms
             .iter()
             .copied()
-            .chain((0..want).map(|i| rest[((i as f64 * step) as usize).min(rest.len() - 1)]))
-            .map(sample)
+            .chain(
+                (0..want).map(|i| rest[((i as f64 * step) as usize).min(rest.len() - 1)] as usize),
+            )
+            .map(|i| sample(&records[i]))
             .collect()
     };
     samples.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
@@ -1220,20 +1262,10 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         amount: records.iter().map(&price).sum(),
         currency: prices.currency.clone(),
     };
-    let (shown, prefixes) = prefix_stats(records, prices);
-    let prefix_index = |r: &Record| {
-        let f = folder_of(r);
-        let p = prefix_for(&shown, &f).unwrap_or("/");
-        prefixes
-            .iter()
-            .take(MAX_PREFIXES)
-            .position(|s| s.prefix == p)
-            .unwrap_or(prefixes.len().saturating_sub(1))
-    };
+    let (_, prefixes, slots) = prefix_stats(records, prices);
     let mut cells: HashMap<(usize, usize), usize> = HashMap::new();
-    for r in records {
-        let b = tl.bin_of(r);
-        *cells.entry((prefix_index(r), b)).or_default() += 1;
+    for (r, slot) in records.iter().zip(&slots) {
+        *cells.entry((*slot as usize, tl.bin_of(r))).or_default() += 1;
     }
     let mut heat: Vec<HeatCell> = cells
         .into_iter()
@@ -1241,40 +1273,42 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         .collect();
     heat.sort_by_key(|c| (c.prefix, c.bin));
 
-    // flows: operation → prefix → outcome
-    let outcome = |r: &Record| match tone(r) {
-        0 => "ok",
-        1 => "not found",
-        2 => "client error",
-        _ => "server error",
-    };
-    let top_ops: Vec<String> =
-        groups
-            .iter()
-            .map(|(g, _)| g.kind.clone())
-            .fold(Vec::new(), |mut v, o| {
-                if !v.contains(&o) {
-                    v.push(o);
-                }
-                v
-            });
-    let op_name = |r: &Record| {
-        if top_ops.iter().take(6).any(|o| *o == r.kind) {
-            r.kind.to_string()
-        } else {
-            "other operations".into()
+    // flows: operation → prefix → outcome (counted by number, named once)
+    let mut top_ops: Vec<&str> = Vec::new();
+    for (g, _) in &groups {
+        if top_ops.len() < 6 && !top_ops.contains(&g.kind.as_str()) {
+            top_ops.push(&g.kind);
         }
+    }
+    let mut to_prefix: HashMap<(usize, u8), usize> = HashMap::new();
+    let mut to_outcome: HashMap<(u8, u8), usize> = HashMap::new();
+    for (r, slot) in records.iter().zip(&slots) {
+        let op = top_ops
+            .iter()
+            .position(|o| *o == r.kind)
+            .unwrap_or(top_ops.len());
+        *to_prefix.entry((op, *slot)).or_default() += 1;
+        *to_outcome.entry((*slot, tone(r))).or_default() += 1;
+    }
+    let prefix_name = |slot: u8| match prefixes[slot as usize].prefix.as_str() {
+        "other" => "other prefixes".to_string(),
+        p => p.to_string(),
     };
     let mut flow: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for r in records {
-        let p = &prefixes[prefix_index(r)].prefix;
-        let p = if p == "other" {
-            "other prefixes".to_string()
-        } else {
-            p.clone()
+    for ((op, slot), n) in to_prefix {
+        let op = top_ops.get(op).map_or("other operations", |o| o);
+        *flow.entry((op.to_string(), prefix_name(slot))).or_default() += n;
+    }
+    for ((slot, tone), n) in to_outcome {
+        let outcome = match tone {
+            0 => "ok",
+            1 => "not found",
+            2 => "client error",
+            _ => "server error",
         };
-        *flow.entry((op_name(r), p.clone())).or_default() += 1;
-        *flow.entry((p, outcome(r).to_string())).or_default() += 1;
+        *flow
+            .entry((prefix_name(slot), outcome.to_string()))
+            .or_default() += n;
     }
     let flows: Vec<Flow> = flow
         .into_iter()
@@ -1287,8 +1321,12 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
 
     let sum_ms: f64 = records.iter().map(|r| r.latency_ms.max(0.0)).sum();
     // the distribution, every request in it (not a sample)
-    let mut all: Vec<f64> = records.iter().map(|r| r.latency_ms.max(0.0)).collect();
-    all.sort_by(f64::total_cmp);
+    // (the slices' latencies are every request's)
+    let mut all = took;
+    for v in &mut all {
+        *v = v.max(0.0);
+    }
+    all.sort_unstable_by(f64::total_cmp);
     let q = |p: f64| percentile(&all, p);
     let mut latency: Vec<LatencyBucket> = LATENCY_EDGES
         .iter()
@@ -1783,7 +1821,9 @@ pub struct Run {
     /// are shown by are chosen from.
     pub folders: HashMap<String, usize>,
     /// Its findings at any threshold, by identity: a finding of the run
-    /// before that is only among these is less, not fixed.
+    /// before that is only among these is less, not fixed. (Their counts
+    /// and words: the operations, saved requests, fixes and callers each
+    /// names are let go.)
     pub traces: BTreeMap<String, Observation>,
     /// What its findings would save, by what their requests asked.
     pub asks: crate::fixloop::Asks,
@@ -1869,9 +1909,16 @@ impl Run {
         name_findings(&mut observations, &traces);
         let asks = crate::fixloop::asks_of(records, &observations);
         let error_classes = error_classes(records);
+        // (a trace is read for its counts and its words, not for the
+        // operations and requests it names: a run of a million has tens of
+        // thousands)
         let traces = traces
             .into_iter()
-            .map(|o| (finding_identity(&o), o))
+            .map(|mut o| {
+                (o.episodes, o.saved_ids) = (Vec::new(), Vec::new());
+                (o.fixes, o.callers) = (Vec::new(), Vec::new());
+                (finding_identity(&o), o)
+            })
             .collect();
         Run {
             requests: records.len(),
@@ -1890,24 +1937,19 @@ impl Run {
         }
     }
 
-    /// A run of `records` reckoned here: where its time went on one thread
-    /// while its operations and findings are made on this one.
+    /// A run of `records` reckoned: where its time went, its operations and
+    /// its findings.
     pub fn analysed(
         header: &crate::session::SessionHeader,
         records: &[Record],
         prices: &RequestPrices,
     ) -> Run {
-        let (profile, observations, traces) = std::thread::scope(|scope| {
-            let p = scope.spawn(|| profile(records, prices));
-            let episodes = crate::episode::episodes(records);
-            let o = crate::episode::observations_of(header, records, &episodes);
-            let t = crate::episode::traces_of(header, records, &episodes);
-            drop(episodes);
-            match p.join() {
-                Ok(p) => (p, o, t),
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        });
+        // (one after another, as [`crate::view::Analysis::of_records`])
+        let profile = profile(records, prices);
+        let episodes = crate::episode::episodes(records);
+        let observations = crate::episode::observations_of(header, records, &episodes);
+        let traces = crate::episode::traces_of(header, records, &episodes);
+        drop(episodes);
         Run::with(records, profile, observations, traces)
     }
 }
@@ -2213,7 +2255,7 @@ mod tests {
             .map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0 + i as f64))
             .collect();
         let mut slow = rec(21, 30, "PutObject", 503, 400.0);
-        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         slow.retries = 2;
         rs.push(slow);
         let p = profile(&rs, &RequestPrices::default());
@@ -2314,14 +2356,18 @@ mod tests {
                 },
                 status: Some(200),
                 latency_ms: 10.0,
-                request_headers: vec![Header::new(
-                    crate::callers::CALLER_HEADER,
-                    if i < 4 {
-                        "etl/load.py:12 read"
-                    } else {
-                        "etl/load.py:30 check"
-                    },
-                )],
+                lists: reqlog::Lists {
+                    request_headers: vec![Header::new(
+                        crate::callers::CALLER_HEADER,
+                        if i < 4 {
+                            "etl/load.py:12 read"
+                        } else {
+                            "etl/load.py:30 check"
+                        },
+                    )],
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             })
             .collect();
@@ -2480,10 +2526,11 @@ mod tests {
     #[test]
     fn a_request_that_never_reached_the_store_is_not_on_its_bill() {
         let mut refused = rec(2, 10, "PutObject", 403, 0.0);
-        refused.response_headers = vec![reqlog::Header::new("x-sonde-proxy", "refused")];
+        refused.lists_mut().response_headers =
+            vec![reqlog::Header::new("x-sonde-proxy", "refused")];
         let mut lost = rec(3, 20, "PutObject", 200, 5.0);
         lost.status = None;
-        lost.transport_error = Some("connection refused".into());
+        lost.rare_mut().transport_error = Some("connection refused".into());
         let rs = [rec(1, 0, "PutObject", 200, 5.0), refused, lost];
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!((p.cost.writes, p.cost.reads, p.cost.free), (1, 0, 0));
@@ -2705,15 +2752,17 @@ mod injected {
         // a trial's 503: the store never saw it
         let mut fault = put.clone();
         fault.status = Some(503);
-        fault.injected = Some("slowdown".into());
+        fault.rare_mut().injected = Some("slowdown".into());
         fault
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", "slowdown"));
         assert!(!reached_store(&fault));
         assert_eq!(price(&fault, &prices), 0.0);
         // an answer lost on purpose: the store made the write, and bills it
         let mut lost = fault.clone();
-        lost.response_headers
+        lost.lists_mut()
+            .response_headers
             .push(Header::new("x-sonde-store-status", "200"));
         assert_eq!(price(&lost, &prices), price(&put, &prices));
         let p = profile(&[put, fault, lost], &prices);
@@ -2772,7 +2821,7 @@ mod injected {
             ..Default::default()
         };
         l.bucket = Some("b".into());
-        l.query = vec![("prefix".into(), "out/".into())];
+        l.lists_mut().query = vec![("prefix".into(), "out/".into())];
         listed.push(l);
         assert_eq!(
             chains(&listed).iter().map(|c| c.requests).sum::<usize>(),

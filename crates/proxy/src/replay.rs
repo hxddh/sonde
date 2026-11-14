@@ -61,7 +61,12 @@ pub fn replay_tag(original: u64) -> String {
 
 /// The original id a replayed record stands for.
 pub fn original_of(r: &Record) -> Option<u64> {
-    r.job.as_deref()?.strip_prefix("replay:")?.parse().ok()
+    r.rare()
+        .job
+        .as_deref()?
+        .strip_prefix("replay:")?
+        .parse()
+        .ok()
 }
 
 /// Operations a replay leaves out when it is confined to a prefix: they would
@@ -106,7 +111,7 @@ pub struct Plan {
 }
 
 fn refused(r: &Record) -> bool {
-    r.response_headers
+    r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
@@ -114,7 +119,7 @@ fn refused(r: &Record) -> bool {
 /// The operation a record's own method, place and query name today.
 fn named(r: &Record) -> String {
     let headers: Vec<(String, String)> = r
-        .request_headers
+        .request_headers()
         .iter()
         .map(|h| (h.name.to_string(), h.value.to_string()))
         .collect();
@@ -122,7 +127,7 @@ fn named(r: &Record) -> String {
         &r.method,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query,
+        r.query(),
         &headers,
     )
 }
@@ -147,19 +152,19 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if !opts.prefix.is_empty() && (changes_bucket(&r.kind) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
-    if r.query.iter().any(|(k, _)| k == "versionId") {
+    if r.query().iter().any(|(k, _)| k == "versionId") {
         return Some("names a version of the original endpoint".into());
     }
     // a copy of a version: its id is the original endpoint's
-    if r.request_headers
+    if r.request_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-amz-copy-source") && h.value.contains("versionId="))
     {
         return Some("copies a version of the original endpoint".into());
     }
     // a cut document no longer ends its root element, flagged or not
-    if r.request_body_truncated
-        || r.request_body.as_ref().is_some_and(|b| {
+    if r.rare().request_body_truncated
+        || r.rare().request_body.as_ref().is_some_and(|b| {
             b.len() + 1024 >= reqlog::MAX_REQUEST_BODY && !b.trim_end().ends_with('>')
         })
     {
@@ -168,8 +173,8 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if reqlog::is_control_operation(&r.kind)
         && r.kind != "CompleteMultipartUpload"
         && r.kind != "CreateBucket"
-        && r.request_bytes.unwrap_or(0) > 0
-        && r.request_body.is_none()
+        && r.request_bytes.get().unwrap_or(0) > 0
+        && r.rare().request_body.is_none()
     {
         return Some("its body was not recorded".into());
     }
@@ -254,7 +259,7 @@ struct State {
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.query
+    r.query()
         .iter()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.as_str())
@@ -292,7 +297,7 @@ impl State {
         }
         let listing = r.kind.starts_with("List") && r.kind != "ListBuckets" && r.key.is_none();
         let mut has_prefix = false;
-        for (k, v) in &r.query {
+        for (k, v) in r.query() {
             match k.as_str() {
                 "prefix" => {
                     has_prefix = true;
@@ -348,7 +353,7 @@ impl State {
         if listing && !has_prefix && !opts.prefix.is_empty() {
             req = req.query("prefix", opts.prefix.clone());
         }
-        for h in &r.request_headers {
+        for h in r.request_headers() {
             if !keep_header(&h.name) {
                 continue;
             }
@@ -378,6 +383,7 @@ impl State {
                 .ok_or("no upload id")?;
             let parts = self.parts.get(&upload).cloned().unwrap_or_default();
             let wanted: Vec<u32> = r
+                .rare()
                 .request_body
                 .as_deref()
                 .map(|b| {
@@ -397,14 +403,14 @@ impl State {
             }
             xml.push_str("</CompleteMultipartUpload>");
             req = req.body(Body::from(xml));
-        } else if let Some(b) = &r.request_body {
+        } else if let Some(b) = &r.rare().request_body {
             let body = if r.kind == "DeleteObjects" {
                 move_keys(b, &opts.prefix)
             } else {
                 b.clone()
             };
             req = req.body(Body::from(body));
-        } else if let Some(n) = r.request_bytes.filter(|n| *n > 0) {
+        } else if let Some(n) = r.request_bytes.get().filter(|n| *n > 0) {
             if n > 1 << 30 {
                 return Err("a body over 1 GiB".into());
             }
@@ -457,7 +463,7 @@ impl State {
             _ => {}
         }
         let original = r
-            .response_headers
+            .response_headers()
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("etag"))
             .map(|h| h.value.to_string());
@@ -571,6 +577,7 @@ pub fn outcome(r: &Record) -> String {
     }
     let status = r.status.unwrap_or(0);
     let code = r
+        .rare()
         .error_body
         .as_deref()
         .and_then(|b| tags(b, "Code").first().map(|c| c.to_string()));
@@ -583,14 +590,14 @@ pub fn outcome(r: &Record) -> String {
 /// What a request answered well carried, to compare beside its outcome: a
 /// listing's keys, a read's bytes. `None` when there is nothing to compare.
 pub fn carried(r: &Record) -> Option<String> {
-    if !r.status.is_some_and(|s| (200..300).contains(&s)) || r.transport_error.is_some() {
+    if !r.status.is_some_and(|s| (200..300).contains(&s)) || r.rare().transport_error.is_some() {
         return None;
     }
     if let Some(n) = r.header(reqlog::KEYS_HEADER) {
         return Some(format!("{n} key{}", if n == "1" { "" } else { "s" }));
     }
     (r.method == "GET" && r.key.is_some())
-        .then_some(r.response_bytes)
+        .then_some(r.response_bytes.get())
         .flatten()
         .map(|n| format!("{n} B"))
 }
@@ -640,7 +647,7 @@ impl Comparison {
 }
 
 fn conditions(r: &Record) -> Vec<String> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .filter(|h| {
             let n = h.name.to_ascii_lowercase();
@@ -1058,7 +1065,7 @@ pub fn transcript(records: &[Record]) -> String {
             (Some(b), Some(k)) => format!("{b}/{}", strip(k)),
             (Some(b), None) => {
                 let p = r
-                    .query
+                    .query()
                     .iter()
                     .find(|(k, _)| k == "prefix")
                     .map(|(_, v)| strip(v))
@@ -1126,11 +1133,12 @@ mod tests {
                 bucket: Some("b".into()),
                 key: (method == "GET" && keys.is_none()).then(|| "k".into()),
                 status: Some(200),
-                response_bytes: Some(bytes),
+                response_bytes: Some(bytes).into(),
                 ..Default::default()
             };
             if let Some(n) = keys {
-                r.response_headers
+                r.lists_mut()
+                    .response_headers
                     .push(reqlog::Header::new(reqlog::KEYS_HEADER, n));
             }
             r
@@ -1149,7 +1157,7 @@ mod tests {
             rec(14, "ListObjectsV2", "GET", Some("1"), 340),
         ];
         for (r, o) in replay.iter_mut().zip(1..) {
-            r.job = Some(replay_tag(o));
+            r.rare_mut().job = Some(replay_tag(o));
         }
         let c = compare(&original, &replay, &[]);
         assert_eq!((c.compared, c.same, c.differ()), (4, 2, 2), "{c:#?}");
@@ -1195,12 +1203,18 @@ mod tests {
                 method: "GET".into(),
                 kind: "ListObjectsV2".into(),
                 bucket: Some("b".into()),
-                query: vec![("prefix".into(), "p/".into())],
                 status: Some(200),
+                lists: reqlog::Lists {
+                    query: vec![("prefix".into(), "p/".into())],
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             };
             if let Some(t) = token {
-                r.query.push(("continuation-token".into(), t.into()));
+                r.lists_mut()
+                    .query
+                    .push(("continuation-token".into(), t.into()));
             }
             r
         };
@@ -1244,11 +1258,11 @@ mod tests {
             status: Some(200),
             ..Default::default()
         };
-        a.request_headers = vec![reqlog::Header::new("If-None-Match", "*")];
+        a.lists_mut().request_headers = vec![reqlog::Header::new("If-None-Match", "*")];
         let mut b = a.clone();
         b.key = Some("replay-20261107-015048/db/x".into());
         b.status = Some(412);
-        b.error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
+        b.rare_mut().error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
         assert_eq!(
             transcript(&[a]),
             "PutObject b/db/x [if-none-match: *] → 200\n"

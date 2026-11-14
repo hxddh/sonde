@@ -187,40 +187,44 @@ fn redact_with(s: &mut Session, r: &Redactor) {
         .map(|c| crate::program::program_name(c).unwrap_or_default());
     s.logs.clear();
     for rec in &mut s.records {
-        rec.endpoint = "endpoint".into();
-        rec.url = String::new();
-        rec.job = None;
-        // what failed, not where: the message names the URL
-        rec.transport_error = rec
-            .transport_error
-            .as_ref()
-            .map(|_| "the request did not reach the store".to_string());
         rec.bucket = rec
             .bucket
             .as_deref()
             .map(|b| format!("bucket-{}", r.token(b)).into());
         rec.key = rec.key.as_deref().map(|k| r.path(k).into());
-        for (k, v) in &mut rec.query {
-            if matches!(
-                k.as_str(),
-                "prefix" | "start-after" | "marker" | "key-marker"
-            ) {
-                *v = r.path(v).into();
-            } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
-                // ids, tokens, response-* overrides (a file name), an app's own
-                *v = r.token(v).into();
+        if rec.lists.is_some() {
+            let l = rec.lists_mut();
+            for (k, v) in &mut l.query {
+                if matches!(
+                    k.as_str(),
+                    "prefix" | "start-after" | "marker" | "key-marker"
+                ) {
+                    *v = r.path(v).into();
+                } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
+                    // ids, tokens, response-* overrides (a file name), an app's own
+                    *v = r.token(v).into();
+                }
             }
+            l.request_headers.clear();
+            l.response_headers.clear();
         }
-        rec.request_headers.clear();
-        rec.response_headers.clear();
-        rec.request_body = None;
-        rec.request_id = None;
-        rec.host_id = None;
+        let x = rec.rare_mut();
+        x.endpoint = "endpoint".into();
+        x.url = String::new();
+        x.job = None;
+        // what failed, not where: the message names the URL
+        x.transport_error = x
+            .transport_error
+            .as_ref()
+            .map(|_| "the request did not reach the store".to_string());
+        x.request_body = None;
+        x.request_id = None;
+        x.host_id = None;
         // who asked (an IAM ARN: account and user) and from where
-        rec.requester = None;
-        rec.region = None;
+        x.requester = None;
+        x.region = None;
         // the S3 error code says what went wrong; the message may name things
-        rec.error_body = rec.error_body.as_deref().and_then(|b| {
+        x.error_body = x.error_body.as_deref().and_then(|b| {
             let code = b.split("<Code>").nth(1)?.split("</Code>").next()?;
             Some(format!("<Error><Code>{code}</Code></Error>"))
         });
@@ -244,11 +248,15 @@ mod tests {
             kind: "GetObject".into(),
             bucket: Some("acme-payroll".into()),
             key: Some(key.into()),
-            url: "https://acme-payroll.s3.amazonaws.com/x".into(),
             status: Some(404),
             latency_ms: 4.0,
-            error_body: Some("<Error><Code>NoSuchKey</Code><Message>acme-payroll/2026/alice.parquet</Message></Error>".into()),
-            request_id: Some("REQ".into()),
+            rare: reqlog::Rare {
+                url: "https://acme-payroll.s3.amazonaws.com/x".into(),
+                error_body: Some("<Error><Code>NoSuchKey</Code><Message>acme-payroll/2026/alice.parquet</Message></Error>".into()),
+                request_id: Some("REQ".into()),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
         };
@@ -298,7 +306,7 @@ mod tests {
                 .ends_with("/_delta_log/00000000000000000010.json")
         );
         assert_eq!(
-            s.records[0].error_body.as_deref(),
+            s.records[0].rare().error_body.as_deref(),
             Some("<Error><Code>NoSuchKey</Code></Error>")
         );
         assert_eq!(s.header.command.as_deref(), Some("run"));
@@ -309,11 +317,11 @@ mod tests {
         let mut s = session();
         let r = &mut s.records[0];
         r.key = Some("hr/john.smith".into());
-        r.job = Some("payroll-alice".into());
-        r.transport_error = Some(
+        r.rare_mut().job = Some("payroll-alice".into());
+        r.rare_mut().transport_error = Some(
             "error sending request for url (https://acme-payroll.s3.amazonaws.com/hr/alice)".into(),
         );
-        r.query = vec![
+        r.lists_mut().query = vec![
             (
                 "response-content-disposition".into(),
                 "attachment; filename=alice-salary.csv".into(),
@@ -331,8 +339,8 @@ mod tests {
     #[test]
     fn who_sent_a_request_and_from_which_region_do_not_survive_redaction() {
         let mut s = session();
-        s.records[0].requester = Some("arn:aws:iam::123456789012:user/alice".into());
-        s.records[0].region = Some("eu-west-3".into());
+        s.records[0].rare_mut().requester = Some("arn:aws:iam::123456789012:user/alice".into());
+        s.records[0].rare_mut().region = Some("eu-west-3".into());
         s.header.region = "eu-west-3".into();
         redact(&mut s);
         let doc = serde_json::to_string(&crate::share::session_json(&s, &RequestPrices::default()))

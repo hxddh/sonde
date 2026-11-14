@@ -294,7 +294,7 @@ fn took_ms(r: &Record) -> f64 {
 /// and its `Range` (two ranges of one object are two requests).
 pub(crate) fn request_name(r: &Record) -> String {
     let range = r
-        .request_headers
+        .request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("range"))
         .map_or("", |h| h.value.trim());
@@ -340,64 +340,89 @@ fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
     if places.is_empty() {
         return out;
     }
-    let mut groups: std::collections::HashMap<String, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (i, r) in records.iter().enumerate() {
-        if !places.contains(&(r.bucket.as_deref(), r.key.as_deref())) {
-            continue;
-        }
-        groups.entry(request_name(r)).or_default().push(i);
-    }
-    for group in groups.values_mut() {
-        if !group
-            .iter()
-            .any(|&i| crate::episode::retryable(&records[i]))
-        {
-            continue;
-        }
-        group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
-        // (failure, its retry, the wait between them), in time order
-        let mut links: Vec<(usize, usize, i64)> = Vec::new();
-        let mut free = 0;
-        for at in 0..group.len() {
-            let r = &records[group[at]];
-            if !crate::episode::retryable(r) {
-                continue;
+    // the requests there by their name: by a hash of it, sorted (no name is
+    // kept), and by the name itself where two hashes meet
+    let hash = |r: &Record| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        request_name(r).hash(&mut h);
+        h.finish()
+    };
+    let mut named: Vec<(u64, u32)> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| places.contains(&(r.bucket.as_deref(), r.key.as_deref())))
+        .map(|(i, r)| (hash(r), i as u32))
+        .collect();
+    named.sort_unstable();
+    for same in named.chunk_by(|a, b| a.0 == b.0) {
+        let mut group: Vec<usize> = same.iter().map(|&(_, i)| i as usize).collect();
+        if group.len() > 1 {
+            let mut by_name: Vec<(String, usize)> = group
+                .iter()
+                .map(|&i| (request_name(&records[i]), i))
+                .collect();
+            by_name.sort_unstable();
+            for one in by_name.chunk_by(|a, b| a.0 == b.0) {
+                group = one.iter().map(|(_, i)| *i).collect();
+                link_retries(records, &mut group, &mut out);
             }
-            let told = end_us(r);
-            free = free.max(at + 1);
-            while free < group.len() && start_us(&records[group[free]]) < told {
-                free += 1;
-            }
-            if let Some(&next) = group.get(free) {
-                let wait = start_us(&records[next]) - told;
-                if wait <= RETRY_WINDOW_US {
-                    links.push((at, free, wait));
-                    free += 1;
-                }
-            }
-        }
-        // chains of failures each followed by the next: a steady one is a poll
-        let mut i = 0;
-        while i < links.len() {
-            let mut j = i + 1;
-            while j < links.len() && links[j].0 == links[j - 1].1 {
-                j += 1;
-            }
-            let chain = &links[i..j];
-            let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
-            waits.sort_unstable();
-            let mid = waits[waits.len() / 2];
-            let poll = chain.len() >= 3
-                && waits[0] >= POLL_MIN_US
-                && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
-            if !poll {
-                out.extend(chain.iter().map(|l| (group[l.0], group[l.1])));
-            }
-            i = j;
+        } else {
+            link_retries(records, &mut group, &mut out);
         }
     }
     out
+}
+
+/// [`retry_links`] among the requests of one name (`group`, by index).
+fn link_retries(records: &[Record], group: &mut [usize], out: &mut Vec<(usize, usize)>) {
+    if !group
+        .iter()
+        .any(|&i| crate::episode::retryable(&records[i]))
+    {
+        return;
+    }
+    group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
+    // (failure, its retry, the wait between them), in time order
+    let mut links: Vec<(usize, usize, i64)> = Vec::new();
+    let mut free = 0;
+    for at in 0..group.len() {
+        let r = &records[group[at]];
+        if !crate::episode::retryable(r) {
+            continue;
+        }
+        let told = end_us(r);
+        free = free.max(at + 1);
+        while free < group.len() && start_us(&records[group[free]]) < told {
+            free += 1;
+        }
+        if let Some(&next) = group.get(free) {
+            let wait = start_us(&records[next]) - told;
+            if wait <= RETRY_WINDOW_US {
+                links.push((at, free, wait));
+                free += 1;
+            }
+        }
+    }
+    // chains of failures each followed by the next: a steady one is a poll
+    let mut i = 0;
+    while i < links.len() {
+        let mut j = i + 1;
+        while j < links.len() && links[j].0 == links[j - 1].1 {
+            j += 1;
+        }
+        let chain = &links[i..j];
+        let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
+        waits.sort_unstable();
+        let mid = waits[waits.len() / 2];
+        let poll = chain.len() >= 3
+            && waits[0] >= POLL_MIN_US
+            && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
+        if !poll {
+            out.extend(chain.iter().map(|l| (group[l.0], group[l.1])));
+        }
+        i = j;
+    }
 }
 
 /// The smallest body whose transfer is timed against its size: under it the
@@ -550,8 +575,19 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let (mut client, mut server, mut throttled, mut transport, mut injected) =
         (zeros(), zeros(), zeros(), zeros(), zeros());
     let mut retries = zeros();
-    let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
-    let mut all: Vec<f64> = Vec::with_capacity(records.len());
+    // each slice's times side by side in one list, made at its size: the
+    // slices' requests counted first
+    let mut slice_at = vec![0usize; bins + 1];
+    if let Some(tl) = &tl {
+        for r in records {
+            slice_at[tl.bin_of(r) + 1] += 1;
+        }
+    }
+    for i in 0..bins {
+        slice_at[i + 1] += slice_at[i];
+    }
+    let mut took = vec![0f64; slice_at[bins]];
+    let mut filled = slice_at.clone();
     let mut counts = ErrorCounts::default();
     let (mut up_bytes, mut down_bytes, mut retries_total) = (0u64, 0u64, 0u64);
     let mut ops: BTreeMap<&str, Op> = BTreeMap::new();
@@ -582,18 +618,21 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         let s = start_us(r);
         let latency_ms = took_ms(r);
         n[i] += 1.0;
-        took[i].push(latency_ms);
-        all.push(latency_ms);
+        took[filled[i]] = latency_ms;
+        filled[i] += 1;
 
-        let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
+        let (u, d) = (
+            r.request_bytes.get().unwrap_or(0),
+            r.response_bytes.get().unwrap_or(0),
+        );
         up[i] += u as f64;
         down[i] += d as f64;
         up_bytes += u;
         down_bytes += d;
-        if let Some(b) = r.request_bytes {
+        if let Some(b) = r.request_bytes.get() {
             sent.add(b);
         }
-        if let Some(b) = r.response_bytes {
+        if let Some(b) = r.response_bytes.get() {
             received.add(b);
         }
 
@@ -602,13 +641,14 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         // how a program's SDK retries through the proxy: the same request
         // again after an answer that asks for it ([`retry_links`] has the rule)
         let again = u32::from(sent_again[at]);
-        retries[i] += (r.retries + again) as f64;
-        retries_total += (r.retries + again) as u64;
+        let mine = u32::from(r.retries);
+        retries[i] += (mine + again) as f64;
+        retries_total += (mine + again) as u64;
         if is_failure(r) {
             // what sonde did in the store's place is not the store's failure
-            let (series, count) = if r.injected.is_some() {
+            let (series, count) = if r.rare().injected.is_some() {
                 (&mut injected, &mut counts.injected)
-            } else if r.status.is_none() || r.transport_error.is_some() {
+            } else if r.status.is_none() || r.rare().transport_error.is_some() {
                 (&mut transport, &mut counts.transport)
             } else if crate::profile::throttled(r) {
                 (&mut throttled, &mut counts.throttled)
@@ -635,7 +675,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         op.requests += 1;
         op.billed += usize::from(reached_store(r));
         op.cost += cost;
-        if let Some(fb) = r.first_byte_ms.filter(|_| timed) {
+        if let Some(fb) = r.first_byte_ms.get().filter(|_| timed) {
             let fb = if fb.is_finite() {
                 fb.clamp(0.0, reqlog::MAX_LATENCY_MS)
             } else {
@@ -652,9 +692,9 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         let body = match r.kind.as_str() {
             "GetObject" => r.response_bytes,
             "PutObject" | "UploadPart" => r.request_bytes,
-            _ => None,
+            _ => None.into(),
         };
-        if let Some(b) = body.filter(|b| *b >= TRANSFER_MIN)
+        if let Some(b) = body.get().filter(|b| *b >= TRANSFER_MIN)
             && latency_ms > 0.0
             && !r.is_error()
         {
@@ -667,7 +707,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         }
 
         let at = (s - t0) as f64 / 1000.0 + start_ms;
-        let code = r.error_body.as_deref().and_then(s3_code);
+        let code = r.rare().error_body.as_deref().and_then(s3_code);
         let row = statuses
             .entry((r.status, code))
             .or_insert_with(|| StatusRow {
@@ -679,7 +719,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
                 last_ms: at,
             });
         row.count += 1;
-        row.injected += usize::from(r.injected.is_some());
+        row.injected += usize::from(r.rare().injected.is_some());
         row.first_ms = row.first_ms.min(at);
         row.last_ms = row.last_ms.max(at);
 
@@ -691,19 +731,20 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
 
     // latency: the whole run's and each slice's, by the profile's definition
-    let whole = bands(&mut all);
+    let (mut p50, mut p95, mut p99) = (zeros(), zeros(), zeros());
+    for i in 0..bins {
+        let l = &mut took[slice_at[i]..slice_at[i + 1]];
+        if !l.is_empty() {
+            (p50[i], p95[i], p99[i]) = bands(l);
+        }
+    }
+    // (the slices' times are every request's: the whole run's, once the slices are done)
+    let whole = bands(&mut took);
     let (whole50, whole95, whole99) = (
         timed.then_some(whole.0),
         timed.then_some(whole.1),
         timed.then_some(whole.2),
     );
-    let (mut p50, mut p95, mut p99) = (zeros(), zeros(), zeros());
-    for (i, l) in took.iter_mut().enumerate() {
-        if l.is_empty() {
-            continue;
-        }
-        (p50[i], p95[i], p99[i]) = bands(l);
-    }
 
     // in flight: the requests in the order they started, the ends of those
     // still running kept by time (as many as are in flight, never all of
@@ -1337,7 +1378,9 @@ mod tests {
     fn another_range_of_the_object_is_another_request() {
         let ranged = |id, at, range: &str, status| {
             let mut r = get(id, at, "k", status);
-            r.request_headers.push(Header::new("range", range));
+            r.lists_mut()
+                .request_headers
+                .push(Header::new("range", range));
             r
         };
         assert_eq!(
@@ -1394,7 +1437,7 @@ mod tests {
     fn a_run_under_a_second_has_totals_and_no_rate() {
         let mut one = get(1, 0, "k", 200);
         one.latency_ms = 2.0;
-        one.response_bytes = Some(10);
+        one.response_bytes = Some(10).into();
         let s = signals(std::slice::from_ref(&one), &RequestPrices::default());
         assert!(s.short);
         assert_eq!(
@@ -1489,7 +1532,7 @@ mod tests {
                 let mut r = get(i as u64, i as i64 * 400, "k", 200);
                 r.kind = (*op).into();
                 r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
-                r.first_byte_ms = Some(2.0);
+                r.first_byte_ms = Some(2.0).into();
                 r
             })
             .collect();

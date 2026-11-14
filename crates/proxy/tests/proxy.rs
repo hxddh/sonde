@@ -348,10 +348,10 @@ async fn put_get_list_are_resigned_and_recorded() {
     let put = records.last().unwrap();
     assert_eq!(put.key.as_deref(), Some("dir/a b+c.txt"));
     assert_eq!(put.request_bytes, Some(19));
-    assert_eq!(put.endpoint, "target");
+    assert_eq!(put.rare().endpoint, "target");
     // what the application sent is kept; its signature is masked
     let auth = put
-        .request_headers
+        .request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("authorization"))
         .unwrap();
@@ -359,7 +359,7 @@ async fn put_get_list_are_resigned_and_recorded() {
     assert!(up.calls.lock().len() == 3);
     // a body read to its end: logged with its first byte inside its whole time
     let get = records.iter().find(|r| r.kind == "GetObject").unwrap();
-    let first = get.first_byte_ms.expect("first byte measured");
+    let first = get.first_byte_ms.get().expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
 }
@@ -393,9 +393,9 @@ async fn a_bucket_in_another_region_is_signed_for_its_region() {
     assert!(
         records
             .iter()
-            .all(|r| r.region.as_deref() == Some("ap-southeast-2")),
+            .all(|r| r.rare().region.as_deref() == Some("ap-southeast-2")),
         "{:?}",
-        records.iter().map(|r| &r.region).collect::<Vec<_>>()
+        records.iter().map(|r| &r.rare().region).collect::<Vec<_>>()
     );
 }
 
@@ -628,9 +628,10 @@ async fn upstream_errors_keep_their_body() {
         .unwrap();
     assert_eq!(resp.status(), 403);
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.request_id.as_deref(), Some("UP403"));
+    assert_eq!(rec.rare().request_id.as_deref(), Some("UP403"));
     assert!(
-        rec.error_body
+        rec.rare()
+            .error_body
             .as_deref()
             .unwrap()
             .contains("SignatureDoesNotMatch")
@@ -663,7 +664,7 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
     assert_ne!(resp.status(), 400, "{}", resp.text().await.unwrap());
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(r.kind, "DeleteObjects");
-    assert_eq!(r.request_body.as_deref(), Some(doc));
+    assert_eq!(r.rare().request_body.as_deref(), Some(doc));
 }
 
 #[tokio::test]
@@ -716,7 +717,8 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
     assert_eq!(refused.len(), 3);
     assert!(refused.iter().all(|r| r.status == Some(403)));
     assert!(refused.iter().any(|r| {
-        r.error_body
+        r.rare()
+            .error_body
             .as_deref()
             .is_some_and(|b| b.contains("not this machine's"))
     }));
@@ -1001,8 +1003,9 @@ async fn a_body_that_stops_moving_is_cut_after_the_timeout() {
         records = log.snapshot();
     }
     let r = records.first().expect("the request is recorded");
-    assert_eq!((r.status, r.response_bytes), (Some(200), Some(1)));
+    assert_eq!((r.status, r.response_bytes.get()), (Some(200), Some(1)));
     let why = r
+        .rare()
         .transport_error
         .as_deref()
         .expect("a cut body is an error");
@@ -1198,17 +1201,17 @@ async fn a_request_held_past_the_programs_patience_is_kept_as_given_up() {
     let mut held = None;
     for _ in 0..50 {
         let recs = log.list(&reqlog::Filter::default(), 10);
-        held = recs.into_iter().find(|r| r.injected.is_some());
+        held = recs.into_iter().find(|r| r.rare().injected.is_some());
         if held.is_some() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let held = held.expect("the given-up attempt is recorded");
-    assert!(held.transport_error.is_some(), "{held:?}");
+    assert!(held.rare().transport_error.is_some(), "{held:?}");
     assert!(sonde_proxy::trial::faulted(&held));
     assert!(
-        held.response_headers
+        held.response_headers()
             .iter()
             .any(|h| h.name == sonde_proxy::fault::GIVEN_UP_HEADER),
         "{held:?}"
@@ -1227,10 +1230,13 @@ async fn a_fault_is_answered_without_the_store_and_the_retry_goes_through() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(up.calls.lock().len(), 1);
     let recs = log.list(&reqlog::Filter::default(), 10);
-    let injected: Vec<_> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    let injected: Vec<_> = recs
+        .iter()
+        .filter(|r| r.rare().injected.is_some())
+        .collect();
     assert_eq!(injected.len(), 1);
     assert_eq!(injected[0].status, Some(503));
-    assert_eq!(injected[0].injected.as_deref(), Some("slowdown"));
+    assert_eq!(injected[0].rare().injected.as_deref(), Some("slowdown"));
 }
 
 #[tokio::test]
@@ -1240,9 +1246,9 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     assert_eq!(r.status, 500);
     assert_eq!(up.calls.lock().len(), 1, "the store took the write");
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.injected.as_deref(), Some("lost-answer"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("lost-answer"));
     assert!(
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-store-status" && h.value == "200")
     );
@@ -1290,7 +1296,7 @@ async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.key.as_deref(), Some(".."));
     assert!(
-        !rec.response_headers
+        !rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-proxy"),
         "not refused"
@@ -1335,13 +1341,13 @@ async fn two_batches_of_deletes_each_meet_the_fault_and_each_has_its_retry() {
     names.dedup();
     assert_eq!(names.len(), 2, "{names:?}");
     assert!(
-        recs.iter().all(|r| r.request_body.is_some()),
+        recs.iter().all(|r| r.rare().request_body.is_some()),
         "kept on a failed one too"
     );
     // read as a trial: both failed, both sent again
     let clean: Vec<reqlog::Record> = recs
         .iter()
-        .filter(|r| r.injected.is_none())
+        .filter(|r| r.rare().injected.is_none())
         .cloned()
         .collect();
     let t = sonde_proxy::trial::judge(
@@ -1436,7 +1442,7 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
         "the store had sent {sent} bytes: the whole body was read"
     );
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.injected.as_deref(), Some("lose-all"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("lose-all"));
 }
 
 #[tokio::test]
@@ -1458,7 +1464,7 @@ async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
     for rec in log.list(&reqlog::Filter::default(), 10) {
         assert_eq!(rec.status, Some(400));
         assert!(
-            rec.response_headers
+            rec.response_headers()
                 .iter()
                 .any(|h| h.name == "x-sonde-proxy" && h.value == "refused")
         );
@@ -1494,7 +1500,7 @@ async fn a_body_hash_the_program_sends_is_not_the_requests_name() {
     assert_eq!(names.len(), 2, "{names:?}");
     for r in &recs {
         let kept: Vec<&str> = r
-            .request_headers
+            .request_headers()
             .iter()
             .filter(|h| {
                 h.name
@@ -1538,13 +1544,13 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     let rec = log
         .list(&reqlog::Filter::default(), 10)
         .into_iter()
-        .find(|r| r.injected.is_some())
+        .find(|r| r.rare().injected.is_some())
         .expect("recorded as injected");
     assert_eq!(rec.status, Some(200));
     assert_eq!(rec.response_bytes, Some(500));
-    assert_eq!(rec.injected.as_deref(), Some("cut-body"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("cut-body"));
     let header = |n: &str| {
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .find(|h| h.name == n)
             .map(|h| h.value.as_str())
@@ -1553,7 +1559,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     assert_eq!(header(sonde_proxy::CUT_HEADER), Some("500"));
     assert_eq!(header("x-sonde-store-status"), Some("200"));
     assert_eq!(
-        rec.transport_error.as_deref(),
+        rec.rare().transport_error.as_deref(),
         Some("sonde cut the response body after 500 of 1000 bytes on purpose (scenario cut-body)")
     );
     assert!(sonde_proxy::trial::faulted(&rec));
@@ -1576,7 +1582,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     let injected = log
         .list(&reqlog::Filter::default(), 20)
         .iter()
-        .filter(|r| r.injected.is_some())
+        .filter(|r| r.rare().injected.is_some())
         .count();
     assert_eq!(injected, 1);
 }
@@ -1616,7 +1622,10 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
     assert_eq!(app.send_raw(swap()).await.unwrap().status, 200);
 
     let recs = log.list(&reqlog::Filter::default(), 20);
-    let lost: Vec<&reqlog::Record> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    let lost: Vec<&reqlog::Record> = recs
+        .iter()
+        .filter(|r| r.rare().injected.is_some())
+        .collect();
     assert_eq!(lost.len(), 2);
     for r in &lost {
         assert_eq!(r.status, Some(412));

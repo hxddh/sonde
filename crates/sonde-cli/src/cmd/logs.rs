@@ -249,7 +249,7 @@ pub(super) async fn import_logs(
     }
     // the requests are the endpoint's: priced and checked as its
     for r in records.iter_mut() {
-        r.endpoint = ep.as_str().into();
+        r.rare_mut().endpoint = ep.as_str().into();
     }
     records.sort_by_key(|r| r.time);
     for (i, r) in records.iter_mut().enumerate() {
@@ -424,7 +424,11 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("big".into()),
             status: Some(200),
-            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+            lists: reqlog::Lists {
+                query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let started = || rec(0, "POST", "CreateMultipartUpload", &[("uploads", "")]);

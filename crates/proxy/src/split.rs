@@ -121,8 +121,9 @@ const BANDS: [(u64, &str); 5] = [
 fn band(r: &Record) -> usize {
     let n = r
         .request_bytes
+        .get()
         .unwrap_or(0)
-        .max(r.response_bytes.unwrap_or(0));
+        .max(r.response_bytes.get().unwrap_or(0));
     if n == 0 {
         return 0;
     }
@@ -440,11 +441,15 @@ mod tests {
             key: Some(key.into()),
             status: Some(200),
             latency_ms: ms,
-            response_bytes: Some(bytes),
-            request_headers: vec![Header {
-                name: "user-agent".into(),
-                value: "Boto3/1.44.2 md/Botocore#1.44.2 Python/3.12".into(),
-            }],
+            response_bytes: Some(bytes).into(),
+            lists: reqlog::Lists {
+                request_headers: vec![Header {
+                    name: "user-agent".into(),
+                    value: "Boto3/1.44.2 md/Botocore#1.44.2 Python/3.12".into(),
+                }],
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
     }

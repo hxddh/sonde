@@ -180,16 +180,15 @@ pub fn episode_line(
         " ".repeat(pad),
         paint(&format!("{meta:>16}"), "2", color),
     );
-    match &e.outcome {
+    match e.outcome() {
         Outcome::Ok => {}
         Outcome::Failed(why) => line.push_str(&paint(&format!("  ✗ {why}"), "31", color)),
         Outcome::Refused => line.push_str(&paint("  refused by sonde", "33", color)),
     }
-    let notes: Vec<&str> = e
-        .notes
-        .iter()
+    let notes: Vec<String> = e
+        .notes()
+        .into_iter()
         .filter(|n| !hide.contains(n))
-        .map(String::as_str)
         .collect();
     if !notes.is_empty() {
         line.push_str(&paint(&format!("  · {}", notes.join(" · ")), "2", color));
@@ -303,7 +302,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             // million of them is a gigabyte of text)
             w.array(
                 "operations",
-                eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
+                eps.iter()
+                    .filter(|e| !a.errors || *e.outcome() != Outcome::Ok),
             )?;
             w.field("findings", &analysis.observations)?;
             if a.requests {
@@ -351,7 +351,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             } else if !a.summary && (a.errors || a.all) {
                 let shown: Vec<&Episode> = eps
                     .iter()
-                    .filter(|e| !a.errors || e.outcome != Outcome::Ok)
+                    .filter(|e| !a.errors || *e.outcome() != Outcome::Ok)
                     .collect();
                 let width = shown
                     .iter()

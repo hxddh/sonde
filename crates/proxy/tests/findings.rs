@@ -19,8 +19,8 @@ fn rec(id: u64, at_ms: i64, op: &str, key: Option<&str>, status: u16, latency: f
         key: key.map(Into::into),
         status: Some(status),
         latency_ms: latency,
-        request_bytes: Some(0),
-        response_bytes: Some(10),
+        request_bytes: Some(0).into(),
+        response_bytes: Some(10).into(),
         ..Default::default()
     }
 }
@@ -171,7 +171,7 @@ fn a_finding_whose_details_change_is_the_same_finding() {
 #[test]
 fn concurrent_uploads_to_one_key_each_get_their_own_create() {
     let q = |mut r: Record, kv: &[(&str, &str)]| {
-        r.query = kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
+        r.lists_mut().query = kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         r
     };
     let mut recs = Vec::new();
@@ -391,9 +391,9 @@ fn the_pages_of_one_listing_are_not_the_prefix_listed_again() {
     // ListObjects (v1) pages with a marker, as ListObjectsV2's with a token
     let page = |id: u64, op: &str, param: Option<(&str, &str)>| {
         let mut r = rec(id, id as i64 * 10, op, None, 200, 5.0);
-        r.query = vec![("prefix".into(), "t/".into())];
+        r.lists_mut().query = vec![("prefix".into(), "t/".into())];
         if let Some((k, v)) = param {
-            r.query.push((k.into(), v.into()));
+            r.lists_mut().query.push((k.into(), v.into()));
         }
         r
     };

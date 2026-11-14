@@ -103,7 +103,7 @@ pub fn condition<'a>(mut headers: impl Iterator<Item = (&'a str, &'a str)>) -> O
 /// [`condition`] of a recorded request.
 pub fn condition_of(r: &reqlog::Record) -> Option<Condition> {
     condition(
-        r.request_headers
+        r.request_headers()
             .iter()
             .map(|h| (h.name.as_str(), h.value.as_str())),
     )
@@ -379,14 +379,19 @@ pub fn identity<K: AsRef<str>, V: AsRef<str>>(
 /// with it, or, for a record from elsewhere (an import), the hash of the
 /// body itself.
 pub fn kept_body_hash(r: &reqlog::Record) -> Option<String> {
-    r.request_headers
+    r.request_headers()
         .iter()
         // sonde's own is the last: the proxy drops one the program sent, and
         // a record from elsewhere is not trusted to have done so
         .rev()
         .find(|h| h.name.eq_ignore_ascii_case(BODY_HASH_HEADER))
         .map(|h| h.value.to_string())
-        .or_else(|| r.request_body.as_deref().map(|b| body_hash(b.as_bytes())))
+        .or_else(|| {
+            r.rare()
+                .request_body
+                .as_deref()
+                .map(|b| body_hash(b.as_bytes()))
+        })
 }
 
 /// [`identity`] of a recorded request.
@@ -396,7 +401,7 @@ pub fn identity_of(r: &reqlog::Record) -> String {
         &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query,
+        r.query(),
         kept_body_hash(r).as_deref(),
     )
 }
@@ -1120,12 +1125,21 @@ mod tests {
             method: "POST".into(),
             kind: "DeleteObjects".into(),
             bucket: Some("b".into()),
-            query: vec![("delete".into(), "".into())],
-            request_body: Some("cut and redac…".into()),
+            rare: reqlog::Rare {
+                request_body: Some("cut and redac…".into()),
+                ..Default::default()
+            }
+            .into(),
+            lists: reqlog::Lists {
+                query: vec![("delete".into(), "".into())],
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let sent = body_hash(b"<Delete>the whole of it</Delete>");
-        r.request_headers
+        r.lists_mut()
+            .request_headers
             .push(reqlog::Header::new(BODY_HASH_HEADER, &sent));
         assert_eq!(
             identity_of(&r),
@@ -1134,7 +1148,7 @@ mod tests {
                 "DeleteObjects",
                 Some("b"),
                 None,
-                &r.query,
+                r.query(),
                 Some(&sent)
             )
         );

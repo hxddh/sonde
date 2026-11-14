@@ -236,7 +236,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         .format("%H:%M:%S%.3f")
         .to_string();
     let refused = r
-        .response_headers
+        .response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"));
     let miss = sonde_proxy::summary::is_miss(r);
@@ -249,7 +249,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         None => paint("ERR", "31", color),
     };
     let upload = matches!(r.method.as_str(), "PUT" | "POST");
-    let bytes = match (r.request_bytes, r.response_bytes) {
+    let bytes = match (r.request_bytes.get(), r.response_bytes.get()) {
         (Some(up), _) if up > 0 || (upload && !r.is_error()) => format!("↑{}", human_bytes(up)),
         (_, Some(down)) if down > 0 && !r.is_error() => format!("↓{}", human_bytes(down)),
         _ => String::new(),
@@ -259,13 +259,13 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         (Some(b), None) => format!("{b}/"),
         _ => "/".into(),
     };
-    let conditions = r.request_headers.iter().filter_map(|h| {
+    let conditions = r.request_headers().iter().filter_map(|h| {
         let n = h.name.to_ascii_lowercase();
         (n.starts_with("if-") || n == "x-amz-copy-source-if-match")
             .then(|| format!("{n}: {}", h.value))
     });
     let detail = r
-        .query
+        .query()
         .iter()
         .filter(|(k, _)| {
             matches!(
@@ -294,11 +294,11 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
     if !detail.is_empty() {
         line.push_str(&paint(&format!("  {detail}"), "2", color));
     }
-    if let Some(e) = &r.transport_error {
+    if let Some(e) = &r.rare().transport_error {
         line.push_str(&paint(&format!("  {e}"), "31", color));
     } else if r.is_error()
         && !miss
-        && let Some(code) = r.error_body.as_deref().and_then(|b| {
+        && let Some(code) = r.rare().error_body.as_deref().and_then(|b| {
             let start = b.find("<Code>")? + 6;
             Some(&b[start..start + b[start..].find("</Code>")?])
         })

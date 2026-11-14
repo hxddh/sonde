@@ -164,8 +164,14 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
         }
 
         // bytes: each way, slice by slice, what the profile counted
-        let up: u64 = recs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum();
-        let down: u64 = recs.iter().map(|r| r.response_bytes.unwrap_or(0)).sum();
+        let up: u64 = recs
+            .iter()
+            .map(|r| r.request_bytes.get().unwrap_or(0))
+            .sum();
+        let down: u64 = recs
+            .iter()
+            .map(|r| r.response_bytes.get().unwrap_or(0))
+            .sum();
         assert_eq!(
             (sig.bytes.up_bytes, sig.bytes.down_bytes),
             (up, down),
@@ -262,7 +268,9 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
         }
         assert_eq!(
             sig.sizes.request.iter().map(|b| b.count).sum::<usize>(),
-            recs.iter().filter(|r| r.request_bytes.is_some()).count(),
+            recs.iter()
+                .filter(|r| r.request_bytes.get().is_some())
+                .count(),
             "{name}"
         );
         assert_eq!(sig.sizes.request.iter().map(|b| b.bytes).sum::<u64>(), up);
@@ -360,25 +368,25 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
     }
     // a fault scenario answered 503 in the store's place; the store's own 503
     recs[2].status = Some(503);
-    recs[2].injected = Some("slow-down".into());
-    recs[2].error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+    recs[2].rare_mut().injected = Some("slow-down".into());
+    recs[2].rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
     recs[3].status = Some(503);
-    recs[3].error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+    recs[3].rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
     // a scenario lost an answer: injected too, not a transport error
     recs[4].status = None;
-    recs[4].transport_error = Some("connection reset".into());
-    recs[4].injected = Some("lost-answer".into());
+    recs[4].rare_mut().transport_error = Some("connection reset".into());
+    recs[4].rare_mut().injected = Some("lost-answer".into());
     // a scenario that only delayed a request failed nothing
-    recs[5].injected = Some("delay".into());
+    recs[5].rare_mut().injected = Some("delay".into());
     // the rest of the classes
     recs[6].status = Some(403);
-    recs[6].error_body = Some("AccessDenied: no".into());
+    recs[6].rare_mut().error_body = Some("AccessDenied: no".into());
     recs[7].status = None;
-    recs[7].transport_error = Some("timed out".into());
+    recs[7].rare_mut().transport_error = Some("timed out".into());
     recs[7].retries = 3;
     // a lookup that found nothing is no error
     recs[8].status = Some(404);
-    recs[8].error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
+    recs[8].rare_mut().error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
 
     let s = signals(&recs, &RequestPrices::default());
     let c = &s.errors.counts;
@@ -426,12 +434,12 @@ fn the_first_byte_is_told_from_the_rest_by_kind_of_request() {
     // reads: the body is most of the time; writes: the answer is all of it
     for i in 0..5u64 {
         let mut r = rec(i + 1, i as i64 * 10, "GetObject", 200, 100.0);
-        r.first_byte_ms = Some(20.0 + i as f64);
+        r.first_byte_ms = Some(20.0 + i as f64).into();
         recs.push(r);
     }
     for i in 5..8u64 {
         let mut r = rec(i + 1, i as i64 * 10, "PutObject", 200, 50.0);
-        r.first_byte_ms = Some(50.0);
+        r.first_byte_ms = Some(50.0).into();
         recs.push(r);
     }
     // one whose first byte was not timed is in neither
@@ -470,8 +478,8 @@ fn sizes_fall_in_buckets_that_double_and_transfers_are_timed_against_them() {
             200,
             ms,
         );
-        r.request_bytes = Some(bytes);
-        r.response_bytes = Some(0);
+        r.request_bytes = Some(bytes).into();
+        r.response_bytes = Some(0).into();
         recs.push(r);
     };
     // 8 MiB in one, two and four seconds: 8, 4 and 2 MiB/s
@@ -486,12 +494,12 @@ fn sizes_fall_in_buckets_that_double_and_transfers_are_timed_against_them() {
     put(1, 10.0);
     put(0, 10.0);
     let mut get = rec(9, 90, "GetObject", 200, 500.0);
-    get.response_bytes = Some(64 * 1024);
+    get.response_bytes = Some(64 * 1024).into();
     recs.push(get);
     // a transfer that failed moved nothing whole
     let mut cut = rec(10, 100, "GetObject", 200, 500.0);
-    cut.response_bytes = Some(32 * MIB);
-    cut.transport_error = Some("cut".into());
+    cut.response_bytes = Some(32 * MIB).into();
+    cut.rare_mut().transport_error = Some("cut".into());
     recs.push(cut);
     // a size not known is in no bucket
     recs.push(rec(11, 110, "HeadObject", 200, 1.0));
@@ -681,16 +689,21 @@ fn million() -> Vec<Record> {
                 bucket: Some("b".into()),
                 key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if failed { 503 } else { 200 }),
-                error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
                 latency_ms: 3.0 + (i % 50) as f64,
-                first_byte_ms: Some(1.0 + (i % 7) as f64),
+                first_byte_ms: Some(1.0 + (i % 7) as f64).into(),
                 request_bytes: Some(if method == "PUT" {
                     100_000 + i % 5_000_000
                 } else {
                     0
-                }),
-                response_bytes: Some(if op == "GetObject" { i % 300_000 } else { 200 }),
-                retries: u32::from(i % 211 == 0),
+                })
+                .into(),
+                response_bytes: Some(if op == "GetObject" { i % 300_000 } else { 200 }).into(),
+                retries: u16::from(i % 211 == 0),
+                rare: reqlog::Rare {
+                    error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             }
         })

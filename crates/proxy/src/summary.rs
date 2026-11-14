@@ -81,7 +81,7 @@ pub fn is_miss(r: &Record) -> bool {
         // a bucket that is not there is a mistake, not a lookup: a key is
         // looked for, a bucket is named
         && !r
-            .error_body
+            .rare().error_body
             .as_deref()
             .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"))
 }
@@ -100,16 +100,16 @@ pub fn summarize(records: &[Record]) -> Summary {
     let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
     for r in records {
         s.requests += 1;
-        let up = r.request_bytes.unwrap_or(0);
+        let up = r.request_bytes.get().unwrap_or(0);
         let down = if r.is_error() {
             0
         } else {
-            r.response_bytes.unwrap_or(0)
+            r.response_bytes.get().unwrap_or(0)
         };
         s.bytes_up += up;
         s.bytes_down += down;
         let refused = r
-            .response_headers
+            .response_headers()
             .iter()
             .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"));
         if is_miss(r) {
@@ -120,7 +120,7 @@ pub fn summarize(records: &[Record]) -> Summary {
                 s.refused += 1;
                 if s.refusals.len() < REFUSALS_NAMED {
                     let header = |n: &str| {
-                        r.response_headers
+                        r.response_headers()
                             .iter()
                             .find(|h| h.name.eq_ignore_ascii_case(n))
                             .map(|h| h.value.to_string())
@@ -136,7 +136,7 @@ pub fn summarize(records: &[Record]) -> Summary {
                     });
                 }
             }
-            let what = match (r.status, r.error_body.as_deref().and_then(s3_code)) {
+            let what = match (r.status, r.rare().error_body.as_deref().and_then(s3_code)) {
                 _ if refused => "refused by sonde".to_string(),
                 (Some(st), Some(code)) => format!("{st} {code}"),
                 (Some(st), None) => st.to_string(),
@@ -355,8 +355,8 @@ impl Counter {
             r.latency_us(),
             r.is_error(),
             is_miss(r),
-            r.request_bytes.unwrap_or(0),
-            r.response_bytes.unwrap_or(0),
+            r.request_bytes.get().unwrap_or(0),
+            r.response_bytes.get().unwrap_or(0),
         );
     }
 
@@ -538,8 +538,8 @@ mod tests {
             status: Some(status),
             latency_ms: ms,
             time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
-            request_bytes: Some(10),
-            response_bytes: Some(100),
+            request_bytes: Some(10).into(),
+            response_bytes: Some(100).into(),
             ..Default::default()
         }
     }
@@ -548,9 +548,9 @@ mod tests {
     fn a_missing_bucket_is_an_error_and_a_missing_key_a_lookup() {
         let mut key = rec("GetObject", 404, 1.0, 0);
         key.method = "GET".into();
-        key.error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
+        key.rare_mut().error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
         let mut bucket = key.clone();
-        bucket.error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
+        bucket.rare_mut().error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
         assert!(is_miss(&key) && !is_failure(&key));
         assert!(!is_miss(&bucket) && is_failure(&bucket));
     }
@@ -558,9 +558,9 @@ mod tests {
     #[test]
     fn counts() {
         let mut slow = rec("GetObject", 503, 80.0, 100);
-        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         let mut refused = rec("DeleteObject", 403, 0.0, 150);
-        refused.response_headers = vec![
+        refused.lists_mut().response_headers = vec![
             Header::new("x-sonde-proxy", "refused"),
             Header::new("x-sonde-policy", "no-delete"),
         ];
