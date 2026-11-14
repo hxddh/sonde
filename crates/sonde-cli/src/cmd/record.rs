@@ -741,7 +741,9 @@ mod tests {
         };
         assert_eq!(
             refused_lines(&s, 1),
-            ["  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"]
+            [
+                "  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"
+            ]
         );
         s.refusals.push(refusal("no-delete", "DeleteObject demo/a"));
         s.refusals.push(refusal("no-delete", "DeleteObject demo/b"));

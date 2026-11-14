@@ -222,9 +222,7 @@ fn more_kinds(cut: usize, same: usize) -> Option<String> {
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if !a.replay.is_empty() {
         let [one] = a.runs.as_slice() else {
-            return Err(super::usage(
-                "--replay ENDPOINT replays one run: name it",
-            ));
+            return Err(super::usage("--replay ENDPOINT replays one run: name it"));
         };
         return super::replay::replay(s, one, &a.replay, &a.how, a.format).await;
     }
@@ -235,8 +233,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     }
     // a session and its replay, in either order: their answers compared
     if let [x, y] = a.runs.as_slice() {
-        let header =
-            |f: &PathBuf| sonde_proxy::session::read_header(&super::runs::resolve(s, f));
+        let header = |f: &PathBuf| sonde_proxy::session::read_header(&super::runs::resolve(s, f));
         match (header(x), header(y)) {
             (_, Some(h)) if named_replay(&h) => return diff(s, x, y, a.format).await,
             (Some(h), _) if named_replay(&h) => return diff(s, y, x, a.format).await,

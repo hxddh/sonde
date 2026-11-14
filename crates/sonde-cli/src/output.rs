@@ -155,6 +155,15 @@ pub fn json(v: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
+/// Rows as an aligned table, as `print!` writes them.
+pub fn print(headers: &[&str], rows: &[Vec<String>]) {
+    println!("{}", table(headers, rows));
+}
+
+pub fn bytes(b: u64) -> String {
+    sonde_fmt::bytes(b)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -179,13 +188,4 @@ mod tests {
         let t = super::table(&["a", "bb"], &[vec!["xxx".into(), "y".into()]]);
         assert_eq!(t, "a    bb\n───  ──\nxxx  y");
     }
-}
-
-/// Rows as an aligned table, as `print!` writes them.
-pub fn print(headers: &[&str], rows: &[Vec<String>]) {
-    println!("{}", table(headers, rows));
-}
-
-pub fn bytes(b: u64) -> String {
-    sonde_fmt::bytes(b)
 }

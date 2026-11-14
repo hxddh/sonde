@@ -1295,10 +1295,7 @@ mod tests {
             Err(ReadError::Io(_))
         ));
         std::fs::write(&path, b"").unwrap();
-        assert_eq!(
-            bad(Session::read_said(&path, Keep::All)),
-            "empty run file"
-        );
+        assert_eq!(bad(Session::read_said(&path, Keep::All)), "empty run file");
         std::fs::write(&path, b"hello\n").unwrap();
         assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde run"));
         recorded(&path, 10);

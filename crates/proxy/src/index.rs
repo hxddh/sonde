@@ -411,7 +411,10 @@ mod tests {
             (
                 vec![
                     ("etl".into(), Change::Baseline(Some("a.sonde".into()))),
-                    ("etl".into(), Change::Findings(Some(serde_json::json!({"x": 1})))),
+                    (
+                        "etl".into(),
+                        Change::Findings(Some(serde_json::json!({"x": 1}))),
+                    ),
                     ("etl".into(), Change::Verdicts(Some(serde_json::json!({})))),
                     ("digest".into(), Change::Import(Some("a.sonde".into()))),
                     ("a.sonde".into(), Change::Title(Some("nightly".into()))),

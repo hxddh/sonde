@@ -45,10 +45,7 @@ async fn baseline_of(
         return Ok(Some((t.to_path_buf(), Some(t))));
     }
     if asked != "auto" {
-        return Ok(Some((
-            super::runs::resolve(s, &PathBuf::from(asked)),
-            None,
-        )));
+        return Ok(Some((super::runs::resolve(s, &PathBuf::from(asked)), None)));
     }
     let dir = s.paths().runs();
     let key = sonde_proxy::session::read_header(file)

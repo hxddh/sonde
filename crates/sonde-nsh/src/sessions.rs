@@ -2512,7 +2512,8 @@ mod tests {
     #[test]
     fn an_unknown_recording_policy_is_refused_not_allowed() {
         assert_eq!(policy_of("allow").unwrap(), Policy::Allow);
-        assert_eq!(policy_of("").unwrap(), Policy::NoDelete, "safe by default");
+        // a program does with its data what it would without sonde
+        assert_eq!(policy_of("").unwrap(), Policy::Allow);
         assert_eq!(policy_of("no-delete").unwrap(), Policy::NoDelete);
         assert_eq!(policy_of("read-only").unwrap(), Policy::ReadOnly);
         assert!(policy_of("readonly").unwrap_err().contains("readonly"));
@@ -2525,7 +2526,7 @@ mod tests {
         std::fs::create_dir_all(t.path().join(".git")).unwrap();
         let at = |asked| run_policy(Some(asked), Some(t.path()));
         assert_eq!(at(Policy::Allow).unwrap(), Policy::Allow);
-        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::NoDelete);
+        assert_eq!(run_policy(None, Some(t.path())).unwrap(), Policy::Allow);
         let file = t.path().join("sonde.toml");
         std::fs::write(&file, "[record]\npolicy = \"read-only\"\n").unwrap();
         assert_eq!(at(Policy::Allow).unwrap(), Policy::ReadOnly);
@@ -3269,10 +3270,7 @@ mod tests {
             "[check]\nmax-errors = 3\nmax-waiting = \"2s\"\n",
         )
         .unwrap();
-        assert_eq!(
-            super::project_budget(&inner),
-            Some((Some(3), Some(2000.0)))
-        );
+        assert_eq!(super::project_budget(&inner), Some((Some(3), Some(2000.0))));
     }
 
     #[test]

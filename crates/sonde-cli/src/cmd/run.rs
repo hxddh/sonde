@@ -749,19 +749,16 @@ async fn run_once(
         None => words,
     };
     // a container reaches sonde on the host's network
-    let words = match sonde_proxy::container::with_settings(
-        &words,
-        &for_container.0,
-        &for_container.1,
-    ) {
-        Some(argv) => {
-            if under.is_none() {
-                eprintln!("{}", container_note(&words));
+    let words =
+        match sonde_proxy::container::with_settings(&words, &for_container.0, &for_container.1) {
+            Some(argv) => {
+                if under.is_none() {
+                    eprintln!("{}", container_note(&words));
+                }
+                argv
             }
-            argv
-        }
-        None => words,
-    };
+            None => words,
+        };
     let program = words[0].clone();
     let mut child = tokio::process::Command::new(&program);
     child.args(&words[1..]);
@@ -1105,8 +1102,14 @@ const POINTED: &[(&[&str], &str)] = &[
         &["python", "python3", "boto3"],
         "boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])",
     ),
-    (&["go"], "Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)"),
-    (&["java", "mvn", "gradle"], "Java SDK v2         2.21 or newer"),
+    (
+        &["go"],
+        "Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)",
+    ),
+    (
+        &["java", "mvn", "gradle"],
+        "Java SDK v2         2.21 or newer",
+    ),
     (
         &["spark-submit", "pyspark", "hadoop", "flink"],
         "Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)",
@@ -1163,7 +1166,10 @@ mod tests {
         assert!(first("/usr/bin/rclone ls remote:b").starts_with("rclone"));
         // every way is said, whatever the program
         let all = no_requests(&["./job".into()]);
-        assert_eq!(all.lines().filter(|l| l.starts_with("  ")).count(), POINTED.len());
+        assert_eq!(
+            all.lines().filter(|l| l.starts_with("  ")).count(),
+            POINTED.len()
+        );
         assert!(all.contains("SONDE"));
     }
 

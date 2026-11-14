@@ -6,13 +6,59 @@
 /// word (`-e NAME`, `--network host`); every other option takes none, or its
 /// value after `=`.
 const TAKES_VALUE: &[&str] = &[
-    "-a", "--attach", "--add-host", "--cap-add", "--cap-drop", "--cidfile", "--cpus",
-    "--cpuset-cpus", "-c", "--cpu-shares", "--device", "--dns", "-e", "--env", "--env-file",
-    "--entrypoint", "--expose", "--gpus", "-h", "--hostname", "--ip", "-l", "--label",
-    "--log-driver", "--log-opt", "-m", "--memory", "--mount", "--name", "--network", "--net",
-    "--platform", "--pull", "-p", "--publish", "--restart", "--runtime", "--security-opt",
-    "--shm-size", "--stop-signal", "--tmpfs", "-u", "--user", "--ulimit", "-v", "--volume",
-    "--volumes-from", "-w", "--workdir", "--userns", "--pid", "--ipc", "--uts",
+    "-a",
+    "--attach",
+    "--add-host",
+    "--cap-add",
+    "--cap-drop",
+    "--cidfile",
+    "--cpus",
+    "--cpuset-cpus",
+    "-c",
+    "--cpu-shares",
+    "--device",
+    "--dns",
+    "-e",
+    "--env",
+    "--env-file",
+    "--entrypoint",
+    "--expose",
+    "--gpus",
+    "-h",
+    "--hostname",
+    "--ip",
+    "-l",
+    "--label",
+    "--log-driver",
+    "--log-opt",
+    "-m",
+    "--memory",
+    "--mount",
+    "--name",
+    "--network",
+    "--net",
+    "--platform",
+    "--pull",
+    "-p",
+    "--publish",
+    "--restart",
+    "--runtime",
+    "--security-opt",
+    "--shm-size",
+    "--stop-signal",
+    "--tmpfs",
+    "-u",
+    "--user",
+    "--ulimit",
+    "-v",
+    "--volume",
+    "--volumes-from",
+    "-w",
+    "--workdir",
+    "--userns",
+    "--pid",
+    "--ipc",
+    "--uts",
 ];
 
 /// Where `run`'s options start in the words after `docker` or `podman`
@@ -107,7 +153,10 @@ mod tests {
 
     #[test]
     fn a_container_is_given_the_hosts_network_and_the_variables_by_name() {
-        let names = ["AWS_ENDPOINT_URL".to_string(), "AWS_ACCESS_KEY_ID".to_string()];
+        let names = [
+            "AWS_ENDPOINT_URL".to_string(),
+            "AWS_ACCESS_KEY_ID".to_string(),
+        ];
         let got = with_settings(
             &words("docker run --rm -v /data:/data amazon/aws-cli s3 ls"),
             &names,
@@ -120,8 +169,12 @@ mod tests {
         );
         // no value of a variable is on the command line
         assert!(!got.iter().any(|w| w.contains('=')));
-        let got = with_settings(&words("podman container run img"), &names[..1], &["/c.pem".into()])
-            .unwrap();
+        let got = with_settings(
+            &words("podman container run img"),
+            &names[..1],
+            &["/c.pem".into()],
+        )
+        .unwrap();
         assert_eq!(
             got.join(" "),
             "podman container run --network host -e AWS_ENDPOINT_URL -v /c.pem:/c.pem:ro img"
@@ -142,8 +195,14 @@ mod tests {
             let w: Vec<&str> = c.split_whitespace().collect();
             image(&w).map(String::from)
         };
-        assert_eq!(img("run --rm -e A -v a:b amazon/aws-cli s3 ls").as_deref(), Some("amazon/aws-cli"));
-        assert_eq!(img("run --name=x --network host rclone/rclone:1.76 ls").as_deref(), Some("rclone/rclone:1.76"));
+        assert_eq!(
+            img("run --rm -e A -v a:b amazon/aws-cli s3 ls").as_deref(),
+            Some("amazon/aws-cli")
+        );
+        assert_eq!(
+            img("run --name=x --network host rclone/rclone:1.76 ls").as_deref(),
+            Some("rclone/rclone:1.76")
+        );
         assert_eq!(img("container run -it img").as_deref(), Some("img"));
         assert_eq!(img("ps -a"), None);
     }

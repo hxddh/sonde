@@ -66,7 +66,7 @@ fn a_head_before_each_get_is_a_request_too_many() {
     );
     assert_eq!(
         f.saving.as_ref().unwrap().en(),
-        "4 fewer requests (50% of the session)"
+        "4 fewer requests (50% of the run)"
     );
 }
 

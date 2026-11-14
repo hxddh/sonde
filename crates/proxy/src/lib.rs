@@ -1703,7 +1703,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         && let Some(b) = bucket.as_deref()
         && let Some(moved_to) = bucket_region(r.status().as_u16(), r.headers(), &region)
     {
-        shared.regions.lock().insert(b.to_string(), moved_to.clone());
+        shared
+            .regions
+            .lock()
+            .insert(b.to_string(), moved_to.clone());
         if sent_len == Some(0)
             && !as_is
             && let Some(creds) = &signed_with
@@ -2330,12 +2333,21 @@ mod tests {
         );
         let mut h = http::HeaderMap::new();
         h.insert("x-amz-bucket-region", "eu-west-1".parse().unwrap());
-        assert_eq!(bucket_region(301, &h, "us-east-1").as_deref(), Some("eu-west-1"));
-        assert_eq!(bucket_region(400, &h, "us-east-1").as_deref(), Some("eu-west-1"));
+        assert_eq!(
+            bucket_region(301, &h, "us-east-1").as_deref(),
+            Some("eu-west-1")
+        );
+        assert_eq!(
+            bucket_region(400, &h, "us-east-1").as_deref(),
+            Some("eu-west-1")
+        );
         // the region it was signed for, or an answer that is no redirect
         assert_eq!(bucket_region(301, &h, "eu-west-1"), None);
         assert_eq!(bucket_region(200, &h, "us-east-1"), None);
-        assert_eq!(bucket_region(301, &http::HeaderMap::new(), "us-east-1"), None);
+        assert_eq!(
+            bucket_region(301, &http::HeaderMap::new(), "us-east-1"),
+            None
+        );
     }
 
     #[test]

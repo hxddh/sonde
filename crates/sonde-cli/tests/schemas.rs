@@ -284,7 +284,7 @@ async fn every_json_output_is_as_its_schema_says() {
         .await
         .unwrap();
     assert_eq!(demo.status.code(), Some(0));
-    let session = std::fs::read_dir(b.path("data/sessions"))
+    let session = std::fs::read_dir(b.path("data/runs"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
@@ -358,7 +358,7 @@ async fn every_json_output_is_as_its_schema_says() {
         "compare",
         &b.json(&["compare", s, s, "-f", "json"], 0).await,
     );
-    holds("sessions", &b.json(&["sessions", "-f", "json"], 0).await);
+    holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
     // replaying it on the small store, and the two compared
     let replayed = b.path("replay.sonde");
@@ -510,7 +510,7 @@ fn every_schema_is_checked_and_documented() {
         "show-by",
         "check",
         "compare",
-        "sessions",
+        "runs",
         "compare-replay",
         "compare-replay-stores",
         "compare-answers",

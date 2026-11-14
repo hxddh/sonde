@@ -131,10 +131,7 @@ enum Command {
 /// one list of fourteen.
 const GROUPS: &[(&str, &[&str])] = &[
     ("Record", &["run", "proxy", "import"]),
-    (
-        "Read a run",
-        &["runs", "show", "compare", "check", "share"],
-    ),
+    ("Read a run", &["runs", "show", "compare", "check", "share"]),
     ("Buckets", &["bucket", "layout", "probe", "endpoints"]),
     ("More", &["tui"]),
 ];

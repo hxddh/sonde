@@ -2571,10 +2571,7 @@ mod tests {
             trials.join("run-2.slowdown.sonde").exists(),
             "another run's"
         );
-        assert!(
-            trials.join("run.notes.txt").exists(),
-            "not a trial's run"
-        );
+        assert!(trials.join("run.notes.txt").exists(), "not a trial's run");
         remove(&other);
         assert!(!trials.join("run-2.slowdown.sonde").exists());
     }

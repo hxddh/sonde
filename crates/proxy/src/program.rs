@@ -201,7 +201,7 @@ fn unquote(word: &str) -> String {
 /// Commands that set the stage for the program rather than being it.
 const STAGE: &[&str] = &[
     "cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec",
-    "printf", "wait", "nohup",
+    "printf", "wait", "nohup", "exit",
 ];
 
 /// The program a command runs, by name (`python` for
@@ -262,8 +262,8 @@ pub fn program_name(command: &str) -> Option<String> {
 /// session files are named by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
-        "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv",
-        "poetry", "npx", "dotnet",
+        "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv", "poetry",
+        "npx", "dotnet",
     ];
     const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash"];
     let program = program_name(command)?;
@@ -281,9 +281,11 @@ pub fn short_name(command: &str) -> Option<String> {
         .take_while(|w| !is_separator(w))
         .map(String::as_str)
         .collect();
+    // (a shell that only sets the stage, `sh -c 'exit 3'`, is the shell)
     if SHELLS.contains(&base)
         && let Some(at) = after.iter().position(|w| *w == "-c")
         && let Some(inner) = after.get(at + 1)
+        && program_name(inner).is_some_and(|p| !STAGE.contains(&p.as_str()))
     {
         return short_name(inner);
     }
@@ -415,7 +417,11 @@ pub fn baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, St
 }
 
 /// Makes `run` (a file name in `dir`) the baseline of `program`; none: no baseline.
-pub fn set_baseline(dir: &std::path::Path, program: &str, run: Option<&str>) -> std::io::Result<()> {
+pub fn set_baseline(
+    dir: &std::path::Path,
+    program: &str,
+    run: Option<&str>,
+) -> std::io::Result<()> {
     crate::index::update(dir, |_| {
         (
             vec![(
@@ -1713,6 +1719,7 @@ mod tests {
             // 21.0 named these `big`, `example` and `docker`
             ("sh -c 'aws s3 cp big.bin s3://b/'", "aws"),
             ("bash -c \"curl https://example.invalid\"", "curl"),
+            ("sh -c 'exit 3'", "sh"),
             ("docker run --rm -e A amazon/aws-cli:2.40 s3 ls", "aws-cli"),
             ("podman run -v a:b rclone/rclone ls", "rclone"),
             ("python3 -m pytest tests/", "pytest"),
@@ -1961,7 +1968,7 @@ mod tests {
             (&p, &warned, &pr, &o),
             Some((&p, &warned, &pr, &o)),
             &Budget {
-                    ..Default::default()
+                ..Default::default()
             },
         );
         let row = c.verdicts.iter().find(|v| v.what == "warnings").unwrap();
@@ -2044,7 +2051,10 @@ mod tests {
             md.contains("- **requests 20 → 40 (+100%)**, past the 22 it may use"),
             "{md}"
         );
-        assert!(!md.contains("| survived") && !md.contains("**over**"), "{md}");
+        assert!(
+            !md.contains("| survived") && !md.contains("**over**"),
+            "{md}"
+        );
         assert!(squeezed(&md).contains("| HeadObject | 0 → 20 |"), "{md}");
         let new = md.find("**New findings**").expect("new findings");
         assert!(md[new..].contains("HEAD"), "{md}");

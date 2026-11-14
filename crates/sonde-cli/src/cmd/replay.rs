@@ -202,10 +202,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                     &request_prices_for(s, &original.header.endpoint),
                 );
             }
-            eprintln!(
-                "{}",
-                paint(&format!("run: {}", path.display()), "2", color)
-            );
+            eprintln!("{}", paint(&format!("run: {}", path.display()), "2", color));
         }
     }
     // what it wrote and could not remove is a failure, whatever the answers

@@ -330,7 +330,9 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
         Some(Action::Prune { keep, yes }) => {
             let dir = s.paths().runs();
             let baselines: std::collections::HashSet<String> =
-                sonde_proxy::program::baselines(&dir).into_values().collect();
+                sonde_proxy::program::baselines(&dir)
+                    .into_values()
+                    .collect();
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)

@@ -303,10 +303,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            import(&s, "demo", "s3://demo/logs/").await,
-            0
-        );
+        assert_eq!(import(&s, "demo", "s3://demo/logs/").await, 0);
         let sessions: Vec<_> = std::fs::read_dir(s.paths().runs())
             .unwrap()
             .flatten()
@@ -321,10 +318,7 @@ mod tests {
             Some("logs of s3://demo/logs/")
         );
         // a second pass has nothing new: no second session
-        assert_eq!(
-            import(&s, "demo", "s3://demo/logs/").await,
-            0
-        );
+        assert_eq!(import(&s, "demo", "s3://demo/logs/").await, 0);
         let count = || {
             std::fs::read_dir(s.paths().runs())
                 .unwrap()
@@ -345,10 +339,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            import(&s, "demo", "s3://demo/logs/").await,
-            0
-        );
+        assert_eq!(import(&s, "demo", "s3://demo/logs/").await, 0);
         assert_eq!(count(), 2);
     }
 
@@ -384,10 +375,7 @@ mod tests {
                 + &line("00:40", "REST.GET.OBJECT", "GET /demo/other"),
         )
         .await;
-        assert_eq!(
-            import(&s, "demo", "s3://demo/uplogs/").await,
-            0
-        );
+        assert_eq!(import(&s, "demo", "s3://demo/uplogs/").await, 0);
         let sessions = || {
             let mut all: Vec<_> = std::fs::read_dir(s.paths().runs())
                 .unwrap()
@@ -419,10 +407,7 @@ mod tests {
             ),
         )
         .await;
-        assert_eq!(
-            import(&s, "demo", "s3://demo/uplogs/").await,
-            0
-        );
+        assert_eq!(import(&s, "demo", "s3://demo/uplogs/").await, 0);
         let all = sessions();
         assert_eq!(all.len(), 2);
         let second = all.iter().find(|p| **p != first[0]).unwrap();
