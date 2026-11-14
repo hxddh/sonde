@@ -108,20 +108,26 @@ for (const v of variants) {
     // The committed run after the fix, opened from the list of runs: the oldest are last, so the list is brought to
     // its end, the newer of the program's two rows pressed (the first of the two in the list), and the list brought
     // back to its start.
-    const fixture = async () => {
+    // A run opened by its row's name (the first of that name in the list), the list brought down to it and back.
+    const openRow = async (name: string, header: string) => {
       await go("sessions");
       if (!app.shows("id:session-list") && !app.shows("id:program-list")) await app.keyboard.press("mod+b");
       if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
-      for (let n = 0; n < 30 && !app.shows("text:nightly-report.sh"); n++) await app.scroll("id:session-list", 800);
+      for (let n = 0; n < 30 && !app.shows(`id:session-list >> text:${name}`); n++) await app.scroll("id:session-list", 800);
       await app.scroll("id:session-list", 800);
       await app.wait(300);
-      await app.press("id:session-list >> text:nightly-report.sh >> nth=0");
-      // (its header says its command: the session shown is the one pressed)
-      await app.waitUntil(() => app.shows("id:session-summary") && app.texts().some((x) => x.includes("./nightly-report.sh")), { timeout: 10000 });
+      // (its header says its command: the session shown is the one pressed; a press the list's settling undid, again)
+      const shown = () => app.shows("id:session-summary") && app.texts().some((x) => x.includes(header));
+      for (let n = 0; n < 4 && !shown(); n++) {
+        await app.press(`id:session-list >> text:${name} >> nth=0`);
+        await app.waitUntil(shown, { timeout: 4000 }).catch(() => {});
+      }
+      await app.waitUntil(shown, { timeout: 10000 });
       if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
       for (let n = 0; n < 30 && !app.shows("id:session-0"); n++) await app.scroll("id:session-list", -800);
       await app.wait(600);
     };
+    const fixture = () => openRow("nightly-report.sh", "./nightly-report.sh");
 
     await shot("01-welcome");
     await app.press("id:welcome-demo");
@@ -258,23 +264,23 @@ for (const v of variants) {
     await app.waitFor("id:history-pane", { timeout: 10000 });
     await app.wait(900);
     await shot("03p-programs");
+    // (back on Operations: the example opens on the pane the runs were left on, and has no Runs of its own)
+    await app.press("id:session-pane-mode-operations");
+    await app.wait(500);
     await app.press("id:sessions-by-runs");
     // (the runs' list back first: a press before it settles is undone as it chooses its first run)
     if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
     await app.wait(700);
-    await app.press("id:open-example");
-    // read off the interface's thread: there once its header is (a variant after the first
-    // opens on the example already, and reads it again as the list changes: let that settle)
-    await app.wait(900);
-    await app.waitFor("id:session-summary", { timeout: 10000 });
-    // a variant after the first has the example in its list already: opened from there when the press kept the run shown
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
-    // (else opened from the Programs list, three rows long: a long list of runs has it under the fold)
+    // read off the interface's thread: there once its header is (a variant after the first
+    // opens on the example already, and reads it again as the list changes: let that settle;
+    // the example opened from its row when the list's settling undid the press)
+    await app.press("id:open-example");
+    await app.wait(900);
+    // (a press the list's settling undid: the example opened from its row instead)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
-      await pressUntil("id:sessions-by-programs", "id:program-list");
-      await pressUntil("text:gen-slatedb", "text:$ gen-slatedb s3://slate");
+      await openRow("gen-slatedb", "gen-slatedb s3://slate");
       await app.press("id:session-pane-mode-operations");
-      await pressUntil("id:sessions-by-runs", "id:session-list");
       await app.waitFor(wal, { timeout: 10000 });
     }
     await shot("03-session");
