@@ -188,7 +188,7 @@
               "new",
               "open"
             ],
-            "description": "fixed: gone at any threshold; less and more: by its counts (less also: under its threshold now); back: fixed in an earlier run, or under its threshold in the run before, over it again; open: as much in both."
+            "description": "fixed: gone at any threshold; less and more: still there at any threshold, by its counts; back: fixed in an earlier run, or under its threshold in the run before, over it again; open: as much in both."
           },
           "level": {
             "enum": [

@@ -186,17 +186,17 @@ Between a run and the program's run before it that did not fail, by its counts (
 | State | When | Says |
 |---|---|---|
 | fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
-| less | fewer, or under its threshold now | what it saved so far, `· 92 → 41` |
-| more | more of it (`92 → 216`), over its threshold or not | `↑ more … · 92 → 216` |
+| less | still there (at any threshold), fewer | what it saved so far, `· 92 → 41` |
+| more | still there (at any threshold), more | `↑ more … · 92 → 216` |
 | back | under its threshold in the run before, or fixed by it or an earlier run; over it now | |
 | new | in neither run before, at any threshold | |
-| open | as much in both | named under `N still open:` |
+| open | as much in both, over its threshold or not | named under `N still open:` |
 
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A finding of time alone (requests one after another) is judged by its requests: as many of them one after another,
-under its threshold, is open. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
+A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
+either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
 not compared`, and nothing kept changes; the next run is compared with the last that did not. Runs that end out of
 order (several at once) each add their findings; an older run changes nothing a newer one said.
 

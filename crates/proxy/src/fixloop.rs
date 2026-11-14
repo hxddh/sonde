@@ -27,15 +27,14 @@ use crate::session::SessionHeader;
 pub enum State {
     /// Gone at any threshold.
     Fixed,
-    /// Still there, less of it than in the run before (under its
-    /// threshold, or fewer requests).
+    /// Still there (at any threshold), less of it than in the run before.
     Less,
     /// Fixed in an earlier run, or under its threshold in the run before,
     /// and here again.
     Back,
     /// Not in the run before.
     New,
-    /// Still there, more of it than in the run before.
+    /// Still there (at any threshold), more of it than in the run before.
     More,
     /// In this run and the one before, as much of it.
     Open,
@@ -283,13 +282,13 @@ fn by_counts(was: usize, now: usize) -> State {
 }
 
 /// Each finding of either run, where it stands in `b` against `a`, by its
-/// counts: fixed (gone at any threshold), less (fewer, or under its
-/// threshold now), more, back (under its threshold before, over it now),
-/// new and open (as much), in that order; a finding fixed by an earlier
-/// run is back by a program's kept findings ([`Program::mark_back`]). One
-/// of time alone is judged by its requests: with as many requests one after
-/// another, it is open, whatever its timing. Then each kind of failure
-/// ([`crate::profile::error_class`]) whose count moved.
+/// counts, over its threshold or under it: fixed (gone at any threshold),
+/// less, back (under its threshold before, over it now), new, more and
+/// open (as much), in that order; a finding fixed by an earlier run is back
+/// by a program's kept findings ([`Program::mark_back`]). One of time alone
+/// is judged by its requests: with about as many requests one after
+/// another (a fifth either way), it is open, whatever its timing. Then each
+/// kind of failure ([`crate::profile::error_class`]) whose count moved.
 pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
     let named = |os: &[Observation]| -> BTreeMap<String, usize> {
         os.iter()
@@ -316,25 +315,22 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
     for (id, &i) in &ia {
         let o = &a.observations[i];
         let left = ib.get(id).map(|&j| &b.observations[j]).or(b.traces.get(id));
-        let over = ib.contains_key(id);
-        // still over its threshold, or as many of its requests one after
-        // another: only their timing moved
+        // requests one after another: their count moves with their timing,
+        // so within a fifth either way it is as much
         if of_time(o)
             && let Some(t) = left
-            && (over || t.timed_ids.len() * 10 >= o.timed_ids.len() * 9)
         {
-            let mut c = change(id, State::Open, t, o);
-            c.was = None;
-            out.push(c);
-            continue;
+            let (was, now) = (o.timed_ids.len(), t.timed_ids.len());
+            if now * 5 >= was * 4 && now * 4 <= was * 5 {
+                let mut c = change(id, State::Open, t, o);
+                c.was = None;
+                out.push(c);
+                continue;
+            }
         }
+        // by its counts, over its threshold or under it now: as much is open
         let state = match left {
             None => State::Fixed,
-            // under its threshold now: less, unless there is more of it
-            Some(t) if !over => match by_counts(count_of(o), count_of(t)) {
-                State::More => State::More,
-                _ => State::Less,
-            },
             Some(t) => by_counts(count_of(o), count_of(t)),
         };
         if state != State::Fixed && state != State::Less {
