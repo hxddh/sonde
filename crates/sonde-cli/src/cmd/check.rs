@@ -130,8 +130,9 @@ fn init_project(
     } else {
         "0.0001".into()
     };
-    // a program without a name goes by its whole command: another argument
-    // and it is another program, with no baseline. One is written for it
+    // a program without a name goes by its command (what changes between
+    // runs left out): another argument and it is another program, with no
+    // baseline. One is written for it
     let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
     let name = (!named)
         .then(|| header.command.as_deref().and_then(name_for))

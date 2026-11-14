@@ -18,9 +18,10 @@ pub struct RunArgs {
     #[command(flatten)]
     rec: Recording,
     /// Send the requests to the built-in demo store (buckets `demo`,
-    /// `demo-large`, `demo-layouts`), as `sonde demo` does: no account or
-    /// secrets needed. It lives in this process and starts afresh each run;
-    /// its times are not meaningful.
+    /// `demo-large`, `demo-layouts`): no account or secrets needed. It lives
+    /// in this process and starts afresh each run; its times are not
+    /// meaningful. Without a command: a tour, a small program of sonde's own
+    /// recorded and explained.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
     /// Print each request on stderr as it happens.
@@ -30,7 +31,7 @@ pub struct RunArgs {
     /// It is named by default for Python's boto3, the AWS SDK for
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
     /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
-    /// says its line. Also `name-callers = false` in the settings.
+    /// says its line. Also `[record] name-callers = false` in sonde.toml.
     #[arg(long)]
     no_callers: bool,
     /// Then run the command again under faults chosen from what it did (a
@@ -61,8 +62,12 @@ pub struct RunArgs {
     /// in sonde.toml, else the command itself).
     #[arg(long)]
     name: Option<String>,
-    /// The command, after `--`.
-    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    /// The command, after `--` (none with --demo: the tour).
+    #[arg(
+        required_unless_present = "demo",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
     command: Vec<String>,
 }
 
@@ -133,6 +138,9 @@ struct RunCtx {
     stop: Stop,
     /// How it is recorded: the command line's, and sonde.toml's `[record]`.
     rec: Recording,
+    /// The runs name the code that sent each request: unless
+    /// `--no-callers` or `[record] name-callers = false`.
+    callers: bool,
     /// What the runs wrote: a trial's runs may write again what the clean
     /// run wrote, under no-delete as under allow.
     written: Arc<sonde_proxy::Written>,
@@ -247,6 +255,18 @@ fn names_its_place(command: &[String]) -> bool {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+    // `--demo` alone: the tour, a program of sonde's own
+    if a.demo && a.command.is_empty() {
+        if cli.url.is_some() {
+            return Err(super::usage("--demo and --url name two stores: give one"));
+        }
+        if a.trial || a.again || !a.faults.is_empty() || a.name.is_some() {
+            return Err(super::usage(
+                "the tour is not tried or named: give a command after -- (`sonde run --demo --trial -- python etl.py`)",
+            ));
+        }
+        return super::demo::tour(s, a.rec.out.clone()).await;
+    }
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
     let project = load_project(None)?;
@@ -330,6 +350,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             tls: rec.tls || project.file.record.tls,
             ..rec
         },
+        callers: !a.no_callers && project.file.record.name_callers != Some(false),
         written: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
@@ -575,7 +596,7 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if !a.no_callers && s.settings().name_callers {
+    if ctx.callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`

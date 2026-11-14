@@ -9,6 +9,7 @@ use crate::Cli;
 use crate::output::{self, Format};
 
 #[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct ProbeArgs {
     #[command(subcommand)]
     action: Option<ProbeAction>,
@@ -27,14 +28,13 @@ pub struct ProbeArgs {
     /// Skip probes that wait in real time.
     #[arg(long)]
     no_slow: bool,
-    /// The format written: table or json; a run also markdown and csv.
+    /// The format written: table, json, markdown or csv.
     #[arg(
         long,
         short = 'f',
         value_enum,
         default_value_t,
-        hide_possible_values = true,
-        global = true
+        hide_possible_values = true
     )]
     format: Format,
     /// Write the report here instead of stdout.
@@ -45,11 +45,45 @@ pub struct ProbeArgs {
 #[derive(Subcommand)]
 enum ProbeAction {
     /// The probes and the AWS behavior each checks.
-    List,
+    List {
+        /// The format written: table or json.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
     /// Saved runs, newest first.
-    Runs,
+    Runs {
+        /// The format written: table or json.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
     /// What changed between two saved runs (`<run>:<endpoint>`).
-    Diff { before: String, after: String },
+    Diff {
+        /// The run before, `<run>:<endpoint>` as `sonde probe runs` lists it.
+        before: String,
+        /// The run after, the same way.
+        after: String,
+        /// The format written: table or json.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
 }
 
 fn load(s: &Sonde, spec: &str) -> anyhow::Result<Run> {
@@ -61,23 +95,30 @@ fn load(s: &Sonde, spec: &str) -> anyhow::Result<Run> {
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32> {
     // before a run writes to the store: a report nobody could read is not worth it
-    let (command, writes): (_, &[Format]) = match &a.action {
-        Some(ProbeAction::List) => ("probe list", &[Format::Table, Format::Json]),
-        Some(ProbeAction::Runs) => ("probe runs", &[Format::Table, Format::Json]),
-        Some(ProbeAction::Diff { .. }) => ("probe diff", &[Format::Table, Format::Json]),
+    let (command, format, writes): (_, _, &[Format]) = match &a.action {
+        Some(ProbeAction::List { format }) => {
+            ("probe list", *format, &[Format::Table, Format::Json])
+        }
+        Some(ProbeAction::Runs { format }) => {
+            ("probe runs", *format, &[Format::Table, Format::Json])
+        }
+        Some(ProbeAction::Diff { format, .. }) => {
+            ("probe diff", *format, &[Format::Table, Format::Json])
+        }
         None => (
             "probe",
+            a.format,
             &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
         ),
     };
-    if let Some(why) = output::unsupported(a.format, command, writes) {
+    if let Some(why) = output::unsupported(format, command, writes) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
     match &a.action {
-        Some(ProbeAction::List) => {
+        Some(ProbeAction::List { .. }) => {
             let c = probes::catalog();
-            match a.format {
+            match format {
                 Format::Json => println!("{}", output::json(&c)),
                 _ => println!(
                     "{}",
@@ -91,9 +132,9 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             }
             return Ok(0);
         }
-        Some(ProbeAction::Runs) => {
+        Some(ProbeAction::Runs { .. }) => {
             let r = probes::store::list(s.paths());
-            match a.format {
+            match format {
                 Format::Json => println!("{}", output::json(&r)),
                 _ => println!(
                     "{}",
@@ -116,10 +157,10 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             }
             return Ok(0);
         }
-        Some(ProbeAction::Diff { before, after }) => {
+        Some(ProbeAction::Diff { before, after, .. }) => {
             let (b, af) = (load(s, before)?, load(s, after)?);
             let d = probes::store::diff(&b, &af);
-            match a.format {
+            match format {
                 Format::Json => println!("{}", output::json(&d)),
                 _ if d.is_empty() => println!("no change"),
                 _ => println!(

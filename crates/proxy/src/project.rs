@@ -72,11 +72,17 @@ pub struct Program {
 }
 
 /// The `[record]` table: what a recording of the project lets through
-/// (`allow`, `no-delete`, `read-only`).
+/// (`allow`, `no-delete`, `read-only`), and whether its runs name the code
+/// that sent each request (`name-callers`, on unless `false`).
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Record {
     pub policy: Option<String>,
+    /// Runs name the place in the program's code that sent each request
+    /// (hooks that add `x-sonde-caller`: Python's boto3 on PYTHONPATH, the
+    /// AWS SDK for JavaScript v3 with NODE_OPTIONS, the AWS SDK for Java 2
+    /// with JAVA_TOOL_OPTIONS); `false` turns it off, as `--no-callers`.
+    pub name_callers: Option<bool>,
     /// The endpoint in TLS too, as `--tls`.
     #[serde(default)]
     pub tls: bool,
@@ -84,7 +90,7 @@ pub struct Record {
 
 /// A fault scenario of the project's own, a `[[scenario]]`:
 /// `fault = "503 SlowDown"` (or `500`, `lost-answer`, `cut-body`,
-/// `lost-race`, `stale-list`, `delay 200ms`), `on` the operations it is for, `prefix` the
+/// `lost-race`, `stale-list`, `delay 200ms`), `on` the kinds of request it is for, `prefix` the
 /// keys, `times` the attempts at each request that meet it (1 unless said;
 /// 0 is every attempt).
 #[derive(Debug, Clone, Deserialize)]
@@ -232,13 +238,33 @@ pub fn duration_ms(name: &str, v: &toml::Value) -> Result<f64, String> {
 mod tests {
     use super::*;
 
+    /// docs/configuration.md's `sonde.toml` is one sonde reads as it says.
+    #[test]
+    fn the_documented_example_reads() {
+        let doc = include_str!("../../../docs/configuration.md");
+        let example = doc
+            .split("```toml\n")
+            .nth(2)
+            .and_then(|b| b.split("```").next())
+            .unwrap();
+        let p = parse(example).unwrap();
+        assert_eq!(p.file.program.name.as_deref(), Some("nightly-etl"));
+        assert_eq!(p.policy, Some(Policy::NoDelete));
+        assert_eq!(
+            (p.file.record.name_callers, p.file.record.tls),
+            (Some(true), false)
+        );
+        assert_eq!(p.scenarios.len(), 1);
+    }
+
     #[test]
     fn every_table_reads_and_what_sonde_does_not_know_is_refused() {
         let p = parse(
-            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-p95 = 250\n\n[program]\nname = \"etl\"\n\n[record]\npolicy = \"allow\"\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
+            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-p95 = 250\n\n[program]\nname = \"etl\"\n\n[record]\npolicy = \"allow\"\nname-callers = false\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
         )
         .unwrap();
         assert_eq!(p.policy, Some(Policy::Allow));
+        assert_eq!(p.file.record.name_callers, Some(false));
         assert_eq!(p.file.program.name.as_deref(), Some("etl"));
         assert_eq!(p.scenarios.len(), 1);
         let b = p.file.check.budget().unwrap();

@@ -7,7 +7,7 @@ credentials never reach the program.
 ```sh
 sonde run -- python etl.py                  # record a command
 sonde run --live -- ./my-service            # print requests as they happen
-sonde run --allow-writes -- python etl.py   # allow deletes and overwrites
+sonde run --policy allow -- python etl.py  # allow deletes and overwrites
 sonde proxy --listen 127.0.0.1:9000         # a standing endpoint for a program started elsewhere
 sonde proxy --rotate 60                     # left running: status line, warnings, a file an hour
 ```
@@ -16,7 +16,7 @@ The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credential
 ([credentials](credentials.md)).
 
 **In the app**, Run does the same: a command (and working directory), an endpoint and a policy (starting at
-Settings › Safety, `no-delete`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows), with
+`no-delete`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows), with
 operations beside it; Stop ends it, a notification says how, the session opens. Output is kept in the session with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
 highlights its lines and back. Output is kept as printed: do not print secrets.
@@ -93,7 +93,7 @@ committer settings; empty `…/` directory markers are reported with their delet
 ## How a request is handled
 
 1. Bucket and key from the path (`/bucket/key`) or a `<bucket>.localhost` Host; the query decoded as is (`+` stays).
-2. The operation named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
+2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
    SignatureDoesNotMatch`, recorded as refused, never forwarded.
@@ -132,12 +132,12 @@ How `no-delete` finds an existing object:
 - A program may write over what it wrote: in this recording, in its earlier recordings (kept per
   [program](cli.md) and endpoint in `written.json` beside its runs, the newest 100,000 objects), and, during a trial,
   anything under a `{trial}` place of its command (`t{trial}/` → keys under `tclean`, `tslowdown`, …). A refused write
-  names the key; `--allow-writes` lets it through.
+  names the key; `--policy allow` lets it through.
 - `sonde proxy` and `watch` record no program: only what the recording itself wrote.
 
-Which applies, first match: the flag (`--policy allow|no-delete|read-only`, or `--allow-writes`); `[record] policy`
-in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at the
-`record-policy` setting, which `[record] policy` may narrow, never widen.
+Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy`
+in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
+project's `[record] policy` when Run is not asked for one), which `[record] policy` may narrow, never widen.
 
 ## Session files
 

@@ -65,6 +65,7 @@ pub fn class(r: &Record) -> Class {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
+    #[serde(rename = "kind")]
     pub operation: String,
     /// GET or HEAD answered 404.
     pub missed: bool,
@@ -1263,6 +1264,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatencyChange {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub missed: bool,
     pub requests: (usize, usize),
@@ -1301,6 +1303,7 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupChange {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub missed: bool,
     pub requests: (usize, usize),

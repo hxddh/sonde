@@ -819,13 +819,13 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
   // one request of the operation: its status (a scenario's answer marked), what it was, how long it took
   const request = (r: () => RecordSummary, i: () => number) => (
     <View style={{ height: rowHeight(ROW.twoLine) }}>
-      <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
+      <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().kind} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
         <View class={WIDTH.status}>
           <StatusMark status={r().status} injected={r().injected} />
         </View>
         <View class="min-w-0 flex-1">
           <View class="flex-row items-center gap-2">
-            <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{r().operation}</Text>
+            <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{r().kind}</Text>
             {/* a fault scenario answered it, not the store */}
             <If when={r().injected}>
               <Text testID="op-request-injected" class="shrink-0 text-caption text-status-injected">{t("plots.injected")}</Text>

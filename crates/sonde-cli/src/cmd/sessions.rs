@@ -9,17 +9,23 @@ use sonde_core::Sonde;
 use crate::output::{self, Format};
 
 #[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct SessionsArgs {
     #[command(subcommand)]
     action: Option<Action>,
-    /// The format written: table, json, markdown or csv (the list).
+    #[command(flatten)]
+    list: ListArgs,
+}
+
+#[derive(Args)]
+struct ListArgs {
+    /// The format written: table, json, markdown or csv.
     #[arg(
         long,
         short = 'f',
         value_enum,
         default_value_t,
-        hide_possible_values = true,
-        global = true
+        hide_possible_values = true
     )]
     format: Format,
 }
@@ -27,13 +33,15 @@ pub struct SessionsArgs {
 #[derive(Subcommand)]
 enum Action {
     /// List them, newest first (the default).
-    List,
-    /// Delete all but the newest N (baselines are kept). Without --yes, only says what it would delete.
+    List(ListArgs),
+    /// Delete all but the newest N (baselines are kept): a dry run, unless --confirm repeats the count it prints.
     Prune {
-        #[arg(long)]
+        /// How many of the newest sessions to keep.
+        #[arg(long, value_name = "N")]
         keep: usize,
-        #[arg(long)]
-        yes: bool,
+        /// The number of sessions the dry run said it would delete: deletes them.
+        #[arg(long, value_name = "COUNT")]
+        confirm: Option<usize>,
     },
 }
 
@@ -43,6 +51,9 @@ struct Row {
     path: String,
     created: String,
     program: Option<String>,
+    /// The command it ran, as it ran it: what tells two runs of a program apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
     /// The program's name, when it was given one.
     #[serde(skip)]
     named: Option<String>,
@@ -82,6 +93,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 path: p.to_string_lossy().into_owned(),
                 created: c.created.to_rfc3339(),
                 program: c.program,
+                command: c.command,
                 named: c.name.filter(|n| !n.trim().is_empty()),
                 endpoint: c.endpoint,
                 bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
@@ -213,27 +225,25 @@ pub fn open_lean(
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
-    let (command, writes): (_, &[Format]) = match &a.action {
-        None | Some(Action::List) => (
-            "sessions",
-            &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
-        ),
-        Some(Action::Prune { .. }) => ("sessions prune", &[Format::Table]),
+    let format = match &a.action {
+        Some(Action::List(l)) => l.format,
+        _ => a.list.format,
     };
-    if let Some(why) = output::unsupported(a.format, command, writes) {
+    let writes = [Format::Table, Format::Json, Format::Markdown, Format::Csv];
+    if let Some(why) = output::unsupported(format, "sessions", &writes) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
     let all = rows(s);
     match &a.action {
-        None | Some(Action::List) => {
-            if matches!(a.format, Format::Json) {
+        None | Some(Action::List(_)) => {
+            if matches!(format, Format::Json) {
                 println!("{}", output::json(&all));
                 return Ok(0);
             }
             if all.is_empty() {
                 eprintln!(
-                    "no sessions yet: `sonde demo` for a tour, `sonde run -- <command>` for your program"
+                    "no sessions yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
                 );
                 return Ok(0);
             }
@@ -252,8 +262,12 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     vec![
                         r.name.clone(),
                         local(&r.created),
-                        // its name, when it has one; else its command
-                        r.named.clone().or(r.program.clone()).unwrap_or_default(),
+                        // its name, when it has one; else its command as it ran
+                        r.named
+                            .clone()
+                            .or(r.command.clone())
+                            .or(r.program.clone())
+                            .unwrap_or_default(),
                         r.endpoint.clone(),
                         if r.unreadable.is_some() {
                             format!("{} !", output::grouped(r.requests))
@@ -269,7 +283,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 .collect();
             // a command may be a line long: in a terminal it is cut in its
             // middle so that every row fits (a file or a pipe gets it whole)
-            if matches!(a.format, Format::Table)
+            if matches!(format, Format::Table)
                 && let Some(width) = terminal_width()
             {
                 const PROGRAM: usize = 2;
@@ -294,7 +308,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 }
             }
             output::print(
-                a.format,
+                format,
                 &[
                     "session", "recorded", "program", "endpoint", "requests", "took", "errors",
                     "trials", "size",
@@ -310,7 +324,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             Ok(0)
         }
-        Some(Action::Prune { keep, yes }) => {
+        Some(Action::Prune { keep, confirm }) => {
             let dir = s.paths().sessions();
             // which sessions are baselines is unknown: none is deleted
             let baselines: std::collections::HashSet<String> =
@@ -338,9 +352,22 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                         ""
                     }
                 );
+                return Ok(0);
             }
+            // what the dry run listed, repeated: anything else deletes nothing
+            let yes = match confirm {
+                None => false,
+                Some(n) if *n == gone.len() => true,
+                Some(n) => {
+                    eprintln!(
+                        "sonde: --confirm {n} does not match: {} would be deleted now; nothing was deleted",
+                        gone.len()
+                    );
+                    return Ok(77);
+                }
+            };
             for r in &gone {
-                if *yes {
+                if yes {
                     std::fs::remove_file(&r.path)?;
                     sonde_proxy::trial::remove(std::path::Path::new(&r.path));
                     // and what was counted of it, kept beside it
@@ -348,15 +375,15 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 }
                 println!(
                     "{}{}",
-                    if *yes { "deleted " } else { "would delete " },
+                    if yes { "deleted " } else { "would delete " },
                     r.name
                 );
             }
-            if !*yes && !gone.is_empty() {
+            if !yes {
                 eprintln!(
-                    "{}: add --yes to delete {}",
+                    "dry run: to delete {}, run again with --confirm {}",
                     output::count(gone.len(), "session"),
-                    if gone.len() == 1 { "it" } else { "them" }
+                    gone.len()
                 );
                 // a dry run with something to do: 4, as every dry run
                 return Ok(4);

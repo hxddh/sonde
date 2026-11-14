@@ -133,22 +133,6 @@ export function SettingsScreen() {
         {(d) => (
           <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
             <ConfigNotice />
-            {/* the one safety setting: what a recorded program may do (sonde's own deletes each ask for a typed confirmation) */}
-            <Section title={t("settings.safety")}>
-              <Choice
-                testID="record-policy"
-                label={t("settings.recordPolicy")}
-                value={d()["record-policy"] ?? "no-delete"}
-                items={[
-                  { value: "no-delete", title: t("timeline.noDelete") },
-                  { value: "read-only", title: t("timeline.readOnly") },
-                  { value: "allow", title: t("timeline.allow") },
-                ]}
-                onChange={(v) => change({ ...d(), "record-policy": v as Settings["record-policy"] }, true)}
-              />
-              <Text class="text-small text-muted-foreground">{t("settings.recordPolicyHint")}</Text>
-            </Section>
-
             <Section title={t("settings.appearance")}>
               <View class={GRID}>
                 <Labeled class={CELL} label={t("settings.themeLabel")}>
@@ -185,11 +169,6 @@ export function SettingsScreen() {
                   <View class={CELL} />
                 </If>
               </View>
-            </Section>
-
-            <Section title={t("settings.findings")}>
-              {/* findings then say where in the program: the place to change */}
-              <SwitchRow testID="name-callers" label={t("settings.callers")} hint={t("settings.callersHint")} checked={d()["name-callers"] ?? false} onChange={(v) => change({ ...d(), "name-callers": v }, true)} />
             </Section>
 
             {/* prices by storage class are config.toml's: the default is the one most stores need */}

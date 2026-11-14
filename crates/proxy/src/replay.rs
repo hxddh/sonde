@@ -605,6 +605,7 @@ pub struct Answer {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Difference {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub original: String,
     pub replay: String,

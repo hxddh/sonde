@@ -14,9 +14,11 @@ pub struct DuArgs {
     /// The endpoint (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
+    /// The bucket.
     #[arg(long, short = 'b')]
     bucket: String,
-    #[arg(long, short = 'p', default_value = "")]
+    /// Only what is under this key prefix (default: the whole bucket).
+    #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
     prefix: String,
     /// Leave out incomplete multipart uploads.
     #[arg(long)]

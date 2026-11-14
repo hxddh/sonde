@@ -42,7 +42,7 @@ for sdk in "${sdks[@]}"; do
   session="$out/$sdk.sonde"
   echo "== $sdk"
   # (each program removes what it wrote: deletes are asked for)
-  if ! "$sonde" "${opts[@]}" run --allow-writes -o "$session" -- "${cmd[@]}"; then
+  if ! "$sonde" "${opts[@]}" run --policy allow -o "$session" -- "${cmd[@]}"; then
     echo "!! $sdk: the program failed (session: $session)"; fail=1; continue
   fi
   errors="$("$sonde" show "$session" --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["summary"]["errors"])')"

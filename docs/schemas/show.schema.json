@@ -84,7 +84,8 @@
           "description": "The storage format a step is of (`iceberg`, `delta`, …)."
         },
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Display text, not stable."
         },
         "start": {
           "type": "string"
@@ -110,6 +111,7 @@
         },
         "notes": {
           "type": "array",
+          "description": "Display text, not stable.",
           "items": {
             "type": "string"
           }
@@ -119,12 +121,14 @@
         },
         "titleText": {
           "type": "array",
+          "description": "Display text, not stable.",
           "items": {
             "$ref": "#/$defs/phrase"
           }
         },
         "notesText": {
           "type": "array",
+          "description": "Display text, not stable.",
           "items": {
             "$ref": "#/$defs/phrase"
           }
@@ -192,11 +196,11 @@
         },
         "text": {
           "type": "string",
-          "description": "In English."
+          "description": "Display text, not stable: in English."
         },
         "phrases": {
           "type": "array",
-          "description": "The same, as phrases.",
+          "description": "Display text, not stable: the same, as phrases.",
           "items": {
             "$ref": "#/$defs/phrase"
           }
@@ -220,7 +224,8 @@
           "$ref": "#/$defs/phrase"
         },
         "savingText": {
-          "type": "string"
+          "type": "string",
+          "description": "Display text, not stable."
         },
         "savesRequests": {
           "type": "integer"
@@ -255,10 +260,10 @@
         "impact"
       ]
     },
-    "operationSummary": {
+    "kindSummary": {
       "type": "object",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "count": {
@@ -298,7 +303,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "count",
         "errors",
         "misses",
@@ -367,9 +372,9 @@
         "endpoint": {
           "type": "string"
         },
-        "operation": {
+        "kind": {
           "type": "string",
-          "description": "The S3 operation (`GetObject`, `Unknown`)."
+          "description": "The request's kind: the S3 call (`GetObject`, `Unknown`)."
         },
         "method": {
           "type": "string"
@@ -502,7 +507,7 @@
         "id",
         "time",
         "endpoint",
-        "operation",
+        "kind",
         "method",
         "url",
         "bucket",
@@ -619,11 +624,11 @@
         "bytesDown": {
           "type": "integer"
         },
-        "operations": {
+        "kinds": {
           "type": "array",
           "description": "Each kind of request.",
           "items": {
-            "$ref": "#/$defs/operationSummary"
+            "$ref": "#/$defs/kindSummary"
           }
         },
         "errorCodes": {
@@ -657,7 +662,7 @@
         "seconds",
         "bytesUp",
         "bytesDown",
-        "operations",
+        "kinds",
         "errorCodes"
       ]
     },

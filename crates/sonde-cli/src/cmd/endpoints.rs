@@ -10,24 +10,36 @@ use crate::output::{self, Format};
 pub struct EndpointArgs {
     #[command(subcommand)]
     action: EndpointAction,
-    /// The format written: table or json (list and test).
-    #[arg(
-        long,
-        short = 'f',
-        value_enum,
-        default_value_t,
-        hide_possible_values = true,
-        global = true
-    )]
-    format: Format,
 }
 
 #[derive(Subcommand)]
 enum EndpointAction {
     /// Configured endpoints (never their credentials).
-    List,
+    List {
+        /// The format written: table or json.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
     /// Lists buckets and, where the vendor has it, asks STS who the credentials belong to.
-    Test { endpoint: Option<String> },
+    Test {
+        /// The endpoint's id (default: --url, or the only one configured).
+        endpoint: Option<String>,
+        /// The format written: table or json.
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
+        format: Format,
+    },
     /// Adds an endpoint: its URL, credentials from a profile or the AWS default chain (never a key on the command line).
     Add {
         /// A short id: what -e names it by.
@@ -51,14 +63,13 @@ enum EndpointAction {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
-    let (command, writes): (_, &[Format]) = match &a.action {
-        EndpointAction::List => ("endpoints list", &[Format::Table, Format::Json]),
-        EndpointAction::Test { .. } => ("endpoints test", &[Format::Table, Format::Json]),
-        // these say what they did on stderr: there is nothing to format
-        EndpointAction::Add { .. } => ("endpoints add", &[Format::Table]),
-        EndpointAction::Import { .. } => ("endpoints import", &[Format::Table]),
+    // add and import say what they did on stderr: they have no -f
+    let (command, format) = match &a.action {
+        EndpointAction::List { format } => ("endpoints list", *format),
+        EndpointAction::Test { format, .. } => ("endpoints test", *format),
+        _ => ("endpoints", Format::Table),
     };
-    if let Some(why) = output::unsupported(a.format, command, writes) {
+    if let Some(why) = output::unsupported(format, command, &[Format::Table, Format::Json]) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
@@ -96,9 +107,9 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
                 }
             }
         }
-        EndpointAction::List => {
+        EndpointAction::List { .. } => {
             let e = s.endpoints();
-            match a.format {
+            match format {
                 Format::Json => println!("{}", output::json(&e)),
                 _ => println!(
                     "{}",
@@ -119,10 +130,10 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             }
             Ok(0)
         }
-        EndpointAction::Test { endpoint } => {
+        EndpointAction::Test { endpoint, .. } => {
             let ep = to_test(s, endpoint.as_deref())?;
             let r = s.test_endpoint(&ep).await;
-            match a.format {
+            match format {
                 Format::Json => println!("{}", output::json(&r)),
                 _ => {
                     println!(

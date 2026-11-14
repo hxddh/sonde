@@ -73,7 +73,7 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                 divided
                 first={i() === 0}
                 testID={`key-request-${shown().from + i()}`}
-                label={`${x().operation} ${clock(x().time, "ms")}`}
+                label={`${x().kind} ${clock(x().time, "ms")}`}
                 selected={x().id === props.at}
                 disabled={x().id === props.at}
                 onPress={() => props.onRecord(x().id)}
@@ -91,7 +91,7 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                 <View class={WIDTH.status}>
                   <StatusMark status={x().status} injected={x().injected} />
                 </View>
-                <Text class="min-w-0 flex-1 text-small text-foreground line-clamp-1">{x().operation}</Text>
+                <Text class="min-w-0 flex-1 text-small text-foreground line-clamp-1">{x().kind}</Text>
                 <Text class="shrink-0 font-mono text-caption text-muted-foreground">{clock(x().time, "ms")}</Text>
               </ListRow>
             )}

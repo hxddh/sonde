@@ -66,6 +66,7 @@ impl Standing {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Where {
+    #[serde(rename = "kind", alias = "operation")]
     pub operation: String,
     /// `bucket/key`, or the bucket and what was listed.
     pub key: String,
@@ -3794,7 +3795,7 @@ mod tests {
         );
         // as JSON, for the app
         let j = serde_json::to_value(&t).unwrap();
-        assert_eq!(j["where"]["operation"], "PutObject");
+        assert_eq!(j["where"]["kind"], "PutObject");
         assert_eq!(j["where"]["caller"], "/home/me/job/etl.py:12 in save");
         assert_eq!(j["advice"]["key"], "trial.advice.retries");
         let back: Trial = serde_json::from_value(j).unwrap();

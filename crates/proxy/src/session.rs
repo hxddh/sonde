@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 
 pub const FORMAT: &str = "sonde-session";
 /// The format's version: what this sonde writes, and the newest it reads.
-pub const VERSION: u32 = 1;
+/// Format 2 (20.0) names a record's S3 call `kind`; format 1 named it
+/// `operation`, and is read the same.
+pub const VERSION: u32 = 2;
 
 /// The first line of a session file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1019,9 +1021,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
         let least = concat!(
-            r#"{"format":"sonde-session","version":1,"created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","later":{"x":1}}"#,
+            r#"{"format":"sonde-session","version":2,"created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","later":{"x":1}}"#,
             "\n",
-            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","operation":"GetObject","method":"GET","url":"","query":[],"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[],"later":true}"#,
+            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","kind":"GetObject","method":"GET","url":"","query":[],"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[],"later":true}"#,
             "\n",
             r#"{"log":{"time":"2026-11-12T10:00:00.002Z","text":"hi\n"},"later":1}"#,
             "\n",
@@ -1033,32 +1035,61 @@ mod tests {
             (s.records[0].status, s.records[0].bucket.as_ref()),
             (None, None)
         );
+        assert_eq!(s.records[0].operation, "GetObject");
         assert_eq!(s.logs.len(), 1);
         assert_eq!(s.header.sonde, None);
         // a line short of a required field is not a record
         std::fs::write(&path, least.replace(r#""latencyMs":3.5,"#, "")).unwrap();
         assert!(Session::open(&path).is_err());
-        // what this sonde writes names it
+        // what this sonde writes names it, and calls the S3 call its kind
         let h = SessionHeader::new("e", "u", "r", None);
         assert_eq!(h.sonde.as_deref(), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(h.version, VERSION);
+        let line = serde_json::to_value(&s.records[0]).unwrap();
+        assert_eq!(
+            (line["kind"].as_str(), line.get("operation")),
+            (Some("GetObject"), None)
+        );
         // newer: refused, by name
-        let newer = least.replacen(r#""version":1,"#, r#""version":2,"sonde":"18.0.0","#, 1);
+        let newer = least.replacen(r#""version":2,"#, r#""version":3,"sonde":"21.0.0","#, 1);
         std::fs::write(&path, &newer).unwrap();
         let e = Session::open(&path).unwrap_err();
         assert!(
-            e.contains("written by sonde 18.0.0, format 2;") && e.contains("reads up to format 1"),
+            e.contains("written by sonde 21.0.0, format 3;") && e.contains("reads up to format 2"),
             "{e}"
         );
-        std::fs::write(&path, least.replacen(r#""version":1"#, r#""version":3"#, 1)).unwrap();
+        std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":4"#, 1)).unwrap();
         let e = Session::open(&path).unwrap_err();
-        assert!(e.contains("written by a newer sonde, format 3"), "{e}");
+        assert!(e.contains("written by a newer sonde, format 4"), "{e}");
         std::fs::write(&path, least.replacen("sonde-session", "har", 1)).unwrap();
         assert!(
             Session::open(&path)
                 .unwrap_err()
                 .contains("not a sonde session")
         );
+    }
+
+    /// Format 1 (19.0 and before) named a record's kind `operation`: it is
+    /// read the same, in full and lean.
+    #[test]
+    fn a_format_1_session_is_read_its_operation_the_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.sonde");
+        let v1 = concat!(
+            r#"{"format":"sonde-session","version":1,"sonde":"19.0.0","created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","command":"python etl.py"}"#,
+            "\n",
+            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","operation":"ListObjectsV2","method":"GET","url":"","bucket":"b","query":[],"status":200,"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
+            "\n",
+            r#"{"id":2,"time":"2026-11-12T10:00:00.002Z","endpoint":"e","operation":"GetObject","method":"GET","url":"","bucket":"b","key":"k","query":[],"status":404,"latencyMs":1.0,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
+            "\n",
+        );
+        std::fs::write(&path, v1).unwrap();
+        let s = Session::open(&path).unwrap();
+        assert_eq!(s.header.version, 1);
+        let kinds: Vec<&str> = s.records.iter().map(|r| r.operation.as_str()).collect();
+        assert_eq!(kinds, ["ListObjectsV2", "GetObject"]);
+        let lean = Session::open_lean(&path).unwrap();
+        assert_eq!(lean.records[1].operation, "GetObject");
     }
 
     #[test]

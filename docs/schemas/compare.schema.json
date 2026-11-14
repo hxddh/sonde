@@ -86,7 +86,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "operation": {
+          "kind": {
             "type": "string"
           },
           "missed": {
@@ -118,7 +118,7 @@
           }
         },
         "required": [
-          "operation",
+          "kind",
           "missed",
           "requests",
           "waitingMs"
@@ -132,10 +132,12 @@
         "type": "object",
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
@@ -154,10 +156,12 @@
         "type": "object",
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
@@ -196,10 +200,12 @@
             ]
           },
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
@@ -209,10 +215,12 @@
             "description": "As it read in the run before (less).",
             "properties": {
               "text": {
-                "type": "string"
+                "type": "string",
+                "description": "Display text, not stable."
               },
               "phrases": {
                 "type": "array",
+                "description": "Display text, not stable.",
                 "items": {
                   "$ref": "#/$defs/phrase"
                 }
@@ -236,7 +244,7 @@
           },
           "savedText": {
             "type": "string",
-            "description": "The measured saving against the predicted."
+            "description": "Display text, not stable: the measured saving against the predicted."
           }
         },
         "required": [

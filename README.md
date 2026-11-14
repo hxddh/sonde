@@ -15,7 +15,7 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Find and fix** | Hot keys, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a fix for your SDK and the line that sent it. Run again: each finding reads **fixed** (with the saving measured), **less**, **back** or **new**. |
 | **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--trial --again` tries only what did not survive. |
 | **Gate CI** | `sonde check` fails a job over its budget or past its baseline; the GitHub Action (`hxddh/sonde@v19`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
-| **Why slow, why costly** | `show --by prefix\|size\|caller\|sdk` splits the table and says where the slow and costly requests are. |
+| **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|sdk` splits the table and says where the slow and costly requests are. |
 | **Compare and replay** | `compare` two runs, or a session replayed on another store (`--replay`) to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
 | **Look at stores** | Browse buckets, find incomplete uploads, run 40 compatibility probes across endpoints, decode table layouts. |
@@ -66,7 +66,7 @@ Windows; the app as `.dmg`, a Linux tarball (GTK 4) and a Windows zip. Checksums
 ## Use
 
 ```sh
-sonde demo                              # a tour on a built-in store, no account needed
+sonde run --demo                        # a tour on a built-in store, no account needed
 sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
 sonde endpoints import                  # your ~/.aws/config profiles
 sonde run -- python etl.py              # record
@@ -87,7 +87,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 ## Good to know
 
 - **What a recorded program may do**: by default `no-delete` — no deletes, no overwriting objects it did not write,
-  no bucket policy or versioning changes. `--allow-writes` lifts it, `--policy read-only` allows only reads
+  no bucket policy or versioning changes. `--policy allow` lifts it, `--policy read-only` allows only reads
   ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`. A safety net,
   not a sandbox: the program runs with your rights ([security](docs/security.md#run)).
 - **A trial runs the program again**, once per scenario: point it at scratch paths with `{trial}` in a key, or
@@ -97,7 +97,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 - Not supported yet: S3 Express One Zone (refused with a reason), SigV4a, HTTP/2 to the endpoint.
 - Memory grows with a session's requests: about a million in 2 GB ([performance](docs/performance.md)).
 - No telemetry. Credentials stay in sonde; logs and shared pages can be redacted.
-- What is stable between versions — session files, JSON outputs, `sonde.toml`, flags, exit codes — is in
+- What is stable between versions — session files, JSON outputs, `sonde.toml` and `config.toml` ([configuration](docs/configuration.md)), flags, exit codes — is in
   [docs/contract.md](docs/contract.md).
 
 ## Documentation

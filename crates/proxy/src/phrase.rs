@@ -207,7 +207,7 @@ fn template(key: &str) -> &'static str {
         "split.cost" => "; {pct}% of the cost is ",
         "split.and" => ", ",
         "split.end" => ".",
-        "split.operation" => "{v}",
+        "split.kind" => "{v}",
         "split.prefix" => "under {v}",
         "split.caller" => "from {v}",
         "split.sdk" => "from {v}",
@@ -295,7 +295,7 @@ fn template(key: &str) -> &'static str {
             "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told"
         }
         "trial.advice.policy" => {
-            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)"
+            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--policy allow)"
         }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"

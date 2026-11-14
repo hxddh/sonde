@@ -18,13 +18,13 @@ it. This page is its contract ([contract.md](contract.md)); `crates/proxy/src/se
 ## The header
 
 ```json
-{"format":"sonde-session","version":1,"sonde":"19.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
+{"format":"sonde-session","version":2,"sonde":"20.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
 ```
 
 | Field | | |
 |---|---|---|
 | `format` | required | Always `"sonde-session"`. Anything else is not a session. |
-| `version` | required | The format's version, an integer: `1`. |
+| `version` | required | The format's version, an integer: `2` (`1` before 20.0). |
 | `created` | required | When the recording began, RFC 3339 in UTC. |
 | `endpoint` | required | The endpoint's id (`adhoc` for `--url`). Never its credentials. |
 | `url` | required | The endpoint's URL. |
@@ -47,7 +47,7 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 | `id` | required | An integer, unique within a recording. Files joined from two recordings repeat ids; readers renumber. |
 | `time` | required | When the request began, RFC 3339. |
 | `endpoint` | required | The endpoint's id. |
-| `operation` | required | The S3 operation, as the API reference spells it (`PutObject`, `ListObjectsV2`), or `Unknown`. |
+| `kind` | required | The S3 call, as the API reference spells it (`PutObject`, `ListObjectsV2`), or `Unknown`. Format 1 named it `operation`. |
 | `method` | required | The HTTP method. |
 | `url` | required | The URL as sent, signatures masked; may be empty (an import, a lean reading). |
 | `query` | required | `[[name, value], …]`, decoded, masked like the URL. |
@@ -89,13 +89,14 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 
 ## Versions
 
-- The format is version `1`, written by every sonde since 1.0.
+- The format is version `2`, written since 20.0: a record's S3 call is `kind` (version `1`, written by 1.0 to 19.x,
+  named it `operation`; nothing else differs). 20.0 reads both.
 - **Within a version**, fields may be added to the header, records or log lines. Readers skip unknown fields and
   treat a missing optional field as not known. Required fields are never removed, renamed, retyped or redefined.
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
   a line kind it cannot skip, another encoding), in a major release ([contract.md](contract.md)).
 - A sonde reads every version up to its own and refuses a newer one by name, never partially:
-  `written by sonde 20.0.0, format 2; this sonde (19.0.0) reads up to format 1: update sonde to read it`
+  `written by sonde 21.0.0, format 3; this sonde (20.0.0) reads up to format 2: update sonde to read it`
   (`a newer sonde` when the header has no `sonde`).
 - A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.

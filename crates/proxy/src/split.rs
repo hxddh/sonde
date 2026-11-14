@@ -1,6 +1,6 @@
 //! A session's requests split by one dimension (`sonde show --by`, the
 //! app's Group by): the operations table's figures for each prefix, size,
-//! caller, SDK, status or operation, and one sentence saying where the slow
+//! caller, SDK, status or kind, and one sentence saying where the slow
 //! and the costly requests concentrate.
 
 use std::collections::{BTreeMap, HashMap};
@@ -16,7 +16,7 @@ use crate::summary::is_miss;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Dimension {
-    Operation,
+    Kind,
     Prefix,
     Size,
     Caller,
@@ -26,7 +26,7 @@ pub enum Dimension {
 
 impl Dimension {
     pub const ALL: [Dimension; 6] = [
-        Dimension::Operation,
+        Dimension::Kind,
         Dimension::Prefix,
         Dimension::Size,
         Dimension::Caller,
@@ -36,7 +36,7 @@ impl Dimension {
 
     pub fn name(self) -> &'static str {
         match self {
-            Dimension::Operation => "operation",
+            Dimension::Kind => "kind",
             Dimension::Prefix => "prefix",
             Dimension::Size => "size",
             Dimension::Caller => "caller",
@@ -56,7 +56,7 @@ impl Dimension {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Row {
-    /// The prefix, size band, caller, SDK, status or operation.
+    /// The prefix, size band, caller, SDK, status or kind.
     pub key: String,
     /// The groups past the table's rows, folded into one.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -149,7 +149,7 @@ impl Keyer {
 
     fn key(&self, r: &Record) -> String {
         match self.by {
-            Dimension::Operation => r.operation.to_string(),
+            Dimension::Kind => r.operation.to_string(),
             Dimension::Prefix => {
                 let f = folder_of(r);
                 prefix_for(&self.prefixes, &f).unwrap_or(&f).to_string()
@@ -270,7 +270,7 @@ pub fn split(records: &[Record], by: Dimension, prices: &RequestPrices) -> Split
 fn place(by: Dimension, key: &str) -> Phrase {
     let v = |k: &'static str| p(k, &[("v", key.to_string())]);
     match by {
-        Dimension::Operation => v("split.operation"),
+        Dimension::Kind => v("split.kind"),
         Dimension::Prefix => v("split.prefix"),
         Dimension::Caller => v("split.caller"),
         Dimension::Sdk => v("split.sdk"),
@@ -343,7 +343,7 @@ fn sentence(
                 let mut n = slow_in_top.len();
                 // a second dimension that narrows them further
                 let mut best: Option<(usize, Phrase)> = None;
-                for d in [Dimension::Prefix, Dimension::Size, Dimension::Operation] {
+                for d in [Dimension::Prefix, Dimension::Size, Dimension::Kind] {
                     if d == by {
                         continue;
                     }
@@ -461,8 +461,8 @@ mod tests {
             s.text,
             "100% of the slow requests (over 300 ms) are under b/wal/."
         );
-        // by operation: one kind, nothing to tell apart
-        let s = split(&session(), Dimension::Operation, &RequestPrices::default());
+        // by kind: one kind, nothing to tell apart
+        let s = split(&session(), Dimension::Kind, &RequestPrices::default());
         assert_eq!(s.rows.len(), 1);
         assert_eq!(s.text, "");
         // by size, and narrowed by prefix: all of the slow requests are both
@@ -493,7 +493,7 @@ mod tests {
                 10,
             ));
         }
-        let s = split(&recs, Dimension::Operation, &RequestPrices::default());
+        let s = split(&recs, Dimension::Kind, &RequestPrices::default());
         // writes cost 12.5 times reads: 10 PUTs are 86% of the cost
         assert!(
             s.text.ends_with("86% of the cost is PutObject."),
