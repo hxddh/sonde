@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
+import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { changedFindings, savedText } from "./fixloop";
 import { StateBadge } from "./sessionview";
 import { fileName, sessionName } from "./manage";
@@ -370,6 +370,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
       <Card pad="none">
       <DataTable
         columns={columns()}
+        renderHeaderCell={terminal() ? undefined : titleCells(columns)}
         data={rows()}
         // the stores under one heading
         groups={[[{ label: "", span: 2 }, { label: t("matrix.stores"), span: props.runs.length }]]}
@@ -497,7 +498,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         when={!runs()}
         else={
           <Actions>
-            <Button variant="outline" label={t("common.close")} onPress={props.onClose} testID="replay-close" />
+            <Button variant="primary" label={t("common.close")} onPress={props.onClose} testID="replay-close" />
           </Actions>
         }
       >

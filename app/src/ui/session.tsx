@@ -77,14 +77,14 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
       }
     >
       {(r) => (
-        <Card class="border-primary/40" testID="recording">
+        <Card testID="recording">
           <View class="flex-row items-center gap-2">
             <Dot tone="live" />
             <Heading class="flex-1 line-clamp-1">{t("timeline.recording", { url: r().url })}</Heading>
             <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
           </View>
           <Text class={TEXT.note}>{t("timeline.pointApp")}</Text>
-          <View selectable class="gap-0 rounded-(--radius) border border-border bg-muted/50 px-3 py-2">
+          <View selectable class="gap-0 rounded-(--radius) bg-muted/60 px-3 py-2">
             <Each of={r().exports.trim().split("\n")}>{(line) => <Text class={TEXT.code}>{line()}</Text>}</Each>
           </View>
           <View class="flex-row">

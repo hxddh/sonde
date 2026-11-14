@@ -87,7 +87,7 @@ its dot (`dot`), its icon (`icon`) and a quiet wash with words (`badge`). The to
 
 **Colour marks, it does not paint.** A status's colour is on its dot, its icon or a 2 pt rule, never on a row's text
 or a tile's figure (both stay in the text's colour, a quiet one muted). A verdict or a state ("Broke", "Latest",
-"Missing") is a `Badge`: a quiet word in its tone, no pill. What is merely done says nothing (Activity has no
+"Missing") is a `Badge`: its tone on a dot, its word in the text's colour (muted when neutral), no pill. What is merely done says nothing (Activity has no
 "Finished"). The one coloured words are a finding's saving ("↘ 10 fewer requests", `info`).
 
 Theme tokens only (`theme.json`, light and dark). Status has its own roles —
@@ -195,7 +195,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
   - tiles (`Tiles`) go in rows of equal count, each as high as its row: four are four abreast or two and two,
-    never three and one; five that do not fit go as many abreast as fit, the last row the shorter. They never stand
+    never three and one; five that do not fit go in rows as even as they can (three and two, not four and one). They never stand
     one per row in a pane 560 pt wide or more; under it each takes a line of its own — what it counts at its start,
     the figure at its end — before any label or figure would be cut. That one-line
     tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
@@ -266,10 +266,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   has a primary (done: Close). A dialog's intro is set at the body's leading; a command in it is one line.
 - **Inside a card or the inspector, nothing is boxed again**: a `KeyValue` or a `SimpleTable bare` has hairlines
   between its rows only, no outer border and no rules between columns; names are sans and muted, mono is for
-  identifiers. Twin cards stand apart by their gap, with no rule between them.
+  identifiers. Twin cards stand apart by their gap, with no rule between them, and a split between two cards
+  (`SPLIT_GAP`) draws no hairline until the pointer finds it. Code inside a card is a well: a muted fill, no border.
 - **Chrome on hover or selection** (`REVEAL`): a row's pencil, trash or Decode and a tile's chevron show under the
   pointer, on the selected row, or while the keyboard is inside the row; a table's sort mark shows on its sorted
-  column and under the pointer, right after its title.
+  column and under the pointer, right after its title (`titleCells`: every DataTable's titles, drawn one way).
 
 ## Spacing and size
 

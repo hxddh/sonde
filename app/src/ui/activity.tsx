@@ -81,7 +81,7 @@ function Jobs() {
                 <If when={j().state === "running"}>
                   <ProgressBar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={core(j().progress.messageText, j().progress.message)} />
                 </If>
-                <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
+                <If when={j().error}>{(e) => <Text class={TEXT.error}>{e().message}</Text>}</If>
               </Row>
             )}
           </Each>
@@ -131,7 +131,7 @@ function Changes() {
                   </View>
                 </If>
                 <If when={e().errors.length > 0}>
-                  <Text class="text-small text-destructive">{e().errors.join("; ")}</Text>
+                  <Text class={TEXT.error}>{e().errors.join("; ")}</Text>
                 </If>
               </Row>
             )}

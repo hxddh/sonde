@@ -13,7 +13,7 @@ import { sectionLabel, SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, report } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { ToolBar, Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
+import { titleCells, ToolBar, Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -76,6 +76,7 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
       testID="matrix"
       accessibilityLabel={t("probes.matrix")}
       columns={columns()}
+      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
       data={data()}
       fontSize={TYPE.small}
       rowHeight={rowHeight(ROW.twoLine)}
@@ -99,7 +100,7 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
                 // at its cell's start: the press area is the badge's, not the cell's
                 <View class="flex-row">
                 <Pressable testID={`cell-${row.probe.id}-${i}`} label={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)}>
-                  <Badge label={`${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}`} tone={verdictTone(c.verdict)} />
+                  <Badge label={verdictLabel(c.verdict)} tone={verdictTone(c.verdict)} />
                 </Pressable>
                 </View>
               );

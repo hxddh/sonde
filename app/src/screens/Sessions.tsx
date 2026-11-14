@@ -19,7 +19,7 @@ import { type SessionCommand, shownSessionCommands, away, chooseBucket, compareO
 import type { LogLine, Observation, SessionInfo, SessionView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, terminal, PANE } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -454,7 +454,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       return (
         <View class="min-h-0 flex-1 gap-3">
           {findings(v)}
-          <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
+          <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("sessions.resizeOutput")}>
             <ResizablePanel minSize={PANE.outputLeast}>
               <View class="flex-1 pr-2">{output()}</View>
             </ResizablePanel>

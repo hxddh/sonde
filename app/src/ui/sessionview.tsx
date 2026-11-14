@@ -14,7 +14,7 @@ import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signa
 import type { Operations } from "../operations";
 import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -315,7 +315,7 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
               testID="fix-code"
               // (the sample as written, without the blank lines around it)
               markdown={`\`\`\`${LANG[f().sdk]}\n${sample(f().code)}\n\`\`\``}
-              classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2 font-mono text-small" }}
+              classes={{ codeBlock: "rounded-(--radius) bg-muted/60 p-2 font-mono text-small" }}
             />
           </If>
         )}
@@ -798,6 +798,7 @@ export function OperationsTable(props: {
       classes={terminal() ? undefined : tableClasses}
       rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? SELECTED : ""))}
       renderCell={terminal() ? undefined : cell}
+      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
       rowSelectable
       sort={sort()}
       onSortChange={({ sort: next }) => sortBy(next)}
@@ -824,6 +825,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
         { key: "time", title: t("column.time"), width: COLUMN.outputTime },
         { key: "line", title: t("sessions.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
       ]}
+      renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, {}])}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
       fontSize={TYPE.small}
       fontFamily={terminal() ? undefined : token("font-mono")}

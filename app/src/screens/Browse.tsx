@@ -11,7 +11,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
+import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, useBucketFacts } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -425,6 +425,14 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     void popupMenu(actions(row));
   };
 
+  // the listing's columns: the name takes what the others leave
+  const objectColumns = () => [
+    { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
+    { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
+    ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
+    ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
+    ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: COLUMN.objectParts, align: "end" as const }] : []),
+    ];
   return (
     <View class="min-h-0 flex-1 gap-2">
       {/* one row, one middle: where this is, then how much of it, finding in it, how it lists, and again.
@@ -504,13 +512,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             testID="objects"
             accessibilityLabel={t("nav.objects")}
             class="min-h-0 flex-1"
-            columns={[
-              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
-              { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
-              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
-              ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
-              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: COLUMN.objectParts, align: "end" as const }] : []),
-            ]}
+            columns={objectColumns()}
+            renderHeaderCell={terminal() ? undefined : titleCells(objectColumns)}
             data={tableData()}
             dataStart={start()}
             rowCount={total()}

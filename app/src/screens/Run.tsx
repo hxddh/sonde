@@ -18,7 +18,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, SPLIT_GAP, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -498,7 +498,7 @@ export function Run() {
         <If
           when={terminal()}
           else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
+            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("run.resizeOperations")}>
               <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />

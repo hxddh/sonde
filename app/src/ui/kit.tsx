@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
 import { isAvailable, Menu, type MenuItem as MenuItemSpec } from "nsh/desktop";
@@ -14,6 +14,9 @@ export const textual = () => terminal() || screenReaderEnabled();
 /** The look of every split's handle (Native Shell's ResizablePanelGroup):
  * a hairline that thickens under the pointer. */
 export const SPLIT_HANDLE = "bg-border group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
+/** The same handle between two cards side by side: their gap parts them, so no hairline is drawn until the
+ * pointer finds it. */
+export const SPLIT_GAP = "bg-transparent group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
 /** A shortcut as the platform writes it: "mod+shift+k" → "⇧⌘K" on macOS,
  * "Ctrl+Shift+K" elsewhere (Native Shell's keymap). */
 export function keyLabel(shortcut: string): string {
@@ -232,16 +235,35 @@ export const TABLE = {
   get headerCell() {
     return `group px-2 ${TEXT.meta}`;
   },
-  // the sort mark right after its title, shown on the sorted column (its one direction) and under the pointer
-  headerContent: "justify-start gap-1",
-  sortAscending: `opacity-0 selected:opacity-100 group-hover:opacity-100 ${TRANSITION}`,
-  sortDescending: `opacity-0 selected:opacity-100 group-hover:opacity-100 ${TRANSITION}`,
+  // a sortable title is pressed anywhere on it (its sort button spans it, unseen): the mark the reader sees is
+  // drawn right after the title by `titleCells`
+  sortIndicator: "absolute inset-0 h-full w-full",
+  sortAscending: "opacity-0",
+  sortDescending: "opacity-0",
   // (its text in the theme's own colour: a table that draws its cells itself was black on dark)
   cell: "px-2 text-foreground",
   rowHover: "bg-row-hover",
   rowSelected: SELECTED,
   fixedEdge: "border-r border-border",
 } as const;
+/** Every DataTable's titles (its `renderHeaderCell`), drawn one way: the title
+ * in the header's role, and on a sortable column its sort mark right after it
+ * — the one direction on the sorted column, both under the pointer, none
+ * otherwise. `columns` are the table's, for which sort and which stand at
+ * their end. */
+export const titleCells = (columns: () => readonly { sortable?: boolean; align?: string; key?: string }[]) => (h: DataTableHeaderCell) => {
+  const c = () => columns()[h.column];
+  return (
+    <View class={`min-w-0 flex-1 flex-row items-center gap-1 ${c()?.align === "end" ? "justify-end" : ""}`}>
+      <Text class={`min-w-0 shrink ${TEXT.meta} line-clamp-1`}>{h.title}</Text>
+      <If when={c()?.sortable && !terminal()}>
+        <View class={`shrink-0 ${h.sort ? "" : `opacity-0 group-hover:opacity-100 ${TRANSITION}`}`}>
+          <Icon name={h.sort === "ascending" ? "chevron-up" : h.sort === "descending" ? "chevron-down" : "chevrons-up-down"} size={ICON.small} tint="muted-foreground" />
+        </View>
+      </If>
+    </View>
+  );
+};
 /** A table inside a card or a chart (`SimpleTable bare`): the same, with no
  * box of its own and no fill under its titles, the hairline under them only. */
 export const BARE_TABLE = {
@@ -979,7 +1001,11 @@ export function tilesPerRow(width: number, n: number, min: number, gap = 12): nu
   for (let k = n - 1; k >= 2; k--) if (n % k === 0 && fits(k, min)) return k;
   // no equal rows in a pane of some width: as many abreast as fit (two at least, the last row the
   // shorter), never one per row — a column of one-line tiles reads as a list, not as figures
-  if (width >= TILES_ABREAST) return Math.max(2, Math.min(n - 1, Math.floor((width + gap) / (min + gap))));
+  // and the rows as even as they go: five where four fit are three and two, not four and one
+  if (width >= TILES_ABREAST) {
+    const most = Math.max(2, Math.min(n - 1, Math.floor((width + gap) / (min + gap))));
+    return Math.ceil(n / Math.ceil(n / most));
+  }
   // a pane too narrow for two: a line each
   return 1;
 }
@@ -1110,14 +1136,18 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
   );
 }
 
-/** A state or a standing ("Broke", "Latest", "Missing"): a quiet word in its
- * tone, on no wash and in no pill — a verdict is read, it does not shout.
- * A neutral one (`quiet`, `plain`) is muted. */
+/** A state or a standing ("Broke", "Latest", "Missing"): a word, its tone on
+ * a dot before it — no painted word, no wash, no pill: a verdict is read, it
+ * does not shout. A neutral one (`quiet`, `plain`) is a muted word alone. */
 export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
   const tone = () => props.tone ?? "quiet";
+  const marked = () => tone() !== "plain" && tone() !== "quiet";
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class="h-5 shrink-0 flex-row items-center">
-      <Text class={`text-small ${tone() === "plain" ? "text-muted-foreground" : TONE[tone()].text}`}>{props.label}</Text>
+    <View testID={props.testID} accessibilityLabel={props.label} class="h-5 shrink-0 flex-row items-center gap-1">
+      <If when={marked()}>
+        <View class={`${DOT} ${TONE[tone()].dot}`} />
+      </If>
+      <Text class={`text-small ${marked() ? "text-foreground" : "text-muted-foreground"}`}>{props.label}</Text>
     </View>
   );
 }
@@ -1693,6 +1723,7 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : props.bare ? BARE_TABLE : TABLE}
       renderCell={custom() ? cell : undefined}
+      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
       accessibilityLabel={props.label}
       rowSelectable={!!props.onSelect}
       rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? SELECTED : "")) : undefined}

@@ -11,7 +11,7 @@ import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
 import { tellApart } from "./sessionlist";
 import { programOf, scrubCommand } from "./sessionview";
@@ -282,12 +282,14 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
   );
   const ext = (p: string) => p.split(".").pop() ?? "";
   return (
-    <Modal open size="wide" onClose={props.onClose} testID="code-change">
+    // one frame while its change loads and once it is there: the dialog keeps its size
+    <Modal open steady size="wide" onClose={props.onClose} testID="code-change">
       <Title>{t("history.codeChange")}</Title>
+      <ModalBody>
       <Await loading={change.loading()} error={change.error()} retry={() => change.refetch()}>
         <If when={change()}>
           {(x) => (
-            <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="gap-3">
+            <View class="gap-3">
               <Muted class="font-mono text-small">{`${x().from.slice(0, 7)} → ${x().to.slice(0, 7)}`}</Muted>
               <If when={x().files.length} else={<Muted>{t("history.noCodeChange")}</Muted>}>
                 <Each of={x().files} key={(f) => f.path}>
@@ -312,12 +314,13 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
               <If when={x().more > 0}>
                 <Muted class="text-small">{t("history.moreFiles", { n: x().more })}</Muted>
               </If>
-            </Scroll>
+            </View>
           )}
         </If>
       </Await>
+      </ModalBody>
       <Actions>
-        <Button variant="outline" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
+        <Button variant="primary" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
       </Actions>
     </Modal>
   );
