@@ -9,7 +9,7 @@ import { type SharedRun, RunViewer } from "./RunViewer";
 function App() {
   const data = host.params as unknown as SharedRun | undefined;
   return (
-    <If when={data?.format === "sonde-share" ? data : null} else={<Empty icon="circle-alert" text={t("viewer.noRun")} />}>
+    <If when={data?.format === "sonde-share" ? data : null} else={<Empty icon="circle-exclamation-point" text={t("viewer.noRun")} />}>
       {(d) => <RunViewer data={d()} />}
     </If>
   );

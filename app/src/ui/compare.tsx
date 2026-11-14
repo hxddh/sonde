@@ -153,7 +153,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
       contextLines={2}
       lineNumbers
       annotations={notes(d).map((n) => ({ id: n.id, side: "new" as const, line: n.line }))}
-      renderAnnotation={(a) => <Notice tone="error" icon="circle-alert" class="mx-2 my-1" text={notes(d).find((x) => x.id === a.id)?.text ?? ""} />}
+      renderAnnotation={(a) => <Notice tone="error" icon="circle-exclamation-point" class="mx-2 my-1" text={notes(d).find((x) => x.id === a.id)?.text ?? ""} />}
       class={`${SURFACE.diff} rounded-(--radius) border border-border`}
     />
   );

@@ -842,7 +842,7 @@ export function Path(props: { path: string; max?: number; class?: string; testID
 export function Notice(props: { text: string; title?: string; tone?: "info" | "warn" | "error"; icon?: IconName; children?: JSX.Element; testID?: string; class?: string }) {
   const tone = () => props.tone ?? "info";
   const look = () => ({ info: "border-border bg-muted/60", warn: "border-warn/30 bg-warn/10", error: "border-status-server/30 bg-status-server/10" })[tone()];
-  const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-alert");
+  const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-exclamation-point");
   const tint = (): Tint => TONE[({ info: "quiet", warn: "warn", error: "fail" } as const)[tone()]].icon;
   return (
     <View testID={props.testID} role={tone() === "error" ? "alert" : undefined} class={`flex-row items-start gap-2 rounded-(--radius) border px-3 py-2 ${look()} ${props.class ?? ""}`}>
@@ -886,7 +886,7 @@ export function Await(props: { loading: boolean; error?: unknown; retry?: () => 
       }
     >
       {(m) => (
-        <Empty icon="triangle-alert" title={t("error.loadTitle")} text={m()} testID={props.testID ? `${props.testID}-error` : "load-error"}>
+        <Empty icon="triangle-exclamation-point" title={t("error.loadTitle")} text={m()} testID={props.testID ? `${props.testID}-error` : "load-error"}>
           <If when={props.retry}>
             <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={() => props.retry?.()} />
           </If>
@@ -1750,7 +1750,7 @@ export function Recoverable(props: { children: JSX.Element }) {
   return (
     <ErrorBoundary
       fallback={(error, reset) => (
-        <Empty icon="triangle-alert" title={t("error.placeTitle")} text={error instanceof Error ? error.message : String(error)} testID="place-error">
+        <Empty icon="triangle-exclamation-point" title={t("error.placeTitle")} text={error instanceof Error ? error.message : String(error)} testID="place-error">
           <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={reset} />
         </Empty>
       )}
