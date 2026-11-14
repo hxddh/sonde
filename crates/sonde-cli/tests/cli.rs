@@ -394,6 +394,10 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
             &names[1],
             "--baseline",
             &names[0],
+            // the demo store's times are not meaningful (a loaded runner doubles them): the
+            // comment's shape is under test here, not a verdict on its waiting
+            "--tolerance",
+            "1000",
             "-f",
             "markdown",
             "--report-url",

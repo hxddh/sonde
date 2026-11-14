@@ -91,11 +91,33 @@ for (const v of variants) {
       }
       await app.waitFor(shown, { timeout: 4000 });
     };
-    // a session's command: its button where the pane has room, else behind its ⋯ by its words
-    const act = async (id: string, label: string) => {
+    // A menu's items, once it is up (a native menu, on macOS, opens a moment after the press that asks for it)
+    const menuItems = async () => {
+      await app.waitUntil(() => (app.menu()?.length ?? 0) > 0, { timeout: 5000 }).catch(() => {});
+      return app.menu()?.map((m) => m.label) ?? [];
+    };
+    // a menu closed, if one is still up (a native menu may have closed itself in between)
+    const closeAnyMenu = async () => {
+      if (app.menu()) await app.closeMenu().catch(() => {});
+    };
+    // The item `label` of the menu `open` shows: asked again once if the menu was gone before it was chosen
+    const chooseFrom = async (open: () => Promise<unknown>, label: string) => {
+      for (let n = 0; ; n++) {
+        await closeAnyMenu();
+        await open();
+        const items = await menuItems();
+        try {
+          return await app.chooseMenuItem(label);
+        } catch (e) {
+          if (n > 0) throw new Error(`choosing ${JSON.stringify(label)} from [${items.join(", ")}]: ${e}`);
+          await app.wait(500);
+        }
+      }
+    };
+    // an act on the session header, or in its ⋯ menu where the header has no room for it (its label in the tour's language)
+    const act = async (id: string, label: string, zh: string) => {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
-      await app.press("id:session-more");
-      await app.chooseMenuItem(label);
+      await chooseFrom(() => app.press("id:session-more"), v.lang ? zh : label);
     };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
@@ -212,10 +234,14 @@ for (const v of variants) {
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
     // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
-    for (let n = 0; n < 6; n++) {
-      const opened = await app.press("id:trial-slowdown").then(() => app.waitFor("id:trial-note", { timeout: 5000 })).then(() => true, () => false);
-      if (opened) break;
-      await app.scroll("id:history-pane", 300);
+    // (the trial's session can take longer than a press's wait to open: what is on screen decides the next step)
+    for (let n = 0; n < 6 && !app.shows("id:trial-note"); n++) {
+      if (app.shows("id:trial-slowdown")) {
+        await app.press("id:trial-slowdown");
+        await app.waitFor("id:trial-note", { timeout: 5000 }).catch(() => {});
+      } else if (app.shows("id:history-pane")) {
+        await app.scroll("id:history-pane", 300);
+      }
       await app.wait(500);
     }
     await app.waitFor("id:trial-note", { timeout: 20000 });
@@ -355,21 +381,26 @@ for (const v of variants) {
     await charts("03o-errors");
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
-    await act("compare-open", "Compare…");
-    const labels = app.menu()?.map((m) => m.label) ?? [];
-    const run = labels.find((l) => l.includes("nightly-report"));
+    // (by "Since the run before"'s Compare where it is shown: the same two runs, and no menu opened from a menu, which
+    // macOS's test bridge lists but cannot choose from)
+    let run: string | undefined = "the run before";
+    if (app.shows("id:since-compare")) await app.press("id:since-compare");
+    else {
+      await act("compare-open", "Compare…", "对比…");
+      run = (await menuItems()).find((l) => l.includes("nightly-report"));
+      if (run) await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
+    }
     if (run) {
-      await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
       // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
       await app.wait(1500);
       await charts("03h-runs");
       await app.press("id:compare-back");
-    } else if (app.menu()) await app.closeMenu();
+    } else await closeAnyMenu();
 
     // what a replay on another store would send, said before it runs
     await app.waitFor("id:session-more", { timeout: 10000 });
-    await act("replay-open", "Replay on…");
+    await act("replay-open", "Replay on…", "重放到…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");
