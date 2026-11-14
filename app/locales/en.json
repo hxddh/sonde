@@ -1043,7 +1043,7 @@
  "shape.peakIn": "%{n} in %{t}",
  "heat.fewest": "Fewest in a cell: %{n}",
  "heat.most": "Most: %{n}",
- "prefixUse.peak": "busiest %{n}/s, %{pct} of S3's limit",
+ "prefixUse.peak": "%{n}/s · %{pct}",
  "trend.errors": "How many requests failed after their retries?",
  "trend.p95": "How long did 95% of the requests take?",
  "trend.warnings": "How many warnings did each run have?",

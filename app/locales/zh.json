@@ -1043,7 +1043,7 @@
  "shape.peakIn": "%{t} 内 %{n} 个",
  "heat.fewest": "一格最少：%{n}",
  "heat.most": "最多：%{n}",
- "prefixUse.peak": "最忙 %{n}/秒，S3 上限的 %{pct}",
+ "prefixUse.peak": "%{n}/秒 · %{pct}",
  "trend.errors": "重试之后还有多少请求失败？",
  "trend.p95": "95% 的请求用了多久？",
  "trend.warnings": "每次运行有多少警告？",
