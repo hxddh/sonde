@@ -8,8 +8,9 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES, ZERO_SLIVER } from "./system";
+import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES, ZERO_SLIVER } from "./system";
 import { EMPHASIS, terminal, textual, SimpleTable } from "../kit";
+import { bytesSaid, lanesSaid } from "./answers";
 
 // --- what ran at once ----------------------------------------------------------------
 
@@ -98,7 +99,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   };
   // the lanes are of the requests sampled: said when that is not all of them
   const total = () => requestsOf(props.profile);
-  const label = () => t("lanes.text", { n: props.profile.peakInFlight, at: duration(props.profile.peakAtMs) });
+  const label = () => lanesSaid(props.profile, props.domainMs);
   const bins = Array.from({ length: LANE_BINS }, (_, i) => `${i}`);
   return (
     <If when={!terminal() && all().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
@@ -155,13 +156,26 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
 
 // --- the shape of a session ---------------------------------------------------
 
-type Slice = { tMs: number; ok: number; miss: number; client: number; server: number; inFlight: number };
+type Slice = { tMs: number; ok: number; miss: number; client: number; server: number; injected: number; inFlight: number };
 
-/** The session's slices with the most requests in flight in each. */
-export function slices(p: Profile): Slice[] {
+/** The session's slices with the most requests in flight in each. A fault
+ * scenario's answers (`injected`, by id) are counted apart, in their own
+ * tone: taken from the outcome they looked like, never the store's failure. */
+export function slices(p: Profile, injected?: number[]): Slice[] {
   let k = 0;
   let last = 0;
-  return p.rate.map((b) => {
+  // the requests sonde answered, slice by slice and by the outcome they looked like
+  const marked = new Set(injected ?? []);
+  const apart = new Map<number, Record<"ok" | "miss" | "client" | "server", number>>();
+  if (marked.size)
+    for (const x of p.samples) {
+      if (!marked.has(x.id)) continue;
+      const i = Math.min(Math.floor(x.tMs / p.binMs), p.rate.length - 1);
+      const c = apart.get(i) ?? { ok: 0, miss: 0, client: 0, server: 0 };
+      c[statusTone(x.status ?? null) as "ok" | "miss" | "client" | "server"] += 1;
+      apart.set(i, c);
+    }
+  return p.rate.map((b, i) => {
     const end = b.tMs + p.binMs;
     let peak = last;
     while (k < p.inFlight.length && p.inFlight[k].tMs < end) {
@@ -169,7 +183,10 @@ export function slices(p: Profile): Slice[] {
       last = p.inFlight[k].n;
       k++;
     }
-    return { ...b, inFlight: peak };
+    const c = apart.get(i);
+    if (!c) return { ...b, injected: 0, inFlight: peak };
+    const less = (v: number, by: number) => Math.max(0, v - by);
+    return { ...b, ok: less(b.ok, c.ok), miss: less(b.miss, c.miss), client: less(b.client, c.client), server: less(b.server, c.server), injected: Math.min(c.ok + c.miss + c.client + c.server, b.ok + b.miss + b.client + b.server), inFlight: peak };
   });
 }
 
@@ -183,15 +200,15 @@ export function shapeSentence(p: Profile): string {
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's session), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; /** the stretch chosen elsewhere (the Time pane's), as slices: marked, the rest quiet */ picked?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number }) {
+export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's session), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; /** the stretch chosen elsewhere (the Time pane's), as slices: marked, the rest quiet */ picked?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number; /** the requests a fault scenario answered, by id: their own tone in the stack */ injected?: number[] }) {
   const hovered = signal<number | null>(null);
   // zoomed: the slices from `range[0]` to `range[1]`, wider each
   const from = () => props.range?.[0] ?? 0;
   const rows = () => {
-    const all = slices(props.profile);
+    const all = slices(props.profile, props.injected);
     return props.range ? all.slice(props.range[0], props.range[1] + 1) : all;
   };
-  const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server));
+  const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server + r.injected));
   // the plot's own top: a fifth over the busiest slice where the scale is written
   const room = () => (props.axis && !props.strip ? 1.2 : 1);
   const ceiling = () => top() * room();
@@ -234,13 +251,13 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     const i = hovered();
     const r = i === null ? null : rows()[i];
     if (!r) return null;
-    const n = r.ok + r.miss + r.client + r.server;
+    const n = r.ok + r.miss + r.client + r.server + r.injected;
     // what began in the slice (an operation that began before and still runs is no request of it: a press
     // shows the operations that span it, so a slice of none begun is not said to hold nothing)
-    const parts = [n === 0 ? t("shape.noneBegan") : t("shape.began", { n }), ...(r.miss ? [t("profile.missN", { n: r.miss })] : []), ...(r.client + r.server ? [t("profile.failedN", { n: r.client + r.server })] : [])];
+    const parts = [n === 0 ? t("shape.noneBegan") : t("shape.began", { n }), ...(r.miss ? [t("profile.missN", { n: r.miss })] : []), ...(r.client + r.server ? [t("profile.failedN", { n: r.client + r.server })] : []), ...(r.injected ? [t("failures.injected", { n: count(r.injected) })] : [])];
     // the findings that begin in this slice: what the numbers over it are
     const marks = marked().get(i!) ?? [];
-    return { title: `+${duration(r.tMs)} – +${duration(r.tMs + props.profile.binMs)}`, lines: [parts.join(" · "), ...(r.inFlight > 0 ? [t("profile.inFlightN", { n: r.inFlight })] : []), ...(props.strip && props.onSlice ? [t("shape.pressSpans")] : []), ...(props.annotate && marks.length ? [t("shape.findingsHere", { list: marks.join(", ") })] : [])] };
+    return { title: `+${duration(r.tMs)} – +${duration(r.tMs + props.profile.binMs)}`, lines: [parts.join(" · "), ...(r.inFlight > 0 ? [t("profile.inFlightN", { n: r.inFlight })] : []), ...(props.strip && props.onSlice && n > 0 ? [t("shape.pressSpans")] : []), ...(props.annotate && marks.length ? [t("shape.findingsHere", { list: marks.join(", ") })] : [])] };
   };
   return (
     // a handful of requests has no shape worth a strip; a chart of its own (the Time pane's, with its axes) draws them
@@ -281,7 +298,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Bar value="ok" stack="r" color={tone("ok")} />
           <Bar value="miss" stack="r" color={tone("miss")} />
           <Bar value="client" stack="r" color={tone("client")} />
-          <Bar value="server" stack="r" color={tone("server")} cornerRadii={TIP.up} />
+          <Bar value="server" stack="r" color={tone("server")} />
+          {/* what sonde answered in the store's place: its own tone, never a failure's */}
+          <Bar value="injected" stack="r" color={tone("injected")} cornerRadii={TIP.up} />
           <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
           {/* full width: when (from the session's start) and how many at once */}
           <If when={props.axis}>
@@ -323,8 +342,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
 /** What the shape's colours and marks stand for: the outcomes the session
  * had, the line of requests in flight, and (with `marks`) the findings'
  * numbers. The whole legend of the timeline. */
-export function shapeLegend(p: Profile, marks: boolean): LegendItem[] {
-  const had = (k: "miss" | "client" | "server") => p.rate.some((b) => b[k] > 0);
+export function shapeLegend(p: Profile, marks: boolean, injected?: number[]): LegendItem[] {
+  const all = slices(p, injected);
+  const had = (k: "miss" | "client" | "server") => all.some((b) => b[k] > 0);
   return [
     { label: t("flows.ok"), swatch: "bg-bar" },
     ...(had("miss") ? [{ label: t("flows.notfound"), swatch: "bg-status-miss" }] : []),
@@ -398,7 +418,7 @@ export function BytesOverTime(props: { signals: Signals; range?: [number, number
   const top = () => Math.max(1, ...rows().map((r) => r.up)) * 1.2;
   const bottom = () => Math.min(-1, ...rows().map((r) => r.down)) * 1.2;
   const hovered = signal<number | null>(null);
-  const label = () => t("bytesTime.text", { up: bytesRate(s().bytes.upPerSec ?? 0), down: bytesRate(s().bytes.downPerSec ?? 0) });
+  const label = () => bytesSaid(s(), props.range);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: `+${duration(r.tMs)}`, lines: [transfer(r.up, -r.down, bytesRate)] } : null;

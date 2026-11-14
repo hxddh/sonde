@@ -33,7 +33,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GroupByChoice, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
 import type { SignalId } from "../signals";
-import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments } from "../ui/plots";
+import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments, began } from "../ui/plots";
 import { RecordDetail } from "../ui/request";
 import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
 import { running, runAgain } from "../run";
@@ -418,7 +418,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
   const strip = (v: () => SessionView) => (
     <If when={!terminal() && v().profile && box().h >= BREAK.short}>
-      <SessionShape strip axis profile={v().profile} slice={slice()} picked={stretch()} onSlice={(i) => stretch.set(i === null ? null : [i, i])} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
+      <SessionShape strip axis profile={v().profile} slice={slice()} picked={stretch()} onSlice={(i) => (i === null ? stretch.set(null) : began(v().profile, i, i) && stretch.set([i, i]))} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} injected={v().injected} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = (v: () => SessionView) => {

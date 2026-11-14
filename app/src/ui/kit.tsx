@@ -349,9 +349,10 @@ const iconTint: Record<Variant, Tint> = {
 
 /** The app's tooltip: a short hint, and the shortcut when there is one. */
 export function Tip(props: { text: string; shortcut?: string }) {
+  // (a hint of a sentence or two, how to read a chart, wraps rather than crossing the window)
   return (
-    <Tooltip placement="bottom" class="flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
-      <Text class="text-small text-background">{props.text}</Text>
+    <Tooltip placement="bottom" class="max-w-80 flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
+      <Text class="min-w-0 shrink text-small text-background">{props.text}</Text>
       <If when={props.shortcut}>{(k) => <Text class="font-mono text-caption text-background opacity-70">{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
