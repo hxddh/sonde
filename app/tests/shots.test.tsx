@@ -531,6 +531,9 @@ for (const v of variants) {
     await app.press("id:compat-demo");
     await app.waitFor("id:compat-dialog");
     await settings("05e-compat");
+    // (macOS can hand the focus back to the main window as the picture is taken: Settings is brought forward again)
+    if (!app.shows("id:compat-close")) await app.keyboard.press("mod+,");
+    await app.waitFor("id:compat-close");
     await app.press("id:compat-close");
     await app.waitFor("id:compat-dialog", { state: "gone" });
     await app.window("settings").pressClose();

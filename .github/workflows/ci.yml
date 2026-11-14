@@ -184,8 +184,8 @@ jobs:
         id: sonde
         with:
           version: path
-          run: python3 -c 'print(1)'
-          run-args: --url http://127.0.0.1:9 --path-style
+          run: aws s3 ls s3://demo
+          run-args: --demo
           artifact: sonde-action-test
           comment: "false"
       - name: The action's outputs

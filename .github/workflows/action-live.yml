@@ -53,8 +53,8 @@ jobs:
         uses: ./
         id: sonde
         with:
-          run: python3 -c 'print(1)'
-          run-args: --url http://127.0.0.1:9 --path-style
+          run: aws s3 ls s3://demo
+          run-args: --demo
           artifact: sonde-live
       - name: A real baseline, from the schedule's run before this one
         if: steps.released.outputs.ok == 'true' && !inputs.after-release
