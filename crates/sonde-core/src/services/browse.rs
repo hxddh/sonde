@@ -349,7 +349,7 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
             };
             if r.is_err()
                 && let Some(p) = part
-                && let Err(e) = tokio::fs::remove_file(&p).await
+                && let Err(e) = remove_closing(&p).await
                 && e.kind() != std::io::ErrorKind::NotFound
             {
                 // said where the job shows: the file is the user's to remove
@@ -364,6 +364,22 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
             r
         },
     )
+}
+
+/// Removes `path`, a file the cancelled download may still be closing: its
+/// handle is closed on a blocking thread after the download is dropped, and
+/// Windows removes no file that is open. Tried again for a moment.
+async fn remove_closing(path: &std::path::Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match tokio::fs::remove_file(path).await {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound && tries < 20 => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            r => return r,
+        }
+    }
 }
 
 async fn fetch(
