@@ -592,16 +592,19 @@ pub struct Check {
 
 /// Whether the project expects finding `o`: an entry of `expect` is its
 /// identity, or its kind for every finding of that kind. A key in an entry
-/// is read as an identity says it (`jobs/{n}/`), whatever it was named in.
+/// is read as an identity says it (`jobs/{n}/`) by the rules of now
+/// ([`crate::profile::IDENTITY_RULES`]), whatever it was named in.
 pub fn expected(o: &Observation, expect: &[String]) -> bool {
     if expect.is_empty() {
         return false;
     }
     let id = crate::profile::finding_identity(o);
     let kind = id.split('|').next().unwrap_or("");
+    // an entry made by older rules is read by these; one that names what
+    // two findings of a run share names both
     expect.iter().any(|e| {
         let e = e.trim();
-        e == kind || e == id || expected_identity(e) == id
+        e == kind || e == id || expected_identity(e) == id || e == expected_identity(&id)
     })
 }
 
@@ -932,6 +935,23 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     }
 }
 
+/// [`check_closing`] of a run whose program may have failed (`exit`, not
+/// 0): a failed run is said to have failed first, whatever its figures.
+pub fn run_closing(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> String {
+    let closing = check_closing(c, trials);
+    match exit {
+        Some(x) if closing == "nothing checked" => format!("the program failed (exit {x})"),
+        Some(x) => format!("the program failed (exit {x}); {closing}"),
+        None => closing,
+    }
+}
+
+/// [`check_passed`] of a run whose program may have failed (`exit`, not
+/// 0): a run that failed fails its check.
+pub fn run_passed(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> bool {
+    exit.is_none() && check_passed(c, trials)
+}
+
 /// Whether a check, with the run's trials, passed: every row of the budget
 /// and the baseline, and no trial that broke.
 pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
@@ -1072,8 +1092,8 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     };
     let mut md = format!(
         "### sonde: {} {}\n",
-        check_closing(c, m.trials),
-        if check_passed(c, m.trials) && m.failed.is_none() {
+        run_closing(c, m.trials, m.failed.map(|(x, _)| x)),
+        if run_passed(c, m.trials, m.failed.map(|(x, _)| x)) {
             "✅"
         } else {
             "❌"

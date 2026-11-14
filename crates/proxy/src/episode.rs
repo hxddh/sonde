@@ -2035,6 +2035,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let mut headed: HashMap<(&str, &str), (u64, chrono::DateTime<chrono::Utc>)> = HashMap::new();
     let mut pairs: Vec<u64> = Vec::new();
     let mut checked = 0usize;
+    let mut under: Option<String> = None;
     for r in records {
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
             continue;
@@ -2054,6 +2055,20 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 {
                     pairs.extend([head, r.id]);
                     checked += 1;
+                    // the folder all of them are in: what the finding is about
+                    let place = format!("{b}/{k}");
+                    under = Some(match under {
+                        None => place[..place.rfind('/').map_or(0, |i| i + 1)].to_string(),
+                        Some(u) => {
+                            let same = u
+                                .char_indices()
+                                .zip(place.chars())
+                                .take_while(|((_, x), y)| x == y)
+                                .last()
+                                .map_or(0, |((i, x), _)| i + x.len_utf8());
+                            u[..u[..same].rfind('/').map_or(0, |i| i + 1)].to_string()
+                        }
+                    });
                 }
             }
             _ => {}
@@ -2062,7 +2077,16 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     if checked >= at(3, 1) {
         out.push(
             info(
-                p("obs.headget", &[("n", checked.to_string())]),
+                p(
+                    "obs.headget",
+                    &[
+                        ("n", checked.to_string()),
+                        (
+                            "prefix",
+                            under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                        ),
+                    ],
+                ),
                 of_records(&mut pairs.iter().copied()),
             )
             .weigh(pairs.len(), checked, total)
@@ -2283,14 +2307,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .then(b.impact.cmp(&a.impact))
     });
     // two of a run's findings that read the same once what changes between
-    // runs is taken out (two dates' keys) stay two: the second by rank `#2`
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    for o in &mut out {
-        let id = crate::profile::identity(o);
-        let n = seen.entry(id.clone()).or_default();
-        *n += 1;
-        o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
-    }
+    // runs is taken out (`t00/`, `t01/`) stay two, by their keys as they were
+    crate::profile::name_findings(&mut out, &[]);
     for o in &mut out {
         // a trace is only told apart from a finding: no fix, no callers
         if any {

@@ -847,15 +847,17 @@ export interface Saving {
   ms: number;
 }
 
-/** A finding between two runs of a program: fixed (gone at any threshold), less (under its threshold), back (fixed before, here again), new or open. */
+/** A finding between two runs of a program: fixed (gone at any threshold), less or more (by its count), back (fixed or under its threshold before, here again), new or open. */
 export interface FindingChange {
   identity: string;
-  state: "fixed" | "less" | "back" | "new" | "open";
+  state: "fixed" | "less" | "more" | "back" | "new" | "open";
   level: "warn" | "info";
   text: string;
   phrases: Phrase[];
   /** As it read in the run before, when it reads otherwise now (less). */
   was?: { text: string; phrases: Phrase[] };
+  /** How much of it each run had, the run before first. */
+  counts?: [number, number];
   predicted: Saving;
   /** Measured between the runs (fixed, less). */
   measured?: Saving;

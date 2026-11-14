@@ -47,9 +47,9 @@ function changeLine(s: SinceLast): string | null {
   return parts.join(" · ");
 }
 
-/** The findings that tell what changed: fixed first, then less, back, new (open ones say nothing new). */
+/** The findings that tell what changed: fixed first, then less, back, new, more (open ones say nothing new). */
 export const changedFindings = (findings: FindingChange[]): FindingChange[] => {
-  const rank: Record<FindingState, number> = { fixed: 0, less: 1, back: 2, new: 3, open: 4 };
+  const rank: Record<FindingState, number> = { fixed: 0, less: 1, back: 2, new: 3, more: 4, open: 5 };
   return findings.filter((f) => f.state !== "open").sort((a, b) => rank[a.state] - rank[b.state]);
 };
 
@@ -62,7 +62,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
   const told = () => (s()?.findings ?? []).filter((f) => f.state === "fixed" || f.state === "back");
   const shown = () => told().slice(0, props.max ?? told().length);
   const tally = () =>
-    (["fixed", "back", "less", "new"] as const)
+    (["fixed", "back", "less", "more", "new"] as const)
       .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st).length] as const)
       .filter(([, n]) => n > 0)
       .map(([st, n]) => `${count(n)} ${say([{ key: "fix." + st, args: {} }], st)}`)

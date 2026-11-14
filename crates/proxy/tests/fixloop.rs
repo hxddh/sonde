@@ -56,7 +56,7 @@ fn a_findings_identity_is_the_same_in_two_runs_of_the_same_program() {
     assert_eq!(
         kinds(&a),
         [
-            "obs.headget|",
+            "obs.headget|etl-bucket/run/in/",
             "obs.listed|etl-bucket/run/in/",
             "obs.serial|",
             "obs.small|"
@@ -128,7 +128,7 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     assert!(third.previous.as_deref().unwrap().ends_with(RUNS[1]));
     assert_eq!(state_of(&third.findings, "obs.headget"), State::Fixed);
     let kept = fixloop::read(dir.path()).unwrap();
-    let head = &kept["etl"].findings["obs.headget|"];
+    let head = &kept["etl"].findings["obs.headget|etl-bucket/run/in/"];
     assert_eq!(head.state, State::Fixed);
     assert_eq!(head.since, RUNS[2]);
     assert_eq!(head.measured.map(|m| m.requests), Some(20));
@@ -137,7 +137,10 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     assert_eq!(state_of(&undone.findings, "obs.headget"), State::Back);
     assert_eq!(state_of(&undone.findings, "obs.small"), State::Back);
     let kept = fixloop::read(dir.path()).unwrap();
-    assert_eq!(kept["etl"].findings["obs.headget|"].state, State::Back);
+    assert_eq!(
+        kept["etl"].findings["obs.headget|etl-bucket/run/in/"].state,
+        State::Back
+    );
     assert_eq!(
         kept["etl"].findings["obs.listed|etl-bucket/run/in/"].state,
         State::Open
@@ -278,8 +281,8 @@ fn two_runs_of_an_unchanged_program_whose_keys_change_every_run_read_no_change()
     for id in [
         "obs.hot|b/jobs/{n}/state.json",
         "obs.hot|b/tbl/metadata/v{n}.metadata.json",
-        "obs.hot|b/out/_temporary/{n}/attempt_{n}_{n}_m_{n}_{n}/part-00000",
-        "obs.listed|b/runs/{uuid}/at={time}/",
+        "obs.hot|b/out/_temporary/{n}/attempt_{n}_{n}_m_{n}_{n}/part-{n}",
+        "obs.listed|b/runs/{uuid}/at={v}/",
     ] {
         assert!(ids.contains(&id.to_string()), "{id} in {ids:?}");
     }
@@ -395,9 +398,9 @@ fn back_is_judged_by_the_runs_compared_not_by_later_ones() {
     assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
 }
 
-/// Less is kept: over its threshold again it is open, not new.
+/// Less is kept: over its threshold again it is back, not new.
 #[test]
-fn less_is_kept_and_over_its_threshold_again_is_open() {
+fn less_is_kept_and_over_its_threshold_again_is_back() {
     let dir = tempfile::tempdir().unwrap();
     ran(dir.path(), 1, &hot(12), Some(0));
     let less = ran(dir.path(), 2, &hot(3), Some(0));
@@ -405,8 +408,8 @@ fn less_is_kept_and_over_its_threshold_again_is_open() {
     let kept = |dir: &Path| fixloop::read(dir).unwrap()["job"].findings["obs.hot|b/hot"].state;
     assert_eq!(kept(dir.path()), State::Less);
     let over = ran(dir.path(), 3, &hot(12), Some(0));
-    assert_eq!(state_of(&over.findings, "obs.hot"), State::Open);
-    assert_eq!(kept(dir.path()), State::Open);
+    assert_eq!(state_of(&over.findings, "obs.hot"), State::Back);
+    assert_eq!(kept(dir.path()), State::Back);
 }
 
 /// `n` requests one after another, each `ms` long.
@@ -450,4 +453,289 @@ fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
     let ms = s.measured.unwrap().ms;
     assert!((ms - 130.0).abs() < 1.0, "{ms}");
     assert!(ms < a.profile.waiting_ms - b.profile.waiting_ms);
+}
+
+/// A run reading keys laid out as tables and jobs lay them out, each named
+/// anew every run (`seed`): Hive partitions, a date-hour value, Delta's log,
+/// Iceberg's metadata and snapshots, Spark's part files, a short job id, a
+/// counter and a time folder. Two prefixes that differ by a number alone
+/// (`t00/`, `t01/`) are listed again and again: two findings. A run reads
+/// three of the keys (`part`): three keys read hot are what a run shows.
+fn layouts_run(seed: u64, part: usize) -> Vec<Record> {
+    let uuid = |n: u64| {
+        format!(
+            "{:08x}-{:04x}-4abc-8def-{:012x}",
+            n * 7_919 + seed,
+            seed,
+            n * 104_729 + seed
+        )
+    };
+    let keys = [
+        format!(
+            "in/year=2026/month=11/day=13/hour={:02}/conf.json",
+            10 + seed
+        ),
+        format!("ev/dt=2026-11-13-{:02}/manifest.json", 20 + seed),
+        format!("t/_delta_log/{:020}.json", seed + 1),
+        format!("t/metadata/{:05}-{}.metadata.json", seed + 2, uuid(1)),
+        format!(
+            "t/metadata/snap-{}-1-{}.avro",
+            6_894_157_311_395_042_398 + seed,
+            uuid(2)
+        ),
+        format!("o/part-00000-{}-c000.snappy.parquet", uuid(3)),
+        format!("jobs/job-{:08x}/state.json", 0x3fa2_b1c9 + seed),
+        format!("runs/run-{}/out.json", 40 + seed),
+        format!("logs/22-{:02}-01/x.log", 40 + seed),
+    ];
+    let mut out: Vec<Record> = Vec::new();
+    for (i, key) in keys.iter().enumerate().skip(part * 3).take(3) {
+        for _ in 0..(12 + i) {
+            out.push(get(out.len() as u64 + 1, key));
+        }
+    }
+    for prefix in ["t00/", "t01/"] {
+        for _ in 0..6 {
+            out.push(list(out.len() as u64 + 1, prefix));
+        }
+    }
+    out
+}
+
+/// 19.0's false ✓ and !: an unchanged job whose keys carry an hour, a
+/// partition, a version or an id read "no change"; and what differs by a
+/// number alone in one run stays two findings.
+#[test]
+fn an_unchanged_job_over_real_layouts_reads_no_change() {
+    let expected = [
+        "obs.hot|b/in/year={v}/month={v}/day={v}/hour={v}/conf.json",
+        "obs.hot|b/ev/dt={v}/manifest.json",
+        "obs.hot|b/t/_delta_log/{n}.json",
+        "obs.hot|b/t/metadata/{n}-{uuid}.metadata.json",
+        "obs.hot|b/t/metadata/snap-{n}-{n}-{uuid}.avro",
+        "obs.hot|b/o/part-{n}-{uuid}-c{n}.snappy.parquet",
+        "obs.hot|b/jobs/job-{id}/state.json",
+        "obs.hot|b/runs/run-{n}/out.json",
+        "obs.hot|b/logs/{n}-{n}-{n}/x.log",
+    ];
+    for part in 0..3 {
+        let (ra, rb) = (layouts_run(1, part), layouts_run(2, part));
+        let a = run_of(&ra);
+        let mut b = run_of(&rb);
+        b.measure(&rb, &a);
+        let ids = kinds(&a);
+        // two prefixes alike once their numbers are out: their own keys
+        for id in expected[part * 3..part * 3 + 3]
+            .iter()
+            .chain(&["obs.listed|b/t00/", "obs.listed|b/t01/"])
+        {
+            assert!(ids.contains(&id.to_string()), "{id} in {ids:?}");
+        }
+        assert_eq!(ids, kinds(&b));
+        let c = compare_runs(&a, &b);
+        assert!(
+            c.findings.iter().all(|f| f.state == State::Open),
+            "{:#?}",
+            c.findings
+        );
+        assert!(c.resolved.is_empty() && c.appeared.is_empty());
+    }
+}
+
+/// 19.0 called a prefix listed 92 → 216 times "less": it had fallen out of
+/// the findings shown, among more prefixes listed more. By its counts it is
+/// more; and throttling that grew is among the findings.
+#[test]
+fn a_finding_that_grew_is_more_never_less() {
+    let lists = |out: &mut Vec<Record>, prefix: &str, n: usize| {
+        for _ in 0..n {
+            out.push(list(out.len() as u64 + 1, prefix));
+        }
+    };
+    let throttled = |out: &mut Vec<Record>, n: usize| {
+        for _ in 0..n {
+            let mut r = get(out.len() as u64 + 1, "busy");
+            r.status = Some(503);
+            r.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+            out.push(r);
+        }
+    };
+    let mut ra: Vec<Record> = Vec::new();
+    lists(&mut ra, "logs/", 92);
+    lists(&mut ra, "same/", 6);
+    throttled(&mut ra, 64);
+    let mut rb: Vec<Record> = Vec::new();
+    lists(&mut rb, "logs/", 216);
+    lists(&mut rb, "same/", 6);
+    for p in ["alpha/", "beta/", "gamma/"] {
+        lists(&mut rb, p, 300);
+    }
+    throttled(&mut rb, 145);
+    let a = run_of(&ra);
+    let mut b = run_of(&rb);
+    b.measure(&rb, &a);
+    // the run after shows three prefixes: logs/ is not among them
+    assert!(
+        !b.observations
+            .iter()
+            .any(|o| o.identity == "obs.listed|b/logs/")
+    );
+    let c = compare_runs(&a, &b);
+    let logs = c
+        .findings
+        .iter()
+        .find(|f| f.identity == "obs.listed|b/logs/")
+        .expect("logs/");
+    assert_eq!(logs.state, State::More, "{logs:#?}");
+    assert_eq!(logs.counts, Some([92, 216]));
+    assert!(logs.saved.is_none());
+    // as much, though under the prefixes shown now: open, not less
+    let same = c
+        .findings
+        .iter()
+        .find(|f| f.identity == "obs.listed|b/same/")
+        .expect("same/");
+    assert_eq!(same.state, State::Open, "{same:#?}");
+    let slow = c
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.throttled"))
+        .expect("throttling");
+    assert_eq!((slow.state, slow.counts), (State::More, Some([64, 145])));
+    // fewer of them is less
+    let c = compare_runs(&b, &a);
+    let slow = c
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.throttled"))
+        .unwrap();
+    assert_eq!(slow.state, State::Less);
+}
+
+/// Every kind of failure is compared: one that moved is a finding of the
+/// change, new, more, less or fixed.
+#[test]
+fn each_kind_of_failure_is_compared() {
+    let failing = |status: u16, code: &str, n: usize, from: u64| -> Vec<Record> {
+        (0..n as u64)
+            .map(|i| Record {
+                status: Some(status),
+                error_body: Some(format!("<Error><Code>{code}</Code></Error>")),
+                ..get(from + i, "x")
+            })
+            .collect()
+    };
+    let mut ra = failing(500, "InternalError", 3, 1);
+    ra.extend(failing(403, "AccessDenied", 2, 10));
+    let mut rb = failing(500, "InternalError", 7, 1);
+    rb.extend(failing(400, "InvalidArgument", 1, 10));
+    let c = compare_runs(&run_of(&ra), &run_of(&rb));
+    let of = |id: &str| {
+        c.findings
+            .iter()
+            .find(|f| f.identity == id)
+            .unwrap_or_else(|| panic!("{id} in {:#?}", c.findings))
+    };
+    let internal = of("obs.errors|500 InternalError");
+    assert_eq!(internal.state, State::More);
+    assert_eq!(internal.text, "7 requests failed with 500 InternalError");
+    assert_eq!(internal.counts, Some([3, 7]));
+    assert_eq!(of("obs.errors|403 AccessDenied").state, State::Fixed);
+    assert_eq!(of("obs.errors|400 InvalidArgument").state, State::New);
+    // the same failures: nothing to say
+    let same = compare_runs(&run_of(&ra), &run_of(&ra));
+    assert!(
+        !same
+            .findings
+            .iter()
+            .any(|f| f.identity.starts_with("obs.errors"))
+    );
+}
+
+/// 19.0 kept 3 of 6 runs' findings when six ran at once: a run that ends
+/// after a later one is taken in, and changes nothing the later one said.
+#[test]
+fn runs_that_end_out_of_order_keep_all_their_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+    let runs: Vec<(i64, Vec<Record>)> = words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let (path, header) = job(dir.path(), i as i64 + 1);
+            let rs: Vec<Record> = (1..=12).map(|n| get(n, w)).collect();
+            write_session(&path, &header, &rs);
+            sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
+            (i as i64 + 1, rs)
+        })
+        .collect();
+    // they end at once, the newest first
+    std::thread::scope(|s| {
+        for (minute, rs) in runs.iter().rev() {
+            let d = dir.path();
+            s.spawn(move || shown(d, *minute, rs));
+        }
+    });
+    let kept = fixloop::read(dir.path()).unwrap();
+    for w in words {
+        let id = format!("obs.hot|b/{w}");
+        assert!(
+            kept["job"].findings.contains_key(&id),
+            "{id} in {:?}",
+            kept["job"].findings.keys()
+        );
+    }
+    assert_eq!(
+        kept["job"].last.as_ref().map(|(_, run)| run.as_str()),
+        Some("run-06.sonde")
+    );
+}
+
+/// Findings kept under 19.0's rules are made again by these: kept, not
+/// read as one fixed and another new; ones told apart by rank let go.
+#[test]
+fn findings_kept_under_older_rules_are_made_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let tracked = |text: &str| {
+        serde_json::json!({
+            "kind": "obs.hot", "text": text, "state": "fixed", "since": "run-01.sonde",
+            "predicted": {"requests": 11, "ms": 0.0}, "fixedIn": ["2023-11-14T22:13:20+00:00"]
+        })
+    };
+    let old = serde_json::json!({
+        "job": {
+            "last": ["2023-11-14T22:13:20+00:00", "run-01.sonde"],
+            "findings": {
+                "obs.hot|b/day={date}/part-00001": tracked("a"),
+                "obs.hot|b/t/{n}/x": tracked("b"),
+                "obs.hot|b/t/{n}/x#2": tracked("c"),
+            }
+        }
+    });
+    std::fs::write(
+        dir.path().join("findings.json"),
+        serde_json::to_vec(&old).unwrap(),
+    )
+    .unwrap();
+    let kept = fixloop::read(dir.path()).unwrap();
+    let job = &kept["job"];
+    assert_eq!(job.rules, sonde_proxy::profile::IDENTITY_RULES);
+    let ids: Vec<&String> = job.findings.keys().collect();
+    assert_eq!(ids, ["obs.hot|b/day={v}/part-{n}"]);
+    // back, as it was fixed before: not new
+    let mut c = vec![fixloop::FindingChange {
+        identity: "obs.hot|b/day={v}/part-{n}".into(),
+        state: State::New,
+        level: "info",
+        text: String::new(),
+        phrases: Vec::new(),
+        was: None,
+        counts: None,
+        predicted: Default::default(),
+        measured: None,
+        saved: None,
+        saved_text: None,
+    }];
+    job.mark_back(&mut c, "2030-01-01T00:00:00+00:00");
+    assert_eq!(c[0].state, State::Back);
 }

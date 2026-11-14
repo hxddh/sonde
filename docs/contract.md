@@ -57,7 +57,7 @@ promise. 20.0 reads 19.0's sessions (format 1). From 20.0 the announcement rule 
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.
-- A finding's text. Its `identity` (what `[check] expect` names) is stable; from 19.0 it leaves out what changes between runs ([cli.md](cli.md#the-fix-loop)).
+- A finding's text. Its `identity` (what `[check] expect` names) is made by versioned rules ([cli.md](cli.md#the-fix-loop)); a change of rules is a new version, and findings kept under older rules are made again by the new ones.
 
 ## Versions
 
