@@ -47,6 +47,20 @@ fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
+/// `sonde` alone says where to start, in three lines: the tour, a real
+/// run, where to read more.
+#[test]
+fn sonde_alone_prints_where_to_start() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(0));
+    let lines: Vec<String> = stdout(&o).lines().map(String::from).collect();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].starts_with("sonde run --demo "));
+    assert!(lines[1].starts_with("sonde run -- <your command> "));
+    assert!(lines[2].contains("docs"));
+}
+
 #[test]
 fn a_mistake_in_the_command_is_a_usage_error_and_help_is_not() {
     let t = tempfile::tempdir().unwrap();
