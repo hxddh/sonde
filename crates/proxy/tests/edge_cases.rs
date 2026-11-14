@@ -11,7 +11,7 @@ fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u
         id,
         time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
         method: method.into(),
-        operation: op.into(),
+        kind: op.into(),
         bucket: Some("b".into()),
         key: key.map(Into::into),
         status: Some(status),
@@ -123,7 +123,7 @@ fn a_session_cut_off_mid_character_still_opens() {
     let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
     w.write(&Record {
         id: 1,
-        operation: "GetObject".into(),
+        kind: "GetObject".into(),
         ..Default::default()
     });
     w.flush().unwrap();
@@ -355,7 +355,7 @@ fn a_growing_session_is_read_in_steps_without_repeats() {
     let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
     let rec = |id| reqlog::Record {
         id,
-        operation: "GetObject".into(),
+        kind: "GetObject".into(),
         ..Default::default()
     };
     for id in 1..=3 {
@@ -397,7 +397,7 @@ fn a_record_written_after_a_newer_one_is_still_read() {
     let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
     let rec = |id| reqlog::Record {
         id,
-        operation: "GetObject".into(),
+        kind: "GetObject".into(),
         ..Default::default()
     };
     for id in [1, 2, 4] {

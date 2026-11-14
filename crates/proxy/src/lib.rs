@@ -191,7 +191,7 @@ impl Written {
     pub fn of(records: &[Record]) -> Written {
         let w = Written::default();
         for r in records {
-            if writes_object(&r.operation)
+            if writes_object(&r.kind)
                 && r.status.is_some_and(|s| (200..300).contains(&s))
                 && let (Some(b), Some(k)) = (&r.bucket, &r.key)
             {
@@ -236,14 +236,7 @@ impl Written {
         keys.extend(order.iter().cloned());
         let over = keys.len().saturating_sub(WRITTEN_KEPT);
         keys.drain(..over);
-        // a name of its own: two programs may end at once
-        let tmp = dir.join(format!(
-            "written.json.{}.{}.tmp",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        reqlog::private::write(&tmp, serde_json::to_vec(&all)?)?;
-        std::fs::rename(&tmp, written_file(&dir))
+        reqlog::private::replace(&written_file(&dir), serde_json::to_vec(&all)?)
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
@@ -1320,7 +1313,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         id: 0,
         time: Utc::now(),
         endpoint: cfg.endpoint_id.as_str().into(),
-        operation: operation.as_str().into(),
+        kind: operation.as_str().into(),
         method: method.as_str().into(),
         url: url.clone(),
         bucket: bucket.as_deref().map(Into::into),
@@ -2074,8 +2067,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
     record.first_byte_ms = Some(record.latency_ms);
-    let keys = (reqlog::is_listing(&record.operation) && status.is_success())
-        .then(reqlog::KeyCounter::default);
+    let keys =
+        (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
     let mut pending = Pending {
         keys,
         record: Some(record),

@@ -402,9 +402,9 @@ pub fn html_against(s: &Session, prices: &RequestPrices, against: Option<&Agains
         o.push_str("<h2>Where the time went</h2><div class=\"card\">");
         for g in prof.groups.iter().take(8) {
             let name = if g.missed {
-                format!("{} (not found)", g.operation)
+                format!("{} (not found)", g.kind)
             } else {
-                g.operation.clone()
+                g.kind.clone()
             };
             let _ = write!(
                 o,
@@ -534,9 +534,9 @@ fn compared(a: &Against) -> String {
         o.push_str("<div class=\"card wrap\"><table><thead><tr><th>kind</th><th class=\"r\">requests</th><th class=\"r\">waiting</th></tr></thead><tbody>");
         for g in kinds {
             let name = if g.missed {
-                format!("{} (not found)", g.operation)
+                format!("{} (not found)", g.kind)
             } else {
-                g.operation.clone()
+                g.kind.clone()
             };
             let _ = write!(
                 o,
@@ -626,7 +626,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("acme-payroll".into()),
             key: Some(key.into()),
             url: "https://acme-payroll.s3.amazonaws.com/x".into(),
@@ -729,7 +729,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 10).unwrap(),
                 method: if i < 2600 { "PUT" } else { "GET" }.into(),
-                operation: if i < 2600 { "PutObject" } else { "GetObject" }.into(),
+                kind: if i < 2600 { "PutObject" } else { "GetObject" }.into(),
                 bucket: Some("b".into()),
                 key: Some(if i < 2600 {
                     format!("out/{i}").into()

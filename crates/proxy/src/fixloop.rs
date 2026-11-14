@@ -134,7 +134,7 @@ pub fn asked(r: &Record) -> String {
         .unwrap_or_default();
     format!(
         "{} {}/{}?{prefix}",
-        r.operation,
+        r.kind,
         r.bucket.as_deref().unwrap_or(""),
         r.key.as_deref().unwrap_or("")
     )
@@ -185,10 +185,7 @@ pub fn count(records: &[Record], wanted: &HashSet<&str>) -> HashMap<String, usiz
         .filter_map(|a| a.split_once(' ').map(|(op, _)| op))
         .collect();
     let mut out: HashMap<String, usize> = HashMap::new();
-    for r in records
-        .iter()
-        .filter(|r| ops.contains(r.operation.as_str()))
-    {
+    for r in records.iter().filter(|r| ops.contains(r.kind.as_str())) {
         let a = asked(r);
         if wanted.contains(a.as_str()) {
             *out.entry(a).or_default() += 1;
@@ -675,17 +672,7 @@ pub fn read(dir: &Path) -> Result<BTreeMap<String, Program>, crate::program::Unr
 }
 
 pub fn write(dir: &Path, all: &BTreeMap<String, Program>) -> std::io::Result<()> {
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "findings.json.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(&tmp, dir.join("findings.json"))
+    reqlog::private::replace(&dir.join("findings.json"), serde_json::to_vec_pretty(all)?)
 }
 
 /// The exit code a run failed with, as its folder's index keeps it (`sonde

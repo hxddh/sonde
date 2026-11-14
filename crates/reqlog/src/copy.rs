@@ -63,7 +63,7 @@ fn req_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
 
 /// An `aws s3api` command doing what the record did.
 pub fn as_aws_cli(r: &Record) -> String {
-    let op = match r.operation.as_str() {
+    let op = match r.kind.as_str() {
         "ListObjectsV2" => "list-objects-v2".to_string(),
         "ListBuckets" => "list-buckets".to_string(),
         "GetCallerIdentity" => return format!("aws sts get-caller-identity{}", region_arg(r)),
@@ -199,7 +199,7 @@ mod tests {
 
     fn rec() -> Record {
         Record {
-            operation: "ListObjectsV2".into(),
+            kind: "ListObjectsV2".into(),
             method: "GET".into(),
             url: "http://127.0.0.1:9000/bucket?list-type=2&prefix=logs%2F&delimiter=%2F".into(),
             bucket: Some("bucket".into()),

@@ -291,15 +291,12 @@ async fn put_get_list_are_resigned_and_recorded() {
 
     let records = log.list(&reqlog::Filter::default(), 100);
     // a listing's record says how many keys it listed
-    let listed = records
-        .iter()
-        .find(|r| r.operation == "ListObjectsV2")
-        .unwrap();
+    let listed = records.iter().find(|r| r.kind == "ListObjectsV2").unwrap();
     assert_eq!(
         listed.header(reqlog::KEYS_HEADER),
         Some(keys.to_string().as_str())
     );
-    let ops: Vec<&str> = records.iter().rev().map(|r| r.operation.as_str()).collect();
+    let ops: Vec<&str> = records.iter().rev().map(|r| r.kind.as_str()).collect();
     assert_eq!(ops, ["PutObject", "GetObject", "ListObjectsV2"]);
     let put = records.last().unwrap();
     assert_eq!(put.key.as_deref(), Some("dir/a b+c.txt"));
@@ -314,7 +311,7 @@ async fn put_get_list_are_resigned_and_recorded() {
     assert!(!auth.value.contains("dummy"));
     assert!(up.calls.lock().len() == 3);
     // a body read to its end: logged with its first byte inside its whole time
-    let get = records.iter().find(|r| r.operation == "GetObject").unwrap();
+    let get = records.iter().find(|r| r.kind == "GetObject").unwrap();
     let first = get.first_byte_ms.expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
@@ -356,7 +353,7 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     assert!(headers.contains(&("x-amz-checksum-crc32".into(), "Ufg6kA==".into())));
     assert!(!headers.iter().any(|(k, _)| k == "content-encoding"));
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "PutObject");
+    assert_eq!(r.kind, "PutObject");
     assert_eq!(r.request_bytes, Some(15));
 }
 
@@ -386,7 +383,7 @@ async fn no_delete_refuses_without_calling_upstream() {
     assert!(r.text().contains("no-delete"));
     assert!(up.calls.lock().is_empty());
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.operation, "DeleteObject");
+    assert_eq!(rec.kind, "DeleteObject");
     assert_eq!(rec.status, Some(403));
 }
 
@@ -515,7 +512,7 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
         .unwrap();
     assert_ne!(resp.status(), 400, "{}", resp.text().await.unwrap());
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "DeleteObjects");
+    assert_eq!(r.kind, "DeleteObjects");
     assert_eq!(r.request_body.as_deref(), Some(doc));
 }
 
@@ -1568,7 +1565,7 @@ async fn s3_express_is_refused_with_its_reason() {
     assert_eq!(resp.status(), 501);
     assert!(resp.text().await.unwrap().contains("S3 Express One Zone"));
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "CreateSession");
+    assert_eq!(r.kind, "CreateSession");
     assert!(up.calls.lock().is_empty());
     assert!(sonde_proxy::is_directory_bucket("logs--usw2-az1--x-s3"));
     assert!(!sonde_proxy::is_directory_bucket("logs--x-s3"));

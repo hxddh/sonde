@@ -111,7 +111,7 @@ committer settings; empty `…/` directory markers are reported with their delet
 
 A record holds the program's headers (signatures redacted), the URL sonde sent to, status, bytes each way, request
 ids, the error body, **latency** (the whole exchange, until the body is through or the program stops reading) and
-**first byte** (until response headers). Overhead: +0.2 ms at p50 for a 1 KiB GET ([performance](performance.md)).
+**first byte** (until response headers). Overhead: +0.2 ms at p50 for a 1 KiB GET ([performance](dev/performance.md)).
 
 ## What a recorded program may do
 
@@ -145,7 +145,7 @@ project's `[record] policy` when Run is not asked for one), which `[record] poli
 
 ## Session files
 
-- JSON lines: a header, then a record per completed request ([session-format](session-format.md)), redacted. A crash
+- JSON lines: a header, then a record per completed request ([session-format](dev/session-format.md)), redacted. A crash
   loses at most a torn last line, which is skipped.
 - In `<data>/sessions/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
   stays plain (the app reads only what was appended).

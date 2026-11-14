@@ -168,16 +168,7 @@ fn put(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     if std::fs::read(path).is_ok_and(|have| have == bytes) {
         return Ok(());
     }
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tmp = path.with_extension(format!(
-        "{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    reqlog::private::replace(path, bytes)
 }
 
 /// A path as one quoted word of `NODE_OPTIONS`. Node reads a backslash

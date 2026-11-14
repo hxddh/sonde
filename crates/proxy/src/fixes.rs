@@ -429,7 +429,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 50).unwrap(),
                 method: "GET".into(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 bucket: Some("b".into()),
                 key: Some(if i < 15 {
                     "conf.json".into()
@@ -476,7 +476,7 @@ mod tests {
                 id,
                 time: DateTime::from_timestamp_millis(at).unwrap(),
                 method: method.into(),
-                operation: op.into(),
+                kind: op.into(),
                 bucket: Some("b".into()),
                 key: Some(format!("k{i}").into()),
                 status: Some(200),
@@ -517,7 +517,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 50).unwrap(),
                 method: "GET".into(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 bucket: Some("b".into()),
                 key: Some("conf.json".into()),
                 status: Some(200),

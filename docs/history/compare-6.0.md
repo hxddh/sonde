@@ -2,7 +2,7 @@
 
 The same states of the app in 5.0.0 (left) and 6.0.0 (right), from `scripts/shots.sh` on a GTK window at 1280×820
 (the session also at the least window size, 900×560). What changed, and why, is in the [changelog](../../CHANGELOG.md)
-and decisions D-056 to D-060 in [decisions.md](../decisions.md); the rules the charts follow are in
+and decisions D-056 to D-060 in [decisions.md](../dev/decisions.md); the rules the charts follow are in
 [app/DESIGN.md](../../app/DESIGN.md#charts).
 
 ## A session

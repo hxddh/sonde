@@ -199,10 +199,8 @@ pub struct Record {
     pub time: DateTime<Utc>,
     /// The endpoint's configured id (never its credentials).
     pub endpoint: Text,
-    /// The request's kind: the S3 API call, such as `ListObjectsV2`
-    /// (`operation` in session format 1).
-    #[serde(rename = "kind", alias = "operation")]
-    pub operation: Text,
+    /// The request's kind: the S3 API call, such as `ListObjectsV2`.
+    pub kind: Text,
     pub method: Text,
     /// The full URL, with presign / signature query parameters masked.
     pub url: String,
@@ -259,8 +257,7 @@ pub struct RecordSummary {
     pub id: u64,
     pub time: DateTime<Utc>,
     pub endpoint: String,
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     pub method: String,
     pub target: String,
     pub status: Option<u16>,
@@ -400,7 +397,7 @@ impl Record {
             id: self.id,
             time: self.time,
             endpoint: self.endpoint.to_string(),
-            operation: self.operation.to_string(),
+            kind: self.kind.to_string(),
             method: self.method.to_string(),
             target,
             status: self.status,
@@ -432,7 +429,7 @@ mod tests {
     fn a_summary_says_which_scenario_answered_in_the_stores_place() {
         let mut r = Record {
             id: 7,
-            operation: "PutObject".into(),
+            kind: "PutObject".into(),
             ..Default::default()
         };
         let plain = serde_json::to_value(r.summary()).unwrap();

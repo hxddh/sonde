@@ -51,7 +51,7 @@ pub enum Class {
 }
 
 pub fn class(r: &Record) -> Class {
-    let op = r.operation.as_str();
+    let op = r.kind.as_str();
     if r.method == "DELETE" || op == "DeleteObjects" {
         Class::Free
     } else if r.method == "PUT" || r.method == "POST" || op.starts_with("List") {
@@ -65,8 +65,7 @@ pub fn class(r: &Record) -> Class {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     /// GET or HEAD answered 404.
     pub missed: bool,
     pub requests: usize,
@@ -290,7 +289,7 @@ struct Depends<'a> {
 
 impl<'a> Depends<'a> {
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
-        r.operation.starts_with("ListObjects").then(|| {
+        r.kind.starts_with("ListObjects").then(|| {
             let prefix = r
                 .query
                 .iter()
@@ -805,7 +804,7 @@ pub fn reached_store(r: &Record) -> bool {
 pub fn price(r: &Record, prices: &RequestPrices) -> f64 {
     match class(r) {
         _ if !reached_store(r) => 0.0,
-        Class::Write if r.operation.starts_with("List") => {
+        Class::Write if r.kind.starts_with("List") => {
             prices.per_1000_lists.unwrap_or(prices.per_1000_writes) / 1000.0
         }
         Class::Write => prices.per_1000_writes / 1000.0,
@@ -982,9 +981,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     // (named by the records' own text: a kind is not copied for each request)
     let mut by: BTreeMap<(&str, bool), Vec<&Record>> = BTreeMap::new();
     for r in records {
-        by.entry((r.operation.as_str(), is_miss(r)))
-            .or_default()
-            .push(r);
+        by.entry((r.kind.as_str(), is_miss(r))).or_default().push(r);
     }
     let waited = waited_us(&by);
     let mut groups: Vec<(Group, Vec<&Record>)> = by
@@ -996,7 +993,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             lat.sort_by(f64::total_cmp);
             let busy = union_us(rs.iter().map(|r| (start_us(r), end_us(r))).collect());
             let g = Group {
-                operation,
+                kind: operation,
                 missed,
                 requests: rs.len(),
                 waiting_ms: ms(busy),
@@ -1241,7 +1238,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let top_ops: Vec<String> =
         groups
             .iter()
-            .map(|(g, _)| g.operation.clone())
+            .map(|(g, _)| g.kind.clone())
             .fold(Vec::new(), |mut v, o| {
                 if !v.contains(&o) {
                     v.push(o);
@@ -1249,8 +1246,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
                 v
             });
     let op_name = |r: &Record| {
-        if top_ops.iter().take(6).any(|o| *o == r.operation) {
-            r.operation.to_string()
+        if top_ops.iter().take(6).any(|o| *o == r.kind) {
+            r.kind.to_string()
         } else {
             "other operations".into()
         }
@@ -1334,8 +1331,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatencyChange {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     pub missed: bool,
     pub requests: (usize, usize),
     pub p50_ms: (f64, f64),
@@ -1353,9 +1349,9 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
             let gb = b
                 .groups
                 .iter()
-                .find(|g| g.operation == ga.operation && g.missed == ga.missed)?;
+                .find(|g| g.kind == ga.kind && g.missed == ga.missed)?;
             Some(LatencyChange {
-                operation: ga.operation.clone(),
+                kind: ga.kind.clone(),
                 missed: ga.missed,
                 requests: (ga.requests, gb.requests),
                 p50_ms: (ga.p50_ms, gb.p50_ms),
@@ -1373,8 +1369,7 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupChange {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     pub missed: bool,
     pub requests: (usize, usize),
     /// The run's waiting that was this kind's in each ([`Group::waited_ms`]:
@@ -1917,14 +1912,14 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         .groups
         .iter()
         .chain(b.profile.groups.iter())
-        .map(|g| (g.operation.clone(), g.missed))
+        .map(|g| (g.kind.clone(), g.missed))
         .collect();
     // a kind's waiting is its share of the run's, as `show` says it
     // ([`Group::waited_ms`]), not the time one of them was in flight
     let find = |p: &Profile, k: &(String, bool)| {
         p.groups
             .iter()
-            .find(|g| g.operation == k.0 && g.missed == k.1)
+            .find(|g| g.kind == k.0 && g.missed == k.1)
             .map_or((0, 0.0), |g| (g.requests, g.waited_ms))
     };
     let mut groups: Vec<GroupChange> = keys
@@ -1933,7 +1928,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
             let (ra, ba) = find(&a.profile, &k);
             let (rb, bb) = find(&b.profile, &k);
             GroupChange {
-                operation: k.0,
+                kind: k.0,
                 missed: k.1,
                 requests: (ra, rb),
                 waiting_ms: (ba, bb),
@@ -2010,7 +2005,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             status: Some(status),
             latency_ms: latency,
             ..Default::default()
@@ -2168,16 +2163,8 @@ mod tests {
         };
         let ((a, pa), (b, _)) = (run(10), run(4));
         let c = compare_runs(&a, &b);
-        let get = c
-            .groups
-            .iter()
-            .find(|g| g.operation == "GetObject")
-            .unwrap();
-        let shown = pa
-            .groups
-            .iter()
-            .find(|g| g.operation == "GetObject")
-            .unwrap();
+        let get = c.groups.iter().find(|g| g.kind == "GetObject").unwrap();
+        let shown = pa.groups.iter().find(|g| g.kind == "GetObject").unwrap();
         assert_eq!(get.waiting_ms.0, shown.waited_ms);
         assert!(
             (shown.waited_ms - 500.0).abs() < 1e-6,
@@ -2206,14 +2193,10 @@ mod tests {
         assert_eq!(p.wall_ms, 300.0);
         assert_eq!(p.waiting_ms, 150.0);
         assert_eq!(p.peak_in_flight, 10);
-        let get = p
-            .groups
-            .iter()
-            .find(|g| g.operation == "GetObject")
-            .unwrap();
+        let get = p.groups.iter().find(|g| g.kind == "GetObject").unwrap();
         assert_eq!(get.waiting_ms, 50.0);
         assert_eq!(get.sum_ms, 500.0);
-        assert_eq!(p.groups[0].operation, "PutObject", "most time first");
+        assert_eq!(p.groups[0].kind, "PutObject", "most time first");
         assert!((p.groups[0].share - 100.0 / 150.0).abs() < 1e-9);
         assert_eq!(p.rate.iter().map(|b| b.ok).sum::<usize>(), 11);
     }
@@ -2249,7 +2232,7 @@ mod tests {
         ];
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!(p.waiting_ms, 150.0);
-        let by = |op: &str| p.groups.iter().find(|g| g.operation == op).unwrap();
+        let by = |op: &str| p.groups.iter().find(|g| g.kind == op).unwrap();
         // the 50 ms both were in flight count once, half each
         assert!((by("GetObject").waited_ms - 75.0).abs() < 1e-6);
         assert!((by("PutObject").waited_ms - 75.0).abs() < 1e-6);
@@ -2266,16 +2249,8 @@ mod tests {
             rec(4, 30, "DeleteObject", 204, 5.0),
         ];
         let p = profile(&rs, &RequestPrices::default());
-        assert!(
-            p.groups
-                .iter()
-                .any(|g| g.operation == "HeadObject" && g.missed)
-        );
-        assert!(
-            p.groups
-                .iter()
-                .any(|g| g.operation == "HeadObject" && !g.missed)
-        );
+        assert!(p.groups.iter().any(|g| g.kind == "HeadObject" && g.missed));
+        assert!(p.groups.iter().any(|g| g.kind == "HeadObject" && !g.missed));
         assert_eq!((p.cost.writes, p.cost.reads, p.cost.free), (1, 2, 1));
         assert!((p.cost.amount - (0.005 + 2.0 * 0.0004) / 1000.0).abs() < 1e-12);
         assert_eq!(p.rate.iter().map(|b| b.miss).sum::<usize>(), 1);
@@ -2320,7 +2295,7 @@ mod tests {
                 time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 20)
                     .unwrap(),
                 method: "GET".into(),
-                operation: if i < 4 {
+                kind: if i < 4 {
                     "GetObject".into()
                 } else {
                     "HeadObject".into()
@@ -2373,7 +2348,7 @@ mod tests {
         );
         let c = compare_runs(&Run::of(&before, pa, oa), &Run::of(&after, pb, ob));
         assert_eq!(c.requests, (12, 1));
-        assert_eq!(c.groups[0].operation, "GetObject");
+        assert_eq!(c.groups[0].kind, "GetObject");
         assert_eq!(c.groups[0].requests, (12, 1));
         assert_eq!(
             c.resolved[0].text,
@@ -2654,7 +2629,7 @@ mod injected {
         let prices = RequestPrices::default();
         let put = Record {
             method: "PUT".into(),
-            operation: "PutObject".into(),
+            kind: "PutObject".into(),
             bucket: Some("b".into()),
             key: Some("k".into()),
             status: Some(200),
@@ -2691,7 +2666,7 @@ mod injected {
                 } else {
                     "GET".into()
                 },
-                operation: op.into(),
+                kind: op.into(),
                 status: Some(200),
                 latency_ms: 2.0,
                 ..Default::default()
@@ -2725,7 +2700,7 @@ mod injected {
             id: 12,
             time: chrono::DateTime::from_timestamp_millis(1_700_000_000_036).unwrap(),
             method: "GET".into(),
-            operation: "ListObjectsV2".into(),
+            kind: "ListObjectsV2".into(),
             status: Some(200),
             latency_ms: 2.0,
             ..Default::default()

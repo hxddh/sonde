@@ -114,7 +114,7 @@ shorten (build charts as they come into view).
 
 Probes, multipart scans, capacity and layout scans run in Rust on tokio and stream progress; the UI never blocks.
 Per job: 16 requests in flight (`settings.concurrency`), optional `settings.rate-limit`, exponential backoff with
-jitter on 503 SlowDown and throttling ([configuration](configuration.md)).
+jitter on 503 SlowDown and throttling ([configuration](../configuration.md)).
 
 ## Not measured
 

@@ -66,8 +66,7 @@ impl Standing {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Where {
-    #[serde(rename = "kind", alias = "operation")]
-    pub operation: String,
+    pub kind: String,
     /// `bucket/key`, or the bucket and what was listed.
     pub key: String,
     /// The line of the program that sent it, when the run named callers.
@@ -490,7 +489,7 @@ fn named_request(r: &Record, name: &str) -> Named {
     let exact = identity_of(r);
     let bare = identity(
         &r.method,
-        &r.operation,
+        &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
         &r.query,
@@ -514,7 +513,7 @@ fn named_request(r: &Record, name: &str) -> Named {
         .or_else(|| crate::fault::kept_body_hash(r));
     let coarse = identity(
         &r.method,
-        &r.operation,
+        &r.kind,
         r.bucket
             .as_deref()
             .map(|b| unplace_both(b, name))
@@ -676,7 +675,7 @@ fn place_of(r: &Record) -> String {
 
 fn where_of(r: &Record) -> Where {
     Where {
-        operation: r.operation.to_string(),
+        kind: r.kind.to_string(),
         key: place_of(r),
         caller: crate::callers::caller(r),
     }
@@ -947,16 +946,16 @@ pub fn judge(
                 if next.is_error() {
                     // the store had done it: the second attempt found it done
                     refused.push((
-                        next.operation.to_string(),
+                        next.kind.to_string(),
                         format!(
                             "{}{}",
                             next.status.unwrap_or(0),
                             code_of(next).map(|c| format!(" {c}")).unwrap_or_default()
                         ),
-                        next.operation == "CompleteMultipartUpload",
+                        next.kind == "CompleteMultipartUpload",
                     ));
                 } else if r.method != "DELETE"
-                    && r.operation != "DeleteObjects"
+                    && r.kind != "DeleteObjects"
                     && condition_of(r) != Some(Condition::Create)
                 {
                     wrote_twice += 1;
@@ -1119,7 +1118,7 @@ pub fn judge(
                     gone.insert((bucket, key));
                 }
             };
-            match r.operation.as_str() {
+            match r.kind.as_str() {
                 "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
                     stands.insert((bucket, r.key.as_deref().unwrap_or_default().to_string()));
                 }
@@ -1205,7 +1204,7 @@ pub fn judge(
     let listings: Vec<&Record> = in_time
         .iter()
         .copied()
-        .filter(|x| crate::fault::LISTINGS.contains(&x.operation.as_str()) && done(x))
+        .filter(|x| crate::fault::LISTINGS.contains(&x.kind.as_str()) && done(x))
         .collect();
     let mut at_clean_place: HashMap<Place, Vec<&str>> = HashMap::new();
     for (id, place) in &clean_place {
@@ -1263,10 +1262,10 @@ pub fn judge(
     // again from its first part
     let reuploaded = run
         .iter()
-        .filter(|r| r.operation == "CompleteMultipartUpload" && faulted(r) && lost_answer(r))
+        .filter(|r| r.kind == "CompleteMultipartUpload" && faulted(r) && lost_answer(r))
         .filter(|r| {
             run.iter().any(|x| {
-                x.operation == "CreateMultipartUpload"
+                x.kind == "CreateMultipartUpload"
                     && (x.time, x.id) > (r.time, r.id)
                     && x.bucket == r.bucket
                     && x.key == r.key
@@ -1741,14 +1740,7 @@ pub fn record(
         let over = seen.len().saturating_sub(HISTORY_KEPT);
         seen.drain(..over);
     }
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "verdicts.json.{}.{}.tmp",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
-    std::fs::rename(&tmp, verdicts_file(dir))
+    reqlog::private::replace(&verdicts_file(dir), serde_json::to_vec_pretty(&all)?)
 }
 
 /// Gives each of a run's trials its scenario's history, up to this run's
@@ -2002,9 +1994,9 @@ impl Trial {
                 let (file, rest) = c.split_once(' ').unwrap_or((c, ""));
                 let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
                 let sep = if rest.is_empty() { "" } else { " " };
-                format!("at {} {} ({name}{sep}{rest})", w.operation, w.key)
+                format!("at {} {} ({name}{sep}{rest})", w.kind, w.key)
             }
-            None => format!("at {} {}", w.operation, w.key),
+            None => format!("at {} {}", w.kind, w.key),
         })
     }
 }
@@ -2053,19 +2045,19 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     if has(&|r| r.method == "PUT" || r.method == "POST" || r.method == "DELETE") {
         names.push("lost-answer");
     }
-    if has(&|r| r.operation == "CompleteMultipartUpload") {
+    if has(&|r| r.kind == "CompleteMultipartUpload") {
         names.push("fail-complete");
         names.push("complete-500");
     }
     if has(&|r| {
-        r.operation == "GetObject"
+        r.kind == "GetObject"
             && done(r)
             && r.response_bytes
                 .is_some_and(|n| crate::fault::cut_at(n).is_some())
     }) {
         names.push("cut-body");
     }
-    if has(&|r| r.operation == "GetObject" && done(r)) {
+    if has(&|r| r.kind == "GetObject" && done(r)) {
         names.push("slow-first-byte");
     }
     // where a 412 means a commit was lost: a table's log, or an update of
@@ -2085,11 +2077,11 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     // under what it lists
     let mut writes: Vec<&Record> = clean
         .iter()
-        .filter(|r| crate::fault::MAKES_KEY.contains(&r.operation.as_str()) && done(r))
+        .filter(|r| crate::fault::MAKES_KEY.contains(&r.kind.as_str()) && done(r))
         .collect();
     writes.sort_by_key(|r| (r.time, r.id));
     if has(&|l| {
-        crate::fault::LISTINGS.contains(&l.operation.as_str())
+        crate::fault::LISTINGS.contains(&l.kind.as_str())
             && done(l)
             && writes.iter().any(|w| {
                 end_of(w) <= l.time
@@ -2119,7 +2111,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(status),
@@ -3220,7 +3212,7 @@ mod tests {
             t.reasons,
             ["waited out 1 stall of 10.0 s before the first byte: no timeout cut it short"]
         );
-        assert_eq!(t.at.as_ref().unwrap().operation, "GetObject");
+        assert_eq!(t.at.as_ref().unwrap().kind, "GetObject");
         assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.timeout");
         // given up on, as another attempt began while it was held (a proxy
         // that saw the close only when it answered)
@@ -3302,7 +3294,7 @@ mod tests {
                 "1 key this run wrote and a listing left out was never read as the clean run read it: the program went on without it"
             ]
         );
-        assert_eq!(t.at.as_ref().unwrap().operation, "ListObjectsV2");
+        assert_eq!(t.at.as_ref().unwrap().kind, "ListObjectsV2");
         assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.list");
         // it listed again and read both
         let t = judge(
@@ -3520,10 +3512,7 @@ mod tests {
             "1 fault, 0 retried · 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) · at GetObject b/big · check the bytes read against Content-Length, and read the rest (Range) or the whole again"
         );
         let w = t.at.as_ref().unwrap();
-        assert_eq!(
-            (w.operation.as_str(), w.key.as_str()),
-            ("GetObject", "b/big")
-        );
+        assert_eq!((w.kind.as_str(), w.key.as_str()), ("GetObject", "b/big"));
         // it saw the short body and failed: broke by its exit, not by the half
         let t = judge(&cut_scenario(), &clean, 0, &run[..1], 1);
         assert_eq!(t.standing, Standing::Broke);
@@ -3792,7 +3781,7 @@ mod tests {
         assert_eq!(
             t.at,
             Some(Where {
-                operation: "PutObject".into(),
+                kind: "PutObject".into(),
                 key: "b/state".into(),
                 caller: Some("/home/me/job/etl.py:12 in save".into()),
             })

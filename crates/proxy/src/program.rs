@@ -426,17 +426,7 @@ pub fn write_baselines(
     dir: &std::path::Path,
     all: &std::collections::BTreeMap<String, String>,
 ) -> std::io::Result<()> {
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "baselines.json.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(&tmp, dir.join("baselines.json"))
+    reqlog::private::replace(&dir.join("baselines.json"), serde_json::to_vec_pretty(all)?)
 }
 
 /// What a program keeps beside its runs, by its key: its baseline, its
@@ -459,6 +449,7 @@ pub fn rename_program(
     let mut moved = Vec::new();
     for name in KEPT_BY_PROGRAM {
         let path = dir.join(name);
+        let _held = crate::index::hold(dir, name.trim_end_matches(".json"));
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -473,9 +464,7 @@ pub fn rename_program(
             continue;
         };
         all.insert(to.to_string(), kept);
-        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
-        reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
-        std::fs::rename(&tmp, &path)?;
+        reqlog::private::replace(&path, serde_json::to_vec_pretty(&all)?)?;
         moved.push(*name);
     }
     Ok(moved)
@@ -1329,9 +1318,9 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
             .map(|g| {
                 vec![
                     md_text(&if g.missed {
-                        format!("{} (not found)", g.operation)
+                        format!("{} (not found)", g.kind)
                     } else {
-                        g.operation.clone()
+                        g.kind.clone()
                     }),
                     format!("{} → {}", g.requests.0, g.requests.1),
                     format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1)),
@@ -1477,7 +1466,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(200),
@@ -1508,8 +1497,8 @@ mod tests {
                 0 => r.status = Some(503),
                 1 => r.status = Some(404),
                 2 => r.status = None,
-                3 => (r.method, r.operation) = ("PUT".into(), "PutObject".into()),
-                4 => r.operation = "ListObjectsV2".into(),
+                3 => (r.method, r.kind) = ("PUT".into(), "PutObject".into()),
+                4 => r.kind = "ListObjectsV2".into(),
                 5 => r.method = "DELETE".into(),
                 _ => {}
             }
@@ -2049,7 +2038,7 @@ mod tests {
             let mut head = r.clone();
             head.id = 100 + i as u64;
             head.method = "HEAD".into();
-            head.operation = "HeadObject".into();
+            head.kind = "HeadObject".into();
             head.time = r.time - chrono::Duration::milliseconds(5);
             after.push(head);
             after.push(r.clone());

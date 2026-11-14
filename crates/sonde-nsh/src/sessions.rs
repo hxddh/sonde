@@ -38,22 +38,24 @@ impl Recording {
     /// Ends it: the requests in flight are answered and recorded (those
     /// still going after [`SHUTDOWN_GRACE`] are left out), then the file is
     /// compressed. The session file's path.
-    async fn finish(self) -> String {
+    async fn finish(self) -> (String, Option<String>) {
         self.finish_within(SHUTDOWN_GRACE).await
     }
 
     /// [`Recording::finish`], waiting `grace` for the requests in flight.
-    async fn finish_within(mut self, grace: std::time::Duration) -> String {
+    /// Also what the recording lost ([`SessionWriter::not_written`]).
+    async fn finish_within(mut self, grace: std::time::Duration) -> (String, Option<String>) {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
         self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
+        let lost = self.writer.not_written();
         let _ = self.written.keep();
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
         let _ = sonde_proxy::session::compress(&file);
-        file.to_string_lossy().into_owned()
+        (file.to_string_lossy().into_owned(), lost)
     }
 }
 
@@ -222,17 +224,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 /// Writes the files opened into sessions, by their contents' digest: `imports.json`.
 fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tmp = dir.join(format!(
-        "imports.json.{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    if serde_json::to_vec(all)
-        .ok()
-        .is_some_and(|b| reqlog::private::write(&tmp, b).is_ok())
-    {
-        let _ = std::fs::rename(&tmp, dir.join("imports.json"));
+    if let Ok(b) = serde_json::to_vec(all) {
+        let _ = reqlog::private::replace(&dir.join("imports.json"), b);
     }
 }
 
@@ -634,18 +627,14 @@ fn titles() -> std::collections::BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// Holds `titles.json`'s lock: see [`sonde_proxy::index::hold`].
+fn titles_held() -> Option<std::fs::File> {
+    sonde_proxy::index::hold(&sonde().paths().sessions(), "titles")
+}
+
 fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = sonde().paths().sessions();
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "titles.json.{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?)
-        .map_err(err_msg)?;
-    std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
+    let file = sonde().paths().sessions().join("titles.json");
+    reqlog::private::replace(&file, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)
 }
 
 /// A session of the sessions directory, by path: what may be renamed or
@@ -1025,8 +1014,11 @@ async fn run_recorded(
         g.take_if(|r| r.path == Path::new(&path))
     };
     // resolves once the file is whole: what reads it next reads all of it
-    if let Some(r) = own {
-        let _ = background(r.finish()).await;
+    if let Some(r) = own
+        && let Ok((_, Some(lost))) = background(r.finish()).await
+    {
+        // said where the run's output is, as the CLI says it
+        output.post(json!({ "data": format!("\r\nsonde: {lost}\r\n") }));
     }
     Ok((code, path))
 }
@@ -1059,10 +1051,6 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     POINTS
         .lock()
         .insert(path.to_path_buf(), (now, figures.point.clone()));
-    // (what 15.0 kept them in, all in one file)
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::remove_file(dir.join(".runpoints.json"));
-    }
     Some(figures.point)
 }
 
@@ -2144,14 +2132,15 @@ impl Sessions {
         let key = header_of(Path::new(&path))
             .and_then(|h| sonde_proxy::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
-        let mut all = map_to_change(&sonde().paths().sessions().join("baselines.json"))?;
+        let dir = sonde().paths().sessions();
+        let _held = sonde_proxy::index::hold(&dir, "baselines");
+        let mut all = map_to_change(&dir.join("baselines.json"))?;
         if on {
             all.insert(key, name);
         } else if all.get(&key) == Some(&name) {
             all.remove(&key);
         }
-        sonde_proxy::program::write_baselines(&sonde().paths().sessions(), &all)
-            .map_err(err_msg)?;
+        sonde_proxy::program::write_baselines(&dir, &all).map_err(err_msg)?;
         Ok(true)
     }
 
@@ -2226,6 +2215,7 @@ impl Sessions {
         let digest = format!("{:016x}", fnv1a(text.as_bytes()));
         // an index that does not read is left as it is (the session is
         // still made; opening the file again makes another)
+        let _held = sonde_proxy::index::hold(&dir, "imports");
         let known = map_to_change(&dir.join("imports.json"));
         let mut imported = known.clone().unwrap_or_default();
         if let Some(p) = imported
@@ -2303,6 +2293,7 @@ impl Sessions {
     /// Gives a session a title of the user's (an empty one takes it away).
     pub fn rename(path: String, title: String) -> Result<bool, String> {
         let (_, name) = own_session(&path)?;
+        let _held = titles_held();
         let mut t = map_to_change(&sonde().paths().sessions().join("titles.json"))?;
         let title = title.trim();
         if title.is_empty() {
@@ -2335,6 +2326,7 @@ impl Sessions {
         forget(&p);
         sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
         // the session is gone either way; a titles file that does not read stays
+        let _held = titles_held();
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
             && t.remove(&name).is_some()
         {
@@ -2670,7 +2662,7 @@ mod tests {
                 w.write(&reqlog::Record {
                     id: i + 1,
                     time: chrono::Utc::now(),
-                    operation: "GetObject".into(),
+                    kind: "GetObject".into(),
                     method: "GET".into(),
                     bucket: Some("b".into()),
                     key: Some("hot".into()),
@@ -2719,7 +2711,7 @@ mod tests {
             SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
         w.write(&reqlog::Record {
             id: 1,
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         });
         drop(w);
@@ -2851,8 +2843,9 @@ mod tests {
             runtime: tokio::runtime::Handle::current(),
             written: Arc::default(),
         };
-        let file = recording.finish().await;
+        let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);
+        assert_eq!(lost, None);
         assert!(sonde_proxy::session::is_compressed(&path));
         let s = Session::open(&path).unwrap();
         assert_eq!(
@@ -2873,7 +2866,7 @@ mod tests {
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         };
         w.flush().unwrap();
@@ -2901,7 +2894,7 @@ mod tests {
                 time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 100)
                     .unwrap(),
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
-                operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
+                kind: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 url: format!("http://s3/b/data/k{i:05}"),
                 bucket: Some("b".into()),
                 key: Some(format!("data/k{i:05}").into()),
@@ -3086,7 +3079,7 @@ mod tests {
             id,
             time: chrono::Utc::now(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(200),
@@ -3123,7 +3116,7 @@ mod tests {
             id,
             time: chrono::Utc::now(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(if injected.is_some() { 503 } else { 200 }),

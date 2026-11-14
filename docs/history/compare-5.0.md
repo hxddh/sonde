@@ -2,7 +2,7 @@
 
 The same states of the app in 4.0.0 (left) and 5.0.0 (right), from `scripts/shots.sh` on a GTK window at 1280×820
 (the session at the least window size, 900×560, too). What changed, and why, is in the [changelog](../../CHANGELOG.md)
-and decisions D-051 to D-055 in [decisions.md](../decisions.md).
+and decisions D-051 to D-055 in [decisions.md](../dev/decisions.md).
 
 ## A session
 

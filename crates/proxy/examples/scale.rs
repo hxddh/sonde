@@ -41,7 +41,7 @@ fn main() {
                 time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 300)
                     .unwrap(),
                 method: method.into(),
-                operation: op.into(),
+                kind: op.into(),
                 bucket: Some("lake".into()),
                 key: Some(format!("t/part={}/f-{:06}.parquet", i % 97, i / 7).into()),
                 status: Some(if i % 501 == 0 { 404 } else { 200 }),

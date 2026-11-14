@@ -337,12 +337,12 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let kinds: Vec<(String, bool)> = before
         .groups
         .iter()
-        .map(|g| (g.operation.clone(), g.missed))
+        .map(|g| (g.kind.clone(), g.missed))
         .collect();
     let p95 = |p: &Profile, op: &str, missed: bool| {
         p.groups
             .iter()
-            .find(|g| g.operation == op && g.missed == missed)
+            .find(|g| g.kind == op && g.missed == missed)
             .map(|g| g.p95_ms)
     };
     if matches!(a.format, Format::Json) {

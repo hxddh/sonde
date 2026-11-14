@@ -1107,7 +1107,6 @@ dependencies = [
  "bytes",
  "chrono",
  "crc32fast",
- "futures",
  "serde",
  "serde_json",
  "snap",
@@ -3598,7 +3597,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "futures",
  "http",
  "md-5 0.10.6",
  "parking_lot",
@@ -4437,7 +4435,6 @@ dependencies = [
  "crc32c",
  "crc32fast",
  "crc64fast-nvme",
- "futures",
  "hex",
  "hmac 0.12.1",
  "http",
@@ -4449,12 +4446,10 @@ dependencies = [
  "reqlog",
  "reqwest",
  "serde",
- "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util",
  "tracing",
  "url",
 ]
@@ -4931,7 +4926,6 @@ dependencies = [
  "sha2 0.10.9",
  "sonde-fmt",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "toml",
@@ -4952,10 +4946,8 @@ name = "sonde-nsh"
 version = "21.0.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "chrono",
  "decoders",
- "flate2",
  "nsh-core",
  "parking_lot",
  "portable-pty",
@@ -5002,7 +4994,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "toml",
- "tracing",
 ]
 
 [[package]]

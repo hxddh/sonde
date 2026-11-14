@@ -878,6 +878,9 @@ async fn run_once(
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
+    if let Some(lost) = started.writer.not_written() {
+        eprintln!("sonde: {lost}");
+    }
     if under.is_none() {
         // read before it is put in its place: this run's, whatever another does
         let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;

@@ -49,4 +49,4 @@ The objects are Native Shell's table: columns that resize, rows drawn as they co
   changelog go further).
 
 The macOS screens CI keeps are cut off at the runner's 1024-point screen (an issue of Native Shell's test host,
-[nsh-issues](../nsh-issues.md)); the Linux ones are whole.
+[nsh-issues](../dev/nsh-issues.md)); the Linux ones are whole.

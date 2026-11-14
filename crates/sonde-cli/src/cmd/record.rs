@@ -79,38 +79,12 @@ pub(super) struct Of<'a> {
 impl Recording {
     /// The policy asked for: the flag's, else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
-    fn policy(&self, config_file: &Path) -> anyhow::Result<Policy> {
-        // config.toml's settings from before 20.0 are not read: said each run, and an older
-        // policy stricter than the one in force is kept, so a move never loosens a recording
-        let mut older = None;
-        for (key, value) in sonde_core::config::Config::moved(config_file) {
-            let to = sonde_core::config::MOVED
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map_or("", |(_, to)| to);
-            eprintln!(
-                "warning: {}: `{key} = \"{value}\"` is no longer read; it is {to}",
-                config_file.display()
-            );
-            if key == "record-policy" {
-                older = Policy::named(&value);
-            }
-        }
+    fn policy(&self) -> anyhow::Result<Policy> {
         if let Some(p) = self.policy.as_deref().and_then(Policy::named) {
             return Ok(p);
         }
         let project = load_project(None)?;
         let chosen = project.policy.unwrap_or_default();
-        // (policies are ordered by what they hold back: allow < no-delete < read-only)
-        if let Some(o) = older
-            && o > chosen
-        {
-            eprintln!(
-                "warning: recording under {} as before, until it is set in sonde.toml",
-                o.name()
-            );
-            return Ok(o);
-        }
         if project.policy == Some(Policy::Allow)
             && let Some(path) = &project.path
         {
@@ -142,7 +116,7 @@ pub(super) async fn start_under(
     of: &Of<'_>,
 ) -> anyhow::Result<Started> {
     let under = of.under;
-    let policy = r.policy(&s.paths().config_file())?;
+    let policy = r.policy()?;
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
     let cfg = client.config();
@@ -322,7 +296,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
     let mut line = format!(
         "{}  {status}{pad}  {latency:>7}  {bytes:>10}  {:<24} {target}",
         paint(&time, "2", color),
-        r.operation,
+        r.kind,
     );
     if !detail.is_empty() {
         line.push_str(&paint(&format!("  {detail}"), "2", color));
@@ -392,9 +366,9 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
             let star = if mark && few(g) { "*" } else { "" };
             let mut row = vec![
                 if g.missed {
-                    format!("{} (not found)", g.operation)
+                    format!("{} (not found)", g.kind)
                 } else {
-                    g.operation.clone()
+                    g.kind.clone()
                 },
                 output::grouped(g.requests as u64),
                 if g.errors > 0 && !g.missed {

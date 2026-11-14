@@ -19,7 +19,6 @@ thiserror.workspace = true
 apache-avro = { workspace = true, features = ["snappy", "zstandard"] }
 snap = "1"
 crc32fast.workspace = true
-futures.workspace = true
 tokio = { workspace = true }
 
 [dev-dependencies]

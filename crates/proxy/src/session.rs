@@ -1,6 +1,6 @@
 //! Session files (`.sonde`): one JSON header line, then one redacted record
 //! per line. Written as requests happen, so a crash keeps what came before.
-//! The format is a contract (docs/session-format.md): a field may be added
+//! The format is a contract (docs/dev/session-format.md): a field may be added
 //! within a version, and readers pass over fields they do not know; a change
 //! that would mislead an older reader is a new [`VERSION`], which that reader
 //! refuses by name ([`SessionHeader::readable`]).
@@ -15,9 +15,7 @@ use reqlog::{Record, Sink};
 use serde::{Deserialize, Serialize};
 
 pub const FORMAT: &str = "sonde-session";
-/// The format's version: what this sonde writes, and the newest it reads.
-/// Format 2 (20.0) names a record's S3 call `kind`; format 1 named it
-/// `operation`, and is read the same.
+/// The format's version: what this sonde writes, and the only one it reads.
 pub const VERSION: u32 = 2;
 
 /// The first line of a session file.
@@ -146,20 +144,25 @@ impl SessionHeader {
         }
     }
 
-    /// Whether this sonde reads the file: a sonde session of a version it
-    /// knows. A newer one is refused by name, never read as far as it goes:
-    /// a field whose meaning changed would be read in its old one.
+    /// Whether this sonde reads the file: its format, at this sonde's
+    /// version. Any other version is refused by name, never read as far as
+    /// it goes: a field whose meaning changed would be read in its old one.
     pub fn readable(&self) -> Result<(), String> {
         if self.format != FORMAT {
             return Err(format!("not a sonde session (format {:?})", self.format));
         }
-        if self.version > VERSION {
+        if self.version != VERSION {
             let by = self
                 .sonde
                 .as_deref()
-                .map_or("a newer sonde".to_string(), |v| format!("sonde {v}"));
+                .map_or("another sonde".to_string(), |v| format!("sonde {v}"));
+            let then = if self.version > VERSION {
+                ": update sonde to read it"
+            } else {
+                ""
+            };
             return Err(format!(
-                "written by {by}, format {}; this sonde ({}) reads up to format {VERSION}: update sonde to read it",
+                "written by {by}, format {}; this sonde ({}) reads format {VERSION}{then}",
                 self.version,
                 env!("CARGO_PKG_VERSION")
             ));
@@ -202,9 +205,35 @@ struct LogLine {
     log: LogChunk,
 }
 
-/// Appends records to a session file.
+/// Appends records to a session file. A write that fails is not retried:
+/// the first error is kept, and the requests not written are counted, for
+/// the recording's end to say ([`SessionWriter::not_written`]).
 pub struct SessionWriter {
-    out: Mutex<BufWriter<File>>,
+    out: Mutex<Out>,
+}
+
+struct Out {
+    file: BufWriter<File>,
+    /// Requests not written, and the first error.
+    lost: u64,
+    why: Option<String>,
+}
+
+impl Out {
+    /// Writes one line; an error is kept, the first one.
+    fn line(&mut self, value: &impl Serialize) -> bool {
+        let written = serde_json::to_writer(&mut self.file, value)
+            .map_err(std::io::Error::from)
+            .and_then(|()| self.file.write_all(b"\n"))
+            .and_then(|()| self.file.flush());
+        match written {
+            Ok(()) => true,
+            Err(e) => {
+                self.why.get_or_insert_with(|| e.to_string());
+                false
+            }
+        }
+    }
 }
 
 /// A path for a new session file in `dir` named `<stem>.sonde`, or
@@ -241,36 +270,47 @@ impl SessionWriter {
         out.write_all(b"\n")?;
         out.flush()?;
         Ok(SessionWriter {
-            out: Mutex::new(out),
+            out: Mutex::new(Out {
+                file: out,
+                lost: 0,
+                why: None,
+            }),
+        })
+    }
+
+    /// What the recording lost: "N requests not written: <why>", or none.
+    /// The program's output that was not written is not counted, but its
+    /// error is said when no request was lost.
+    pub fn not_written(&self) -> Option<String> {
+        let out = self.out.lock();
+        let why = out.why.as_deref()?;
+        Some(match out.lost {
+            0 => format!("the program's output was not all written: {why}"),
+            1 => format!("1 request not written: {why}"),
+            n => format!("{n} requests not written: {why}"),
         })
     }
 
     /// Appends a chunk of the program's output.
     pub fn write_log(&self, text: &str) {
-        let mut out = self.out.lock();
-        let line = LogLine {
+        self.out.lock().line(&LogLine {
             log: LogChunk {
                 time: Utc::now(),
                 text: text.to_string(),
             },
-        };
-        if serde_json::to_writer(&mut *out, &line).is_ok() {
-            let _ = out.write_all(b"\n");
-            let _ = out.flush();
-        }
+        });
     }
 
     pub fn flush(&self) -> std::io::Result<()> {
-        self.out.lock().flush()
+        self.out.lock().file.flush()
     }
 }
 
 impl Sink for SessionWriter {
     fn write(&self, record: &Record) {
         let mut out = self.out.lock();
-        if serde_json::to_writer(&mut *out, record).is_ok() {
-            let _ = out.write_all(b"\n");
-            let _ = out.flush();
+        if !out.line(record) {
+            out.lost += 1;
         }
     }
 }
@@ -461,16 +501,15 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     if is_compressed(path) {
         return Ok(());
     }
-    let tmp = path.with_extension("sonde.gz.tmp");
     // (a session written elsewhere, with -o, gets no file beside it)
     let listed = path
         .parent()
         .and_then(|d| d.file_name())
         .is_some_and(|n| n == "sessions");
     let mut tally = listed.then(Tally::default);
-    {
-        let mut src = File::open(path)?;
-        let out = reqlog::private::create(&tmp)?;
+    let mut src = File::open(path)?;
+    // synced before it replaces the only copy
+    reqlog::private::replace_with(path, |out| {
         let mut gz =
             flate2::write::GzEncoder::new(BufWriter::new(out), flate2::Compression::new(6));
         let mut buf = vec![0u8; 1 << 16];
@@ -486,9 +525,8 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
                 t.feed(&buf[..n]);
             }
         }
-        gz.finish()?.flush()?;
-    }
-    std::fs::rename(&tmp, path)?;
+        gz.finish()?.flush()
+    })?;
     if let Some((header, counter)) = tally.and_then(Tally::finish) {
         // (the file is ours, just written: its stamp is of what was counted)
         let at = crate::summary::stamp(path);
@@ -991,6 +1029,25 @@ mod tests {
         assert!(!p.exists());
     }
 
+    /// A write that fails is said at the end, with the first error.
+    #[test]
+    fn requests_not_written_are_counted_with_the_first_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sonde");
+        let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
+        assert_eq!(w.not_written(), None);
+        // a file that refuses writes, as a full disk does
+        w.out.lock().file = BufWriter::new(File::open(&path).unwrap());
+        for id in 1..=3 {
+            w.write(&Record {
+                id,
+                ..Default::default()
+            });
+        }
+        let said = w.not_written().unwrap();
+        assert!(said.starts_with("3 requests not written: "), "{said}");
+    }
+
     /// A session, its counts and its verdicts are their user's alone.
     #[cfg(unix)]
     #[test]
@@ -1002,7 +1059,7 @@ mod tests {
         let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
         w.write(&Record {
             id: 1,
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         });
         w.flush().unwrap();
@@ -1014,7 +1071,7 @@ mod tests {
         assert_eq!(mode(&path.with_file_name(crate::index::FILE)), 0o600);
     }
 
-    /// docs/session-format.md's promises: the fewest fields a line needs,
+    /// docs/dev/session-format.md's promises: the fewest fields a line needs,
     /// fields not known passed over, a newer format refused by name.
     #[test]
     fn the_format_as_its_spec_says() {
@@ -1035,7 +1092,7 @@ mod tests {
             (s.records[0].status, s.records[0].bucket.as_ref()),
             (None, None)
         );
-        assert_eq!(s.records[0].operation, "GetObject");
+        assert_eq!(s.records[0].kind, "GetObject");
         assert_eq!(s.logs.len(), 1);
         assert_eq!(s.header.sonde, None);
         // a line short of a required field is not a record
@@ -1055,41 +1112,26 @@ mod tests {
         std::fs::write(&path, &newer).unwrap();
         let e = Session::open(&path).unwrap_err();
         assert!(
-            e.contains("written by sonde 21.0.0, format 3;") && e.contains("reads up to format 2"),
+            e.contains("written by sonde 21.0.0, format 3;")
+                && e.contains("reads format 2: update sonde"),
             "{e}"
         );
         std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":4"#, 1)).unwrap();
         let e = Session::open(&path).unwrap_err();
-        assert!(e.contains("written by a newer sonde, format 4"), "{e}");
+        assert!(e.contains("written by another sonde, format 4"), "{e}");
+        // older: refused too, never read in part
+        std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":1"#, 1)).unwrap();
+        let e = Session::open(&path).unwrap_err();
+        assert!(
+            e.contains("format 1; this sonde") && e.ends_with("reads format 2"),
+            "{e}"
+        );
         std::fs::write(&path, least.replacen("sonde-session", "har", 1)).unwrap();
         assert!(
             Session::open(&path)
                 .unwrap_err()
                 .contains("not a sonde session")
         );
-    }
-
-    /// Format 1 (19.0 and before) named a record's kind `operation`: it is
-    /// read the same, in full and lean.
-    #[test]
-    fn a_format_1_session_is_read_its_operation_the_kind() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("old.sonde");
-        let v1 = concat!(
-            r#"{"format":"sonde-session","version":1,"sonde":"19.0.0","created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","command":"python etl.py"}"#,
-            "\n",
-            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","operation":"ListObjectsV2","method":"GET","url":"","bucket":"b","query":[],"status":200,"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
-            "\n",
-            r#"{"id":2,"time":"2026-11-12T10:00:00.002Z","endpoint":"e","operation":"GetObject","method":"GET","url":"","bucket":"b","key":"k","query":[],"status":404,"latencyMs":1.0,"retries":0,"requestHeaders":[],"responseHeaders":[]}"#,
-            "\n",
-        );
-        std::fs::write(&path, v1).unwrap();
-        let s = Session::open(&path).unwrap();
-        assert_eq!(s.header.version, 1);
-        let kinds: Vec<&str> = s.records.iter().map(|r| r.operation.as_str()).collect();
-        assert_eq!(kinds, ["ListObjectsV2", "GetObject"]);
-        let lean = Session::open_lean(&path).unwrap();
-        assert_eq!(lean.records[1].operation, "GetObject");
     }
 
     #[test]
@@ -1104,7 +1146,7 @@ mod tests {
         for i in 0..3 {
             w.write(&Record {
                 id: i,
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 ..Default::default()
             });
         }
@@ -1133,7 +1175,7 @@ mod tests {
         for i in 0..n {
             w.write(&Record {
                 id: i + 1,
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 method: "GET".into(),
                 url: format!("https://x.r2.dev/b/k{i}"),
                 key: Some(format!("k{i}").into()),
@@ -1392,7 +1434,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 20_000)
                     .unwrap(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 method: "GET".into(),
                 bucket: Some("b".into()),
                 key: Some(format!("{long}{}", i % 3).into()),

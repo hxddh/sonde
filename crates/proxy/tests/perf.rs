@@ -33,7 +33,7 @@ pub fn busy(n: u64) -> Vec<Record> {
                 id: i + 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000 + (i as i64) * 7).unwrap(),
                 method: method.into(),
-                operation: op.into(),
+                kind: op.into(),
                 bucket: Some("b".into()),
                 key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if i % 97 == 0 { 503 } else { 200 }),

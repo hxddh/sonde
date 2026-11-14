@@ -143,7 +143,7 @@ fn record(
         id: 0,
         time: when,
         endpoint: "prod".into(),
-        operation: op.into(),
+        kind: op.into(),
         method: method.into(),
         url,
         bucket: Some(BUCKET.into()),
@@ -536,7 +536,7 @@ fn plain(
         id: n,
         time: at(t),
         endpoint: "prod".into(),
-        operation: op.into(),
+        kind: op.into(),
         method: method.into(),
         url: format!(
             "https://s3.amazonaws.com/b/{key}{}{}",

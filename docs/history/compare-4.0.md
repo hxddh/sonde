@@ -2,7 +2,7 @@
 
 The same states of the app in 3.0.0 (left) and 4.0.0 (right), from `scripts/shots.sh` on a GTK window at 1280×820
 (the last row at the least window size, 900×560). What changed, and why, is in the [changelog](../../CHANGELOG.md),
-decisions D-046 to D-050 in [decisions.md](../decisions.md), and the standards in [app/DESIGN.md](../../app/DESIGN.md).
+decisions D-046 to D-050 in [decisions.md](../dev/decisions.md), and the standards in [app/DESIGN.md](../../app/DESIGN.md).
 
 ## A session
 

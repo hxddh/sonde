@@ -40,7 +40,7 @@ fn rec(id: u64, at_ms: i64, op: &str, status: u16, latency: f64) -> Record {
         id,
         time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
         method: method.into(),
-        operation: op.into(),
+        kind: op.into(),
         bucket: Some("b".into()),
         key: Some(format!("data/{}.bin", id % 7).into()),
         status: Some(status),
@@ -427,17 +427,12 @@ fn the_first_byte_is_told_from_the_rest_by_kind_of_request() {
     assert_eq!(fb.kinds.len(), 2);
     let get = &fb.kinds[0];
     assert_eq!(
-        (
-            get.operation.as_str(),
-            get.count,
-            get.first_byte_ms,
-            get.rest_ms
-        ),
+        (get.kind.as_str(), get.count, get.first_byte_ms, get.rest_ms),
         ("GetObject", 5, 22.0, 78.0)
     );
     let put = &fb.kinds[1];
     assert_eq!(
-        (put.operation.as_str(), put.first_byte_ms, put.rest_ms),
+        (put.kind.as_str(), put.first_byte_ms, put.rest_ms),
         ("PutObject", 50.0, 0.0)
     );
     // 110 + 150 of 500 + 150 ms
@@ -523,7 +518,7 @@ fn sizes_fall_in_buckets_that_double_and_transfers_are_timed_against_them() {
         .sizes
         .throughput
         .iter()
-        .map(|t| (t.operation.as_str(), t.bucket, t.count, t.mib_per_sec))
+        .map(|t| (t.kind.as_str(), t.bucket, t.count, t.mib_per_sec))
         .collect();
     assert_eq!(
         rows,
@@ -576,13 +571,7 @@ fn cost_by_operation_is_the_profiles_cost_and_a_refused_request_costs_nothing() 
         s.cost.operations.iter().map(|r| r.cost).sum(),
         p.cost.amount
     ));
-    let row = |op: &str| {
-        s.cost
-            .operations
-            .iter()
-            .find(|r| r.operation == op)
-            .unwrap()
-    };
+    let row = |op: &str| s.cost.operations.iter().find(|r| r.kind == op).unwrap();
     assert_eq!(
         (row("PutObject").class, row("PutObject").billed),
         ("write", 249)
@@ -596,7 +585,7 @@ fn cost_by_operation_is_the_profiles_cost_and_a_refused_request_costs_nothing() 
         ("free", 0.0)
     );
     // dearest first
-    assert_eq!(s.cost.operations[0].operation, "PutObject");
+    assert_eq!(s.cost.operations[0].kind, "PutObject");
     let t = text(&s, false);
     assert!(t.contains("cost  ") && !t.contains("DeleteObject"), "{t}");
 }
@@ -673,7 +662,7 @@ fn million() -> Vec<Record> {
                 time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 700)
                     .unwrap(),
                 method: method.into(),
-                operation: op.into(),
+                kind: op.into(),
                 bucket: Some("b".into()),
                 key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if failed { 503 } else { 200 }),
