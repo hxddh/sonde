@@ -2567,26 +2567,33 @@ async fn an_upload_under_lost_answers_survives_on_the_demo_store_as_on_s3() {
             .args(the_program_command());
         c
     };
-    let o = out(
-        sonde(&[
-            "run",
-            "--demo",
-            "--fault",
-            "lost-answer",
-            "--fault",
-            "complete-500",
-            "-o",
-            "up.sonde",
-        ])
-        .output()
-        .await
-        .unwrap(),
-    );
+    let o = out(sonde(&[
+        "run",
+        "--demo",
+        "--fault",
+        "lost-answer",
+        "--fault",
+        "complete-500",
+        "-o",
+        "up.sonde",
+    ])
+    .output()
+    .await
+    .unwrap());
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     let all = trials(&dir.path().join("up.sonde"));
     for name in ["lost-answer", "complete-500"] {
-        assert_eq!(trial(&all, name)["standing"], "survived", "{name}: {}", o.stderr);
+        assert_eq!(
+            trial(&all, name)["standing"],
+            "survived",
+            "{name}: {}",
+            o.stderr
+        );
     }
-    assert!(o.stderr.contains("The program did not break."), "{}", o.stderr);
+    assert!(
+        o.stderr.contains("The program did not break."),
+        "{}",
+        o.stderr
+    );
     assert!(!o.stderr.contains("refused"), "{}", o.stderr);
 }

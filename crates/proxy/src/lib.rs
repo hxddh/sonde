@@ -1241,8 +1241,14 @@ async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String
     let send = async {
         if s3raw::has_dot_segment(key) {
             let empty = reqwest::Body::from(Vec::new());
-            return asis::send(&http::Method::HEAD, &url, &headers, empty, cfg.ca_pem.as_deref())
-                .await;
+            return asis::send(
+                &http::Method::HEAD,
+                &url,
+                &headers,
+                empty,
+                cfg.ca_pem.as_deref(),
+            )
+            .await;
         }
         let mut rb = client.http_streaming().head(&url);
         for (k, v) in &headers {
@@ -1791,8 +1797,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let as_is = key.as_deref().is_some_and(s3raw::has_dot_segment);
     let send = async {
         if as_is {
-            return asis::send(&parts.method, &url, &out, upstream_body, cfg.ca_pem.as_deref())
-                .await;
+            return asis::send(
+                &parts.method,
+                &url,
+                &out,
+                upstream_body,
+                cfg.ca_pem.as_deref(),
+            )
+            .await;
         }
         let mut rb = client.http_streaming().request(parts.method.clone(), &url);
         for (k, v) in &out {
@@ -2033,8 +2045,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
-        if let Ok(started) =
-            s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
+        if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
         {
             shared.cfg.written.made_upload(b, k, &started.upload_id);
         }

@@ -200,7 +200,11 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     // the bucket is not created again: it is outside the prefix
     assert_eq!(
         p.skipped,
-        [("creates or deletes a bucket, outside the prefix".to_string(), 1)].into()
+        [(
+            "creates or deletes a bucket, outside the prefix".to_string(),
+            1
+        )]
+        .into()
     );
 
     // replay on another faithful store: nothing differs

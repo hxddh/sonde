@@ -584,7 +584,11 @@ fn cloudtrail(
         },
         // one document, not one event a line: cut short or damaged
         Err(e)
-            if text.chars().take(4096).collect::<String>().contains("\"Records\"")
+            if text
+                .chars()
+                .take(4096)
+                .collect::<String>()
+                .contains("\"Records\"")
                 && text
                     .lines()
                     .find(|l| !l.trim().is_empty())

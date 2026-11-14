@@ -396,7 +396,10 @@ mod tests {
             "logs/\\e]0;pwned\\x07x\\u{9b}2J\\x7f\\u{202e}fdp.exe"
         );
         assert_eq!(escape("a\nb\tc\rd"), "a\\nb\\tc\\rd");
-        assert!(matches!(escape("plain/日本/ü"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            escape("plain/日本/ü"),
+            std::borrow::Cow::Borrowed(_)
+        ));
         // what sonde prints: its lines, colours and progress erase stay
         let line = format!("\u{1b}[31mbroke\u{1b}[0m at {planted}\n\r\u{1b}[2K3/4\t");
         assert_eq!(

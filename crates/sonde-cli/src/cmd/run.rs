@@ -252,7 +252,11 @@ fn names_its_place(command: &[String]) -> bool {
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
     // a word like a flag where the command starts is a flag of run's
     // mistyped, not a program (none is named `--typo`)
-    if let Some(first) = a.command.first().filter(|w| w.starts_with('-') && *w != "-") {
+    if let Some(first) = a
+        .command
+        .first()
+        .filter(|w| w.starts_with('-') && *w != "-")
+    {
         return Err(super::usage(format!(
             "run: unknown option {first} (the command goes after `--`: sonde run [OPTIONS] -- COMMAND)"
         )));
@@ -514,9 +518,7 @@ fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
         unjudged.push(format!("{refused} refused by the recording policy"));
     }
     if untested > 0 {
-        unjudged.push(format!(
-            "{untested} met no request of the program's"
-        ));
+        unjudged.push(format!("{untested} met no request of the program's"));
     }
     let unjudged = unjudged.join(", ");
     match (judged, broke) {
@@ -525,9 +527,9 @@ fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
         }
         (0, _) => format!("Nothing was judged: {unjudged}."),
         (_, 0) if unjudged.is_empty() => "The program did not break.".to_string(),
-        (_, 0) => format!(
-            "The program did not break under the {judged} judged; not judged: {unjudged}."
-        ),
+        (_, 0) => {
+            format!("The program did not break under the {judged} judged; not judged: {unjudged}.")
+        }
         _ if unjudged.is_empty() => format!("The program broke under {broke} of {judged}."),
         _ => format!("The program broke under {broke} of {judged} judged; not judged: {unjudged}."),
     }
@@ -869,10 +871,7 @@ async fn run_once(
             started.path = place(&started.path, t, a.force)?;
         }
         // kept as the app keeps it: a run that failed is compared with none
-        sonde_proxy::index::set(
-            &started.path,
-            sonde_proxy::index::Change::Exit(code),
-        );
+        sonde_proxy::index::set(&started.path, sonde_proxy::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &session.header.endpoint);
         let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
@@ -930,7 +929,11 @@ fn recording_path(target: &std::path::Path) -> PathBuf {
 /// Puts a finished recording at `target`: over a file there only with
 /// `--force`. One another run put there meanwhile is kept, and this one
 /// goes beside it under a fresh name, said.
-fn place(recorded: &std::path::Path, target: &std::path::Path, force: bool) -> anyhow::Result<PathBuf> {
+fn place(
+    recorded: &std::path::Path,
+    target: &std::path::Path,
+    force: bool,
+) -> anyhow::Result<PathBuf> {
     if force {
         std::fs::rename(recorded, target)?;
         return Ok(target.to_path_buf());

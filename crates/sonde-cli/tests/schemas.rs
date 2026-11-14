@@ -326,7 +326,10 @@ async fn every_json_output_is_as_its_schema_says() {
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
         holds("show", &shown);
-        holds("show-summary", &b.json(&["show", q, "--summary", "-f", "json"], 0).await);
+        holds(
+            "show-summary",
+            &b.json(&["show", q, "--summary", "-f", "json"], 0).await,
+        );
     }
     holds(
         "show",

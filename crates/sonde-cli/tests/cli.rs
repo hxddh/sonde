@@ -1981,10 +1981,7 @@ fn a_keys_control_characters_are_written_out_never_sent() {
     std::fs::write(&log, line.repeat(3)).unwrap();
     let session = t.path().join("planted.sonde");
     let s = session.to_str().unwrap();
-    let mut seen = vec![sonde(
-        t.path(),
-        &["import", log.to_str().unwrap(), "-o", s],
-    )];
+    let mut seen = vec![sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s])];
     for args in [
         vec!["show", s],
         vec!["show", "--requests", s],
@@ -2027,10 +2024,18 @@ fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_ru
     let t = tempfile::tempdir().unwrap();
     let o = sonde(t.path(), &["run", "--demo", "--typo", "--", "true"]);
     assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
-    assert!(stderr(&o).contains("unknown option --typo"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("unknown option --typo"),
+        "{}",
+        stderr(&o)
+    );
     let o = sonde(t.path(), &["run", "--", "true"]);
     assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
-    assert!(stderr(&o).contains("no endpoint configured"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no endpoint configured"),
+        "{}",
+        stderr(&o)
+    );
     let o = sonde(t.path(), &["run", "--demo", "--", "/no/such/program"]);
     assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
     assert!(stderr(&o).contains("cannot start"), "{}", stderr(&o));
@@ -2052,7 +2057,10 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
     assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
     assert!(stderr(&o).contains("--force"), "{}", stderr(&o));
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "mine");
-    let o = sonde(t.path(), &["run", "--demo", "-o", o_, "--force", "--", "true"]);
+    let o = sonde(
+        t.path(),
+        &["run", "--demo", "-o", o_, "--force", "--", "true"],
+    );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert_ne!(std::fs::read(&out).unwrap(), b"mine");
     // two at once, one file
@@ -2065,7 +2073,10 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
             let dirs = t.path().to_path_buf();
             std::thread::spawn(move || {
                 let script = format!("sleep 0.5; echo {word}");
-                sonde(&dirs, &["run", "--demo", "-o", &b_, "--", "sh", "-c", &script])
+                sonde(
+                    &dirs,
+                    &["run", "--demo", "-o", &b_, "--", "sh", "-c", &script],
+                )
             })
         })
         .collect();

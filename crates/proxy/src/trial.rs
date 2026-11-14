@@ -3869,10 +3869,7 @@ mod tests {
             "refused by the recording policy (no-delete): 1 request more than in the clean run, so what the program does under the fault cannot be told"
         );
         // its key has the run's place already: not told to add one
-        assert_eq!(
-            t.advice.as_ref().unwrap().key,
-            "trial.advice.policy.placed"
-        );
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy.placed");
         assert_eq!(t.at.as_ref().unwrap().key, "b/etl-slowdown/state");
         assert_eq!(worst(std::slice::from_ref(&t)), Some(Standing::Refused));
         // a key the same in every run is told to take one

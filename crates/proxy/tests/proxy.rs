@@ -1118,18 +1118,32 @@ async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another
     ] {
         for method in ["PUT", "GET", "DELETE"] {
             let answer = raw(&proxy, method, path).await;
-            assert!(!answer.starts_with("HTTP/1.1 4"), "{method} {path}: {answer}");
+            assert!(
+                !answer.starts_with("HTTP/1.1 4"),
+                "{method} {path}: {answer}"
+            );
             let calls = up.calls.lock().clone();
-            assert_eq!(calls.last().unwrap(), &format!("{method} {sent}"), "{calls:?}");
+            assert_eq!(
+                calls.last().unwrap(),
+                &format!("{method} {sent}"),
+                "{calls:?}"
+            );
         }
     }
     // nothing reached another key
     let calls = up.calls.lock().clone();
-    assert!(!calls.iter().any(|c| c.ends_with(" /data/g1") || c.ends_with(" /data")), "{calls:?}");
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.ends_with(" /data/g1") || c.ends_with(" /data")),
+        "{calls:?}"
+    );
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.key.as_deref(), Some(".."));
     assert!(
-        !rec.response_headers.iter().any(|h| h.name == "x-sonde-proxy"),
+        !rec.response_headers
+            .iter()
+            .any(|h| h.name == "x-sonde-proxy"),
         "not refused"
     );
     // a dot in a name is a name, and goes the usual way

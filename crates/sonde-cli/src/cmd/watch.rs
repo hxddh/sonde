@@ -67,8 +67,9 @@ fn hold_unfinished(records: &mut Vec<Record>) -> Vec<Record> {
         })
         .flat_map(|e| e.records.iter().copied())
         .collect();
-    let (out, kept): (Vec<Record>, Vec<Record>) =
-        std::mem::take(records).into_iter().partition(|r| held.contains(&r.id));
+    let (out, kept): (Vec<Record>, Vec<Record>) = std::mem::take(records)
+        .into_iter()
+        .partition(|r| held.contains(&r.id));
     *records = kept;
     out
 }
@@ -756,12 +757,18 @@ mod tests {
         put(
             "uplogs/2026-02-06-00-01-00-AB",
             line("00:38", "REST.POST.UPLOADS", "POST /demo/big.bin?uploads")
-                + &line("00:39", "REST.PUT.PART", "PUT /demo/big.bin?partNumber=1&uploadId=u1")
+                + &line(
+                    "00:39",
+                    "REST.PUT.PART",
+                    "PUT /demo/big.bin?partNumber=1&uploadId=u1",
+                )
                 + &line("00:40", "REST.GET.OBJECT", "GET /demo/other"),
         )
         .await;
         assert_eq!(
-            watch_logs(&s, &logs("demo", "s3://demo/uplogs/")).await.unwrap(),
+            watch_logs(&s, &logs("demo", "s3://demo/uplogs/"))
+                .await
+                .unwrap(),
             0
         );
         let sessions = || {
@@ -788,11 +795,17 @@ mod tests {
         assert_eq!(unfinished(&first[0]), (1, false), "the upload waits");
         put(
             "uplogs/2026-02-06-00-02-00-CD",
-            line("01:10", "REST.POST.UPLOAD", "POST /demo/big.bin?uploadId=u1"),
+            line(
+                "01:10",
+                "REST.POST.UPLOAD",
+                "POST /demo/big.bin?uploadId=u1",
+            ),
         )
         .await;
         assert_eq!(
-            watch_logs(&s, &logs("demo", "s3://demo/uplogs/")).await.unwrap(),
+            watch_logs(&s, &logs("demo", "s3://demo/uplogs/"))
+                .await
+                .unwrap(),
             0
         );
         let all = sessions();
@@ -819,7 +832,10 @@ mod tests {
         assert_eq!(hold_unfinished(&mut fresh).len(), 1);
         assert_eq!(fresh.len(), 1);
         let mut stale = vec![started(), rec(30, "GET", "GetObject", &[])];
-        assert!(hold_unfinished(&mut stale).is_empty(), "a day on: unfinished");
+        assert!(
+            hold_unfinished(&mut stale).is_empty(),
+            "a day on: unfinished"
+        );
         assert_eq!(stale.len(), 2);
     }
 
