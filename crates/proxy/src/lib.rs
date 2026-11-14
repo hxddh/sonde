@@ -352,11 +352,8 @@ pub struct ProxyConfig {
 /// A fresh client key and secret: the key names the proxy, the secret is 32
 /// random bytes in hex.
 pub fn client_keys() -> (String, String) {
-    use rand::RngCore;
-    let mut k = [0u8; 8];
-    let mut s = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut k);
-    rand::thread_rng().fill_bytes(&mut s);
+    let k: [u8; 8] = rand::random();
+    let s: [u8; 32] = rand::random();
     (format!("SONDE{}", hex_upper(&k)), hex_lower(&s))
 }
 
