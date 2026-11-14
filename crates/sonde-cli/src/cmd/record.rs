@@ -152,10 +152,7 @@ pub(super) async fn start_under(
         (None, None) => {
             let dir = s.paths().sessions();
             std::fs::create_dir_all(&dir)?;
-            let name = command
-                .as_deref()
-                .and_then(sonde_proxy::program::program_name)
-                .filter(|n| !n.is_empty())
+            let name = sonde_proxy::program::file_stem(of.name.as_deref(), command.as_deref())
                 .unwrap_or_else(|| "proxy".into());
             sonde_proxy::session::fresh_path(
                 &dir,
@@ -547,7 +544,10 @@ pub(super) fn print_summary_of(
         say(line);
     }
     for (what, n) in &s.error_codes {
-        say(format!("  {} × {what}", output::grouped(*n)));
+        match refused_line(s, *n).filter(|_| what == "refused by sonde") {
+            Some(line) => say(paint(&line, "33", color)),
+            None => say(format!("  {} × {what}", output::grouped(*n))),
+        }
     }
     if all {
         let mut signals = a.signals.clone();
@@ -564,6 +564,45 @@ pub(super) fn print_summary_of(
         }
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
+}
+
+/// `-o FILE` and a file there: refused (64) unless `--force`. One rule for
+/// every command that writes a file it is given (`run`, `import`, `share`).
+pub(super) fn refuse_existing(out: &Path, force: bool) -> anyhow::Result<()> {
+    if !force && out.symlink_metadata().is_ok() {
+        return Err(super::usage(format!(
+            "-o {}: the file is there; --force writes over it",
+            out.display()
+        )));
+    }
+    Ok(())
+}
+
+/// The requests the recording's policy refused, named, with the policy and
+/// the flag that lifts it: `1 × refused by sonde's no-delete policy:
+/// DeleteObject demo/old/report.csv (--policy allow lets it through)`.
+fn refused_line(s: &sonde_proxy::summary::Summary, n: u64) -> Option<String> {
+    let first = s.refusals.first()?;
+    let named: Vec<&str> = s.refusals.iter().map(|r| r.request.as_str()).collect();
+    let more = (n as usize).saturating_sub(named.len());
+    let more = if more > 0 {
+        format!(" and {} more", output::grouped(more as u64))
+    } else {
+        String::new()
+    };
+    let it = if n == 1 { "it" } else { "them" };
+    Some(match first.policy.as_str() {
+        "" => format!(
+            "  {} × refused by sonde: {}{more}",
+            output::grouped(n),
+            named.join(", ")
+        ),
+        policy => format!(
+            "  {} × refused by sonde's {policy} policy: {}{more} (--policy allow lets {it} through)",
+            output::grouped(n),
+            named.join(", ")
+        ),
+    })
 }
 
 /// A share as a percentage: `0.4%`, `12%` ([`sonde_fmt::percent`]).
@@ -607,12 +646,25 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
     )
 }
 
-/// The newest session recorded from a program's own requests (`run`,
-/// `proxy`): what a bare `sonde show` or `sonde check` is about. A
-/// replay, an import and a trial are sessions too, and are named to be read.
-pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
+/// The run a command is about when none is named: one rule for `show`,
+/// `compare`, `share` and `check`. The newest run of the project's program
+/// (`[program] name` in sonde.toml; a run recorded before it had the name,
+/// whose command `check --init` names so, is one), else of the program
+/// recorded in this folder (the session's `cwd`), else the newest run of
+/// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
+/// named to be read. The run, and which it is in words.
+pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
     let dir = s.paths().sessions();
-    let mut newest: Option<(chrono::DateTime<chrono::Utc>, PathBuf)> = None;
+    let here = std::env::current_dir().ok();
+    let here = here.as_ref().map(|h| h.canonicalize().unwrap_or(h.clone()));
+    // the newest of the program named, of this folder, and of all
+    type Newest = Option<(chrono::DateTime<chrono::Utc>, PathBuf, String)>;
+    let (mut named, mut local, mut any): (Newest, Newest, Newest) = (None, None, None);
+    let keep = |n: &mut Newest, at: chrono::DateTime<chrono::Utc>, p: &PathBuf, key: &str| {
+        if n.as_ref().is_none_or(|(t, ..)| at > *t) {
+            *n = Some((at, p.clone(), key.to_string()));
+        }
+    };
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
@@ -621,21 +673,107 @@ pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
         let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
             continue;
         };
-        if newest.as_ref().is_none_or(|(n, _)| h.created > *n) {
-            newest = Some((h.created, p));
+        let key = sonde_proxy::program::key_of(&h).unwrap_or_else(|| "proxy".into());
+        keep(&mut any, h.created, &p, &key);
+        if let Some(n) = name
+            && of_program(&h, n)
+        {
+            keep(&mut named, h.created, &p, &key);
+        }
+        let cwd = h.cwd.as_deref().map(PathBuf::from);
+        let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
+        if cwd.is_some() && cwd == here {
+            keep(&mut local, h.created, &p, &key);
         }
     }
-    newest.map(|(_, p)| p).ok_or_else(|| {
-        super::usage(format!(
+    match (name, named, local, any) {
+        (Some(n), Some((_, p, _)), ..) => Ok((
+            p,
+            format!("the newest run of program \"{n}\" ([program] name in sonde.toml)"),
+        )),
+        (Some(n), None, ..) => Err(super::usage(format!(
+            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the session",
+            dir.display()
+        ))),
+        (None, _, Some((_, p, key)), _) => Ok((
+            p,
+            format!("the newest run of program `{key}` recorded in this folder"),
+        )),
+        (None, _, None, Some((_, p, key))) => Ok((
+            p,
+            format!("the newest run (program `{key}`; none was recorded in this folder)"),
+        )),
+        (None, _, None, None) => Err(super::usage(format!(
             "no recorded sessions in {} yet: record one with `sonde run -- <command>`",
             dir.display()
-        ))
-    })
+        ))),
+    }
+}
+
+/// Whether a run is of the program named `name`: by its key, or, recorded
+/// without a name of its own, by the name `check --init` gives its command.
+pub fn of_program(h: &SessionHeader, name: &str) -> bool {
+    sonde_proxy::program::key_of(h).as_deref() == Some(name)
+        || (h.name.as_deref().is_none_or(|x| x.trim().is_empty())
+            && h.command
+                .as_deref()
+                .and_then(sonde_proxy::program::short_name)
+                .as_deref()
+                == Some(name))
+}
+
+/// The project's program's name here (`[program] name` of the sonde.toml
+/// this folder is in), when it says one. A sonde.toml that cannot be read
+/// names none here: `run` and `check` say what is wrong with it.
+pub fn project_name() -> Option<String> {
+    let here = std::env::current_dir().ok()?;
+    sonde_proxy::project::of(&here)
+        .ok()??
+        .file
+        .program
+        .name
+        .filter(|n| !n.trim().is_empty())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 20.0 said `1 × refused by sonde` and nothing of what, why or how to
+    /// let it through.
+    #[test]
+    fn a_refused_request_is_named_with_its_policy_and_the_flag_that_lifts_it() {
+        use sonde_proxy::summary::{Refusal, Summary};
+        let refusal = |request: &str| Refusal {
+            policy: "no-delete".into(),
+            request: request.into(),
+        };
+        let mut s = Summary {
+            refused: 1,
+            refusals: vec![refusal("DeleteObject demo/old/report.csv")],
+            ..Default::default()
+        };
+        assert_eq!(
+            refused_line(&s, 1).unwrap(),
+            "  1 × refused by sonde's no-delete policy: DeleteObject demo/old/report.csv (--policy allow lets it through)"
+        );
+        s.refusals.push(refusal("DeleteObject demo/a"));
+        s.refusals.push(refusal("DeleteObject demo/b"));
+        assert!(
+            refused_line(&s, 7)
+                .unwrap()
+                .ends_with("demo/b and 4 more (--policy allow lets them through)")
+        );
+        // refused for what no policy lifts (a path naming no bucket)
+        s.refusals = vec![Refusal {
+            policy: String::new(),
+            request: "GetObject".into(),
+        }];
+        assert_eq!(
+            refused_line(&s, 1).unwrap(),
+            "  1 × refused by sonde: GetObject"
+        );
+    }
 
     #[tokio::test]
     async fn a_proxy_stopped_with_a_request_in_flight_is_not_said_to_have_drained() {

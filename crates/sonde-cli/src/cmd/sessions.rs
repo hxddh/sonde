@@ -67,6 +67,10 @@ struct Row {
     /// `survived`, `untested`. None when it was never tried.
     #[serde(skip_serializing_if = "Option::is_none")]
     trials: Option<&'static str>,
+    /// How its program exited (128 + a signal; 143 when sonde was sent
+    /// SIGTERM). None when not known: a proxy's, a replay's, an import's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit: Option<i32>,
     /// Its first line in the middle that is no record: `show` refuses the
     /// file, so it is not listed as a session that reads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,6 +105,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 seconds: c.seconds,
                 errors: c.errors,
                 trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
+                exit: sonde_proxy::index::get(&p).exit,
                 unreadable: c.unreadable,
             })
         })
@@ -276,21 +281,31 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                         },
                         output::duration(r.seconds * 1000.0),
                         output::grouped(r.errors),
+                        r.exit.map(|x| x.to_string()).unwrap_or_default(),
                         r.trials.unwrap_or("").to_string(),
                         output::bytes(r.bytes),
                     ]
                 })
                 .collect();
+            let mut heads = vec![
+                "session", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
+                "trials", "size",
+            ];
+            // a table has no column with nothing in it (no run's exit is
+            // known: imports, replays); a file's columns stay what they are
+            const EXIT: usize = 7;
+            if matches!(format, Format::Table) && all.iter().all(|r| r.exit.is_none()) {
+                heads.remove(EXIT);
+                for r in &mut rows {
+                    r.remove(EXIT);
+                }
+            }
             // a command may be a line long: in a terminal it is cut in its
             // middle so that every row fits (a file or a pipe gets it whole)
             if matches!(format, Format::Table)
                 && let Some(width) = terminal_width()
             {
                 const PROGRAM: usize = 2;
-                let heads = [
-                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "trials", "size",
-                ];
                 let others: usize = (0..heads.len())
                     .filter(|i| *i != PROGRAM)
                     .map(|i| {
@@ -307,14 +322,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     r[PROGRAM] = middle(&r[PROGRAM], room);
                 }
             }
-            output::print(
-                format,
-                &[
-                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "trials", "size",
-                ],
-                &rows,
-            );
+            output::print(format, &heads, &rows);
             for r in all.iter().filter(|r| r.unreadable.is_some()) {
                 eprintln!(
                     "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",
@@ -406,6 +414,9 @@ pub struct ImportArgs {
     /// The session file (default: a new one in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// With -o: write over the file if it is there (else it is refused).
+    #[arg(long, requires = "out")]
+    force: bool,
     /// With s3://: keep reading as new log files arrive, each pass its
     /// session, until Ctrl-C.
     #[arg(long)]
@@ -446,6 +457,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             "--follow, --endpoint and --alert are for logs read from s3://bucket/prefix",
         ));
     }
+    if let Some(out) = &a.out {
+        super::record::refuse_existing(out, a.force)?;
+    }
     // a folder is every file in it: S3 delivers logs as thousands of small ones
     let is_dir = a.file.is_dir();
     let name = if is_dir {
@@ -474,10 +488,11 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     };
     let imported = match imported {
         Ok(x) => x,
-        // a file cut short is bad data (65); the wrong file, a usage error
+        // a file cut short or with nothing in it is bad data (65); the wrong
+        // file, a usage error
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
-            return Ok(if sonde_proxy::import::is_broken(&e) {
+            return Ok(if sonde_proxy::import::is_bad_data(&e) {
                 65
             } else {
                 64

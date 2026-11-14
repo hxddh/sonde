@@ -333,7 +333,7 @@ test("a session file that cannot be read says so, and why", async () => {
  * carries the totals and the first page only; a page is made when it is asked for, and every ask is kept. */
 function bigSession(n: number) {
   const t0 = Date.parse("2026-11-07T00:00:00Z");
-  const row = (i: number) => ({ index: i, kind: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
+  const row = (i: number) => ({ index: i, shape: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
   const zeros = [0, 0];
   const signals = {
     timed: true, short: false, wallMs: n * 10, binMs: n * 5, bins: 2,

@@ -71,7 +71,7 @@
     },
     "programExit": {
       "type": "integer",
-      "description": "The program failed with this exit status: `--program-exit`, else the one the run kept."
+      "description": "The program failed with this exit status, as the run kept it."
     },
     "verdict": {
       "type": "string",

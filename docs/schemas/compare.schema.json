@@ -269,6 +269,14 @@
       "type": "boolean",
       "description": "Both are runs of one program: their findings compare."
     },
+    "waitingKnown": {
+      "type": "boolean",
+      "description": "Whether both runs' waiting is known: false when either's times are to the second (an imported log's); `waitingMs` then says nothing."
+    },
+    "commandChanged": {
+      "type": "string",
+      "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `measured` or `saved`."
+    },
     "latency": {
       "type": "array",
       "description": "Each run's latency on the same buckets.",
@@ -360,6 +368,7 @@
     "appeared",
     "findings",
     "sameProgram",
+    "waitingKnown",
     "latency",
     "prefixes"
   ],

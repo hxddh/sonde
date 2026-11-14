@@ -85,13 +85,13 @@ export function StatusMark(props: { status: number | null; text?: string; inject
 
 const FORMAT_TEXT: Record<string, string> = { SlateDB: "text-fmt-slatedb", Iceberg: "text-fmt-iceberg", Delta: "text-fmt-delta", Lance: "text-fmt-lance" };
 /** An operation's kind as a tag, in the app's language. */
-const kindLabel = (k: EpisodeRow["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
+const kindLabel = (k: EpisodeRow["shape"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
 
 /** What kind of thing an operation is: its storage format, else its kind. */
-function family(e: Pick<EpisodeRow, "format" | "kind">): { label: string; class: string } {
+function family(e: Pick<EpisodeRow, "format" | "shape">): { label: string; class: string } {
   if (e.format) return { label: e.format, class: FORMAT_TEXT[e.format] ?? "text-fmt-other" };
-  const k = kindLabel(e.kind);
-  return k ? { label: k, class: e.kind === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
+  const k = kindLabel(e.shape);
+  return k ? { label: k, class: e.shape === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
 }
 
 /** How long an operation ran, in ms (a number: `duration` writes it). */

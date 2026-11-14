@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use sonde_proxy::episode::{Format, Kind, Outcome, episodes, observations};
+use sonde_proxy::episode::{Format, Outcome, Shape, episodes, observations};
 use sonde_proxy::session::Session;
 
 fn load(name: &str) -> Session {
@@ -101,9 +101,11 @@ fn slatedb_run_reads_as_slatedb_steps() {
         "{shared:?}"
     );
 
+    // its GC boundary is looked up again and again and is never there: a
+    // miss no cache keeps, and one the writer may create, so no hot key
     let obs = observations(&s.records, &eps);
     assert!(
-        obs.iter()
+        !obs.iter()
             .any(|o| o.text.contains("gc/manifest.boundary was read")),
         "{obs:?}"
     );
@@ -114,7 +116,7 @@ fn sdk_runs_show_one_multipart_upload() {
     for name in ["sdk-python.sonde", "sdk-java.sonde"] {
         let s = load(name);
         let eps = episodes(&s.records);
-        let mpu: Vec<_> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        let mpu: Vec<_> = eps.iter().filter(|e| e.shape == Shape::Multipart).collect();
         assert_eq!(mpu.len(), 1, "{name}: {eps:#?}");
         assert!(
             mpu[0].title().contains("3 parts · 12.0 MiB"),
@@ -188,9 +190,11 @@ fn delta_rs_run_reads_as_commits() {
             .any(|(n, note)| *n == 4 && note.starts_with("conditional create (If-None-Match: *)")),
         "{shared:?}"
     );
+    // the log is listed after each commit to find the newest: a commit is
+    // written between the listings, so listing once would miss it
     let obs = observations(&s.records, &eps);
     assert!(
-        obs.iter()
+        !obs.iter()
             .any(|o| o.text.ends_with("_delta_log/ was listed 15 times"))
     );
 }

@@ -4,13 +4,17 @@ What is listed under **Stable** changes only in a major release; everything else
 
 The contract starts at 19.0 (D-138). 19.0 kept nothing of earlier versions: no folded commands, flags, files, settings
 or JSON names of before it are read or said ([changelog](../CHANGELOG.md), [0.1 to 18.0](history/changelog-0-18.md)).
-From here a break comes only in a major, and is announced one version ahead.
+A break comes only in a major, in the major that makes it, and is said in its changelog: nothing is announced
+ahead, and nothing removed lives on as an alias.
 
-**20.0** breaks without a 19.x announcing it, by the owner's decision: one name for each thing (an S3 call is a
-`kind`: `requests[].kind`, `summary.kinds`, `show --by kind`, session format 2), a program is its command with what
-changes between runs left out, `record-policy` and `name-callers` move to `sonde.toml`, `sonde demo` is `run
---demo`, `--allow-writes` is `--policy allow`, `prune` confirms with `--confirm COUNT`, and display text leaves the
-promise. 20.0 reads 19.0's sessions (format 1). From 20.0 the announcement rule holds.
+**20.0** broke: one name for each thing (an S3 call is a `kind`: `requests[].kind`, `summary.kinds`, `show --by kind`,
+session format 2), a program is its command with what changes between runs left out, `record-policy` and
+`name-callers` move to `sonde.toml`, `sonde demo` is `run --demo`, `--allow-writes` is `--policy allow`, `prune`
+confirms with `--confirm COUNT`, and display text leaves the promise. 20.0 reads 19.0's sessions (format 1).
+
+**21.0** broke: an operation's `kind` is its `shape` (`operations[].shape`), so a kind is only an S3 call; `check
+--program-exit` is gone (the session keeps the exit); a program's key keeps its numbers (`--limit 30` and `--limit 5`
+are two programs); `compare -f json` requires `waitingKnown`; `--again` implies `--trial`.
 
 ## Stable
 
@@ -74,7 +78,6 @@ Within a major:
 - A session file may gain fields within its version. sonde reads every version up to its own and refuses a newer one
   by name.
 - `sonde.toml` may gain keys. An older sonde refuses an unknown key (exit 64) rather than half-reading the file.
-- A flag to be removed keeps working, with a note on stderr, until the next major, and is gone in it.
 
 A change to a stable thing updates its documentation and its test in the same commit; a test failing on a change
 means the change needs a major.

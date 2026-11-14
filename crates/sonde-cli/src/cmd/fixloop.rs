@@ -53,8 +53,9 @@ pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> 
 }
 
 /// A finding between two runs, on one line: `✓ fixed  … · saved 20
-/// requests (predicted 20)`.
-pub(super) fn change_line(f: &FindingChange, color: bool) -> String {
+/// requests (predicted 20)`; with the command changed between the runs
+/// (`command`), fixed, less and more say so in place of a saving.
+pub(super) fn change_line(f: &FindingChange, command: Option<&str>, color: bool) -> String {
     let (mark, tone) = match f.state {
         State::Fixed => ("✓", "32"),
         State::Less => ("↓", "36"),
@@ -87,16 +88,29 @@ pub(super) fn change_line(f: &FindingChange, color: bool) -> String {
     if let Some(saved) = &f.saved_text {
         line.push_str(&paint(&format!(" · {saved}"), "32", color));
     }
+    if let Some(change) = command
+        && matches!(f.state, State::Fixed | State::Less | State::More)
+    {
+        line.push_str(&paint(
+            &format!(" · the command changed ({change})"),
+            "33",
+            color,
+        ));
+    }
     line
 }
 
 /// The findings of a change worth a line (fixed, less, more, new, back),
 /// then those still open as they were, each named.
-pub(super) fn change_lines(findings: &[FindingChange], color: bool) -> Vec<String> {
+pub(super) fn change_lines(
+    findings: &[FindingChange],
+    command: Option<&str>,
+    color: bool,
+) -> Vec<String> {
     let mut out: Vec<String> = findings
         .iter()
         .filter(|f| f.state != State::Open)
-        .map(|f| change_line(f, color))
+        .map(|f| change_line(f, command, color))
         .collect();
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
     if !open.is_empty() && !out.is_empty() {
@@ -127,13 +141,22 @@ pub(super) fn moved(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
     format!("{before} → {after}{pct}")
 }
 
+/// A program's command changed between two runs: said before the figures.
+pub(super) fn command_line(change: &str) -> String {
+    format!("the command changed ({change}): what moved is not counted as a fix")
+}
+
 /// The figures of a change on one line: requests, waiting, cost.
 fn figures_line(c: &RunChange) -> String {
     let n = |v: f64| format!("{v:.0}");
     format!(
         "requests {} · waiting {} · cost ≈ {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),
-        moved(c.waiting_ms.0, c.waiting_ms.1, ms_text),
+        if c.waiting_known {
+            moved(c.waiting_ms.0, c.waiting_ms.1, ms_text)
+        } else {
+            "— (not known)".into()
+        },
         moved(c.cost.0, c.cost.1, |v| money_text(v, &c.currency)),
     )
 }
@@ -162,8 +185,15 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     out.push(paint(&format!("since the run before ({name})"), "1", color));
+    if let Some(ch) = &c.command_changed {
+        out.push(paint(&format!("  {}", command_line(ch)), "33", color));
+    }
     out.push(format!("  {}", figures_line(c)));
-    out.extend(change_lines(&since.findings, color));
+    out.extend(change_lines(
+        &since.findings,
+        c.command_changed.as_deref(),
+        color,
+    ));
     out
 }
 
@@ -230,6 +260,7 @@ mod tests {
                 change(State::Open, "small uploads", None),
                 change(State::Open, "hot key", None),
             ],
+            None,
             false,
         );
         assert_eq!(
@@ -244,7 +275,7 @@ mod tests {
             ]
         );
         // nothing moved: no "still open" alone
-        assert!(change_lines(&[change(State::Open, "x", None)], false).is_empty());
+        assert!(change_lines(&[change(State::Open, "x", None)], None, false).is_empty());
     }
 
     #[test]
@@ -252,7 +283,7 @@ mod tests {
         let mut grew = change(State::More, "b/logs/ was listed 216 times", None);
         grew.counts = Some([92, 216]);
         assert_eq!(
-            change_line(&grew, false),
+            change_line(&grew, None, false),
             "  ↑ more   b/logs/ was listed 216 times · 92 → 216"
         );
     }

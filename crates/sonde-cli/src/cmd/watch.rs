@@ -61,7 +61,7 @@ fn hold_unfinished(records: &mut Vec<Record>) -> Vec<Record> {
     let held: std::collections::HashSet<u64> = episodes(records)
         .iter()
         .filter(|e| {
-            e.kind == sonde_proxy::episode::Kind::Multipart
+            e.shape == sonde_proxy::episode::Shape::Multipart
                 && e.title().ends_with("(not completed)")
                 && newest - e.start < UPLOAD_WAITED
         })
@@ -350,7 +350,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
                 }
             }
             // said here whether or not anything is told elsewhere
-            if let Some(what) = over_budget(s, records) {
+            if let Some(what) = over_budget(s, &key, records) {
                 over = true;
                 let text = format!("sonde ({src}): {} is over budget: {what}", path.display());
                 eprintln!(
@@ -403,17 +403,29 @@ fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// The project's budget (`sonde.toml`'s `[check]`), when there is one.
-fn project_budget() -> Option<sonde_proxy::program::Budget> {
-    let here = std::env::current_dir().ok()?;
-    let project = sonde_proxy::project::of(&here).ok()??;
+/// The project's budget (`sonde.toml`'s `[check]`), when there is one, for
+/// the sessions of program `key`: a project's budget is its program's, so
+/// only when its `[program] name` is `key` (a proxy's sessions, with no
+/// program, are the folder's: `key` none).
+fn project_budget(key: Option<&str>) -> Option<sonde_proxy::program::Budget> {
+    project_budget_in(&std::env::current_dir().ok()?, key)
+}
+
+/// [`project_budget`] of the project `here` is in.
+fn project_budget_in(here: &Path, key: Option<&str>) -> Option<sonde_proxy::program::Budget> {
+    let project = sonde_proxy::project::of(here).ok()??;
+    if let Some(key) = key
+        && project.file.program.name.as_deref().map(str::trim) != Some(key)
+    {
+        return None;
+    }
     project.file.check.budget().ok()
 }
 
-/// A finished file held to the project's budget: what went over, when
-/// anything did.
-fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
-    let budget = project_budget()?;
+/// A finished file of the logs of `key` held to its budget: what went
+/// over, when anything did.
+fn over_budget(s: &Arc<Sonde>, key: &str, records: &[Record]) -> Option<String> {
+    let budget = project_budget(Some(key))?;
     let endpoint = records.first().map(|r| r.endpoint.as_str()).unwrap_or("");
     let prof = profile(records, &request_prices_for(s, endpoint));
     let obs = observations(records, &episodes(records));
@@ -487,7 +499,7 @@ pub(super) async fn watch(s: &Arc<Sonde>, a: &ProxyArgs) -> anyhow::Result<i32> 
         recent.push_back(r);
     };
     let over = |figures: Option<sonde_proxy::program::RunFigures>| {
-        over_limits(&figures?.point(), &project_budget()?)
+        over_limits(&figures?.point(), &project_budget(None)?)
     };
     let mut minute: VecDeque<(Instant, Record)> = VecDeque::new();
     let mut warned: HashSet<String> = HashSet::new();
@@ -614,6 +626,25 @@ pub(super) async fn watch(s: &Arc<Sonde>, a: &ProxyArgs) -> anyhow::Result<i32> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 20.0 held `import s3://` to the sonde.toml of the folder it ran in,
+    /// whatever program that was: a project's budget is its program's.
+    #[test]
+    fn logs_are_held_to_a_projects_budget_only_when_it_names_them() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("sonde.toml"), "[check]\nmax-requests = 1\n").unwrap();
+        let logs = Some("logs of s3://b/logs/");
+        assert!(project_budget_in(t.path(), logs).is_none());
+        // a proxy's sessions, of no program, are the folder's
+        assert!(project_budget_in(t.path(), None).is_some());
+        std::fs::write(
+            t.path().join("sonde.toml"),
+            "[program]\nname = \"logs of s3://b/logs/\"\n[check]\nmax-requests = 1\n",
+        )
+        .unwrap();
+        let b = project_budget_in(t.path(), logs).expect("its own");
+        assert_eq!(b.max_requests, Some(1));
+    }
 
     /// One pass over the logs at `src` through `endpoint`.
     fn logs<'a>(endpoint: &'a str, src: &'a str) -> Logs<'a> {

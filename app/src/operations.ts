@@ -38,7 +38,7 @@ export interface Operations {
 const time = (iso: string) => new Date(iso).getTime();
 
 /** An operation of a whole session as a row: its index, how many requests, whether it is a lookup that found nothing. */
-export const rowOf = (e: Episode, index: number): EpisodeRow => ({ ...e, index, requests: e.records.length, ...(e.kind === "probe" || e.title.includes("found nothing") ? { miss: true as const } : {}) });
+export const rowOf = (e: Episode, index: number): EpisodeRow => ({ ...e, index, requests: e.records.length, ...(e.shape === "probe" || e.title.includes("found nothing") ? { miss: true as const } : {}) });
 
 /** A whole session (a shared page's) in the shape a view has: its operations as rows, its span, its families, each finding's count and start. */
 export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "operations"> & SessionView {
@@ -49,7 +49,7 @@ export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "operations">
   let b = -Infinity;
   for (const e of episodes) {
     if (e.format) formats[e.format] = (formats[e.format] ?? 0) + 1;
-    kinds[e.kind] = (kinds[e.kind] ?? 0) + 1;
+    kinds[e.shape] = (kinds[e.shape] ?? 0) + 1;
     a = Math.min(a, time(e.start));
     b = Math.max(b, time(e.end));
   }

@@ -7,7 +7,7 @@ answering chosen requests in the store's place. From the requests that follow it
 ```sh
 sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'
 sonde run --fault slowdown:3 --fault cut-body -- python etl.py 's3://scratch/etl-{trial}/'
-sonde run --trial --again -- python etl.py 's3://scratch/etl-{trial}/'   # only what did not survive
+sonde run --again -- python etl.py 's3://scratch/etl-{trial}/'   # only what did not survive
 ```
 
 ```text
@@ -173,7 +173,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 |---|---|
 | History | Each verdict is added to its program's in `verdicts.json` beside its runs: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
-| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
+| `--again` | `sonde run --again -- CMD` (`--trial` implied): a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
 | App | `Sessions.trialAgain(path, …)`: the same, from a run of the program. |
 
 ## Where the results go

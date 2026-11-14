@@ -66,12 +66,12 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
         Format::Csv => print!("{}", du::to_csv(&r)),
         _ => {
             println!(
-                "{}/{}: {} total ({} {}/month), via {}\n",
+                "{}/{}: {} total ({}/month), via {}\n",
                 r.bucket,
                 r.prefix,
                 h(r.total_bytes),
-                sonde_fmt::cents(r.cost_per_month),
-                r.currency,
+                // a cost too small for cents is said in its digits, not 0.00
+                sonde_proxy::program::money_text(r.cost_per_month, &r.currency),
                 r.source
             );
             println!(

@@ -473,7 +473,7 @@ impl Tables {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Kind {
+pub enum Shape {
     /// One request that is nothing more.
     Request,
     Multipart,
@@ -501,7 +501,7 @@ pub enum Outcome {
 /// session may have a million operations, and each would hold it twice).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
-    pub kind: Kind,
+    pub shape: Shape,
     pub format: Option<Format>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -524,7 +524,7 @@ impl Serialize for Episode {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Written<'a> {
-            kind: &'a Kind,
+            shape: &'a Shape,
             format: &'a Option<Format>,
             title: String,
             start: &'a DateTime<Utc>,
@@ -539,7 +539,7 @@ impl Serialize for Episode {
             notes_text: &'a [Phrase],
         }
         Written {
-            kind: &self.kind,
+            shape: &self.shape,
             format: &self.format,
             title: self.title(),
             start: &self.start,
@@ -681,7 +681,12 @@ fn parent(key: &str) -> &str {
 }
 
 /// Builds an episode from records (any order).
-fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Record>) -> Episode {
+fn build(
+    shape: Shape,
+    format: Option<Format>,
+    title: Vec<Phrase>,
+    mut rs: Vec<&Record>,
+) -> Episode {
     rs.sort_by_key(|r| (r.time, r.id));
     let start = rs.first().map(|r| r.time).unwrap_or_default();
     let end = rs.iter().map(|r| end_of(r)).max().unwrap_or(start);
@@ -692,7 +697,7 @@ fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Re
         None => Outcome::Ok,
     };
     Episode {
-        kind,
+        shape,
         format,
         title_text: title,
         start,
@@ -892,7 +897,7 @@ fn single(r: &Record, targets: &mut Targets) -> Episode {
     if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
         title.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
     }
-    let mut e = build(Kind::Request, None, title, vec![r]);
+    let mut e = build(Shape::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
     e
 }
@@ -928,7 +933,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     };
     let n = rs.len();
     vec![build(
-        Kind::Probe,
+        Shape::Probe,
         None,
         vec![p("probe", &[("n", n.to_string()), ("dir", dir)])],
         rs,
@@ -943,7 +948,7 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
     let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
     let n = rs.len();
     build(
-        Kind::Listing,
+        Shape::Listing,
         None,
         vec![p(
             "listing",
@@ -1087,7 +1092,7 @@ fn multipart<'a>(
         } else if !completed && begun {
             title.push(p("mpu.open", &[]));
         }
-        let mut e = build(Kind::Multipart, None, title, rs);
+        let mut e = build(Shape::Multipart, None, title, rs);
         if !completed && !aborted && begun {
             e.note(p("mpu.billed", &[]));
         }
@@ -1218,7 +1223,7 @@ fn retries<'a>(
             let n = rs.len() - 1;
             let target = rs[0].key.as_deref().unwrap_or_default().to_string();
             let mut e = build(
-                Kind::Retry,
+                Shape::Retry,
                 None,
                 vec![p(
                     "retry",
@@ -1454,7 +1459,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
             ],
         ));
     }
-    let mut e = build(Kind::Step, Some(f), title, rs.clone());
+    let mut e = build(Shape::Step, Some(f), title, rs.clone());
     conditional_note(&mut e, &[commit]);
     if let Some(d) = listed {
         e.note(p("after.listing", &[("dir", d.to_string())]));
@@ -1480,7 +1485,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     let (writes, bytes) = written(&rs, None);
     if !writes.is_empty() {
         return build(
-            Kind::Step,
+            Shape::Step,
             Some(f),
             vec![p(
                 "loose.uncommitted",
@@ -1501,7 +1506,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         .all(|r| r.method == "DELETE" || r.operation == "DeleteObjects")
     {
         return build(
-            Kind::Step,
+            Shape::Step,
             Some(f),
             vec![p(
                 "loose.deletes",
@@ -1604,7 +1609,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     } else {
         vec![p("loose.reads", &[("n", n.to_string())])]
     };
-    build(Kind::Step, Some(f), title, rs)
+    build(Shape::Step, Some(f), title, rs)
 }
 
 /// Something worth knowing about a session.
@@ -1838,7 +1843,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
-        of_episodes(&|e| e.kind == Kind::Multipart && e.title().ends_with("(not completed)"));
+        of_episodes(&|e| e.shape == Shape::Multipart && e.title().ends_with("(not completed)"));
     if !unfinished.is_empty() {
         let n = unfinished.len();
         let impact = requests_of(&unfinished);
@@ -1950,8 +1955,11 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             ),
         );
     }
-    // the same key read again and again (counted by the records' own
+    // the same key read again and again, and the same each time: what a
+    // cache would answer as the store did (counted by the records' own
     // names: only a hot key's is written out)
+    let writes = writes_by_bucket(records);
+    let unchanging = unchanging_reads(records, &writes);
     let mut reads: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
     for r in records
         .iter()
@@ -1970,6 +1978,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 ids.len() >= 10 && ids.len() * 10 >= total
             }
         })
+        .filter(|(place, _)| unchanging.contains(place))
         .map(|((b, k), ids)| (format!("{b}/{k}"), ids))
         .collect();
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
@@ -1993,8 +2002,10 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .saving_of(again),
         );
     }
-    // the same prefix listed again and again
-    let mut lists: HashMap<String, Vec<u64>> = HashMap::new();
+    // the same prefix listed again and again, with nothing written under it
+    // in between: a listing kept from the first would answer the same (one
+    // written between is the program looking for what changed)
+    let mut lists: HashMap<(&str, &str), Vec<&Record>> = HashMap::new();
     for r in records.iter().filter(|r| {
         // a later page (ListObjectsV2's token, ListObjects' marker) is the
         // same listing going on
@@ -2003,17 +2014,27 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             && query(r, "marker").is_none_or(str::is_empty)
     }) {
         lists
-            .entry(format!(
-                "{}/{}",
+            .entry((
                 r.bucket.as_deref().unwrap_or(""),
-                query(r, "prefix").unwrap_or("")
+                query(r, "prefix").unwrap_or(""),
             ))
             .or_default()
-            .push(r.id);
+            .push(r);
     }
     let mut repeated: Vec<(String, Vec<u64>)> = lists
         .into_iter()
-        .filter(|(_, ids)| ids.len() >= at(5, 2))
+        .filter(|(_, rs)| rs.len() >= at(5, 2))
+        .filter(|((b, prefix), rs)| {
+            let first = rs.iter().map(|r| (r.time, r.id)).min();
+            let last = rs.iter().map(|r| (r.time, r.id)).max();
+            let (Some(first), Some(last)) = (first, last) else {
+                return false;
+            };
+            !writes
+                .get(b)
+                .is_some_and(|w| written_between(w, first, last, |k| k.starts_with(prefix)))
+        })
+        .map(|((b, prefix), rs)| (format!("{b}/{prefix}"), rs.iter().map(|r| r.id).collect()))
         .collect();
     repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (prefix_name, ids) in repeated.into_iter().take(most) {
@@ -2329,6 +2350,94 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     out
 }
 
+/// The writes of a session by bucket, each with when it was sent and the key
+/// it changed (a PUT, a copy onto it, a part, a completion, a delete, each
+/// key a DeleteObjects names), in order: what tells a read that would answer
+/// the same again from one whose answer changed in between.
+fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(Order, &str)>> {
+    let mut out: std::collections::HashMap<&str, Vec<(Order, &str)>> = Default::default();
+    for r in records.iter().filter(|r| !crate::profile::is_read(r)) {
+        let Some(b) = r.bucket.as_deref() else {
+            continue;
+        };
+        let at = (r.time, r.id);
+        let w = out.entry(b).or_default();
+        if let Some(k) = r.key.as_deref() {
+            w.push((at, k));
+        }
+        if r.operation == "DeleteObjects"
+            && let Some(body) = r.request_body.as_deref()
+        {
+            let mut rest = body;
+            while let Some(i) = rest.find("<Key>") {
+                rest = &rest[i + 5..];
+                let end = rest.find("</Key>").unwrap_or(rest.len());
+                w.push((at, &rest[..end]));
+                rest = &rest[end..];
+            }
+        }
+    }
+    for w in out.values_mut() {
+        w.sort();
+    }
+    out
+}
+
+/// When a request was sent, as requests are ordered.
+type Order = (DateTime<Utc>, u64);
+
+/// Whether a write that `changes` sits strictly between `first` and `last`.
+fn written_between(
+    writes: &[(Order, &str)],
+    first: Order,
+    last: Order,
+    changes: impl Fn(&str) -> bool,
+) -> bool {
+    let from = writes.partition_point(|(at, _)| *at <= first);
+    writes[from..]
+        .iter()
+        .take_while(|(at, _)| *at < last)
+        .any(|(_, k)| changes(k))
+}
+
+/// The keys (bucket, key) whose every read would be answered the same by a
+/// copy kept from the first: each found (no miss, no failure), whole (no
+/// range or part: those are the parallel reading of one object), of one
+/// ETag where the store said it, and with no write to the key between the
+/// first read and the last. A key rewritten between its reads would be
+/// answered stale by a cache, and a miss is not kept by one (an exception
+/// is not cached; a key polled for appears): neither is a hot key to cache.
+fn unchanging_reads<'a>(
+    records: &'a [Record],
+    writes: &std::collections::HashMap<&str, Vec<(Order, &str)>>,
+) -> std::collections::HashSet<(&'a str, &'a str)> {
+    use std::collections::HashMap;
+    let mut reads: HashMap<(&str, &str), (Order, Order, bool, Option<&str>)> = HashMap::new();
+    for r in records.iter().filter(|r| crate::profile::is_read(r)) {
+        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+            continue;
+        };
+        let at = (r.time, r.id);
+        let whole = header(r, "range").is_none() && query(r, "partNumber").is_none();
+        let etag = response_header(r, "etag");
+        let e = reads.entry((b, k)).or_insert((at, at, true, etag));
+        e.0 = e.0.min(at);
+        e.1 = e.1.max(at);
+        e.2 &= whole && !r.is_error() && (etag.is_none() || e.3.is_none() || etag == e.3);
+        e.3 = e.3.or(etag);
+    }
+    reads
+        .into_iter()
+        .filter(|((b, k), (first, last, same, _))| {
+            *same
+                && !writes
+                    .get(b)
+                    .is_some_and(|w| written_between(w, *first, *last, |written| written == *k))
+        })
+        .map(|(place, _)| place)
+        .collect()
+}
+
 /// Copies out of a `_temporary/` folder and the deletes of what they copied
 /// (by id): a rename on S3, as Hadoop's FileOutputCommitter commits.
 fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
@@ -2456,7 +2565,7 @@ mod tests {
         rs.push(at(4, 900 + 61_000, "a", 503));
         rs.push(at(5, 900 + 200_000, "a", 200));
         let eps = episodes(&rs);
-        let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
+        let retried: Vec<&Episode> = eps.iter().filter(|e| e.shape == Shape::Retry).collect();
         assert_eq!(retried.len(), 1, "{eps:#?}");
         assert_eq!(retried[0].records, [1, 2, 3]);
         assert_eq!(retried[0].title(), "GetObject a retried 2× after 503");
@@ -2505,13 +2614,13 @@ mod tests {
             at(8, 70, "CreateMultipartUpload", &[("uploads", "")], 500),
         ];
         let eps = episodes(&rs);
-        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.shape == Shape::Multipart).collect();
         assert_eq!(uploads.len(), 2, "{eps:#?}");
         assert_eq!(uploads[0].records, [1, 2, 4, 6]);
         assert_eq!(uploads[1].records, [3, 5, 7]);
         assert!(
             eps.iter()
-                .any(|e| e.kind == Kind::Request && e.records == [8])
+                .any(|e| e.shape == Shape::Request && e.records == [8])
         );
     }
 
@@ -2547,7 +2656,7 @@ mod tests {
         let other = rec(4, 100, "GET", "GetObject", Some("other"), 200);
         let eps = episodes(&[slow, slow2, ok, other]);
         assert_eq!(eps.len(), 2);
-        let retry = eps.iter().find(|e| e.kind == Kind::Retry).unwrap();
+        let retry = eps.iter().find(|e| e.shape == Shape::Retry).unwrap();
         assert_eq!(retry.records, vec![1, 2, 3]);
         assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
         assert_eq!(retry.outcome, Outcome::Ok);
@@ -2632,7 +2741,7 @@ mod tests {
         );
         let rs = [create, part, lost, again, abort];
         let eps = episodes(&rs);
-        let upload = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        let upload = eps.iter().find(|e| e.shape == Shape::Multipart).unwrap();
         assert!(
             !upload.title().contains("aborted") && !upload.title().contains("not completed"),
             "{}",
@@ -2723,7 +2832,7 @@ mod tests {
             &[("partNumber", "2"), ("uploadId", "u1")],
         );
         let eps = episodes(&[p1, p2]);
-        let up = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        let up = eps.iter().find(|e| e.shape == Shape::Multipart).unwrap();
         assert!(!up.title().contains("not completed"), "{}", up.title());
         let obs = observations(&[], &eps);
         assert!(
@@ -2806,7 +2915,7 @@ mod tests {
         let eps = episodes(&[spark.clone(), hive.clone()]);
         assert_eq!(eps.len(), 2, "{eps:#?}");
         assert!(eps.iter().all(|e| e.format.is_none()), "{eps:#?}");
-        assert!(eps.iter().all(|e| e.kind == Kind::Request), "{eps:#?}");
+        assert!(eps.iter().all(|e| e.shape == Shape::Request), "{eps:#?}");
 
         // the same reads beside a table's log are that table's
         let log = with_query(
@@ -3199,5 +3308,178 @@ mod tests {
         let markers = find("obs.markers");
         assert_eq!(markers.saves_requests, 4);
         assert!(markers.text.starts_with("4 directory markers written"));
+    }
+
+    /// Whether keeping the first answer in place of the requests a finding
+    /// saves would change what the program sees: each saved read answered
+    /// as the first did, with no write to what it reads in between. What a
+    /// hot key's cache and a listing kept from the first must hold.
+    fn a_kept_answer_is_the_same(records: &[Record], o: &Observation) -> bool {
+        let by_id = |id: u64| records.iter().find(|r| r.id == id).unwrap();
+        let saved: Vec<&Record> = o.saved_ids.iter().map(|&id| by_id(id)).collect();
+        let Some(last) = saved.iter().map(|r| (r.time, r.id)).max() else {
+            return true;
+        };
+        let etag = |r: &Record| response_header(r, "etag").map(str::to_string);
+        let is_listing = |r: &Record| r.operation.starts_with("ListObjects");
+        let place = |r: &Record| match query(r, "prefix") {
+            Some(p) if is_listing(r) => p.to_string(),
+            _ => r.key.as_deref().unwrap_or("").to_string(),
+        };
+        let listing = is_listing(saved[0]);
+        // the read kept: the first of those that read what the saved ones do
+        let first = records
+            .iter()
+            .filter(|r| crate::profile::is_read(r) && is_listing(r) == listing)
+            .filter(|r| place(r) == place(saved[0]))
+            .min_by_key(|r| (r.time, r.id))
+            .unwrap();
+        let changed = records.iter().any(|w| {
+            !crate::profile::is_read(w)
+                && (w.time, w.id) > (first.time, first.id)
+                && (w.time, w.id) < last
+                && w.key.as_deref().is_some_and(|k| {
+                    if listing {
+                        k.starts_with(&place(first))
+                    } else {
+                        k == place(first)
+                    }
+                })
+        });
+        !changed
+            && saved
+                .iter()
+                .all(|r| r.status == first.status && etag(r) == etag(first))
+    }
+
+    #[test]
+    fn a_hot_key_is_one_a_cache_answers_as_the_store_did() {
+        let get = |id: u64, key: &str, status: u16| {
+            rec(id, id as i64 * 10, "GET", "GetObject", Some(key), status)
+        };
+        let put = |id: u64, key: &str| rec(id, id as i64 * 10, "PUT", "PutObject", Some(key), 200);
+        let hot = |rs: &[Record]| -> Vec<Observation> {
+            let all = observations(rs, &episodes(rs));
+            for o in all.iter().filter(|o| o.phrases[0].key == "obs.hot") {
+                assert!(
+                    a_kept_answer_is_the_same(rs, o),
+                    "{} would change what the program reads",
+                    o.text
+                );
+            }
+            all.into_iter()
+                .filter(|o| o.phrases[0].key == "obs.hot")
+                .collect()
+        };
+        let traced = |rs: &[Record]| {
+            traces(rs, &episodes(rs))
+                .iter()
+                .any(|o| o.phrases[0].key == "obs.hot")
+        };
+        // read 15 times, unchanged: a cache reads it once
+        let same: Vec<Record> = (1..=15).map(|i| get(i, "conf.json", 200)).collect();
+        assert_eq!(hot(&same).len(), 1);
+        assert!(
+            hot(&same)[0]
+                .fixes
+                .iter()
+                .any(|f| f.code.contains("lru_cache"))
+        );
+        // written before each read: a cache would answer the first value
+        let rewritten: Vec<Record> = (0..15u64)
+            .flat_map(|i| {
+                [
+                    put(2 * i + 1, "state/counter"),
+                    get(2 * i + 2, "state/counter", 200),
+                ]
+            })
+            .collect();
+        assert!(hot(&rewritten).is_empty());
+        assert!(
+            !traced(&rewritten),
+            "nor is it a trace that tells a fix from less"
+        );
+        // written once before the reads and once after: the reads between are one value
+        let mut around = vec![put(1, "conf.json")];
+        around.extend((2..=16).map(|i| get(i, "conf.json", 200)));
+        around.push(put(17, "conf.json"));
+        assert_eq!(hot(&around).len(), 1);
+        // deleted between them, by a DeleteObjects that names it
+        let mut deleted: Vec<Record> = (1..=15).map(|i| get(i, "conf.json", 200)).collect();
+        let mut batch = rec(8, 75, "POST", "DeleteObjects", None, 200);
+        batch.request_body = Some("<Delete><Object><Key>conf.json</Key></Object></Delete>".into());
+        deleted.push(batch);
+        assert!(hot(&deleted).is_empty());
+        // changed by another writer: the store said another ETag
+        let other: Vec<Record> = (1..=15)
+            .map(|i| {
+                let mut r = get(i, "conf.json", 200);
+                r.response_headers = vec![reqlog::Header {
+                    name: "ETag".into(),
+                    value: if i < 8 {
+                        "\"a\"".into()
+                    } else {
+                        "\"b\"".into()
+                    },
+                }];
+                r
+            })
+            .collect();
+        assert!(hot(&other).is_empty());
+        // looked up and not found each time: lru_cache keeps no exception,
+        // and a key polled for may appear
+        let missing: Vec<Record> = (1..=12).map(|i| get(i, "nothing/here", 404)).collect();
+        assert!(hot(&missing).is_empty());
+        assert!(!traced(&missing));
+        // read in ranges: the parallel reading of one object, not a key to keep whole
+        let ranged: Vec<Record> = (1..=12)
+            .map(|i| {
+                let mut r = get(i, "big.parquet", 206);
+                r.request_headers = vec![reqlog::Header {
+                    name: "Range".into(),
+                    value: format!("bytes={}-{}", i * 100, i * 100 + 99).into(),
+                }];
+                r
+            })
+            .collect();
+        assert!(hot(&ranged).is_empty());
+    }
+
+    #[test]
+    fn a_prefix_written_between_its_listings_is_not_one_to_list_once() {
+        let list = |id: u64| {
+            with_query(
+                rec(id, id as i64 * 10, "GET", "ListObjectsV2", None, 200),
+                &[("list-type", "2"), ("prefix", "inbox/")],
+            )
+        };
+        let found = |rs: &[Record]| {
+            let all = observations(rs, &episodes(rs));
+            for o in all.iter().filter(|o| o.phrases[0].key == "obs.listed") {
+                assert!(
+                    a_kept_answer_is_the_same(rs, o),
+                    "{} would change what the program sees",
+                    o.text
+                );
+            }
+            all.iter().any(|o| o.phrases[0].key == "obs.listed")
+        };
+        let listed: Vec<Record> = (1..=6).map(list).collect();
+        assert!(found(&listed));
+        // a file arrives between the listings: the program looks for it
+        let mut polled = listed.clone();
+        polled.push(rec(100, 35, "PUT", "PutObject", Some("inbox/new.csv"), 200));
+        assert!(!found(&polled));
+        // a write elsewhere changes nothing
+        let mut elsewhere = listed.clone();
+        elsewhere.push(rec(
+            100,
+            35,
+            "PUT",
+            "PutObject",
+            Some("outbox/new.csv"),
+            200,
+        ));
+        assert!(found(&elsewhere));
     }
 }
