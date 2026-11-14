@@ -69,7 +69,10 @@ fn verify(req: &http::request::Parts, body_hash: &str) -> Result<(), String> {
         .collect();
     let query = sonde_proxy::parse_query(req.uri.query());
     let payload = req.headers["x-amz-content-sha256"].to_str().unwrap();
-    if payload != body_hash && payload != sigv4::UNSIGNED_PAYLOAD {
+    if payload != body_hash
+        && payload != sigv4::UNSIGNED_PAYLOAD
+        && payload != "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+    {
         return Err(format!(
             "payload hash {payload} but the body hashes to {body_hash}"
         ));
@@ -119,7 +122,7 @@ async fn serve(
     let path = parts.uri.path().to_string();
     let resp = match parts.method.as_str() {
         "PUT" => {
-            let checksums: Vec<(String, String)> = parts
+            let mut checksums: Vec<(String, String)> = parts
                 .headers
                 .iter()
                 .filter(|(k, _)| {
@@ -127,7 +130,22 @@ async fn serve(
                 })
                 .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
                 .collect();
-            up.objects.lock().insert(path, (body.to_vec(), checksums));
+            // an unsigned aws-chunked body, read as S3 reads it: the payload,
+            // and its trailing checksums as the object's
+            let mut data = body.to_vec();
+            if parts.headers["x-amz-content-sha256"] == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
+                let d = sonde_proxy::chunked::decode(&body).expect("aws-chunked");
+                let said: usize = parts.headers["x-amz-decoded-content-length"]
+                    .to_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                assert_eq!(d.payload.len(), said, "the decoded length said");
+                data = d.payload;
+                checksums.retain(|(k, _)| k != "content-encoding");
+                checksums.extend(d.trailers);
+            }
+            up.objects.lock().insert(path, (data, checksums));
             Response::builder().status(200).header("etag", "\"e\"")
         }
         // a listing of the bucket: every object's key
@@ -355,6 +373,74 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(r.kind, "PutObject");
     assert_eq!(r.request_bytes, Some(15));
+}
+
+/// A large signed body goes on as it comes, in pieces of any size: without
+/// a trailer as its payload, unsigned; with one, framed again with the
+/// client's checksum. Neither is read whole first.
+#[tokio::test]
+async fn signed_aws_chunked_bodies_stream_with_and_without_a_trailer() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let sig = "0".repeat(64);
+    let payload: Vec<u8> = (0..(3 << 20) + 17).map(|i: u32| (i % 251) as u8).collect();
+    for (key, trailer) in [
+        ("plain", None),
+        ("trailed", Some("x-amz-checksum-crc64nvme")),
+    ] {
+        let mut body = Vec::new();
+        for c in payload.chunks(64 << 10) {
+            body.extend(format!("{:x};chunk-signature={sig}\r\n", c.len()).as_bytes());
+            body.extend(c);
+            body.extend(b"\r\n");
+        }
+        body.extend(format!("0;chunk-signature={sig}\r\n").as_bytes());
+        if let Some(t) = trailer {
+            body.extend(
+                format!("{t}:AAAAAAAAAAA=\r\nx-amz-trailer-signature:{sig}\r\n").as_bytes(),
+            );
+        }
+        body.extend(b"\r\n");
+        let sha = if trailer.is_some() {
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+        } else {
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+        };
+        let path = format!("/data/{key}");
+        let (date, auth) = signed(&proxy, "PUT", &path, &[], &[], sha);
+        // sent in pieces of an odd size: chunk headers fall across them
+        let pieces: Vec<Result<Bytes, std::io::Error>> = body
+            .chunks(7919)
+            .map(|c| Ok(Bytes::copy_from_slice(c)))
+            .collect();
+        let mut req = web()
+            .put(format!("{}{path}", proxy.url()))
+            .header("x-amz-content-sha256", sha)
+            .header("x-amz-date", date)
+            .header("content-encoding", "aws-chunked")
+            .header("content-length", body.len())
+            .header("x-amz-decoded-content-length", payload.len())
+            .header("authorization", auth);
+        if let Some(t) = trailer {
+            req = req.header("x-amz-trailer", t);
+        }
+        let resp = req
+            .body(reqwest::Body::wrap_stream(futures::stream::iter(pieces)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{key}: {}", resp.text().await.unwrap());
+        let (data, headers) = up.objects.lock().get(&path).cloned().unwrap();
+        assert!(data == payload, "{key}: the payload, whole");
+        assert_eq!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-amz-checksum-crc64nvme" && v == "AAAAAAAAAAA="),
+            trailer.is_some(),
+            "{key}: {headers:?}"
+        );
+        let r = &log.list(&reqlog::Filter::default(), 1)[0];
+        assert_eq!(r.request_bytes, Some(payload.len() as u64), "{key}");
+    }
 }
 
 #[tokio::test]

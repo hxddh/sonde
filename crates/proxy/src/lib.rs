@@ -1285,9 +1285,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .to_ascii_lowercase()
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
+    let streaming_sig = chunked::is_signed_streaming(&content_sha);
+    // a signed aws-chunked body is decoded as it arrives, unless it is a
+    // control document (read whole, kept) or its length cannot be told the
+    // store before it ends
+    let streamed = (streaming_sig && !reqlog::is_control_operation(&operation))
+        .then(|| Streamed::of(&parts.headers))
+        .flatten();
     // a body read whole waits its turn in the buffering budget, held until
     // the request is answered
-    let _budget = if chunked::is_signed_streaming(&content_sha) || (has_body && length.is_none()) {
+    let _budget = if (streaming_sig && streamed.is_none()) || (has_body && length.is_none()) {
         let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
             .parse()
             .ok()
@@ -1305,7 +1312,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a control document (DeleteObjects, a lifecycle rule) is read now: it
     // is small, it is kept on the record, and it tells one request without a
     // key from the next (two batches of deletes are two requests to fail)
-    let streaming_sig = chunked::is_signed_streaming(&content_sha);
     let mut body = Some(body);
     let mut early: Option<Bytes> = None;
     let mut body_hash: Option<String> = None;
@@ -1458,8 +1464,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // for one that has stopped moving
     let idle = cfg.timeout;
     let moved = Moved::default();
+    // the payload's bytes, when the body sent is framed otherwise
+    let mut payload_len = None;
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
-        if chunked::is_signed_streaming(&content_sha) {
+        if let (Some(plan), None) = (&streamed, &early) {
+            let incoming = body.take().expect("a body not read early is still here");
+            payload_len = Some(plan.decoded);
+            plan.forward(&mut out);
+            (
+                plan.payload_hash().to_string(),
+                plan.body(incoming, moved.clone()),
+                Some(plan.sent_len()),
+            )
+        } else if streaming_sig {
             let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
                 Ok(raw) => raw,
                 Err(e) => {
@@ -1562,7 +1579,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
         };
-    record.request_bytes = sent_len;
+    record.request_bytes = payload_len.or(sent_len);
 
     out.push(("host".into(), upstream_host));
     // signing's credentials may be fetched now (STS, IMDS): not the store's time
@@ -2028,6 +2045,157 @@ async fn whole(
             .map(|c| c.to_bytes())
             .map_err(|e| e.to_string()),
         (None, None) => Ok(Bytes::new()),
+    }
+}
+
+/// A signed `aws-chunked` body sent on as it arrives: its chunks'
+/// signatures cannot be made again, so the payload goes unsigned, as it is
+/// or, with a trailing checksum, framed again as an unsigned `aws-chunked`
+/// body that carries it to the store. Either way the store is told the
+/// length first, which the request's headers give.
+struct Streamed {
+    /// The payload's bytes (`x-amz-decoded-content-length`).
+    decoded: u64,
+    /// The trailing headers it names (`x-amz-trailer`), with how long each
+    /// value is; none: the payload goes as it is.
+    trailers: Vec<(String, usize)>,
+}
+
+/// The chunks a payload with a trailer is framed in again.
+const RECHUNK: usize = 64 << 10;
+
+impl Streamed {
+    /// How a request's body is streamed, when it can be: its payload's
+    /// length said, and each trailer one whose length is known.
+    fn of(headers: &http::HeaderMap) -> Option<Streamed> {
+        let decoded = header_value(headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok()?;
+        let trailers = header_value(headers, "x-amz-trailer")
+            .split(',')
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty())
+            .map(|t| chunked::checksum_len(&t).map(|n| (t, n)))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Streamed { decoded, trailers })
+    }
+
+    fn payload_hash(&self) -> &'static str {
+        if self.trailers.is_empty() {
+            sigv4::UNSIGNED_PAYLOAD
+        } else {
+            "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+        }
+    }
+
+    fn sent_len(&self) -> u64 {
+        if self.trailers.is_empty() {
+            return self.decoded;
+        }
+        let names: Vec<(usize, usize)> = self.trailers.iter().map(|(t, n)| (t.len(), *n)).collect();
+        chunked::Encoder::len(self.decoded, RECHUNK as u64, &names)
+    }
+
+    /// The headers forwarded: without the framing, when there is none.
+    fn forward(&self, out: &mut Vec<(String, String)>) {
+        if !self.trailers.is_empty() {
+            return;
+        }
+        out.retain(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            k != "x-amz-decoded-content-length" && k != "x-amz-trailer"
+        });
+        for (k, v) in out.iter_mut() {
+            if k.eq_ignore_ascii_case("content-encoding") {
+                *v = v
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|e| !e.eq_ignore_ascii_case("aws-chunked"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+            }
+        }
+        out.retain(|(k, v)| !(k.eq_ignore_ascii_case("content-encoding") && v.is_empty()));
+    }
+
+    /// The body sent: decoded (and framed again) a piece at a time. A body
+    /// that is not aws-chunked, or whose trailers are not the ones named,
+    /// fails the request (the store has not been told all of it).
+    fn body(&self, incoming: Incoming, moved: Moved) -> reqwest::Body {
+        struct At {
+            from: http_body_util::BodyDataStream<Incoming>,
+            decoder: chunked::Decoder,
+            encoder: Option<chunked::Encoder>,
+            named: Vec<(String, usize)>,
+            done: bool,
+        }
+        let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
+        let at = At {
+            from: incoming.into_data_stream(),
+            decoder: chunked::Decoder::default(),
+            encoder: (!self.trailers.is_empty()).then(|| chunked::Encoder::new(RECHUNK)),
+            named: self.trailers.clone(),
+            done: false,
+        };
+        let pieces = futures::stream::unfold(at, move |mut at| {
+            let moved = moved.clone();
+            async move {
+                if at.done {
+                    return None;
+                }
+                loop {
+                    let mut out = Vec::new();
+                    match at.from.next().await {
+                        Some(Ok(piece)) => {
+                            moved.touch();
+                            if let Err(e) = at.decoder.feed(&piece, &mut out) {
+                                at.done = true;
+                                return Some((Err(bad(e)), at));
+                            }
+                            if let Some(e) = &mut at.encoder {
+                                out = e.push(&out);
+                            }
+                            if !out.is_empty() {
+                                return Some((Ok(Bytes::from(out)), at));
+                            }
+                        }
+                        Some(Err(e)) => {
+                            at.done = true;
+                            return Some((Err(std::io::Error::other(e)), at));
+                        }
+                        None => {
+                            at.done = true;
+                            if let Err(e) = at.decoder.finish() {
+                                return Some((Err(bad(e)), at));
+                            }
+                            let Some(e) = &mut at.encoder else {
+                                return None;
+                            };
+                            // the trailers named, in their order, each as long as said
+                            let mut trailers = Vec::new();
+                            for (name, len) in &at.named {
+                                match at.decoder.trailers.iter().find(|(k, _)| k == name) {
+                                    Some((_, v)) if v.len() == *len => {
+                                        trailers.push((name.clone(), v.clone()))
+                                    }
+                                    _ => {
+                                        return Some((
+                                            Err(bad(format!(
+                                                "aws-chunked: no trailer {name} of its length"
+                                            ))),
+                                            at,
+                                        ));
+                                    }
+                                }
+                            }
+                            let tail = e.finish(&trailers);
+                            return Some((Ok(Bytes::from(tail)), at));
+                        }
+                    }
+                }
+            }
+        });
+        reqwest::Body::wrap_stream(pieces)
     }
 }
 
