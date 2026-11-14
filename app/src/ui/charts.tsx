@@ -127,6 +127,8 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
   // the areas with room for their name whole (and their size under it): the others say nothing, their tooltip does
   const size = signal<[number, number]>([0, 0]);
   const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length);
+  // (a value line is told its row, not its index)
+  const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   return (
     <If when={!textual()} else={<BarChart items={props.items} />}>
       <Plot
@@ -156,7 +158,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           groupLabelClass={LABEL.group}
           inactiveOpacity={INACTIVE}
           label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
-          valueLabel={(_, v, i) => (room()[i] === "both" ? `${bytes(v)} · ${pct(v, total())}` : "")}
+          valueLabel={(r, v) => (roomOf(r.id) === "both" ? `${bytes(v)} · ${pct(v, total())}` : "")}
           labelClass={LABEL.area}
           valueLabelClass={LABEL.areaValue}
           hoverClass={HOVER}

@@ -231,6 +231,8 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
   // the areas with room for their name whole (and their figures under it): the others say nothing, their tooltip does
   const size = signal<[number, number]>([0, 0]);
   const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, 0, (i) => rows()[i].label.length);
+  // (a value line is told its row, not its index)
+  const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   const hovered = signal<number | null>(null);
   // (the same in both runs: one figure)
   const line = (x: { requests: [number, number] }) => (x.requests[0] === x.requests[1] ? count(x.requests[1]) : t("prefixChange.line", { a: count(x.requests[0]), b: count(x.requests[1]) }));
@@ -268,7 +270,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
               cornerRadii={TIP.area}
               inactiveOpacity={INACTIVE}
               label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
-              valueLabel={(_, __, i) => (room()[i] === "both" ? line(rows()[i]!.x) : "")}
+              valueLabel={(r) => (roomOf(r.id) === "both" ? line(rows().find((x) => x.id === r.id)!.x) : "")}
               // on a tile its change made dark, the words turn light (Native Shell marks it `data-dark`)
               labelClass={`${LABEL.area} data-dark:text-white`}
               valueLabelClass={`${LABEL.areaValue} data-dark:text-white/80`}
