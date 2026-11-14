@@ -355,7 +355,7 @@ for (const v of variants) {
     await charts("03o-errors");
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
-    await act("compare-open", "Compare…");
+    await act("compare-open", v.lang ? "对比…" : "Compare…");
     const labels = app.menu()?.map((m) => m.label) ?? [];
     const run = labels.find((l) => l.includes("nightly-report"));
     if (run) {
@@ -369,7 +369,7 @@ for (const v of variants) {
 
     // what a replay on another store would send, said before it runs
     await app.waitFor("id:session-more", { timeout: 10000 });
-    await act("replay-open", "Replay on…");
+    await act("replay-open", v.lang ? "重放到…" : "Replay on…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");

@@ -148,11 +148,16 @@ export function Layouts() {
               <If when={f().length > 0} else={<Muted>{t("layouts.noneFound")}</Muted>}>
                 <Each of={f()}>
                   {(d) => (
-                    // a row each: what it is, where, and what gave it away; Decode under the pointer or the keyboard
-                    <View class="group min-h-7 flex-row items-center gap-3">
-                      <Text class={`${WIDTH.badge} shrink-0 ${TEXT.body} line-clamp-1`}>{LABEL[d().format] ?? d().format}</Text>
-                      <Path path={d().root || "/"} class="min-w-0 flex-1 text-foreground" />
-                      <Text class={`shrink ${TEXT.note} line-clamp-1`}>{d().evidence}</Text>
+                    // a row each: what it is and where, and under them what gave it away (whole names at any
+                    // width: no column cuts a name to make room for the next); Decode under the pointer or the keyboard
+                    <View class="group min-h-7 flex-row items-center gap-3 py-1">
+                      <View class="min-w-0 flex-1 gap-1">
+                        <View class="flex-row items-center gap-2">
+                          <Text class={`shrink-0 ${TEXT.body}`}>{LABEL[d().format] ?? d().format}</Text>
+                          <Path path={d().root || "/"} class="min-w-0 flex-1 text-muted-foreground" />
+                        </View>
+                        <Text class={`${TEXT.note} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>{d().evidence}</Text>
+                      </View>
                       <View class={REVEAL}>
                         <Button small variant="ghost" label={t("layouts.decode")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
                       </View>
