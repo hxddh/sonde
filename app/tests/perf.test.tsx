@@ -12,9 +12,9 @@ test("100 000 rows: load and scroll", async () => {
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
-  // Buckets opens on the first; the large one is a press in the tree
-  await app.press("id:bucket-demo-large");
-  await app.waitFor("text:demo-large · Objects", { timeout: 10000 });
+  // a terminal's Buckets opens on none: the large one is chosen from its menu
+  await app.press("label:Choose a bucket");
+  await app.press("text:demo-large");
   await app.waitFor("text:1 item", { timeout: 10000 });
   await app.press("id:flat");
   const loadStart = Date.now();
