@@ -15,7 +15,7 @@ use crate::session::Session;
 use crate::summary::summarize;
 
 mod embedded {
-    include!(concat!(env!("OUT_DIR"), "/viewer.rs"));
+    include!(concat!(env!("OUT_DIR"), "/viewer_files.rs"));
 }
 
 /// Whether this build carries the viewer (a development build may not).

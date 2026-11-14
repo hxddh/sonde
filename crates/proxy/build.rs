@@ -12,7 +12,7 @@ fn main() {
 
 fn viewer() {
     println!("cargo:rerun-if-env-changed=SONDE_VIEWER_DIR");
-    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("viewer.rs");
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("viewer_files.rs");
     let dir = std::env::var_os("SONDE_VIEWER_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {

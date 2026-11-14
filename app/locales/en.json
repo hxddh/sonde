@@ -669,7 +669,7 @@
  "cdf.title": "How long did requests take in each run?",
  "cdf.hint": "Both runs' latency: where the curves part is where requests got slower or faster",
  "waterfall.more": "and %{n} more, in the list below",
- "waterfall.title": "When each request ran",
+ "waterfall.title": "When did each request run?",
  "verdict.requests": "Requests",
  "verdict.waiting": "Waiting",
  "verdict.cost": "Cost",
@@ -1080,5 +1080,6 @@
  "share.showFile": "Show the file",
  "viewer.compared": "What changed",
  "viewer.against": "Against %{name}",
- "viewer.noRun": "This page holds no run: make it with sonde share"
+ "viewer.noRun": "This page holds no run: make it with sonde share",
+ "dist.textFew": "Half took %{p50} or less; the slowest %{max}"
 }

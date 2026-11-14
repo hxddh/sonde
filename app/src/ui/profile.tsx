@@ -497,13 +497,15 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "errors",
       group: "errors",
       zooms: true,
-      when: () => failed() && (shaped() || terminal()),
+      // (an error-free run says so in the card, rather than leaving it out)
+      when: () => shaped() || terminal(),
       title: () => t("failures.title"),
       text: () => failuresSaid(zs(), zr(), sa()),
       how: () => t("failures.hint"),
       legend: () => failureLegend(zs()),
       rows: () => ({ columns: ["ms", "client", "server", "throttled", "transport", "injected", "retries"], rows: zs().errors.series.map((_, i) => [slotMs(zs(), i), zs().errors.client[i] ?? 0, zs().errors.server[i] ?? 0, zs().errors.throttled[i] ?? 0, zs().errors.transport[i] ?? 0, zs().errors.injected[i] ?? 0, zs().errors.retries[i] ?? 0]) }),
-      body: () => <ErrorsOverTime signals={zs()} range={zr()} focus={focus} onFailures={props.onFailures ? (ms) => props.onFailures!(ms) : undefined} />,
+      // (none failed: the sentence says it, and there is nothing to draw)
+      body: () => !failed() ? <View testID="no-failures" /> : <ErrorsOverTime signals={zs()} range={zr()} focus={focus} onFailures={props.onFailures ? (ms) => props.onFailures!(ms) : undefined} />,
     },
     {
       // the rate beside the counts: the share of each slice's requests that failed

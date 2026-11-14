@@ -300,3 +300,67 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
     // (a lookup: held at a few times what it takes, as the view is)
     assert!(first < Duration::from_millis(1500), "a page took {first:?}");
 }
+
+/// What the Time pane of a million requests is given, and what choosing a
+/// stretch of it costs: the profile and the signals the pane draws are
+/// bounded by its slices (not its requests), so the pane's JavaScript has
+/// the same rows to draw whatever the run's size; and a tenth of the run,
+/// reckoned alone on the run's axis as the bridge does for a stretch, adds
+/// that tenth of a copy, not a second run.
+#[test]
+#[ignore = "a million requests: run in release, as CI does"]
+fn the_time_pane_of_a_million_requests_draws_bounded_rows() {
+    use sonde_proxy::profile::{Timeline, profile, profile_from};
+    use sonde_proxy::signals::{signals, signals_from};
+    let _alone = alone(false);
+    let dir = tempfile::tempdir().expect("a folder");
+    let path = session(dir.path(), "lake-1000000-1.sonde", |p| {
+        support::lake(1_000_000, p, 1)
+    });
+    peak_from_now();
+    let started = Instant::now();
+    let s = Session::open_lean(&path).expect("the session opens");
+    let prices = RequestPrices::default();
+    let (p, g) = (profile(&s.records, &prices), signals(&s.records, &prices));
+    // what the bridge sends the pane: its rows bounded by the slices
+    let sent = serde_json::to_vec(&(&p, &g)).expect("as JSON").len();
+    assert!(
+        p.rate.len() <= 91 && p.samples.len() <= 4000,
+        "{} slices, {} samples",
+        p.rate.len(),
+        p.samples.len()
+    );
+    assert!(p.latency_heat.len() <= 91 * 16 && p.heat.len() <= 91 * 9);
+    assert!(sent < 2 << 20, "{sent} bytes for the pane");
+    // a stretch of a tenth, mid-run: its own slices, on the run's axis
+    let tl = Timeline::of(&s.records).expect("a timeline");
+    let (from, to) = (
+        tl.t0_us + tl.wall_us * 45 / 100,
+        tl.t0_us + tl.wall_us * 55 / 100,
+    );
+    let tenth: Vec<reqlog::Record> = s
+        .records
+        .iter()
+        .filter(|r| (from..to).contains(&r.time.timestamp_micros()))
+        .cloned()
+        .collect();
+    let zoom = profile_from(&tenth, &prices, Some(tl.t0_us));
+    let zsig = signals_from(&tenth, &prices, Some(tl.t0_us));
+    assert!(zoom.start_ms > 0.0 && zoom.bin_ms < p.bin_ms && zsig.rate.requests == tenth.len());
+    let took = started.elapsed();
+    eprintln!(
+        "the Time pane of a million: {:.1} s, {} KiB sent, a tenth ({} requests) reckoned alone, peak {:?} MiB",
+        took.as_secs_f64(),
+        sent / 1024,
+        tenth.len(),
+        peak_mib()
+    );
+    // what show of a million holds, and room for a tenth of it held again (not yet measured: CI's first run
+    // says it)
+    held(
+        "the Time pane of a million",
+        took,
+        Duration::from_secs(45),
+        MILLION_MIB + MILLION_MIB / 8,
+    );
+}

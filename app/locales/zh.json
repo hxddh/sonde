@@ -669,7 +669,7 @@
  "cdf.title": "两次运行中请求各耗时多久？",
  "cdf.hint": "两次运行的延迟：曲线分开之处就是请求变慢或变快的地方",
  "waterfall.more": "另有 %{n} 个，见下方列表",
- "waterfall.title": "各请求的起止",
+ "waterfall.title": "每个请求何时运行？",
  "verdict.requests": "请求数",
  "verdict.waiting": "等待时间",
  "verdict.cost": "费用",
@@ -1080,5 +1080,6 @@
  "share.showFile": "显示文件",
  "viewer.compared": "变化",
  "viewer.against": "对比 %{name}",
- "viewer.noRun": "这个页面没有运行：用 sonde share 生成"
+ "viewer.noRun": "这个页面没有运行：用 sonde share 生成",
+ "dist.textFew": "一半用时不超过 %{p50}；最慢 %{max}"
 }

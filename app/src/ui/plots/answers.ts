@@ -182,7 +182,13 @@ export function spentSaid(p: Profile): string {
 
 /** How long most took: the median, p95 and p99 as shares done by then, of the requests the profile holds (the
  * stretch's, when one is chosen), marked when they are few. */
-export const distSaid = (p: Profile): string => (p.p50Ms == null ? "" : t("dist.text", { p50: duration(p.p50Ms), p95: duration(p.p95Ms ?? 0), p99: duration(p.p99Ms ?? 0) }) + few(p.rate.reduce((n, b) => n + requests(b), 0)));
+export function distSaid(p: Profile): string {
+  if (p.p50Ms == null) return "";
+  const n = p.rate.reduce((k, b) => k + requests(b), 0);
+  // a handful has no p95 or p99 to state: its median and its slowest
+  if (n < FEW) return t("dist.textFew", { p50: duration(p.p50Ms), max: duration(Math.max(0, ...p.groups.map((g) => g.maxMs))) }) + few(n);
+  return t("dist.text", { p50: duration(p.p50Ms), p95: duration(p.p95Ms ?? 0), p99: duration(p.p99Ms ?? 0) });
+}
 
 /** What a status is called when S3 gave no code of its own for it: its HTTP name. */
 export const REASON: Record<number, string> = { 200: "OK", 201: "Created", 204: "No Content", 206: "Partial Content", 301: "Moved Permanently", 304: "Not Modified", 307: "Temporary Redirect", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 411: "Length Required", 412: "Precondition Failed", 416: "Range Not Satisfiable", 429: "Too Many Requests", 500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
