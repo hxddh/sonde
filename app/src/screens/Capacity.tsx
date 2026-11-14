@@ -6,7 +6,7 @@ import { bytes, count, day, money } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
-import { bucket, endpoint, notify, prefix, report } from "../store";
+import { bucket, endpoint, notify, offerCommands, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { sectionLabel } from "../labels";
@@ -83,6 +83,16 @@ export function Capacity() {
       if (!terminal() && !result()) void scan();
     });
   });
+  // the section's commands: in the palette and on their shortcuts, as on its row
+  offerCommands(
+    () => sectionLabel("capacity"),
+    () => [
+      { id: "du-scan", label: result() ? t("overview.rescan") : t("common.scan"), icon: "refresh-cw", shortcut: "mod+shift+r", disabled: !bucket() || progress() !== null, run: () => void scan() },
+      { id: "du-mpu", label: t("du.includeMultipart"), icon: "layers", shortcut: "mod+shift+u", run: () => mpu.set(!mpu()) },
+      { id: "du-csv", label: t("du.exportCsv"), icon: "download", shortcut: "mod+shift+e", disabled: !result(), run: () => exportAs("csv") },
+      { id: "du-json", label: t("du.exportJson"), icon: "download", disabled: !result(), run: () => exportAs("json") },
+    ],
+  );
   const exportAs = (f: "json" | "csv") => {
     try {
       notify(t("common.exportedTo", { path: api.duExport(endpoint()!, bucket()!, pfx(), f) }));
@@ -114,7 +124,7 @@ export function Capacity() {
         </If>
         {/* what the next scan counts: before the command, so Cancel coming and going moves nothing */}
         <SwitchRow label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
-        <Button small variant={result() ? "outline" : "primary"} label={result() ? t("overview.rescan") : t("common.scan")} onPress={scan} disabled={!bucket() || progress() !== null} testID="du-scan" />
+        <Button small variant={result() ? "outline" : "primary"} label={result() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={scan} disabled={!bucket() || progress() !== null} testID="du-scan" />
         <If when={progress()}>
           <Button small variant="ghost" label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} testID="du-cancel" />
         </If>

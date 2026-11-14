@@ -1,10 +1,10 @@
 // Buckets: the store's side, in one place. The endpoint's buckets in the
 // sidebar, as a tree whose folders are their prefixes (loaded as they open);
-// beside it one row of sections — the chosen prefix's objects (under tiles
-// that say what sonde noticed, each a press to its section), its size, its
-// incomplete uploads, a key's versions, the layouts it holds, and the
-// endpoint's compatibility. The row is the one way to each (a finding whose
-// fix is one of them opens it too); a terminal has the same row.
+// beside it one row of sections — the chosen prefix's objects (an object's
+// versions open from its inspector), its size, its incomplete uploads and
+// the layouts it holds. The row is the one way to each (a finding whose fix
+// is one of them opens it too); a terminal has the same row. Each section's
+// commands are in the palette and on their shortcuts too.
 
 import { batch, cleanup, effect, resource, signal, Text, untracked, View } from "nsh";
 import { Tree, type TreeItem, type TreeRef } from "nsh/base";
@@ -20,8 +20,6 @@ import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
 import { Multipart } from "./Multipart";
-import { Probes } from "./Probes";
-import { Versions } from "./Versions";
 
 function screen(s: StoreTab) {
   switch (s) {
@@ -29,14 +27,10 @@ function screen(s: StoreTab) {
       return <Browse />;
     case "multipart":
       return <Multipart />;
-    case "versions":
-      return <Versions />;
     case "capacity":
       return <Capacity />;
     case "layouts":
       return <Layouts />;
-    case "probes":
-      return <Probes />;
   }
 }
 
@@ -215,7 +209,7 @@ function useBuckets() {
   return { list, needed };
 }
 
-/** The sections of Buckets, in one row: Objects first, the endpoint's compatibility last. */
+/** The sections of Buckets, in one row: Objects, Size, Incomplete uploads, Layouts. */
 const sections = () => STORE_TABS.map((s) => ({ value: s, title: s === "browse" ? t("nav.objects") : sectionLabel(s) }));
 
 /** A section, rebuilt per section and per place (endpoint, bucket, prefix): each owns its jobs,

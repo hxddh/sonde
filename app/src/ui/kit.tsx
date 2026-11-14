@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, type InputRef, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
@@ -301,7 +301,6 @@ export const SIZES = {
   compareTile: 176,
   capacityTile: 128,
   dialogScroll: 480,
-  terminalMatrix: 640,
   findingsShort: 68,
   findingsShortOpen: 96,
   findingsLeast: 104,
@@ -387,14 +386,10 @@ export const PANE = {
 export const WIDTH = {
   /** a number: a count of days */
   number: "w-28",
-  /** a short choice: how long a link lasts */
-  choice: "w-36",
   /** a prefix, a bucket, a key's start */
   field: "w-56",
   /** a folder, a filter, a snapshot among snapshots */
   long: "w-64",
-  /** a run among runs */
-  wide: "w-80",
   /** a status and its code */
   status: "w-12",
   /** a size, at its column's end */
@@ -1189,8 +1184,15 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dens
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean; /** without the focus, its text rests at its start (a long command shows what it runs, not its last arguments) */ rest?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
+  // resting: back at the start whenever the field lets go of the focus, or its value is set from elsewhere
+  let field: InputRef | undefined;
+  let focused = false;
+  effect(() => {
+    props.value;
+    if (props.rest && !focused) untracked(() => field?.setSelection(0));
+  });
   const refused = () => !!props.error || !!props.invalid;
   const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${DISABLED}`;
   // the reason under the field is the field's description to a screen reader, read again each time the field is
@@ -1208,6 +1210,12 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       disabled={props.disabled}
       accessibilityState={refused() ? { invalid: true } : undefined}
       accessibilityDescribedBy={props.error ? reason() : null}
+      ref={(r: InputRef) => (field = r)}
+      onFocus={() => (focused = true)}
+      onBlur={() => {
+        focused = false;
+        if (props.rest) field?.setSelection(0);
+      }}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -1260,7 +1268,7 @@ export function Labeled(props: { label: string; children: JSX.Element; class?: s
 
 /** The one search field: a magnifier, the text, a clear button while it
  * holds any, and what the place puts after it (a "search everywhere"). */
-export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element }) {
+export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element; /** the field itself: a shortcut focuses it */ ref?: (r: ViewRef) => void }) {
   return (
     <View class={terminal() ? `flex-row items-center gap-1 ${props.class ?? ""}` : `${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${props.class ?? ""}`}>
       <If when={!terminal()}>
@@ -1270,6 +1278,7 @@ export function SearchField(props: { value: string; onChange: (v: string) => voi
       </If>
       <Input
         testID={props.testID}
+        ref={props.ref}
         value={props.value}
         placeholder={props.placeholder}
         autoCapitalize="none"
