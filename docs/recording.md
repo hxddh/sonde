@@ -36,8 +36,8 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
   variables.
 - A client that ignores these needs the endpoint set by hand (`sonde proxy` prints it), path-style or a
   `<bucket>.localhost` host.
-- Tested in CI (`scripts/sdk-smoke.sh`): boto3, AWS SDKs for JavaScript v3, Go v2, Java v2, the AWS CLI, polars
-  (object_store), and boto3 under `--tls`.
+- Tested in CI (`scripts/sdk-smoke.sh`): boto3, AWS SDKs for JavaScript v3, Go v2, Java v2, the AWS CLI (also in its
+  container image, through `run -- docker run`), polars (object_store), and boto3 under `--tls`.
 
 ### TLS
 

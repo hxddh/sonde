@@ -210,8 +210,9 @@ jobs:
         run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
 
   record:
-    # sonde run with four AWS SDKs, the AWS CLI (the runner's v2), polars and
-    # one --tls pass against RustFS, and the proxy's overhead
+    # sonde run with four AWS SDKs, the AWS CLI (the runner's v2, and its
+    # image through `run -- docker run`), polars and one --tls pass against
+    # RustFS, and the proxy's overhead
     runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: rustfsadmin

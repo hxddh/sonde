@@ -5,9 +5,10 @@
 #
 #   scripts/sdk-smoke.sh [sonde options, e.g. --url http://127.0.0.1:9100] [-- sdk...]
 #
-# SDKs: python node go java aws polars, and tls (boto3 again, through `run
-# --tls`: https and the unsigned streaming trailer). Default: every one whose
-# toolchain is installed. Runs go to $SMOKE_SESSIONS (default: a temporary
+# SDKs: python node go java aws polars, tls (boto3 again, through `run
+# --tls`: https and the unsigned streaming trailer) and docker (the AWS CLI in
+# a container: `run -- docker run …` gives it the host's network and the
+# variables). Default: every one whose toolchain is installed. Runs go to $SMOKE_SESSIONS (default: a temporary
 # directory).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,7 +17,7 @@ opts=()
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do opts+=("$1"); shift; done
 [ "${1:-}" = "--" ] && shift
 sdks=("$@")
-[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars tls)
+[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars tls docker)
 out="${SMOKE_SESSIONS:-$(mktemp -d)}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"   # the builds below change directory
@@ -36,6 +37,9 @@ for sdk in "${sdks[@]}"; do
     aws)
       command -v aws >/dev/null || { echo "skip aws"; continue; }
       cmd=(bash "$smoke/aws/smoke.sh") ;;
+    docker)
+      docker info >/dev/null 2>&1 || { echo "skip docker"; continue; }
+      cmd=(docker run --rm amazon/aws-cli:2.40.3 s3 ls) ;;
     node)
       [ -d "$smoke/node/node_modules" ] || (cd "$smoke/node" && npm install --silent --no-audit --no-fund) || { echo "skip node"; continue; }
       cmd=(node "$smoke/node/smoke.mjs") ;;
