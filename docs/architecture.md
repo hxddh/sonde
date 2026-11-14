@@ -66,6 +66,7 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 |---|---|
 | `fault.rs` | answers in the store's place (503, 500, slow, lost answer, cut body, lost race), per request's attempts |
 | `trial.rs` | a clean run, then one per scenario, each judged against the clean run (verdicts in the index, `trials/`) |
+| `trial_plan.rs` | what a trial of a recorded run would try, said before it runs (the app's plan) |
 | `episode.rs` | requests → operations and findings |
 | `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
