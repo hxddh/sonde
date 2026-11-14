@@ -38,10 +38,18 @@ def text(path: Path) -> list[str]:
 
 
 def moved(lines: list[str], by: timedelta, header: dict) -> list[str]:
-    """Every time in the session moved by `by`, the header made the fixture's."""
+    """Every time in the session moved by `by`, the header made the fixture's; in the session format 2
+    (docs/session-format.md: a record's S3 call is `kind`, `operation` in format 1)."""
+    header = {k: v for k, v in header.items() if k != "sonde"}
+    header["version"] = 2
     out = [json.dumps(header, separators=(",", ":"))]
     for line in lines[1:]:
-        out.append(STAMP.sub(lambda m: '"' + (parse(m.group(1)) + by).strftime("%Y-%m-%dT%H:%M:%S.%fZ") + '"', line))
+        line = STAMP.sub(lambda m: '"' + (parse(m.group(1)) + by).strftime("%Y-%m-%dT%H:%M:%S.%fZ") + '"', line)
+        record = json.loads(line)
+        if "operation" in record and "log" not in record:
+            record = {("kind" if k == "operation" else k): v for k, v in record.items()}
+            line = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+        out.append(line)
     return out
 
 
@@ -85,6 +93,8 @@ def main(src: Path) -> None:
         sys.exit(f"{src}: no slowdown verdict for {fixed.name} in its index")
     for t in verdict:
         t["session"] = trial_name
+        if isinstance(t.get("where"), dict) and "operation" in t["where"]:
+            t["where"] = {("kind" if k == "operation" else k): v for k, v in t["where"].items()}
         for k, v in list(t.items()):
             if isinstance(v, str) and STAMP.fullmatch(f'"{v}"'):
                 t[k] = (parse(v) + by).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
