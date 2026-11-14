@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy` and `demo` share (the
+//! Recording: what `sonde run`, `proxy` and the tour share (the
 //! recording's arguments, the proxy started, a session's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -22,7 +22,6 @@ use crate::output;
 
 pub use super::check::{CheckArgs, check};
 pub use super::compare::{CompareArgs, compare};
-pub use super::demo::{DemoArgs, demo};
 pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, show_file};
@@ -40,9 +39,6 @@ pub struct Recording {
     /// through. Default: `[record] policy` in sonde.toml, else no-delete.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
-    /// `--policy allow`: the program may delete and write over what it finds.
-    #[arg(long, conflicts_with = "policy")]
-    pub(super) allow_writes: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
@@ -81,15 +77,10 @@ pub(super) struct Of<'a> {
 }
 
 impl Recording {
-    /// The policy asked for: the flags', else `[record] policy` of
+    /// The policy asked for: the flag's, else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
     fn policy(&self) -> anyhow::Result<Policy> {
-        let flag = if self.allow_writes {
-            Some(Policy::Allow)
-        } else {
-            self.policy.as_deref().and_then(Policy::named)
-        };
-        if let Some(p) = flag {
+        if let Some(p) = self.policy.as_deref().and_then(Policy::named) {
             return Ok(p);
         }
         let project = load_project(None)?;
@@ -443,7 +434,7 @@ pub(super) fn print_summary(
 }
 
 /// What a session amounts to, in one fixed shape for `run`, `show` and
-/// `demo`: the head line (requests, operations, the SDK, the store, the
+/// the tour: the head line (requests, operations, the SDK, the store, the
 /// time, the waiting and the cost), the findings first (each with its
 /// saving, its line of code and its fix), what acting on them would leave,
 /// one table of the kinds of request, and the change since the program's

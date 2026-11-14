@@ -65,6 +65,7 @@ pub fn class(r: &Record) -> Class {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
+    #[serde(rename = "kind")]
     pub operation: String,
     /// GET or HEAD answered 404.
     pub missed: bool,
@@ -1263,6 +1264,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatencyChange {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub missed: bool,
     pub requests: (usize, usize),
@@ -1301,6 +1303,7 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupChange {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub missed: bool,
     pub requests: (usize, usize),
@@ -1396,8 +1399,7 @@ pub struct FindingText {
 
 /// A finding's identity across runs: what it is and what it is about, not
 /// its counts, nor what changes from one run to the next in the keys it
-/// names ([`stable`]). Set on a finding when it is made, told apart there
-/// from another of the same run that reads the same.
+/// names ([`stable`]). Set on a finding when it is made ([`name_findings`]).
 pub fn finding_identity(o: &Observation) -> String {
     if o.identity.is_empty() {
         identity(o)
@@ -1408,6 +1410,12 @@ pub fn finding_identity(o: &Observation) -> String {
 
 /// [`finding_identity`] worked out, before one is set.
 pub(crate) fn identity(o: &Observation) -> String {
+    identity_as(o, false)
+}
+
+/// A finding's identity, what it is about made [`stable`] or as it was
+/// (`literal`).
+fn identity_as(o: &Observation, literal: bool) -> String {
     let Some(p) = o.phrases.first() else {
         return o.text.clone();
     };
@@ -1416,9 +1424,45 @@ pub(crate) fn identity(o: &Observation) -> String {
     let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
-        .filter_map(|k| p.args.get(k).map(|v| stable(v.as_ref())))
+        .filter_map(|k| {
+            p.args.get(k).map(|v| {
+                if literal {
+                    v.to_string()
+                } else {
+                    stable(v.as_ref())
+                }
+            })
+        })
         .collect();
     format!("{key}|{}", about.join("|"))
+}
+
+/// Names each of a run's findings ([`Observation::identity`]) by what it is
+/// about made [`stable`]; but where two findings of the run (of `findings`
+/// and `among`, its findings at any threshold) read the same so, each keeps
+/// what it is about as it was: `t00/` and `t01/` listed again and again are
+/// two findings, not one. Two that read the same even so are told apart by
+/// rank (`#2`).
+pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
+    use std::collections::HashSet;
+    let mut by: HashMap<String, HashSet<String>> = HashMap::new();
+    for o in findings.iter().chain(among) {
+        by.entry(identity_as(o, false))
+            .or_default()
+            .insert(identity_as(o, true));
+    }
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for o in findings.iter_mut() {
+        let id = identity_as(o, false);
+        let id = if by.get(&id).is_some_and(|l| l.len() > 1) {
+            identity_as(o, true)
+        } else {
+            id
+        };
+        let n = seen.entry(id.clone()).or_default();
+        *n += 1;
+        o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
+    }
 }
 
 /// The kinds of finding, as an identity begins (`obs.hot` of `obs.hot|b/k`):
@@ -1438,17 +1482,53 @@ pub const FINDING_KINDS: &[&str] = &[
     "obs.serial",
 ];
 
+/// The version of the rules a finding's identity is made by ([`stable`]
+/// and [`identity`]): kept with a program's findings (`findings.json`), so
+/// findings kept under older rules are made again by these, not read as one
+/// fixed and another new. 1 was 19.0's; 2 takes every number out.
+pub const IDENTITY_RULES: u32 = 2;
+
 /// A key or prefix with what changes from one run of a program to the next
-/// said as what it is: a UUID `{uuid}`, a date `{date}`, a date and time
-/// `{time}`, a long number (epoch seconds or ms, a log's sequence) `{n}`, a
-/// long hex or mixed id `{id}`, a table's metadata version `v{n}`, the
-/// numbers of a Hadoop attempt folder `{n}`. Short numbers (`part-00001`)
-/// and words stay: two keys that are two things stay two.
+/// taken out: the value of a `name=value` folder `name={v}`, a UUID
+/// `{uuid}`, a date `{date}`, a date and time `{time}`, a word of six or
+/// more hex letters and digits (a commit, a short run id) or a long mixed
+/// id `{id}`, and every other run of digits `{n}` (`part-{n}`, `run-{n}`,
+/// `v{n}`). Two findings of one run that read the same once so are told
+/// apart by their keys as they were ([`Run::with`]).
 pub fn stable(s: &str) -> String {
+    stable_with(s, true)
+}
+
+/// [`stable`] for a command line: a word is replaced only when the whole of it
+/// is a value (a number, a date, a UUID, an id), so `python3`, `s3://` and
+/// `job1.py` stay what they say.
+pub fn stable_words(s: &str) -> String {
+    stable_with(s, false)
+}
+
+fn stable_with(s: &str, digits_in_words: bool) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
+        // a folder or file `name=value` (Hive's partitions): its value
+        if i == 0 || b[i - 1] == b'/' {
+            let seg = s[i..].find('/').map_or(&s[i..], |e| &s[i..i + e]);
+            if let Some((name, value)) = seg.split_once('=')
+                && !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
+            {
+                out.push_str(name);
+                out.push('=');
+                if !value.is_empty() {
+                    out.push_str("{v}");
+                }
+                i += seg.len();
+                continue;
+            }
+        }
         if !b[i].is_ascii_alphanumeric() {
             // a whole character: keys are UTF-8
             let ch = s[i..].chars().next().unwrap_or('?');
@@ -1467,32 +1547,33 @@ pub fn stable(s: &str) -> String {
             continue;
         }
         let end = word_end(b, i);
-        let (w, rest) = (&s[i..end], &s[end..]);
+        let w = &s[i..end];
         let has = |f: fn(&u8) -> bool| w.as_bytes().iter().any(f);
-        let digits = !has(|c| !c.is_ascii_digit());
-        let metadata = rest.starts_with(".metadata.");
-        if digits
-            && (w.len() >= 9
-                || metadata
-                || (rest.starts_with('-') && uuid_at(b, end + 1).is_some()))
-        {
-            out.push_str("{n}");
-        } else if (w.len() >= 16 && !has(|c| !c.is_ascii_hexdigit()) && has(u8::is_ascii_digit))
+        let hex = !has(|c| !c.is_ascii_hexdigit());
+        if (w.len() >= 6 && hex && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
             || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
         {
             out.push_str("{id}");
-        } else if metadata
-            && w.len() > 1
-            && w.starts_with('v')
-            && w[1..].bytes().all(|c| c.is_ascii_digit())
-        {
-            out.push_str("v{n}");
-        } else {
+        } else if !digits_in_words && has(u8::is_ascii_alphabetic) {
             out.push_str(w);
+        } else {
+            // each run of digits
+            let mut digits = false;
+            for c in w.chars() {
+                if c.is_ascii_digit() {
+                    if !digits {
+                        out.push_str("{n}");
+                    }
+                    digits = true;
+                } else {
+                    out.push(c);
+                    digits = false;
+                }
+            }
         }
         i = end;
     }
-    attempts(&out)
+    out
 }
 
 /// The end of the word (letters and digits) at `i`.
@@ -1567,40 +1648,29 @@ fn date_at(b: &[u8], i: usize) -> Option<(usize, bool)> {
     ends(at).then_some((at, false))
 }
 
-/// The numbers of a Hadoop attempt folder (`_temporary/0/`,
-/// `attempt_202611131000_0001_m_000001_1/`): another each job.
-fn attempts(s: &str) -> String {
-    if !s.contains("_temporary/") {
-        return s.to_string();
+/// What failed a request, as two runs' errors are compared: its status
+/// and S3's code (`500 InternalError`), `no answer`, or its status `cut
+/// short` (an answer that began and broke off).
+pub fn error_class(r: &Record) -> String {
+    match (r.status, crate::episode::code_of(r)) {
+        (None, _) => "no answer".to_string(),
+        (Some(s), _) if s < 400 => format!("{s} cut short"),
+        (Some(s), Some(c)) => format!("{s} {c}"),
+        (Some(s), None) => s.to_string(),
     }
-    let mut after = false;
-    let mut out: Vec<String> = Vec::new();
-    for seg in s.split('/') {
-        let numbered = after
-            && (out.last().is_some_and(|p| p == "_temporary")
-                || seg.starts_with("attempt_")
-                || seg.starts_with("task_"));
-        after |= seg == "_temporary";
-        if !numbered {
-            out.push(seg.to_string());
-            continue;
-        }
-        let mut said = String::new();
-        let mut digit = false;
-        for ch in seg.chars() {
-            if ch.is_ascii_digit() {
-                if !digit {
-                    said.push_str("{n}");
-                }
-                digit = true;
-            } else {
-                said.push(ch);
-                digit = false;
-            }
-        }
-        out.push(said);
+}
+
+/// A run's failed requests by [`error_class`]: throttling and lookups that
+/// found nothing are not counted.
+fn error_classes(records: &[Record]) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for r in records
+        .iter()
+        .filter(|r| r.is_error() && !is_miss(r) && !throttled(r))
+    {
+        *out.entry(error_class(r)).or_default() += 1;
     }
-    out.join("/")
+    out
 }
 
 /// One run as [`compare_runs`] holds it: what it amounts to, its records
@@ -1621,6 +1691,9 @@ pub struct Run {
     pub traces: BTreeMap<String, Observation>,
     /// What its findings would save, by what their requests asked.
     pub asks: crate::fixloop::Asks,
+    /// Its failed requests by what failed them ([`error_class`]), throttling
+    /// (a finding of its own) and lookups that found nothing left out.
+    pub error_classes: BTreeMap<String, usize>,
     /// How often it asked what the run before's findings would save
     /// ([`Run::measure`]), and whether that was counted.
     pub counts: HashMap<String, usize>,
@@ -1693,7 +1766,13 @@ impl Run {
                 }
             }
         }
+        // a run's findings are told apart among all of them, at any
+        // threshold: as a finding and as a trace, one name
+        let (mut observations, mut traces) = (observations, traces);
+        name_findings(&mut traces, &observations);
+        name_findings(&mut observations, &traces);
         let asks = crate::fixloop::asks_of(records, &observations);
+        let error_classes = error_classes(records);
         let traces = traces
             .into_iter()
             .map(|o| (finding_identity(&o), o))
@@ -1709,6 +1788,7 @@ impl Run {
             folders,
             traces,
             asks,
+            error_classes,
             counts: HashMap::new(),
             measured: false,
         }
@@ -1841,13 +1921,24 @@ mod tests {
     }
 
     #[test]
-    fn what_changes_between_runs_is_taken_out_of_an_identity_and_stable_keys_stay_apart() {
+    fn what_changes_between_runs_is_taken_out_of_an_identity() {
         for (key, said) in [
             ("b/jobs/1794558464595/state.json", "b/jobs/{n}/state.json"),
-            ("b/epoch/1731456000/x", "b/epoch/{n}/x"),
             (
                 "b/runs/0f8fad5b-d9cb-469f-a165-70867728950e/out",
                 "b/runs/{uuid}/out",
+            ),
+            // Hive's partitions, and a date and hour as one value
+            (
+                "b/in/year=2026/month=11/day=13/hour=10/conf.json",
+                "b/in/year={v}/month={v}/day={v}/hour={v}/conf.json",
+            ),
+            ("b/ev/dt=2026-11-13-21/x", "b/ev/dt={v}/x"),
+            ("b/at=2026-11-13T10:00:00.123Z/x", "b/at={v}/x"),
+            // Delta's log, Iceberg's metadata and snapshots
+            (
+                "b/t/_delta_log/00000000000000000012.json",
+                "b/t/_delta_log/{n}.json",
             ),
             (
                 "b/t/metadata/00003-0f8fad5b-d9cb-469f-a165-70867728950e.metadata.json",
@@ -1858,31 +1949,74 @@ mod tests {
                 "b/t/metadata/v{n}.metadata.json",
             ),
             (
-                "b/t/_delta_log/00000000000000000012.json",
-                "b/t/_delta_log/{n}.json",
+                "b/t/metadata/snap-6894157311395042398-1-0f8fad5b-d9cb-469f-a165-70867728950e.avro",
+                "b/t/metadata/snap-{n}-{n}-{uuid}.avro",
             ),
-            ("b/day=2026-11-13/part-00001", "b/day={date}/part-00001"),
-            ("b/2026/11/13/x", "b/{date}/x"),
-            ("b/run_20261113/x", "b/run_{date}/x"),
-            ("b/at=2026-11-13T10:00:00.123Z/x", "b/at={time}/x"),
-            ("b/at=20261113T100000Z/x", "b/at={time}/x"),
-            ("b/snap-6894157311395042398-1.avro", "b/snap-{n}-1.avro"),
-            ("b/c/3f786850e387550fdab836ed7e6dc881de23001b", "b/c/{id}"),
-            ("b/u/01HF8X3KQZ7Y4M2N5P6R8T9VWX/x", "b/u/{id}/x"),
+            // Spark's part files
+            (
+                "b/o/part-00000-0f8fad5b-d9cb-469f-a165-70867728950e-c000.snappy.parquet",
+                "b/o/part-{n}-{uuid}-c{n}.snappy.parquet",
+            ),
             (
                 "b/o/_temporary/0/_temporary/attempt_202611131000_0001_m_000001_1/part-00000",
-                "b/o/_temporary/{n}/_temporary/attempt_{n}_{n}_m_{n}_{n}/part-00000",
+                "b/o/_temporary/{n}/_temporary/attempt_{n}_{n}_m_{n}_{n}/part-{n}",
             ),
-            // what a program names the same every run stays as it is
-            ("b/static/part-00001.parquet", "b/static/part-00001.parquet"),
-            ("b/api/v2/config.json", "b/api/v2/config.json"),
-            ("b/year=2026/month=11/", "b/year=2026/month=11/"),
+            // a short run id, a counter, a time folder, a date
+            ("b/job-3fa2b1c9/out", "b/job-{id}/out"),
+            ("b/run-42/out", "b/run-{n}/out"),
+            ("b/logs/22-46-01/x", "b/logs/{n}-{n}-{n}/x"),
+            ("b/2026/11/13/x", "b/{date}/x"),
+            ("b/run_20261113/x", "b/run_{date}/x"),
+            ("b/c/3f786850e387550fdab836ed7e6dc881de23001b", "b/c/{id}"),
+            ("b/u/01HF8X3KQZ7Y4M2N5P6R8T9VWX/x", "b/u/{id}/x"),
+            // words stay
+            ("b/static/config.json", "b/static/config.json"),
+            ("b/decade/x", "b/decade/x"),
             ("b/über/schlüssel", "b/über/schlüssel"),
         ] {
             assert_eq!(stable(key), said, "{key}");
         }
-        assert_ne!(stable("b/part-00001"), stable("b/part-00002"));
-        assert_ne!(stable("b/api/v1/x"), stable("b/api/v2/x"));
+    }
+
+    /// Two findings of one run that read the same once their numbers are
+    /// out (`t00/`, `t01/`) keep their keys; one alone is said stable.
+    #[test]
+    fn two_findings_of_a_run_that_read_the_same_keep_their_keys() {
+        let listed = |prefix: &str| Observation {
+            level: "info",
+            text: String::new(),
+            phrases: vec![crate::phrase::p(
+                "obs.listed",
+                &[("prefix", prefix.into()), ("n", "9".into())],
+            )],
+            episodes: Vec::new(),
+            impact: 9,
+            saving: None,
+            saving_text: None,
+            saves_requests: 0,
+            saves_ms: 0.0,
+            saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
+            fixes: Vec::new(),
+            callers: Vec::new(),
+            sdk: None,
+            identity: String::new(),
+        };
+        let mut two = vec![listed("b/t00/"), listed("b/t01/")];
+        name_findings(&mut two, &[]);
+        assert_eq!(two[0].identity, "obs.listed|b/t00/");
+        assert_eq!(two[1].identity, "obs.listed|b/t01/");
+        // one over its threshold, the other under it: still two
+        let mut one = vec![listed("b/t00/")];
+        name_findings(&mut one, &[listed("b/t01/")]);
+        assert_eq!(one[0].identity, "obs.listed|b/t00/");
+        let mut alone = vec![listed("b/t00/")];
+        name_findings(&mut alone, &[]);
+        assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
+        // the same key twice is told apart by rank
+        let mut same = vec![listed("b/t00/"), listed("b/t00/")];
+        name_findings(&mut same, &[]);
+        assert_eq!(same[1].identity, "obs.listed|b/t{n}/#2");
     }
 
     #[test]

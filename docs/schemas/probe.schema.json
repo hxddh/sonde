@@ -63,6 +63,7 @@
             },
             "summaryText": {
               "type": "array",
+              "description": "Display text, not stable.",
               "items": {
                 "$ref": "#/$defs/phrase"
               }
@@ -75,6 +76,7 @@
             },
             "observationsText": {
               "type": "array",
+              "description": "Display text, not stable.",
               "items": {
                 "type": "array",
                 "items": {
@@ -224,9 +226,9 @@
         "endpoint": {
           "type": "string"
         },
-        "operation": {
+        "kind": {
           "type": "string",
-          "description": "The S3 operation (`GetObject`, `Unknown`)."
+          "description": "The request's kind: the S3 call (`GetObject`, `Unknown`)."
         },
         "method": {
           "type": "string"
@@ -359,7 +361,7 @@
         "id",
         "time",
         "endpoint",
-        "operation",
+        "kind",
         "method",
         "url",
         "bucket",

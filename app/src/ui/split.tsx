@@ -15,7 +15,7 @@ import { Await, Choice } from "./kit";
 import { GroupTable, groupRows } from "./profile";
 
 export type GroupBy = SplitBy | "none";
-export const GROUP_BY: GroupBy[] = ["none", "operation", "prefix", "size", "caller", "sdk", "status"];
+export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status"];
 
 /** The one Group by control: each operation (none), or the operations split by a dimension. */
 export function GroupByChoice(props: { value: GroupBy; onChange: (v: GroupBy) => void }) {
@@ -50,11 +50,11 @@ export function SplitTable(props: { path: string; by: SplitBy; onKind?: (kind: s
             <GroupTable
               testID="split-table"
               rows={groupRows(s())}
-              title={s().by === "operation" ? t("column.kind") : t(`split.by.${s().by}`)}
+              title={s().by === "kind" ? t("column.kind") : t(`split.by.${s().by}`)}
               currency={s().currency}
               max={14}
               onSelect={
-                s().by === "operation" && props.onKind
+                s().by === "kind" && props.onKind
                   ? (name) => {
                       const k = kindOf(s(), name);
                       if (k) props.onKind!(k);

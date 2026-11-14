@@ -1,8 +1,10 @@
 name: CI
 
-# One run per change: a pull request's, then main's once merged. Nightly
-# and by hand, the rest: every build, the macOS and Windows tours. A
-# Dependabot crate update runs lint, unit and supply.
+# One run per change: a pull request's, then main's once merged. Main's
+# run, the nightly and one by hand do everything: every build a release
+# ships (release.yml publishes main's) and the tours of Linux, macOS and
+# Windows. A pull request's builds and tours Linux only. A Dependabot crate
+# update runs lint, unit and supply.
 on:
   pull_request:
   push:
@@ -64,21 +66,19 @@ jobs:
       # the default members: the CLI, the proxy and what is under them (the
       # app's bridge, sonde-nsh, is built by the lint, ui and shots jobs)
       - run: cargo test --workspace --locked
-      # sessions of any size, held: a million requests read and analysed in
-      # 15 s and 2 GB, an outage and small uploads of 300 thousand in 10 s,
-      # the app's first view of 100 thousand in 2 s (optimised, as released).
-      # A shared runner's speed and what else it holds vary from run to run:
-      # a budget missed once is run again before it fails the build, and the
-      # miss is a warning on the run, so one that drifts toward its limit is
-      # seen before it fails twice. Each test is a process of its own: a
-      # process's peak memory counts what the tests before it left held.
+      # sessions of any size, held (optimised, as released): each test's
+      # peak memory, the same from run to run, against its budget; its time,
+      # which a shared runner moves, said and held only past several times
+      # what it takes (crates/proxy/tests/budgets.rs, docs/performance.md).
+      # Each test is a process of its own, so its peak is its own.
       - name: Budgets of a large session
         if: runner.os == 'Linux'
         run: |
-          budget() { cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$1"; }
+          set -o pipefail
           for t in $(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p'); do
-            budget "$t" || { echo "::warning title=Budgets::$t missed its budget once and ran again (the log says by how much)"; budget "$t"; } || exit 1
+            cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
           done
+          { echo '```'; grep -h "^budget " budgets.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   supply:
     # what sonde is built from: the licences, advisories and sources of its
@@ -112,9 +112,10 @@ jobs:
         run: |
           pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
-          shellcheck action/*.sh install.sh
+          shellcheck action/*.sh install.sh scripts/release-wait*.sh
           actionlint
       - run: bash action/test.sh
+      - run: bash scripts/release-wait.test.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build -p sonde-cli && echo "$PWD/target/debug" >> "$GITHUB_PATH"
@@ -198,13 +199,14 @@ jobs:
   shots:
     # the app on a real window — GTK under Xvfb, AppKit, Win32: every place,
     # wide and at the least size, light and dark, English and Chinese — kept
-    # as an artifact, the visual record of each build. Linux on every change
-    # (its pictures are the approved ones); macOS and Windows nightly.
+    # as an artifact, the visual record of each build. Linux on every change;
+    # macOS and Windows on main's runs too (a release waits for them), the
+    # nightly and by hand.
     if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"os":"ubuntu-24.04","name":"linux"},{"os":"macos-15","name":"macos"},{"os":"windows-latest","name":"windows"}]' || '[{"os":"ubuntu-24.04","name":"linux"}]') }}
+        include: ${{ fromJSON(github.event_name != 'pull_request' && '[{"os":"ubuntu-24.04","name":"linux"},{"os":"macos-15","name":"macos"},{"os":"windows-latest","name":"windows"}]' || '[{"os":"ubuntu-24.04","name":"linux"}]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
@@ -236,16 +238,14 @@ jobs:
       # approved for it in app/shots.approved.json, or the job fails. Approving
       # is committing that file (scripts/shots-diff.py approve, on this run's
       # sonde-shots-<platform> artifact). A platform with no approved pictures
-      # is reported, not held; macOS and Windows are compared with the last
-      # nightly run, the only one that has them.
+      # is reported, not held.
       - name: Screens against the last green run, held to the approved ones
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ matrix.name != 'linux' && '&event=schedule' || '' }}
         run: |
           mkdir -p shots-before
-          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}$EVENT&per_page=1" --jq '.workflow_runs[0].id' || true)
+          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}&per_page=1" --jq '.workflow_runs[0].id' || true)
           if [ -n "$prev" ]; then
             gh run download "$prev" -R "${{ github.repository }}" -n "sonde-shots-${{ matrix.name }}" -D shots-before || echo "no screenshots in run $prev: every screen is held to the approved ones"
           else
@@ -270,10 +270,12 @@ jobs:
           if-no-files-found: ignore
 
   build:
-    # a pull request: Linux x86_64; main: and Linux arm64, macOS arm64,
-    # Windows; nightly and by hand: everything a release ships
+    # a pull request: Linux x86_64; main, nightly and by hand: everything a
+    # release ships (main's is the release's: a signature its macOS app
+    # lacks is a warning)
     if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     uses: ./.github/workflows/build.yml
     with:
-      set: ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'main' || 'all' }}
+      set: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
+      release: ${{ github.event_name == 'push' }}
     secrets: inherit

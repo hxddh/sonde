@@ -196,17 +196,27 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
         buckets: vec![],
     };
     let p = plan(&records, &opts);
-    assert_eq!(p.requests, 14);
-    assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+    assert_eq!(p.requests, 13);
+    // the bucket is not created again: it is outside the prefix
+    assert_eq!(
+        p.skipped,
+        [(
+            "creates or deletes a bucket, outside the prefix".to_string(),
+            1
+        )]
+        .into()
+    );
 
     // replay on another faithful store: nothing differs
     let twin = MiniS3::start(true).await;
     let log = RequestLog::new(1000);
     let done = replay(&client(&twin.url, log.clone()), &records, &opts, |_, _| {}).await;
-    assert!(done.iter().all(|d| d.skipped.is_none()), "{done:?}");
+    let skipped: Vec<_> = done.iter().filter_map(|d| d.skipped.as_deref()).collect();
+    assert_eq!(skipped, ["creates or deletes a bucket, outside the prefix"]);
     let replayed = log.list(&Filter::default(), 1000);
+    assert!(replayed.iter().all(|r| r.operation != "CreateBucket"));
     let c = compare(&records, &replayed, &done);
-    assert_eq!(c.compared, 14);
+    assert_eq!(c.compared, 13);
     assert_eq!(c.differ(), 0, "{c:#?}");
     // everything landed under the prefix; the batch delete removed its key there
     assert_eq!(
@@ -385,7 +395,7 @@ async fn a_replay_that_cannot_list_its_prefix_does_not_start() {
 }
 
 #[tokio::test]
-async fn a_bucket_that_is_not_there_yet_holds_nothing() {
+async fn a_bucket_that_is_not_there_is_not_created_and_nothing_is_sent() {
     let url = answering(404, "NoSuchBucket").await;
     let store = client(&url, RequestLog::default());
     let dir = tempfile::tempdir().unwrap();
@@ -394,11 +404,13 @@ async fn a_bucket_that_is_not_there_yet_holds_nothing() {
         buckets: vec![],
     };
     let out = dir.path().join("r.sonde");
-    let run = sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {})
-        .await
-        .unwrap();
-    assert_eq!(run.plan.requests, 1);
-    assert_eq!(run.removed, 0);
+    let Err(why) =
+        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await
+    else {
+        panic!("replayed into a bucket that is not there");
+    };
+    assert!(why.contains("a replay creates no bucket"), "{why}");
+    assert!(!out.exists());
 }
 
 #[tokio::test]

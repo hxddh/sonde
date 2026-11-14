@@ -15,7 +15,8 @@
         "description": "The guarantee's family (`conditionalWrites`, `multipart`, …)."
       },
       "title": {
-        "type": "string"
+        "type": "string",
+        "description": "Display text, not stable."
       },
       "description": {
         "type": "string"
@@ -25,18 +26,21 @@
       },
       "titleText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }
       },
       "descriptionText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }
       },
       "awsBehaviorText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }

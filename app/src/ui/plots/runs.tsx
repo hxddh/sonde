@@ -187,7 +187,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           <Dot value="before" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={INACTIVE} />
           <Dot value="after" color="tone" r={4.5} class="stroke-card stroke-[1.5]" inactiveOpacity={INACTIVE} />
           {/* its figures on its own line (the label's middle on the row's), past the further dot */}
-          <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: `${count(r.before)} → ${count(r.after)}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: ROW_FIGURE }))} />
+          <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: r.before === r.after ? count(r.after) : `${count(r.before)} → ${count(r.after)}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: ROW_FIGURE }))} />
           <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
           {/* how many: none, and the most of either run */}
           <PlotAxis placement="bottom" tickValues={[0, peak()]} format={(v) => (v === 0 ? "0" : t("run.bandRequests", { n: v }))} labelClass={BUCKET_TICK} />
@@ -217,7 +217,8 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
       .filter((x) => x.requests[0] + x.requests[1] > 0)
       .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
   const hovered = signal<number | null>(null);
-  const line = (x: { requests: [number, number] }) => t("prefixChange.line", { a: x.requests[0], b: x.requests[1] });
+  // (the same in both runs: one figure)
+  const line = (x: { requests: [number, number] }) => (x.requests[0] === x.requests[1] ? count(x.requests[1]) : t("prefixChange.line", { a: count(x.requests[0]), b: count(x.requests[1]) }));
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: r.x.prefix === "other" ? r.label : r.x.prefix, lines: [line(r.x)] } : null;

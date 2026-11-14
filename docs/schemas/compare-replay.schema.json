@@ -91,7 +91,7 @@
     "difference": {
       "type": "object",
       "properties": {
-        "operation": {
+        "kind": {
           "type": "string"
         },
         "original": {
@@ -116,7 +116,7 @@
         }
       },
       "required": [
-        "operation",
+        "kind",
         "original",
         "replay",
         "count",

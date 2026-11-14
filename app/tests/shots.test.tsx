@@ -91,10 +91,43 @@ for (const v of variants) {
       }
       await app.waitFor(shown, { timeout: 4000 });
     };
+    // a session's command: its button where the pane has room, else behind its ⋯ by its words
+    const act = async (id: string, label: string) => {
+      if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
+      await app.press("id:session-more");
+      await app.chooseMenuItem(label);
+    };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
     };
+    // The screens that draw measured figures (a run's times, a trial's run over its clean run, two runs compared, a
+    // program's runs) show committed sessions (tests/fixtures/sessions, which scripts/shots.sh puts in the tour's
+    // data folder): `./nightly-report.sh` run on two mornings, before its fix and after (with a slowdown trial).
+    // The tour's own runs are measured anew each time; their screens show what recording does, not its figures.
+    // The committed run after the fix, opened from the list of runs: the oldest are last, so the list is brought to
+    // its end, the newer of the program's two rows pressed (the first of the two in the list), and the list brought
+    // back to its start.
+    // A run opened by its row's name (the first of that name in the list), the list brought down to it and back.
+    const openRow = async (name: string, header: string) => {
+      await go("sessions");
+      if (!app.shows("id:session-list") && !app.shows("id:program-list")) await app.keyboard.press("mod+b");
+      if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
+      for (let n = 0; n < 30 && !app.shows(`id:session-list >> text:${name}`); n++) await app.scroll("id:session-list", 800);
+      await app.scroll("id:session-list", 800);
+      await app.wait(300);
+      // (its header says its command: the session shown is the one pressed; a press the list's settling undid, again)
+      const shown = () => app.shows("id:session-summary") && app.texts().some((x) => x.includes(header));
+      for (let n = 0; n < 4 && !shown(); n++) {
+        await app.press(`id:session-list >> text:${name} >> nth=0`);
+        await app.waitUntil(shown, { timeout: 4000 }).catch(() => {});
+      }
+      await app.waitUntil(shown, { timeout: 10000 });
+      if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
+      for (let n = 0; n < 30 && !app.shows("id:session-0"); n++) await app.scroll("id:session-list", -800);
+      await app.wait(600);
+    };
+    const fixture = () => openRow("nightly-report.sh", "./nightly-report.sh");
 
     await shot("01-welcome");
     await app.press("id:welcome-demo");
@@ -178,16 +211,23 @@ for (const v of variants) {
     await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
-    await app.press("id:trial-slowdown");
-    // (a long list of verdicts has it under the fold: brought up, and pressed again)
-    if (!(await app.waitFor("id:trial-note", { timeout: 10000 }).then(() => true, () => false)) && app.shows("id:trial-slowdown")) {
-      await app.scroll("id:history-pane", 500);
-      await app.wait(300);
-      await app.press("id:trial-slowdown");
+    // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
+    for (let n = 0; n < 6; n++) {
+      const opened = await app.press("id:trial-slowdown").then(() => app.waitFor("id:trial-note", { timeout: 5000 })).then(() => true, () => false);
+      if (opened) break;
+      await app.scroll("id:history-pane", 300);
+      await app.wait(500);
     }
     await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.wait(600);
     await shot("02i-trial-session");
+    // the run under faults over its clean run, on its Time pane: the committed run's slowdown trial, opened as the
+    // tour's was, from the run's Runs pane
+    await fixture();
+    await app.press("id:session-pane-mode-runs");
+    await app.waitFor("id:trial-slowdown", { timeout: 10000 });
+    await app.press("id:trial-slowdown");
+    await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await app.wait(900);
@@ -201,7 +241,8 @@ for (const v of variants) {
       await app.waitFor("id:output", { timeout: 5000 });
       await shot("02k-output");
     }
-    // the run's own session: what failed over its time, and the first byte against the rest
+    // the run's own session (the committed run, its clean run): what failed over its time, and the first byte against
+    // the rest
     await go("sessions");
     await app.waitFor("id:session-summary", { timeout: 10000 });
     await app.press("id:signal-errors");
@@ -216,37 +257,43 @@ for (const v of variants) {
     }
 
     await go("sessions");
-    // the programs run here, each over its runs
+    // the programs run here, each over its runs: the committed program's runs beside the list (its run is the one shown)
     await app.press("id:sessions-by-programs");
-    await app.wait(700);
+    await app.waitFor("id:program-list", { timeout: 10000 });
+    await app.press("id:session-pane-mode-runs");
+    await app.waitFor("id:history-pane", { timeout: 10000 });
+    await app.wait(900);
     await shot("03p-programs");
+    // (back on Operations: the example opens on the pane the runs were left on, and has no Runs of its own)
+    await app.press("id:session-pane-mode-operations");
+    await app.wait(500);
     await app.press("id:sessions-by-runs");
     // (the runs' list back first: a press before it settles is undone as it chooses its first run)
     if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
     await app.wait(700);
-    await app.press("id:open-example");
-    // read off the interface's thread: there once its header is (a variant after the first
-    // opens on the example already, and reads it again as the list changes: let that settle)
-    await app.wait(900);
-    await app.waitFor("id:session-summary", { timeout: 10000 });
-    // a variant after the first has the example in its list already: opened from there when the press kept the run shown
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
-    // (else opened from the Programs list, three rows long: a long list of runs has it under the fold)
+    // read off the interface's thread: there once its header is (a variant after the first
+    // opens on the example already, and reads it again as the list changes: let that settle;
+    // the example opened from its row when the list's settling undid the press)
+    await app.press("id:open-example");
+    await app.wait(900);
+    // (a press the list's settling undid: the example opened from its row instead)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
-      await pressUntil("id:sessions-by-programs", "id:program-list");
-      await pressUntil("text:gen-slatedb", "text:$ gen-slatedb s3://slate");
+      await openRow("gen-slatedb", "gen-slatedb s3://slate");
       await app.press("id:session-pane-mode-operations");
-      await pressUntil("id:sessions-by-runs", "id:session-list");
       await app.waitFor(wal, { timeout: 10000 });
     }
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
-    await shot("03b-operation");
+    // (the operation's chart of its requests draws itself in: shot once drawn)
+    await charts("03b-operation");
     // a narrow window's inspector comes in from the edge, its requests under the fold
     if (width < 1000) await app.scroll("id:inspector-scroll", 400);
     await app.press("id:op-request-0");
     await app.waitFor("id:record-detail");
+    // (a narrow window's inspector, scrolled to its requests, back at its start: where a drag stops differs run to run)
+    if (width < 1000) await app.scroll("id:inspector-scroll", -5000).catch(() => {});
     await shot("03c-request");
     await app.press("id:inspector-close");
     await app.press("id:observation-1");
@@ -293,6 +340,11 @@ for (const v of variants) {
     await app.press("id:signal-latency");
     await app.wait(700);
     await charts("03m-latency");
+    // the folded header holds the first three figures: bytes is pressed from the header unfolded
+    if (!app.shows("id:signal-bytes")) {
+      await app.scroll("id:time-pane", -10000);
+      await app.wait(500);
+    }
     if (app.shows("id:signal-bytes")) {
       await app.press("id:signal-bytes");
       await app.wait(700);
@@ -301,16 +353,11 @@ for (const v of variants) {
     await app.press("id:signal-errors");
     await app.wait(700);
     await charts("03o-errors");
-    // the same program run twice, before and after its fix: the tour's second run against its first (18 requests)
-    if (!app.shows("id:session-1")) await app.keyboard.press("mod+b");
-    if (app.shows("id:session-1")) {
-      await app.press("id:session-1");
-      await app.waitFor("id:session-summary", { timeout: 10000 });
-      await app.wait(600);
-    }
-    await app.press("id:compare-open");
+    // the same program run twice, before and after its fix: the committed run after it against the one before
+    await fixture();
+    await act("compare-open", "Compare…");
     const labels = app.menu()?.map((m) => m.label) ?? [];
-    const run = labels.find((l) => l.includes("curl") && /· 18$/.test(l)) ?? labels.find((l) => l.includes("curl"));
+    const run = labels.find((l) => l.includes("nightly-report"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
@@ -321,8 +368,8 @@ for (const v of variants) {
     } else if (app.menu()) await app.closeMenu();
 
     // what a replay on another store would send, said before it runs
-    await app.waitFor("id:replay-open", { timeout: 10000 });
-    await app.press("id:replay-open");
+    await app.waitFor("id:session-more", { timeout: 10000 });
+    await act("replay-open", "Replay on…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");

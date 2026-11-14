@@ -267,7 +267,7 @@ pub fn write_session_json(
     )?;
     w.field("signals", &crate::signals::signals(&s.records, prices))?;
     w.field("summary", &summarize(&s.records))?;
-    w.field("version", &1)?;
+    w.field("version", &2)?;
     w.end_object()?;
     w.finish()?;
     Ok(())

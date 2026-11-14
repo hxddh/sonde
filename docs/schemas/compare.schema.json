@@ -86,7 +86,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "operation": {
+          "kind": {
             "type": "string"
           },
           "missed": {
@@ -118,7 +118,7 @@
           }
         },
         "required": [
-          "operation",
+          "kind",
           "missed",
           "requests",
           "waitingMs"
@@ -132,10 +132,12 @@
         "type": "object",
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
@@ -154,10 +156,12 @@
         "type": "object",
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
@@ -171,23 +175,24 @@
     },
     "findings": {
       "type": "array",
-      "description": "Each finding of either run, where it stands: fixed first, then less, back, new, open.",
+      "description": "Each finding of either run, where it stands: fixed first, then less, back, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`).",
       "items": {
         "type": "object",
         "properties": {
           "identity": {
             "type": "string",
-            "description": "The same finding across runs: its kind and what it is about."
+            "description": "The same finding across runs: its kind and what it is about ([fix loop](../cli.md#the-fix-loop))."
           },
           "state": {
             "enum": [
               "fixed",
               "less",
+              "more",
               "back",
               "new",
               "open"
             ],
-            "description": "fixed: gone at any threshold; less: under its threshold; back: fixed in an earlier run, here again."
+            "description": "fixed: gone at any threshold; less and more: still there at any threshold, by its counts; back: fixed in an earlier run, or under its threshold in the run before, over it again; open: as much in both."
           },
           "level": {
             "enum": [
@@ -196,23 +201,27 @@
             ]
           },
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "Display text, not stable."
           },
           "phrases": {
             "type": "array",
+            "description": "Display text, not stable.",
             "items": {
               "$ref": "#/$defs/phrase"
             }
           },
           "was": {
             "type": "object",
-            "description": "As it read in the run before (less).",
+            "description": "As it read in the run before, when it reads otherwise now (less, more, back).",
             "properties": {
               "text": {
-                "type": "string"
+                "type": "string",
+                "description": "Display text, not stable."
               },
               "phrases": {
                 "type": "array",
+                "description": "Display text, not stable.",
                 "items": {
                   "$ref": "#/$defs/phrase"
                 }
@@ -222,6 +231,13 @@
               "text",
               "phrases"
             ]
+          },
+          "counts": {
+            "type": "array",
+            "description": "How much of it each run had (times listed, requests throttled or failed), the run before first.",
+            "items": {
+              "type": "integer"
+            }
           },
           "predicted": {
             "$ref": "#/$defs/saving",
@@ -236,7 +252,7 @@
           },
           "savedText": {
             "type": "string",
-            "description": "The measured saving against the predicted."
+            "description": "Display text, not stable: the measured saving against the predicted."
           }
         },
         "required": [

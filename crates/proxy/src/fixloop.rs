@@ -1,9 +1,13 @@
 //! The fix loop: a finding followed across a program's runs. A finding is
 //! the same finding while its identity is ([`crate::profile::finding_identity`]:
 //! its kind and what it is about, never a run's own ids or counts). Between
-//! two runs it is *fixed* (gone at any threshold), *less* (still there,
-//! under its threshold), *open*, *new* or *back* (fixed before, here again);
-//! a fixed one says what it saved, measured, against what was predicted.
+//! two runs it is *fixed* (gone at any threshold), *less* or *more* (still
+//! there, its count fallen or grown), *open* (the same), *new* or *back*
+//! (fixed or under its threshold before, over it again); a fixed one says
+//! what it saved, measured, against what was predicted. A run's failed
+//! requests are compared by what failed them, as findings of their own.
+//! Identities are made by rules of a version ([`crate::profile::IDENTITY_RULES`]), kept
+//! with the findings: ones kept under older rules are made again.
 //! Each program's findings are kept beside its runs (`findings.json`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,13 +27,16 @@ use crate::session::SessionHeader;
 pub enum State {
     /// Gone at any threshold.
     Fixed,
-    /// Still there, under its threshold.
+    /// Still there (at any threshold), less of it than in the run before.
     Less,
-    /// Fixed in an earlier run, and here again.
+    /// Fixed in an earlier run, or under its threshold in the run before,
+    /// and here again.
     Back,
     /// Not in the run before.
     New,
-    /// In this run and the one before.
+    /// Still there (at any threshold), more of it than in the run before.
+    More,
+    /// In this run and the one before, as much of it.
     Open,
 }
 
@@ -38,6 +45,7 @@ impl State {
         match self {
             State::Fixed => "fixed",
             State::Less => "less",
+            State::More => "more",
             State::Back => "back",
             State::New => "new",
             State::Open => "open",
@@ -50,6 +58,7 @@ impl State {
             match self {
                 State::Fixed => "fix.fixed",
                 State::Less => "fix.less",
+                State::More => "fix.more",
                 State::Back => "fix.back",
                 State::New => "fix.new",
                 State::Open => "fix.open",
@@ -92,9 +101,15 @@ pub struct FindingChange {
     /// As it reads in the later run (as it read in the earlier, when fixed).
     pub text: String,
     pub phrases: Vec<Phrase>,
-    /// As it read in the run before, when it reads otherwise now (less).
+    /// As it read in the run before, when it reads otherwise now (less,
+    /// more, back).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub was: Option<FindingText>,
+    /// How much of it each run had (its count: times listed, requests
+    /// throttled or failed), the run before first: what less and more are
+    /// judged by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<[usize; 2]>,
     /// What acting on it was predicted to save (in the run it was found in).
     pub predicted: Saving,
     /// What it saved, measured between the runs (fixed and less).
@@ -247,12 +262,33 @@ fn measured(o: &Observation, left: Option<&Observation>, a: &Run, b: &Run) -> Op
     Some(Saving { requests, ms })
 }
 
-/// Each finding of either run, where it stands in `b` against `a`: fixed,
-/// less, new and open, in that order (back is said by a program's kept
-/// findings, [`Program::mark_back`]). A finding under its threshold in
-/// either run is still there: less in `b`, or open when `a` had it under
-/// its threshold. One of time alone is judged by its requests: under its
-/// threshold with as many requests one after another, it is open.
+/// How much of a finding a run had: its count (times a prefix was listed, a
+/// key read, requests throttled), else the requests it bears on.
+fn count_of(o: &Observation) -> usize {
+    o.phrases
+        .first()
+        .and_then(|p| p.args.get("n"))
+        .and_then(|n| n.as_ref().replace(',', "").parse().ok())
+        .unwrap_or(o.impact)
+}
+
+/// Where a finding in both runs stands by its counts: more, less or as much.
+fn by_counts(was: usize, now: usize) -> State {
+    match now.cmp(&was) {
+        std::cmp::Ordering::Greater => State::More,
+        std::cmp::Ordering::Less => State::Less,
+        std::cmp::Ordering::Equal => State::Open,
+    }
+}
+
+/// Each finding of either run, where it stands in `b` against `a`, by its
+/// counts, over its threshold or under it: fixed (gone at any threshold),
+/// less, back (under its threshold before, over it now), new, more and
+/// open (as much), in that order; a finding fixed by an earlier run is back
+/// by a program's kept findings ([`Program::mark_back`]). One of time alone
+/// is judged by its requests: with about as many requests one after
+/// another (a fifth either way), it is open, whatever its timing. Then each
+/// kind of failure ([`crate::profile::error_class`]) whose count moved.
 pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
     let named = |os: &[Observation]| -> BTreeMap<String, usize> {
         os.iter()
@@ -262,13 +298,14 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             .collect()
     };
     let (ia, ib) = (named(&a.observations), named(&b.observations));
-    let open = |id: &str, now: &Observation| FindingChange {
+    let change = |id: &str, state: State, now: &Observation, was: &Observation| FindingChange {
         identity: id.to_string(),
-        state: State::Open,
+        state,
         level: now.level,
         text: now.text.clone(),
         phrases: now.phrases.clone(),
-        was: None,
+        was: (now.text != was.text).then(|| text_of(was)),
+        counts: Some([count_of(was), count_of(now)]),
         predicted: Saving::predicted(now),
         measured: None,
         saved: None,
@@ -277,30 +314,36 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
     let mut out = Vec::new();
     for (id, &i) in &ia {
         let o = &a.observations[i];
-        if let Some(&j) = ib.get(id) {
-            out.push(open(id, &b.observations[j]));
-            continue;
-        }
-        let left = b.traces.get(id);
-        // as many of its requests one after another: only their timing moved
+        let left = ib.get(id).map(|&j| &b.observations[j]).or(b.traces.get(id));
+        // requests one after another: their count moves with their timing,
+        // so within a fifth either way it is as much
         if of_time(o)
             && let Some(t) = left
-            && t.timed_ids.len() * 10 >= o.timed_ids.len() * 9
         {
-            out.push(open(id, t));
+            let (was, now) = (o.timed_ids.len(), t.timed_ids.len());
+            if now * 5 >= was * 4 && now * 4 <= was * 5 {
+                let mut c = change(id, State::Open, t, o);
+                c.was = None;
+                out.push(c);
+                continue;
+            }
+        }
+        // by its counts, over its threshold or under it now: as much is open
+        let state = match left {
+            None => State::Fixed,
+            Some(t) => by_counts(count_of(o), count_of(t)),
+        };
+        if state != State::Fixed && state != State::Less {
+            let t = left.unwrap_or(o);
+            out.push(change(id, state, t, o));
             continue;
         }
         let predicted = Saving::predicted(o);
         let m = measured(o, left, a, b);
         let saved = m.and_then(|m| saved_phrase(m, predicted));
-        let (state, text, phrases, was) = match left {
-            Some(t) => (
-                State::Less,
-                t.text.clone(),
-                t.phrases.clone(),
-                Some(text_of(o)),
-            ),
-            None => (State::Fixed, o.text.clone(), o.phrases.clone(), None),
+        let (text, phrases, was) = match left {
+            Some(t) => (t.text.clone(), t.phrases.clone(), Some(text_of(o))),
+            None => (o.text.clone(), o.phrases.clone(), None),
         };
         out.push(FindingChange {
             identity: id.clone(),
@@ -309,6 +352,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             text,
             phrases,
             was,
+            counts: Some([count_of(o), left.map_or(0, count_of)]),
             predicted,
             measured: m,
             saved_text: saved.as_ref().map(Phrase::en),
@@ -319,23 +363,86 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         if ia.contains_key(id) {
             continue;
         }
-        let mut c = open(id, &b.observations[j]);
-        // over its threshold again is open; new is new to both runs
-        if !a.traces.contains_key(id) {
-            c.state = State::New;
-        }
+        let now = &b.observations[j];
+        // under its threshold before and over it now is back
+        let c = match a.traces.get(id) {
+            Some(t) => change(id, State::Back, now, t),
+            None => {
+                let mut c = change(id, State::New, now, now);
+                c.counts = Some([0, count_of(now)]);
+                c
+            }
+        };
         out.push(c);
     }
-    // fixed first, then less, new, open; a run's own order within each
+    out.extend(error_changes(a, b));
+    // fixed first, then less, back, new, more, open; a run's own order
+    // within each, failures last
     let rank = |c: &FindingChange| {
         let at = ib
             .get(&c.identity)
             .or_else(|| ia.get(&c.identity))
             .copied()
-            .unwrap_or(0);
+            .unwrap_or(usize::MAX);
         (c.state, at)
     };
     out.sort_by_key(rank);
+    out
+}
+
+/// The kind a run's failures are said by, as a finding's identity begins.
+pub const ERRORS: &str = "obs.errors";
+
+/// Each kind of failure whose count moved between `a` and `b`: as a
+/// finding (`obs.errors|503 InternalError`), new, fixed, more or less.
+fn error_changes(a: &Run, b: &Run) -> Vec<FindingChange> {
+    let classes: std::collections::BTreeSet<&String> = a
+        .error_classes
+        .keys()
+        .chain(b.error_classes.keys())
+        .collect();
+    let mut out = Vec::new();
+    for class in classes {
+        let was = a.error_classes.get(class).copied().unwrap_or(0);
+        let now = b.error_classes.get(class).copied().unwrap_or(0);
+        let state = match (was, now) {
+            _ if was == now => continue,
+            (0, _) => State::New,
+            (_, 0) => State::Fixed,
+            _ => by_counts(was, now),
+        };
+        let said = |n: usize| {
+            p(
+                "obs.errors",
+                &[
+                    ("n", n.to_string()),
+                    ("s", plural(n)),
+                    ("class", class.clone()),
+                ],
+            )
+        };
+        // a fixed one reads as it was
+        let phrase = said(if now == 0 { was } else { now });
+        out.push(FindingChange {
+            identity: format!("{ERRORS}|{class}"),
+            state,
+            level: "warn",
+            text: phrase.en(),
+            phrases: vec![phrase],
+            was: (was > 0 && now > 0).then(|| {
+                let w = said(was);
+                FindingText {
+                    text: w.en(),
+                    phrases: vec![w],
+                }
+            }),
+            counts: Some([was, now]),
+            predicted: Saving::default(),
+            measured: None,
+            saved: None,
+            saved_text: None,
+        });
+    }
     out
 }
 
@@ -362,7 +469,7 @@ pub struct Tracked {
 }
 
 /// A program's findings over its runs.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Program {
     /// The newest run taken in: when it was recorded (RFC 3339) and its file
@@ -371,6 +478,24 @@ pub struct Program {
     pub last: Option<(String, String)>,
     #[serde(default)]
     pub findings: BTreeMap<String, Tracked>,
+    /// The rules of identity its findings were kept by
+    /// ([`crate::profile::IDENTITY_RULES`]; none written: 19.0's, 1).
+    #[serde(default = "first_rules")]
+    pub rules: u32,
+}
+
+fn first_rules() -> u32 {
+    1
+}
+
+impl Default for Program {
+    fn default() -> Self {
+        Program {
+            last: None,
+            findings: BTreeMap::new(),
+            rules: crate::profile::IDENTITY_RULES,
+        }
+    }
 }
 
 impl Program {
@@ -400,14 +525,13 @@ impl Program {
         found: &[Observation],
         changes: &[FindingChange],
     ) -> bool {
-        // RFC 3339 of one offset (UTC) orders as text
-        if self
+        // RFC 3339 of one offset (UTC) orders as text. A run older than the
+        // last taken in (runs at once, ending out of order) adds what is
+        // not kept yet, and changes nothing a later run said
+        let late = self
             .last
             .as_ref()
-            .is_some_and(|(at, _)| at.as_str() >= created)
-        {
-            return false;
-        }
+            .is_some_and(|(at, _)| at.as_str() >= created);
         let tracked = |kind: String, text: &str, predicted: Saving| Tracked {
             kind,
             text: text.to_string(),
@@ -417,17 +541,27 @@ impl Program {
             measured: None,
             fixed_in: Vec::new(),
         };
+        let said: HashMap<&str, State> = changes
+            .iter()
+            .map(|c| (c.identity.as_str(), c.state))
+            .collect();
+        let mut took = false;
         for o in found.iter().filter(|o| !o.identity.is_empty()) {
+            if late && self.findings.contains_key(&o.identity) {
+                continue;
+            }
+            took = true;
             let kind = o.phrases.first().map_or("", |p| p.key).to_string();
             let t = self
                 .findings
                 .entry(o.identity.clone())
                 .or_insert_with(|| tracked(kind, &o.text, Saving::predicted(o)));
-            // fixed before: back; under its threshold before: open again
-            let now = match t.state {
-                State::Fixed => State::Back,
-                State::Less => State::Open,
-                s => s,
+            // fixed before, or under its threshold the run before: back
+            let now = match (t.state, said.get(o.identity.as_str())) {
+                (State::Fixed, _) | (_, Some(State::Back)) => State::Back,
+                (_, Some(State::Less)) => State::Less,
+                (State::Back, _) => State::Back,
+                _ => State::Open,
             };
             if now != t.state {
                 t.state = now;
@@ -437,10 +571,13 @@ impl Program {
             t.text = o.text.clone();
             t.predicted = Saving::predicted(o);
         }
-        for c in changes
-            .iter()
-            .filter(|c| matches!(c.state, State::Fixed | State::Less))
-        {
+        for c in changes.iter().filter(|c| {
+            matches!(c.state, State::Fixed | State::Less) && !c.identity.starts_with(ERRORS)
+        }) {
+            if late && self.findings.contains_key(&c.identity) {
+                continue;
+            }
+            took = true;
             let kind = c.phrases.first().map_or("", |p| p.key).to_string();
             let t = self
                 .findings
@@ -457,8 +594,47 @@ impl Program {
                 t.fixed_in.push(created.to_string());
             }
         }
+        if late {
+            return took;
+        }
         self.last = Some((created.to_string(), run.to_string()));
         true
+    }
+
+    /// The findings kept under older rules of identity, made again by
+    /// these ([`crate::profile::IDENTITY_RULES`]): what each is about made
+    /// [`crate::profile::stable`] again. Findings that become one, or were
+    /// told apart by rank (`#2`), are let go: what told them apart is not
+    /// kept. How many were let go.
+    pub fn rekey(&mut self) -> usize {
+        use crate::profile::{IDENTITY_RULES, stable};
+        if self.rules >= IDENTITY_RULES {
+            return 0;
+        }
+        self.rules = IDENTITY_RULES;
+        let mut by: BTreeMap<String, Vec<(String, Tracked)>> = BTreeMap::new();
+        for (id, t) in std::mem::take(&mut self.findings) {
+            // `#2` of an older run's rank
+            let base = match id.rsplit_once('#') {
+                Some((b, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => b,
+                _ => id.as_str(),
+            };
+            let mut parts = base.split('|');
+            let kind = parts.next().unwrap_or("");
+            let about: Vec<String> = parts.map(stable).collect();
+            let new = format!("{kind}|{}", about.join("|"));
+            by.entry(new).or_default().push((id, t));
+        }
+        let mut dropped = 0;
+        for (id, mut same) in by {
+            if same.len() == 1 {
+                let (_, t) = same.pop().expect("one");
+                self.findings.insert(id, t);
+            } else {
+                dropped += same.len();
+            }
+        }
+        dropped
     }
 }
 
@@ -472,15 +648,24 @@ pub fn folder_of(run: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// Every program's findings: `findings.json` beside its runs. None
+/// Every program's findings: `findings.json` beside its runs, those kept
+/// under older rules of identity made again ([`Program::rekey`]). None
 /// kept when there is no file; a damaged one is an error.
 pub fn read(dir: &Path) -> Result<BTreeMap<String, Program>, crate::program::Unreadable> {
     let path = dir.join("findings.json");
     match std::fs::read(&path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| crate::program::Unreadable {
-            path,
-            why: e.to_string(),
-        }),
+        Ok(b) => {
+            let mut all: BTreeMap<String, Program> =
+                serde_json::from_slice(&b).map_err(|e| crate::program::Unreadable {
+                    path,
+                    why: e.to_string(),
+                })?;
+            // kept under older rules of identity: made again by these
+            for program in all.values_mut() {
+                program.rekey();
+            }
+            Ok(all)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
         Err(e) => Err(crate::program::Unreadable {
             path,
@@ -616,6 +801,7 @@ pub fn since_last(
                     text: o.text.clone(),
                     phrases: o.phrases.clone(),
                     was: None,
+                    counts: None,
                     predicted: Saving::predicted(o),
                     measured: None,
                     saved: None,

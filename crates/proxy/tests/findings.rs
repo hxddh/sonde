@@ -62,7 +62,7 @@ fn a_head_before_each_get_is_a_request_too_many() {
         .expect("HEAD then GET");
     assert_eq!(
         f.text,
-        "4 objects were checked with HEAD and then read with GET: the GET alone answers both"
+        "4 objects under b/data/ were checked with HEAD and then read with GET: the GET alone answers both"
     );
     assert_eq!(
         f.saving.as_ref().unwrap().en(),

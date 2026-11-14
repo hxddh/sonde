@@ -279,7 +279,7 @@ async fn every_json_output_is_as_its_schema_says() {
     let demo = tokio::process::Command::new(env!("CARGO_BIN_EXE_sonde"))
         .env("SONDE_CONFIG_DIR", b.path("config"))
         .env("SONDE_DATA_DIR", b.path("data"))
-        .arg("demo")
+        .args(["run", "--demo"])
         .output()
         .await
         .unwrap();
@@ -303,13 +303,34 @@ async fn every_json_output_is_as_its_schema_says() {
         then.standing = trial::Standing::Broke;
         let dir = session.parent().unwrap();
         let day = chrono::Utc::now() - chrono::Duration::days(1);
-        trial::record(dir, "sonde demo", "earlier.sonde", day, &[then]).unwrap();
+        trial::record(dir, "sonde run --demo", "earlier.sonde", day, &[then]).unwrap();
         let name = session.file_name().unwrap().to_string_lossy();
-        trial::record(dir, "sonde demo", &name, chrono::Utc::now(), &[now]).unwrap();
+        trial::record(dir, "sonde run --demo", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
     // reading a session
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
+    // one with nothing found: no what-if, as the schema says
+    {
+        let quiet = b.path("quiet.log");
+        std::fs::write(
+            &quiet,
+            "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n",
+        )
+        .unwrap();
+        let q = b.path("quiet.sonde");
+        let text = std::fs::read_to_string(&quiet).unwrap();
+        let (_, session) = sonde_proxy::import::import(&text, "quiet").unwrap();
+        sonde_proxy::import::save(&session, &q).unwrap();
+        let q = q.to_str().unwrap();
+        let shown = b.json(&["show", q, "-f", "json"], 0).await;
+        assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
+        holds("show", &shown);
+        holds(
+            "show-summary",
+            &b.json(&["show", q, "--summary", "-f", "json"], 0).await,
+        );
+    }
     holds(
         "show",
         &b.json(&["show", s, "--errors", "-f", "json"], 0).await,
@@ -317,7 +338,7 @@ async fn every_json_output_is_as_its_schema_says() {
     let summary = b.json(&["show", s, "--summary", "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
     holds("show-summary", &summary);
-    for by in ["operation", "prefix", "size", "caller", "sdk", "status"] {
+    for by in ["kind", "prefix", "size", "caller", "sdk", "status"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
@@ -352,7 +373,7 @@ async fn every_json_output_is_as_its_schema_says() {
                 "a",
                 "--bucket",
                 "demo=data",
-                "-y",
+                "--yes",
                 "-o",
                 r,
                 "-f",
@@ -378,7 +399,7 @@ async fn every_json_output_is_as_its_schema_says() {
                 "b",
                 "--bucket",
                 "demo=data",
-                "-y",
+                "--yes",
                 "-f",
                 "json",
             ],
@@ -524,4 +545,55 @@ fn every_schema_is_checked_and_documented() {
             "{name}"
         );
     }
+}
+
+/// The contract promises figures and ids, not wording: every phrase array
+/// (`…Text`) and `layout inspect`'s display tables say so, those tables are
+/// not required, and no output names an S3 call `operation` (it is a
+/// `kind`; an operation is a program's).
+#[test]
+fn display_text_is_marked_and_an_s3_call_is_a_kind() {
+    fn walk(v: &Value, name: &str, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(Value::Object(props)) = o.get("properties") {
+                    let required: Vec<&str> = o
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .map(|r| r.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    for (k, p) in props {
+                        let said = p["description"]
+                            .as_str()
+                            .is_some_and(|d| d.starts_with("Display text, not stable"));
+                        let layout = name == "layout-inspect"
+                            && ["headline", "facts", "tables"].contains(&k.as_str());
+                        if (k.ends_with("Text") || layout) && !said {
+                            out.push(format!("{name}: {k} is not marked display text"));
+                        }
+                        if layout && required.contains(&k.as_str()) {
+                            out.push(format!("{name}: {k} is required"));
+                        }
+                        if k == "operation" {
+                            out.push(format!("{name}: an S3 call named `operation`"));
+                        }
+                    }
+                }
+                for x in o.values() {
+                    walk(x, name, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, name, out)),
+            _ => {}
+        }
+    }
+    let mut wrong = Vec::new();
+    for e in std::fs::read_dir(schemas_dir()).unwrap().flatten() {
+        let file = e.file_name().to_string_lossy().into_owned();
+        let Some(name) = file.strip_suffix(".schema.json") else {
+            continue;
+        };
+        walk(&schema(name), name, &mut wrong);
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

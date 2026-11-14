@@ -192,6 +192,8 @@ export const PANE = {
   mainLeast: 480,
   /** Run's program and its operations */
   terminalLeast: 320,
+  /** the program's output once it has ended: it yields to the result beside it */
+  terminalDone: 200,
   operationsLeast: 340,
   /** a session's output beside its operations */
   outputLeast: 240,
@@ -349,9 +351,10 @@ const iconTint: Record<Variant, Tint> = {
 
 /** The app's tooltip: a short hint, and the shortcut when there is one. */
 export function Tip(props: { text: string; shortcut?: string }) {
+  // (a hint of a sentence or two, how to read a chart, wraps rather than crossing the window)
   return (
-    <Tooltip placement="bottom" class="flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
-      <Text class="text-small text-background">{props.text}</Text>
+    <Tooltip placement="bottom" class="max-w-80 flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
+      <Text class="min-w-0 shrink text-small text-background">{props.text}</Text>
       <If when={props.shortcut}>{(k) => <Text class="font-mono text-caption text-background opacity-70">{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
@@ -540,8 +543,8 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
-  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "injected" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const look = () => props.look ?? "full";
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (
@@ -562,7 +565,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   // a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile
   const figure = () => <Text class={`text-heading font-bold tabular-nums ${look() === "line" ? "shrink-0 line-clamp-1" : "min-w-0 flex-1 line-clamp-2"} ${tint()}`}>{props.value}</Text>;
   return (
-    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
+    // (in a row of tiles, as high as the row: `Tiles` gives it its look)
+    <Card pad="tile" class={`${props.look ? "grow" : ""} ${props.class ?? ""}`} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
       <If
         when={look() !== "line"}
         else={
@@ -714,8 +718,8 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
  * is made of and Escape closes it (Native Shell's Popover): the keyboard,
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
-  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "injected" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
+  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const body = (
     <View class="gap-1">
       <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
@@ -774,11 +778,15 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
   const per = () => (props.ranked ? tilesFit(width(), props.items.length, min(), GAP) : tilesPerRow(width(), props.items.length, min(), GAP));
   const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
   const column = () => !props.ranked && per() === 1 && props.items.length > 1;
-  const look = (): TileLook => (props.short || column() ? "line" : (each() ?? min()) < min() ? "tight" : "full");
+  // the one-line tile only where tiles stand one per row: abreast, a short pane keeps what each counts over
+  // its figure (a name squeezed beside a figure broke inside its words: "Request / s")
+  const alone = () => per() === 1 && props.items.length > 1;
+  const look = (): TileLook => (alone() ? "line" : props.short || (each() ?? min()) < min() ? "tight" : "full");
   return (
     <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row ${column() ? "gap-2" : "gap-3"} ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       {props.items.map((tile, i) => (
-        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
+        // (a tile fills its place in the row: tiles abreast are of one height)
+        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "flex-col" : "min-w-36 flex-1 flex-col"}>
           {typeof tile === "function" ? tile(look) : tile}
         </View>
       ))}

@@ -169,13 +169,13 @@ export function SessionViewer(props: { data: SharedSession }) {
         <SessionHeader
           view={d}
           onSignal={d.profile ? showSignal : undefined}
-          actions={
+          actions={() => (
             // where the app has a session's commands: whose page this is
             <View class="shrink-0 flex-row items-baseline gap-2">
               <Strong>sonde</Strong>
               <Muted class="text-small">{t("viewer.shared")}</Muted>
             </View>
-          }
+          )}
         />
       </View>
       <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">

@@ -66,6 +66,7 @@ impl Standing {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Where {
+    #[serde(rename = "kind", alias = "operation")]
     pub operation: String,
     /// `bucket/key`, or the bucket and what was listed.
     pub key: String,
@@ -1477,7 +1478,23 @@ pub fn judge(
             .any(|x| x.id == r.id)
     };
     let advice = if standing == Standing::Refused {
-        Some(Said::new("trial.advice.policy", &[]))
+        // a key with the run's name in it has its place already
+        let placed = first_blocked.is_some_and(|r| {
+            let at = format!(
+                "{}/{}",
+                r.bucket.as_deref().unwrap_or_default(),
+                r.key.as_deref().unwrap_or_default()
+            );
+            unplace(&at, &scenario.name).contains(PLACE)
+        });
+        Some(Said::new(
+            if placed {
+                "trial.advice.policy.placed"
+            } else {
+                "trial.advice.policy"
+            },
+            &[],
+        ))
     } else {
         turned_on.filter(|r| given_up(r)).map(|r| {
             let sdk = crate::callers::sdk(r);
@@ -3794,7 +3811,7 @@ mod tests {
         );
         // as JSON, for the app
         let j = serde_json::to_value(&t).unwrap();
-        assert_eq!(j["where"]["operation"], "PutObject");
+        assert_eq!(j["where"]["kind"], "PutObject");
         assert_eq!(j["where"]["caller"], "/home/me/job/etl.py:12 in save");
         assert_eq!(j["advice"]["key"], "trial.advice.retries");
         let back: Trial = serde_json::from_value(j).unwrap();
@@ -3852,9 +3869,15 @@ mod tests {
             t.reasons[0],
             "refused by the recording policy (no-delete): 1 request more than in the clean run, so what the program does under the fault cannot be told"
         );
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy");
+        // its key has the run's place already: not told to add one
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy.placed");
         assert_eq!(t.at.as_ref().unwrap().key, "b/etl-slowdown/state");
         assert_eq!(worst(std::slice::from_ref(&t)), Some(Standing::Refused));
+        // a key the same in every run is told to take one
+        let mut shared = run[0].clone();
+        shared.key = Some("state".into());
+        let t = judge(&slowdown(), &[put(1, 0, "state", 200)], 0, &[shared], 1);
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy");
         // refused in the clean run as well: the program's own, judged as ever
         let t = judge(&slowdown(), &run, 0, &run, 1);
         assert_eq!(t.standing, Standing::Broke);

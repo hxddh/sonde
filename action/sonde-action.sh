@@ -26,15 +26,29 @@ install() {
     sonde --version
     return
   fi
-  if [ -z "$version" ]; then
-    case "${GITHUB_ACTION_REF:-}" in
-      # a release's tag (v19.0.1) is that release; a major's (v19) the newest of it
-      v[0-9]*) version="${GITHUB_ACTION_REF#v}" ;;
-      *) version=latest ;;
+  local ref="${GITHUB_ACTION_REF:-}"
+  if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
+    # a release's tag (v20.0.1) is that release; a major's (v20) the newest of it
+    [ -n "$version" ] || version="${ref#v}"
+  else
+    # a branch, a commit or a local checkout (`uses: ./`): its scripts are
+    # of the version its Cargo.toml says, and run with a sonde of that
+    # major, never with whatever release is the newest
+    local own major
+    own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (20, 20.0.0)"
+    major="${own%%.*}"
+    case "$version" in
+      latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;
+      "")
+        version="$major"
+        note "the action at ${ref:-a local checkout} is sonde $own's: installing the newest $major.x"
+        ;;
     esac
   fi
   local dir="$work/bin"
-  SONDE_VERSION="$version" SONDE_INSTALL_DIR="$dir" sh "$here/../install.sh"
+  SONDE_VERSION="$version" SONDE_INSTALL_DIR="$dir" sh "$here/../install.sh" ||
+    fail "sonde $version could not be installed (said above); a major with no release yet has nothing to install: set the version input, or use the action at a release's tag"
   echo "$dir" >>"${GITHUB_PATH:-/dev/null}"
 }
 
@@ -74,13 +88,18 @@ baseline() {
       return
       ;;
   esac
-  local base="${GITHUB_BASE_REF:-}" artifact="${SONDE_ARTIFACT:-sonde}"
-  [ -n "$base" ] || base="${GITHUB_REF_NAME:-}"
+  local base="${GITHUB_BASE_REF:-}" artifact="${SONDE_ARTIFACT:-sonde}" event=push
+  # a pull request against its base branch's pushes; any other run against
+  # this branch's earlier runs of its own kind (a push's, a schedule's)
+  if [ -z "$base" ]; then
+    base="${GITHUB_REF_NAME:-}"
+    event="${GITHUB_EVENT_NAME:-push}"
+  fi
   [ -n "$base" ] || fail "no branch to take a baseline from (GITHUB_BASE_REF, GITHUB_REF_NAME)"
   local workflow ids id dir="$work/baseline"
   workflow="$(workflow_file)"
   ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --branch "$base" \
-    --event push --status completed --limit 6 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+    --event "$event" --status completed --limit 6 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
   for id in $ids; do
     # (a push's own run is not its baseline)
     [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
@@ -95,7 +114,7 @@ baseline() {
       fi
     fi
   done
-  warn "no baseline: no run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget alone"
+  warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget alone"
   out baseline auto
 }
 

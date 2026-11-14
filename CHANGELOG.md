@@ -2,6 +2,44 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [20.0.0] - 2026-11-14
+
+20.0 breaks without a 19.x announcing it, by the owner's decision ([contract](docs/contract.md)). It reads 19.0's
+sessions. From here a break is announced one version ahead.
+
+### Changed
+
+- One name for each thing: an S3 call is a `kind` (`requests[].kind`, `summary.kinds`, `show --by kind`); sessions
+  are written in format 2.
+- A program is its name, else its command with what changes between runs (dates, numbers, ids) left out, so a
+  job run with a new `--date` keeps its baseline.
+- Findings keep their identity across runs when keys hold `key=value` parts, numbers or ids (identity rules v2);
+  less, more and open are judged by a finding's count.
+- `sonde demo` is `sonde run --demo` (without a command, the tour); `--allow-writes` is `--policy allow`; `prune`
+  confirms with `--confirm COUNT`; every flag has help.
+- `record-policy` and `name-callers` move to `sonde.toml` (`[record]`); `config.toml` keeps what sonde keeps.
+- The contract promises figures, ids and exit codes, not display text.
+- The interface: every Time chart says in a sentence what it shows, computed from what it draws; a clean run never
+  shows "Broke"; sonde's own answers are one colour; the header folds at the least window.
+- Releases publish CI's green build of the same commit; main builds and tours Linux, macOS and Windows; the Action
+  at a branch or commit installs its own major, and is tried live after each release.
+
+### Fixed
+
+- `check` fails a run whose program failed, and never checks another program's session.
+- `compare` reads more requests as "more", not "less"; after a program's first run it says there is none before.
+- `run`: an unknown option or no endpoint exits 64; `-o` refuses an existing file without `--force`; a command
+  that cannot start leaves no session; SIGTERM exits 143 and says so.
+- Replay never creates or deletes a bucket, and refuses one that is not there before sending anything.
+- Control characters in keys and program text are escaped wherever sonde prints.
+- `import s3://`: an upload completed in a later pass is not called unfinished; a cut CloudTrail document is bad
+  data (65).
+- The proxy forwards `.` and `..` key segments as sent; no-delete lets a program remove what it made in the same
+  recording.
+- Trials say "did not break" only when every scenario was judged; `--again` keeps the trial's flags.
+- The tour shows committed sessions where it draws measured figures, so no picture is exempt; budgets gate on
+  peak memory.
+
 ## [19.0.0] - 2026-11-13
 
 19.0 drops compatibility with every earlier version: no aliases, shims, migrations or old names. The contract

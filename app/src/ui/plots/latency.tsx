@@ -10,6 +10,7 @@ import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
 import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_LABEL, TICK_ROOM, TIME_TICK, TOP_LABEL, VALUE_TICK, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, GRID, STRIP, TIP, VALUE_TICK_END, CELLS, HOVER, sinceTick, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable } from "../kit";
+import { scatterSaid } from "./answers";
 
 /** The two tones of latency's bands: the body of the requests (median to
  * p95) and their tail (p95 to p99). */
@@ -390,7 +391,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
     const g = props.profile.groups[r.group];
     return { title: g ? groupName(g) : "", lines: [`${duration(r.ms)} · ${r.status ?? "—"} · ${bytes(r.bytes ?? 0)}`, `+${duration(r.tMs)}`] };
   };
-  const label = () => t("scatter.text", { n: rows().length, p95: duration(props.profile.p95Ms ?? 0) });
+  const label = () => scatterSaid(props.profile, props.domainMs);
   return (
     // a stretch with one request draws its one dot; with none, says so in the chart's room
     <If when={!terminal() && rows().length > 0} else={terminal() ? <Text class="text-small text-muted-foreground">{label()}</Text> : <NoneInStretch />}>
@@ -486,10 +487,10 @@ export function FirstByte(props: { signals: Signals; max?: number }) {
   const line = (r: ReturnType<typeof rows>[number]) => t("firstByte.line", { first: duration(r.firstByteMs), rest: duration(r.restMs) });
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.operation, lines: [line(r), t("run.bandRequests", { n: r.count })] } : null;
+    return r ? { title: r.kind, lines: [line(r), t("run.bandRequests", { n: r.count })] } : null;
   };
   return (
-    <If when={!textual()} else={<SimpleTable columns={[t("profile.kind"), t("firstByte.first"), t("firstByte.rest"), t("figure.requests")]} rows={rows().map((r) => [r.operation, duration(r.firstByteMs), duration(r.restMs), count(r.count)])} />}>
+    <If when={!textual()} else={<SimpleTable columns={[t("profile.kind"), t("firstByte.first"), t("firstByte.rest"), t("figure.requests")]} rows={rows().map((r) => [r.kind, duration(r.firstByteMs), duration(r.restMs), count(r.count)])} />}>
       <Plot
         testID="first-byte"
         data={rows()}
@@ -509,7 +510,7 @@ export function FirstByte(props: { signals: Signals; max?: number }) {
       >
         <Bar value="firstByteMs" stack="t" class="fill-chart-1" inactiveOpacity={INACTIVE} />
         <Bar value="restMs" stack="t" class="fill-chart-4" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => duration(rows()[i].firstByteMs + rows()[i].restMs)} labelClass={BAR_LABEL} />
-        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.operation ?? "")} labelClass={AXIS_LABEL} />
+        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.kind ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
   );

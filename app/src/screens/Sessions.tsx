@@ -33,7 +33,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GroupByChoice, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
 import type { SignalId } from "../signals";
-import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments } from "../ui/plots";
+import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments, began } from "../ui/plots";
 import { RecordDetail } from "../ui/request";
 import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
 import { running, runAgain } from "../run";
@@ -295,9 +295,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const others = props.others().filter((s) => s.path !== props.path);
     if (!isAvailable) return;
     // runs of this program first; another program's under its own heading
-    const key = (c: string | null | undefined) => (c ?? "").trim().split(/\s+/).join(" ");
-    const mine = key(info()?.command);
-    const same = others.filter((s) => mine && key(s.command) === mine);
+    const mine = info()?.program;
+    const same = others.filter((s) => mine && s.program === mine);
     const rest = others.filter((s) => !same.includes(s));
     const item = (s: SessionInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${count(s.requests)}`, onSelect: () => compareWith.set(s.path) });
     void Menu.popup(
@@ -313,7 +312,19 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const moreMenu = () => {
     if (!isAvailable) return;
     const me = info();
+    // where the pane is narrow, the session's other commands are here, by their words (not icons beside the title)
+    const narrow = !roomy();
+    const tryable = !terminal() && ranCommand(view()?.header.command) && !view()?.trial;
+    const extras: MenuItem[] = narrow
+      ? [
+          ...(tryable ? [{ label: t("trial.try"), icon: iconSvg("flask-conical"), disabled: !!running(), onSelect: () => tryingFaults.set(true) }] : []),
+          { label: t("replay.open"), icon: iconSvg("repeat-2"), onSelect: () => replaying.set(true) },
+          { label: t("compare.open"), icon: iconSvg("git-compare-arrows"), onSelect: compareMenu },
+          { type: "separator" },
+        ]
+      : [];
     void Menu.popup([
+      ...extras,
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
       { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(props.path) },
       { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(props.path) },
@@ -358,7 +369,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
+    <OperationsTable view={v()} source={source} onScrolled={scrolled} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -418,11 +429,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
   const strip = (v: () => SessionView) => (
     <If when={!terminal() && v().profile && box().h >= BREAK.short}>
-      <SessionShape strip axis profile={v().profile} slice={slice()} picked={stretch()} onSlice={(i) => stretch.set(i === null ? null : [i, i])} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
+      <SessionShape strip axis profile={v().profile} slice={slice()} picked={stretch()} onSlice={(i) => (i === null ? stretch.set(null) : began(v().profile, i, i) && stretch.set([i, i]))} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} injected={v().injected} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -471,18 +482,16 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           testID="run-again"
         />
       </If>
-      {/* the same command under faults, asked first what will run (a trial is no run of its own) */}
-      <If when={!terminal() && ranCommand(view()?.header.command) && !view()?.trial}>
-        <If when={roomy()} else={<IconButton icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />}>
-          <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
-        </If>
+      {/* where the pane is narrow, the others are behind ⋯ by their words (no row of unlabelled icons): the
+          command keeps its room. The same command under faults is asked first what will run (a trial is no run of its own) */}
+      <If when={!terminal() && roomy() && ranCommand(view()?.header.command) && !view()?.trial}>
+        <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
       </If>
-      {/* where the pane is narrow, the others by their icons (their words in their tooltips): the command keeps its room */}
-      <If when={roomy() || terminal()} else={<IconButton icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />}>
+      <If when={roomy() || terminal() || !isAvailable}>
         <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
       </If>
       <If when={isAvailable}>
-        <If when={roomy()} else={<IconButton icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />}>
+        <If when={roomy()}>
           <Button small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />
         </If>
         <IconButton icon="ellipsis" label={t("common.more")} onPress={moreMenu} testID="session-more" />
@@ -543,7 +552,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     >
       <View class="min-h-0 flex-1">
         <View class="shrink-0 px-4 pt-4">
-          <SessionHeader view={v()} actions={actions()} onSignal={showSignal} short={box().h < BREAK.short}>
+          <SessionHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
             {/* what changed since the program's run before: what was fixed, with what it saved */}
             <If when={!v().trial}>
@@ -551,7 +560,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
             </If>
           </SessionHeader>
         </View>
-        <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">
+        {/* (what does not fit beside the tabs goes under them, never off the pane) */}
+        <View class="shrink-0 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 pb-3 pt-3">
           {tabs()}
           <View class="flex-1" />
           {/* what narrows the operations, said where they are; and the one way to group them */}
@@ -569,6 +579,15 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   // the room under the tabs, as it is laid out: what the findings may take of it
   const bodyHeight = signal(0);
+  // the pane under the tabs scrolled from its top: the header folds to one line and gives it the room
+  // (another pane, or the same back at its top, opens it again)
+  // (kept by pane: another pane opens unfolded in the same moment it is shown)
+  const foldedOn = signal<Pane | null>(null);
+  const folded = () => foldedOn() === pane();
+  const scrolled = (away: boolean) => {
+    const want = away ? untracked(pane) : null;
+    if (untracked(foldedOn) !== want) foldedOn.set(want);
+  };
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;
   const inspecting = () => !!(episode() || record());
@@ -858,6 +877,8 @@ export function Sessions() {
         </If>
       </View>
       <If when={!byProgram()} else={
+        // (inset as the runs are: a program's row lines up with a run's)
+        <View class={terminal() ? "flex-1" : "min-h-0 flex-1 px-2"}>
         <ProgramList
           query={terminal() ? "" : query()}
           onOpen={(p) => {
@@ -867,6 +888,7 @@ export function Sessions() {
             });
           }}
         />
+        </View>
       }>
       <If when={sessions().length > 0} else={<Empty compact text={t("timeline.empty")} />}>
         <If when={shown().length > 0} else={<Empty compact text={t("sessions.noMatch")} />}>

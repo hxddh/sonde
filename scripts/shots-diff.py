@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import sys
 import zlib
 from pathlib import Path
@@ -38,15 +37,6 @@ GRID = (40, 25)
 LEVELS = 16
 # cells that may differ by more than a level and still be the same picture
 TOLERANCE = 6
-# screens that draw what the tour's run measured (latencies, its timeline, a request's timings, two of its runs compared): on the same code
-# they move from run to run by more than any tolerance that would still catch a change, so they are reported with
-# their difference images for a person to look at, and not held
-LIVE = re.compile(r"-(02c-errors|02d-first-byte|02j-trial-time|03c-request|03g-time|03h-runs|03p-programs)\.png$")
-
-
-def is_held(name: str) -> bool:
-    return not LIVE.search(name)
-
 # the share of pixels past which a screen changed (and the difference that makes a pixel count)
 CHANGED_PCT = 0.5
 PIXEL = 16
@@ -109,9 +99,6 @@ def diff(before: Path, after: Path, out: Path, approved: Path | None, platform: 
     verdict = {}
     if pictures is not None:
         for name in held:
-            if not is_held(name):
-                verdict[name] = "live: look"
-                continue
             fp = pictures.get(name)
             verdict[name] = "approved" if fp and distance(fp, fingerprint(after / name)) <= TOLERANCE else "**not approved**"
     print("### Screens against the last green run\n")
@@ -124,7 +111,7 @@ def diff(before: Path, after: Path, out: Path, approved: Path | None, platform: 
         print(f"| {name} | new | {verdict.get(name, '')} |")
     for name in sorted(a_names - b_names):
         print(f"| {name} | gone | |")
-    unapproved = sorted(n for n, v in verdict.items() if v not in ("approved", "live: look"))
+    unapproved = sorted(n for n, v in verdict.items() if v != "approved")
     print()
     if pictures is None:
         print(f"No approved pictures for {platform or 'this platform'}: reported, not held." if approved else "")

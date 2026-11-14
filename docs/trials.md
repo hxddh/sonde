@@ -31,7 +31,8 @@ Trial: the command runs 3 more times, each under one scenario.
   the terminal's group, to read the keyboard.)
 - Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions. The
   program's verdict history is kept.
-- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places
+- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places,
+  and remove what it made in that run, its own uploads included
   ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
 
 **Matching a trial's requests to the clean run's**: they match when they differ only by the scenario's name in place
@@ -71,7 +72,7 @@ repeatable; duplicates run once.
   session is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs, and `--again`
   runs each that stands broke. No other built-in takes a number (project scenarios set `times`); the app offers the
   same count.
-- **One request** = method, operation, bucket, key, part number (not upload id: a restarted upload retries the same
+- **One request** = method, kind, bucket, key, part number (not upload id: a restarted upload retries the same
   parts). Key-less requests add `prefix`, `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`,
   `upload-id-marker`, `version-id-marker`, `versions`, `uploads` and the body's hash. Attempts are counted per
   request, so concurrency does not change which fail.
@@ -147,7 +148,10 @@ repeatable; duplicates run once.
 | **degraded** | finished, but gave up a read, left an upload unfinished, waited out a stall, re-uploaded a completed upload, rewrote a hidden key, or after a lost race left extra objects or resent the same `If-Match` |
 | **broke** | another exit; a failed write never resent with exit 0; half a body taken as whole; a lost race never run again with the clean exit; the contested key overwritten unconditionally; a hidden key never read |
 | **untested** | no request met the fault, or hidden keys mattered to nothing. Only untested: exit 0, *Nothing was tried* |
-| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place or `--allow-writes`. Not judged; never broke |
+| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place (or, when the refused key has it already, `--policy allow`). Not judged; never broke |
+
+The last line says *The program did not break* only when every scenario was judged; otherwise it says how many
+were judged and which were not (refused, met no request).
 
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
@@ -169,7 +173,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 |---|---|
 | History | Each verdict is added to its program's in `verdicts.json` beside its runs: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
-| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command. |
+| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
 | App | `Sessions.trialAgain(path, …)`: the same, from a run of the program. |
 
 ## Where the results go
@@ -177,7 +181,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | | |
 |---|---|
 | Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the session says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
-| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`kind`, `key`, `caller`) and `advice` (`key`, `args`). |
 | `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |
@@ -196,7 +200,7 @@ Injected requests are marked "Injected by sonde"; the sessions list marks runs w
 [[scenario]]
 name = "flaky-wal"
 fault = "503 SlowDown"     # or "500", "404 NoSuchKey", "lost-answer", "cut-body", "lost-race", "stale-list", "delay 200ms"
-on = ["PutObject"]         # S3 operation names; "Put*" matches a prefix; all when omitted
+on = ["PutObject"]         # kinds of request; "Put*" matches a prefix; all when omitted
 prefix = "db/wal/"         # keys under it; all when omitted
 times = 2                  # attempts per request that fail (default 1; 0 = every attempt)
 ```
@@ -211,7 +215,7 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 
 - Only traffic through the proxy is tried.
 - Trials use the run's policy (`no-delete` by default); a program that deletes, or writes over what another program
-  wrote, needs `--allow-writes` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
+  wrote, needs `--policy allow` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
   place sonde can read: use `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.

@@ -8,7 +8,7 @@ use crate::Record;
 pub fn to_json(records: &[Record]) -> Value {
     json!({
         "format": "sonde-reqlog",
-        "version": 1,
+        "version": 2,
         "records": records,
     })
 }
@@ -56,7 +56,7 @@ pub fn to_har(records: &[Record]) -> Value {
                 "cache": {},
                 "timings": {"send": 0, "wait": r.latency_ms, "receive": 0},
                 "comment": format!("{} retries={} request-id={}", r.operation, r.retries, r.request_id.clone().unwrap_or_default()),
-                "_sonde": {"id": r.id, "endpoint": r.endpoint, "operation": r.operation, "retries": r.retries, "requestId": r.request_id, "hostId": r.host_id},
+                "_sonde": {"id": r.id, "endpoint": r.endpoint, "kind": r.operation, "retries": r.retries, "requestId": r.request_id, "hostId": r.host_id},
             })
         })
         .collect();

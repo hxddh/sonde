@@ -17,11 +17,14 @@ pub struct LayoutArgs {
 enum LayoutAction {
     /// Detects and decodes the layouts under a prefix (or a local directory with --dir).
     Inspect {
+        /// The endpoint (default: --url, or the only one configured).
         #[arg(long, short = 'e')]
         endpoint: Option<String>,
+        /// The bucket (or --dir).
         #[arg(long, short = 'b')]
         bucket: Option<String>,
-        #[arg(long, short = 'p', default_value = "")]
+        /// The key prefix to look under (default: the bucket's root).
+        #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
         prefix: String,
         /// A local directory instead of a bucket.
         #[arg(long)]

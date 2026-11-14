@@ -166,7 +166,7 @@ impl Parts {
                 &mut malformed,
                 &mut self.other_services,
                 &mut self.hosts,
-            ),
+            )?,
             Source::Har => har(text, &mut self.other_hosts, &mut self.hosts)?,
         };
         self.source = Some(source);
@@ -558,20 +558,48 @@ const TRAIL_QUERY: &[&str] = &[
     "versionId",
 ];
 
+/// How an import's error begins when the file is not what it says it is
+/// (bad data, 65), not the wrong file (64): [`is_broken`].
+const BROKEN: &str = "the file breaks";
+
+/// Whether an import's error is a file broken part way ([`BROKEN`]).
+pub fn is_broken(error: &str) -> bool {
+    error.starts_with(BROKEN)
+}
+
 /// CloudTrail S3 data events (`{"Records": [...]}`, or one event per line).
 /// A line or event that does not read is counted in `malformed`; another
-/// service's event in `other`.
+/// service's event in `other`. A `{"Records": …}` document that does not
+/// read to its end is an error saying where it broke.
 fn cloudtrail(
     text: &str,
     malformed: &mut usize,
     other: &mut usize,
     hosts: &mut std::collections::BTreeMap<String, usize>,
-) -> Vec<Record> {
+) -> Result<Vec<Record>, String> {
     let events: Vec<Value> = match serde_json::from_str::<Value>(text) {
         Ok(v) => match v.get("Records") {
             Some(Value::Array(a)) => a.clone(),
             _ => vec![v],
         },
+        // one document, not one event a line: cut short or damaged
+        Err(e)
+            if text
+                .chars()
+                .take(4096)
+                .collect::<String>()
+                .contains("\"Records\"")
+                && text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .is_none_or(|l| serde_json::from_str::<Value>(l).is_err()) =>
+        {
+            return Err(format!(
+                "{BROKEN} at line {}, column {}: a CloudTrail file's JSON does not read to its end ({e})",
+                e.line(),
+                e.column()
+            ));
+        }
         // JSON lines (as Athena or a log pipeline writes them)
         Err(_) => text
             .lines()
@@ -653,7 +681,7 @@ fn cloudtrail(
         }
         out.push(r);
     }
-    out
+    Ok(out)
 }
 
 /// A HAR file's requests to S3 (a browser's, say).
@@ -766,8 +794,11 @@ fn har(
             .filter(|(n, _)| !n.starts_with(':'))
             .map(|(n, v)| reqlog::Header::new(n, reqlog::redact::redact_header(n, v)))
             .collect();
-        // sonde's own HAR names the operation
-        if let Some(op) = e["_sonde"]["operation"].as_str() {
+        // sonde's own HAR names the kind (`operation` before 20.0)
+        if let Some(op) = e["_sonde"]["kind"]
+            .as_str()
+            .or_else(|| e["_sonde"]["operation"].as_str())
+        {
             r.operation = op.into();
         }
         // a presigned URL's signature, key and token never reach the session
@@ -1259,6 +1290,22 @@ mod tests {
         let i = import_counted(&ct, "trail").unwrap();
         assert_eq!(i.session.records.len(), 2);
         assert_eq!((i.malformed, i.other_services), (2, 1));
+    }
+
+    #[test]
+    fn a_cloudtrail_document_cut_short_says_where_it_broke() {
+        let whole = r#"{"Records":[
+  {"eventTime":"2026-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}},
+  {"eventTime":"2026-02-06T00:00:02Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"b"}}]}"#;
+        assert_eq!(import(whole, "trail").unwrap().1.records.len(), 2);
+        let cut = &whole[..whole.len() - 40];
+        let Err(e) = import(cut, "trail") else {
+            panic!("a cut document read as whole");
+        };
+        assert!(is_broken(&e), "{e}");
+        assert!(e.contains("at line 3, column"), "{e}");
+        // the wrong file is not broken
+        assert!(!is_broken(&import("hello", "x").unwrap_err()));
     }
 
     #[test]

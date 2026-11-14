@@ -138,6 +138,12 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
         return Some("not an S3 operation sonde knows".into());
     }
     // by what the request is, not only by the name the session stored
+    // (by what the request is: a `PUT /b?inventory` stored as CreateBucket
+    // is a bucket's setting)
+    let what = named(r);
+    if !opts.prefix.is_empty() && (what == "CreateBucket" || what == "DeleteBucket") {
+        return Some("creates or deletes a bucket, outside the prefix".into());
+    }
     if !opts.prefix.is_empty() && (changes_bucket(&r.operation) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
@@ -605,6 +611,7 @@ pub struct Answer {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Difference {
+    #[serde(rename = "kind")]
     pub operation: String,
     pub original: String,
     pub replay: String,
@@ -953,9 +960,11 @@ pub async fn replay_to_file(
                 "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
                 opts.prefix
             ),
-            // a bucket that is not there holds nothing (the replay may
-            // create it); any other answer leaves the prefix unknown
-            Err(e) if e.status == Some(404) => continue,
+            // a replay creates no bucket; any other answer leaves the
+            // prefix unknown
+            Err(e) if e.status == Some(404) => format!(
+                "bucket {b} is not there: a replay creates no bucket, so nothing was replayed; create it, or replay into another (--bucket {b}=OTHER)"
+            ),
             Err(e) => format!(
                 "could not check that {b}/{} is empty ({e}): a replay deletes what is under its prefix afterwards, so nothing was replayed",
                 opts.prefix

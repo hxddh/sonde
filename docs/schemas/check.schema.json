@@ -63,7 +63,15 @@
     },
     "passed": {
       "type": "boolean",
-      "description": "The whole check: every row, and no trial that broke."
+      "description": "The whole check: every row, no trial that broke, and a program that did not fail."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why it did not pass, in words (the verdict): only when `passed` is false."
+    },
+    "programExit": {
+      "type": "integer",
+      "description": "The program failed with this exit status: `--program-exit`, else the one the run kept."
     },
     "verdict": {
       "type": "string",

@@ -6,13 +6,20 @@ The contract starts at 19.0 (D-138). 19.0 kept nothing of earlier versions: no f
 or JSON names of before it are read or said ([changelog](../CHANGELOG.md), [0.1 to 18.0](history/changelog-0-18.md)).
 From here a break comes only in a major, and is announced one version ahead.
 
+**20.0** breaks without a 19.x announcing it, by the owner's decision: one name for each thing (an S3 call is a
+`kind`: `requests[].kind`, `summary.kinds`, `show --by kind`, session format 2), a program is its command with what
+changes between runs left out, `record-policy` and `name-callers` move to `sonde.toml`, `sonde demo` is `run
+--demo`, `--allow-writes` is `--policy allow`, `prune` confirms with `--confirm COUNT`, and display text leaves the
+promise. 20.0 reads 19.0's sessions (format 1). From 20.0 the announcement rule holds.
+
 ## Stable
 
 | | What | Documented in | Tested by |
 |---|---|---|---|
 | Session files | The `.sonde` format: header, records, log lines, versioning | [session-format.md](session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
 | JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
-| `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
+| `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
+| `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `high-contrast`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
 | Commands and flags | Subcommands, flags, arguments, `-f` formats, the environment a recorded program gets | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
 
@@ -42,11 +49,15 @@ From here a break comes only in a major, and is announced one version ahead.
 ## Not stable
 
 - Text for people: tables, sentences, `-f markdown`, `-f csv`, `-f github`, all of stderr. Use `-f json`.
-- The desktop app, the terminal UI, the shared HTML page, the app–Rust bridge.
+- Display text inside JSON: each property a schema says is "Display text, not stable": the `*Text` phrase arrays,
+  a finding's and an operation's sentences (`text`, `phrases`, `title`, `notes`), `show --by`'s sentence, and `layout
+  inspect`'s `headline`, `facts` and `tables` (which may also be absent). Read the figures and ids beside them.
+- The desktop app, the terminal UI (its developer flags `--bundle`, `--fps`, `--log-file` too, left out of help), the
+  shared HTML page, the app–Rust bridge.
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.
-- A finding's text. Its `identity` (what `[check] expect` names) is stable; from 19.0 it leaves out what changes between runs ([cli.md](cli.md#the-fix-loop)).
+- A finding's text. Its `identity` (what `[check] expect` names) is made by versioned rules ([cli.md](cli.md#the-fix-loop)); a change of rules is a new version, and findings kept under older rules are made again by the new ones.
 
 ## Versions
 

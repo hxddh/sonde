@@ -226,16 +226,6 @@ pub struct Settings {
     pub high_contrast: bool,
     /// `auto`, `en` or `zh`.
     pub language: String,
-    /// Runs name the place in a program's code that sent each request, on
-    /// by default (hooks that add `x-sonde-caller`: Python's boto3 on
-    /// PYTHONPATH, the AWS SDK for JavaScript v3 with NODE_OPTIONS, the AWS
-    /// SDK for Java 2 with JAVA_TOOL_OPTIONS).
-    pub name_callers: bool,
-    /// What a program recorded by Run may do to the store: `no-delete`
-    /// (the default: nothing removed, nothing there before written over),
-    /// `read-only` or `allow`. sonde's own destructive acts are each a dry
-    /// run first, done on a typed confirmation, and kept in the audit log.
-    pub record_policy: String,
     pub exports_dir: Option<PathBuf>,
     pub downloads_dir: Option<PathBuf>,
 }
@@ -253,8 +243,6 @@ impl Default for Settings {
             theme: "system".into(),
             high_contrast: false,
             language: "auto".into(),
-            name_callers: true,
-            record_policy: "no-delete".into(),
             exports_dir: None,
             downloads_dir: None,
         }
@@ -294,12 +282,6 @@ impl Config {
         }
         if self.settings.concurrency == 0 || self.settings.concurrency > 1024 {
             return Err("settings.concurrency: 1 to 1024".into());
-        }
-        if !["allow", "no-delete", "read-only"].contains(&self.settings.record_policy.as_str()) {
-            return Err(format!(
-                "settings.record-policy {:?}: one of allow, no-delete, read-only",
-                self.settings.record_policy
-            ));
         }
         Ok(())
     }
@@ -429,17 +411,26 @@ credentials = { kind = "profile", name = "prod" }
         assert_eq!(Config::load(&p).unwrap(), c);
     }
 
+    /// docs/configuration.md's `config.toml` is one sonde reads as it says.
     #[test]
-    fn defaults_are_safe() {
-        let c = Config::default();
-        assert_eq!(c.settings.record_policy, "no-delete");
+    fn the_documented_example_reads() {
+        let doc = include_str!("../../../docs/configuration.md");
+        let example = doc
+            .split("```toml\n")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .unwrap();
+        // (as read, not checked: its CA file is an example's)
+        let c: Config = toml::from_str(example).unwrap();
+        assert_eq!(c.settings.concurrency, 16);
+        assert_eq!(c.settings.rate_limit, Some(50.0));
+        assert_eq!(c.endpoints.len(), 2);
+        assert!(!c.endpoints[1].buckets.is_empty());
     }
 
     #[test]
     fn rejects_bad() {
         assert!(Config::parse("[[endpoint]]\nid='a b'\nname='x'\nurl='http://x'").is_err());
-        assert!(Config::parse("[settings]\nrecord-policy = 'everything'").is_err());
-        assert!(Config::parse("[settings]\nrecord-policy = 'allow'").is_ok());
         assert!(Config::parse("[[endpoint]]\nid='a'\nname='x'\nurl='ftp://x'").is_err());
         assert!(Config::parse("[[endpoint]]\nid='a'\nname='x'\nurl='http://x'\n[[endpoint]]\nid='a'\nname='y'\nurl='http://y'").is_err());
         assert!(

@@ -199,3 +199,12 @@ Newest last.
 | D-193 | A finding across runs | its text; a normalised identity | **A normalised identity** (numbers, ids and dates stripped from keys and paths), so a fix is seen as one. |
 | D-194 | Distribution | Homebrew too; release assets | **Release assets, `install.sh` and the Action** (`@v19`); Homebrew dropped. |
 | D-195 | CI | every OS each change; Linux, others nightly | **Linux per change, macOS/Windows/Intel nightly and at release**; the release reuses CI's builds. |
+| D-196 | tui, bucket, probe | remove; keep | **Kept** as they are. |
+| D-197 | Breaking in 20.0 | announce in 19.x; break now | **Break now**, by the owner's decision; 20.0 reads format 1; the announcement rule holds from 20.0. |
+| D-198 | A finding's identity | 19.0's rules; v2 | **Rules v2** (`key=value` values, digit runs, hex ids), versioned; where two findings collide, they stay apart. |
+| D-199 | A program | its command; its command less what changes | **Its name, else its command with whole-word values left out**: `python3` and `job1.py` stay. |
+| D-200 | An S3 call's name | operation; kind | **`kind`** everywhere; session format 2. |
+| D-201 | Settings | one file; two | **`config.toml` what sonde keeps, `sonde.toml` what a project says**; the recording policy is the project's. |
+| D-202 | Display text | in the contract; not | **Not**: figures, ids, fields and exit codes are promised. |
+| D-203 | A release | builds its own; CI's | **CI's green build of the same commit**; main tours every platform. Supersedes D-195. |
+| D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |

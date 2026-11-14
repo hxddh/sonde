@@ -1,8 +1,15 @@
 //! What reading a large session may cost, held by a test: sessions of any
 //! size are a promise only while something fails when it is broken.
 //!
+//! Each test holds its peak memory to a budget: the same from run to run of
+//! the same code, so a miss is a change, never the runner. Its time, which a
+//! shared runner moves by half and more, is said (a `budget` line each) and
+//! held only at several times what it takes, so a test fails on a time
+//! that is wrong, not on a slow machine. docs/performance.md has the figures.
+//!
 //! Ignored by default (they make sessions of up to a million requests); CI
-//! runs them optimised: `cargo test --release -p sonde-proxy --test budgets -- --ignored`.
+//! runs them optimised, each in a process of its own:
+//! `cargo test --release -p sonde-proxy --test budgets -- --ignored --exact NAME`.
 
 mod support;
 
@@ -39,6 +46,24 @@ fn peak_mib() -> Option<u64> {
     Some(kb / 1024)
 }
 
+/// Says what a test cost (`budget NAME: …`, the line CI puts in its
+/// summary) and holds it: the peak (since [`peak_from_now`]) under `mib`,
+/// the time under `room` (several times what it takes: a time past it is a
+/// change, not a busy runner).
+fn held(name: &str, took: Duration, room: Duration, mib: u64) {
+    let peak = peak_mib();
+    eprintln!(
+        "budget {name}: peak {} MiB of {mib}; {:.2} s (held at {:.0} s)",
+        peak.map_or("?".into(), |p| p.to_string()),
+        took.as_secs_f64(),
+        room.as_secs_f64()
+    );
+    if let Some(peak) = peak {
+        assert!(peak < mib, "{name}: peak memory {peak} MiB, past its {mib}");
+    }
+    assert!(took < room, "{name}: took {took:?}, past {room:?}");
+}
+
 /// What `sonde show` does with a session: read it (lean: what the analyses
 /// read), then count it, group it into operations, find what stands out,
 /// reckon the four signals and where the time went, and what acting on the
@@ -65,20 +90,21 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     (took, s.records.len(), a)
 }
 
-/// What a million requests of the lake job may hold at once: what is
-/// measured (1.1 GiB in 17.0, two runs compared 1.2; 1.75 GiB in 16.0) and
-/// room for another allocator's habits, not for a request held whole again.
-const MILLION_MIB: u64 = 1500;
+/// What a million requests of the lake job may hold at once. Each budget is
+/// what was measured (docs/performance.md) and about an eighth more, for another
+/// machine's threads and allocator: not room for a request held whole again.
+const MILLION_MIB: u64 = 1300;
 
 #[test]
 #[ignore = "a million requests: run in release, as CI does"]
-fn a_million_requests_are_read_in_fifteen_seconds_and_a_gigabyte_and_a_half() {
+fn a_million_requests_are_read_within_their_memory() {
     let _alone = alone(true);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("million.sonde");
     let n = support::lake(1_000_000, &path, 1);
     assert!(n >= 1_000_000);
     let before = peak_mib();
+    peak_from_now();
     let (took, read, analysis) = read_as_show(&path);
     assert_eq!(read as u64, n);
     eprintln!(
@@ -90,18 +116,19 @@ fn a_million_requests_are_read_in_fifteen_seconds_and_a_gigabyte_and_a_half() {
     );
     // the lake job has what a real one has: the findings are there to be found
     assert!(analysis.observations.len() >= 4 && analysis.what_if.is_some());
-    assert!(took < Duration::from_secs(15), "took {took:?}");
-    // (the generator writes as it goes: it holds a few thousand records)
-    if let Some(peak) = peak_mib() {
-        assert!(peak < MILLION_MIB, "peak memory {peak} MiB");
-    }
+    held(
+        "show of a million",
+        took,
+        Duration::from_secs(45),
+        MILLION_MIB,
+    );
 }
 
 /// What `sonde compare` does with two runs: each read (lean), reckoned and
 /// let go before the other is read ([`Run::analysed`]), then compared.
 #[test]
 #[ignore = "two runs of a million requests: run in release, as CI does"]
-fn two_runs_of_a_million_requests_compare_in_what_one_costs() {
+fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
     use sonde_proxy::profile::{Run, compare_runs};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
@@ -124,33 +151,41 @@ fn two_runs_of_a_million_requests_compare_in_what_one_costs() {
     );
     assert!(c.requests.0 >= 1_000_000 && c.requests.1 >= 1_000_000);
     assert!(!c.groups.is_empty() && !c.prefixes.is_empty());
-    assert!(took < Duration::from_secs(40), "took {took:?}");
     // the second run is read once the first is let go: one run's memory
-    if let Some(peak) = peak_mib() {
-        assert!(peak < MILLION_MIB, "peak memory {peak} MiB");
-    }
+    held(
+        "compare of two millions",
+        took,
+        Duration::from_secs(120),
+        1450,
+    );
 }
 
 #[test]
 #[ignore = "three hundred thousand requests: run in release, as CI does"]
-fn an_outage_of_three_hundred_thousand_requests_is_read_in_ten_seconds() {
+fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("outage.sonde");
     support::outage(300_000, &path);
+    peak_from_now();
     let (took, read, _) = read_as_show(&path);
     assert_eq!(read, 300_000);
-    eprintln!("an outage of 300 thousand: {:.1} s", took.as_secs_f64());
-    assert!(took < Duration::from_secs(10), "took {took:?}");
+    held(
+        "show of an outage of 300 thousand",
+        took,
+        Duration::from_secs(30),
+        600,
+    );
 }
 
 #[test]
 #[ignore = "three hundred thousand requests: run in release, as CI does"]
-fn small_uploads_of_three_hundred_thousand_requests_are_read_in_ten_seconds() {
+fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("uploads.sonde");
     support::small_uploads(300_000, &path);
+    peak_from_now();
     let (took, read, analysis) = read_as_show(&path);
     // every upload is in the finding, and acting on it leaves one PUT each
     let small = analysis
@@ -160,17 +195,22 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_in_ten_seconds() {
         .expect("small files uploaded in parts");
     assert_eq!(small.saves_requests, 200_000);
     assert_eq!(read, 300_000);
-    eprintln!("small uploads, 300 thousand: {:.1} s", took.as_secs_f64());
-    assert!(took < Duration::from_secs(10), "took {took:?}");
+    held(
+        "show of 300 thousand small uploads",
+        took,
+        Duration::from_secs(30),
+        500,
+    );
 }
 
 #[test]
 #[ignore = "a hundred thousand requests: run in release, as CI does"]
-fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() {
+fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("view.sonde");
     let n = support::lake(100_000, &path, 2);
+    peak_from_now();
     // what the bridge does when a window opens a session: read it, analyse
     // it, and build the view that is sent (the first page and the totals)
     let started = Instant::now();
@@ -187,7 +227,12 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() 
         sent / 1024,
         a.episodes.len()
     );
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    held(
+        "the app's first view of 100 thousand",
+        took,
+        Duration::from_secs(6),
+        280,
+    );
     // and it does not grow with the session: a page of operations, not all
     assert_eq!(
         view["operations"].as_array().map(Vec::len),
@@ -217,5 +262,6 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() 
         first.as_secs_f64() * 1000.0,
         started.elapsed().as_secs_f64() * 1000.0
     );
-    assert!(first < Duration::from_millis(500), "a page took {first:?}");
+    // (a lookup: held at a few times what it takes, as the view is)
+    assert!(first < Duration::from_millis(1500), "a page took {first:?}");
 }

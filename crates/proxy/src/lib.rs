@@ -7,6 +7,7 @@
 //! [`RequestLog`] with the headers the application sent. Responses stream
 //! back unchanged.
 
+mod asis;
 pub mod callers;
 pub mod chunked;
 pub mod episode;
@@ -55,8 +56,8 @@ use tokio::net::TcpListener;
 type Out = BoxBody<Bytes, std::io::Error>;
 
 /// What the proxy lets through. A recording takes [`Policy::NoDelete`]
-/// unless told otherwise (`--allow-writes`, `[record] policy`, the app's
-/// setting); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+/// unless told otherwise (`--policy allow`, `[record] policy`, the app's
+/// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything.
@@ -150,6 +151,17 @@ pub struct Written {
     places: parking_lot::Mutex<Vec<String>>,
     /// Where the program's set is kept: the folder, the program, the endpoint.
     kept: parking_lot::Mutex<Option<(std::path::PathBuf, String, String)>>,
+    /// What this recording made itself, which no-delete lets it remove.
+    made: parking_lot::Mutex<Made>,
+}
+
+/// What one recording made: objects (and their versions), uploads, buckets.
+#[derive(Debug, Default)]
+struct Made {
+    objects: std::collections::HashSet<(String, String)>,
+    versions: std::collections::HashSet<(String, String, String)>,
+    uploads: std::collections::HashSet<(String, String, String)>,
+    buckets: std::collections::HashSet<String>,
 }
 
 /// The most objects kept per program and endpoint: past it, the ones
@@ -250,6 +262,86 @@ impl Written {
         {
             return true;
         }
+        self.in_place(bucket, key)
+    }
+
+    /// The recording wrote `bucket/key` itself (as `version`, when the
+    /// bucket keeps versions): it may write it again, and delete it.
+    pub fn made(&self, bucket: &str, key: &str, version: Option<&str>) {
+        self.add(bucket, key);
+        let mut m = self.made.lock();
+        m.objects.insert((bucket.to_string(), key.to_string()));
+        if let Some(v) = version.filter(|v| !v.is_empty() && *v != "null") {
+            m.versions
+                .insert((bucket.to_string(), key.to_string(), v.to_string()));
+        }
+    }
+
+    /// The recording started upload `id` of `bucket/key`: it may abort it.
+    pub fn made_upload(&self, bucket: &str, key: &str, id: &str) {
+        self.made
+            .lock()
+            .uploads
+            .insert((bucket.to_string(), key.to_string(), id.to_string()));
+    }
+
+    /// The recording created `bucket`: it may delete it.
+    pub fn made_bucket(&self, bucket: &str) {
+        self.made.lock().buckets.insert(bucket.to_string());
+    }
+
+    /// Whether removing `bucket/key` (its `version`, if named) takes only
+    /// what this recording made: an object it wrote (or one under a trial's
+    /// own place), a version it wrote.
+    fn own_object(&self, bucket: &str, key: &str, version: Option<&str>) -> bool {
+        let m = self.made.lock();
+        match version {
+            Some(v) => m
+                .versions
+                .contains(&(bucket.to_string(), key.to_string(), v.to_string())),
+            None => {
+                m.objects.contains(&(bucket.to_string(), key.to_string())) || {
+                    drop(m);
+                    self.in_place(bucket, key)
+                }
+            }
+        }
+    }
+
+    /// Whether a removal no-delete would refuse takes only what this
+    /// recording made: an upload it started, an object or version it wrote,
+    /// a bucket it created. A batch of deletes (`document`) goes by each of
+    /// its objects; one that does not read is not the recording's.
+    pub fn may_remove(
+        &self,
+        op: &str,
+        bucket: Option<&str>,
+        key: Option<&str>,
+        query: &[(String, String)],
+        document: Option<&str>,
+    ) -> bool {
+        let q = |n: &str| query.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
+        match (op, bucket, key) {
+            ("AbortMultipartUpload", Some(b), Some(k)) => q("uploadId").is_some_and(|id| {
+                self.made
+                    .lock()
+                    .uploads
+                    .contains(&(b.to_string(), k.to_string(), id.to_string()))
+            }),
+            ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
+            ("DeleteObjects", Some(b), None) => {
+                document.and_then(delete_list).is_some_and(|objects| {
+                    objects
+                        .iter()
+                        .all(|(k, v)| self.own_object(b, k, v.as_deref()))
+                })
+            }
+            ("DeleteBucket", Some(b), None) => self.made.lock().buckets.contains(b),
+            _ => false,
+        }
+    }
+
+    fn in_place(&self, bucket: &str, key: &str) -> bool {
         let full = format!("{bucket}/{key}");
         let under = |text: &str, place: &str| {
             text.strip_prefix(place)
@@ -271,6 +363,52 @@ impl Written {
             order.push(bk);
         }
     }
+}
+
+/// The objects a DeleteObjects document names (key, version): none when
+/// it does not read.
+fn delete_list(doc: &str) -> Option<Vec<(String, Option<String>)>> {
+    fn text(block: &str, tag: &str) -> Option<String> {
+        let open = format!("<{tag}>");
+        let start = block.find(&open)? + open.len();
+        let end = block[start..].find(&format!("</{tag}>"))? + start;
+        unescape(&block[start..end])
+    }
+    let mut out = Vec::new();
+    for block in doc.split("<Object>").skip(1) {
+        let block = block.split("</Object>").next()?;
+        out.push((text(block, "Key")?, text(block, "VersionId")));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// XML text with its five entities and character references read.
+fn unescape(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        let end = rest[i..].find(';')? + i;
+        let name = &rest[i + 1..end];
+        let c = match name {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "quot" => '"',
+            "apos" => '\'',
+            _ => {
+                let n = match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+                    Some(h) => u32::from_str_radix(h, 16).ok()?,
+                    None => name.strip_prefix('#')?.parse().ok()?,
+                };
+                char::from_u32(n)?
+            }
+        };
+        out.push(c);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
 }
 
 /// Proxy settings.
@@ -1005,11 +1143,11 @@ pub fn empty_first_segment(host: &str, path: &str) -> bool {
     !virtual_hosted && path.starts_with("//")
 }
 
-/// Whether a request's place has a `.` or `..` segment, in the bucket's
-/// position or in the key: what the proxy would record is not what the
-/// store would be asked for.
-pub fn dot_segment(bucket: Option<&str>, key: Option<&str>) -> bool {
-    bucket.is_some_and(|b| b == "." || b == "..") || key.is_some_and(s3raw::has_dot_segment)
+/// Whether a request's bucket is `.` or `..`: no bucket is, and a store
+/// would fold it (`/../demo` read as a listing of `demo`). A key's own `.`
+/// and `..` segments are forwarded as sent ([`asis`]).
+pub fn dot_bucket(bucket: Option<&str>) -> bool {
+    bucket.is_some_and(|b| b == "." || b == "..")
 }
 
 /// Query pairs, decoded (`+` stays a plus: S3 clients encode spaces as %20).
@@ -1099,16 +1237,30 @@ async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String
             &creds,
         );
     }
-    let mut rb = client.http_streaming().head(format!("{origin}{path}"));
-    for (k, v) in &headers {
-        if !k.eq_ignore_ascii_case("host") {
-            rb = rb.header(k.as_str(), v.as_str());
+    let url = format!("{origin}{path}");
+    let send = async {
+        if s3raw::has_dot_segment(key) {
+            let empty = reqwest::Body::from(Vec::new());
+            return asis::send(
+                &http::Method::HEAD,
+                &url,
+                &headers,
+                empty,
+                cfg.ca_pem.as_deref(),
+            )
+            .await;
         }
-    }
-    let resp = tokio::time::timeout(cfg.timeout, rb.send())
+        let mut rb = client.http_streaming().head(&url);
+        for (k, v) in &headers {
+            if !k.eq_ignore_ascii_case("host") {
+                rb = rb.header(k.as_str(), v.as_str());
+            }
+        }
+        rb.send().await.map_err(|e| e.to_string())
+    };
+    let resp = tokio::time::timeout(cfg.timeout, send)
         .await
-        .map_err(|_| "no answer".to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "no answer".to_string())??;
     match resp.status().as_u16() {
         200..=299 => Ok(true),
         404 => Ok(false),
@@ -1242,11 +1394,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(400, "InvalidURI", msg));
     }
 
-    // a `.` or `..` segment never reaches the store as the place it names:
-    // the HTTP library folds it, and `a/../b` would be signed and sent as
-    // `b`, `/../demo` as a listing of `demo`. The bucket's place as the key's.
-    if dot_segment(bucket.as_deref(), key.as_deref()) {
-        let msg = "sonde refused the request: its path has a . or .. segment, which would reach the store as another place";
+    // `.` or `..` in the bucket's place names no bucket: a store would fold
+    // it, `/../demo` read as a listing of `demo`
+    if dot_bucket(bucket.as_deref()) {
+        let msg = "sonde refused the request: its bucket is . or .., which would reach the store as another place";
         record.status = Some(400);
         record.error_body = Some(msg.into());
         record
@@ -1256,9 +1407,24 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(400, "InvalidURI", msg));
     }
 
+    // no-delete lets a program remove what it made in this recording (its
+    // own upload, an object it wrote, a bucket it created); a batch of
+    // deletes is judged once its document is read
+    let mut judge_batch = false;
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
-        let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
-        return Ok(refuse(&shared, record, msg));
+        let own = mode == "no-delete"
+            && shared.cfg.written.may_remove(
+                &operation,
+                bucket.as_deref(),
+                key.as_deref(),
+                &query,
+                None,
+            );
+        judge_batch = mode == "no-delete" && operation == "DeleteObjects" && !own;
+        if !own && !judge_batch {
+            let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
+            return Ok(refuse(&shared, record, msg));
+        }
     }
 
     // under no-delete, an object already there is written over only if
@@ -1276,7 +1442,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
         let over = |why: &str| {
             format!(
-                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
             )
         };
         if said("if-match") {
@@ -1373,6 +1539,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 return Ok(xml_error(400, "IncompleteBody", &msg));
             }
         }
+    }
+    if judge_batch
+        && !shared.cfg.written.may_remove(
+            &operation,
+            bucket.as_deref(),
+            key.as_deref(),
+            &query,
+            record.request_body.as_deref(),
+        )
+    {
+        let msg = format!(
+            "sonde refused {operation}: it names objects this recording did not write, and the proxy runs in no-delete mode"
+        );
+        return Ok(refuse(&shared, record, msg));
     }
     if let Some(mode) = shared
         .cfg
@@ -1607,20 +1787,32 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
     }
 
-    let mut rb = client.http_streaming().request(parts.method.clone(), &url);
-    for (k, v) in &out {
-        if !k.eq_ignore_ascii_case("host") {
-            rb = rb.header(k.as_str(), v.as_str());
-        }
-    }
     if let Some(n) = sent_len
         && (n > 0 || method == "PUT" || method == "POST")
     {
-        rb = rb.header("content-length", n.to_string());
+        out.push(("content-length".into(), n.to_string()));
     }
-    moved.touch();
-    let sent = tokio::select! {
-        r = rb.body(upstream_body).send() => r.map_err(|e| {
+    // a key with a `.` or `..` segment goes as written: the HTTP client's
+    // URL library would fold it into another key
+    let as_is = key.as_deref().is_some_and(s3raw::has_dot_segment);
+    let send = async {
+        if as_is {
+            return asis::send(
+                &parts.method,
+                &url,
+                &out,
+                upstream_body,
+                cfg.ca_pem.as_deref(),
+            )
+            .await;
+        }
+        let mut rb = client.http_streaming().request(parts.method.clone(), &url);
+        for (k, v) in &out {
+            if !k.eq_ignore_ascii_case("host") {
+                rb = rb.header(k.as_str(), v.as_str());
+            }
+        }
+        rb.body(upstream_body).send().await.map_err(|e| {
             let mut msg = e.to_string();
             let mut src = std::error::Error::source(&e);
             while let Some(s) = src {
@@ -1629,7 +1821,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 src = s.source();
             }
             msg
-        }),
+        })
+    };
+    moved.touch();
+    let sent = tokio::select! {
+        r = send => r,
         _ = moved.quiet_for(idle) => Err(stalled(idle)),
     };
     record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
@@ -1655,7 +1851,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
         let msg = format!(
-            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
         );
         return Ok(refuse(&shared, record, msg));
     }
@@ -1663,7 +1859,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
     {
-        shared.cfg.written.add(b, k);
+        let version = headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("x-amz-version-id"))
+            .map(|(_, v)| v.as_str());
+        shared.cfg.written.made(b, k, version);
+    }
+    if status.is_success()
+        && operation == "CreateBucket"
+        && let (Some(b), None) = (bucket.as_deref(), key.as_deref())
+    {
+        shared.cfg.written.made_bucket(b);
     }
     // a fault that needed the store's answer first, and cannot be done to
     // this one, was no fault: the answer goes through as the store's own
@@ -1824,6 +2030,31 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Cutting { at, whole, name }
     });
 
+    // an upload the program starts is its own to abort: its id is read from
+    // the answer (a few hundred bytes), which goes on whole
+    if operation == "CreateMultipartUpload"
+        && status.is_success()
+        && plain
+        && cutting.is_none()
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+        && resp.content_length().is_none_or(|n| n <= 1 << 16)
+    {
+        let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
+            let msg = "the store's answer stopped part way".to_string();
+            record.transport_error = Some(msg.clone());
+            shared.log.push(record);
+            return Ok(xml_error(502, "SondeUpstreamError", &msg));
+        };
+        if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
+        {
+            shared.cfg.written.made_upload(b, k, &started.upload_id);
+        }
+        record.response_bytes = Some(body.len() as u64);
+        record.first_byte_ms = Some(record.latency_ms);
+        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+        shared.log.push(record);
+        return Ok(builder.body(full(body)).expect("valid response"));
+    }
     if status.as_u16() >= 400 && method != "HEAD" {
         let body = tokio::time::timeout(idle, resp.bytes())
             .await
@@ -2245,19 +2476,23 @@ mod tests {
     }
 
     #[test]
-    fn a_dot_segment_is_refused_wherever_in_the_path_it_stands() {
+    fn a_dot_segment_in_the_buckets_place_is_refused_and_in_a_key_is_a_key() {
         let at = |path: &str| {
-            let (b, k) = parse_target("127.0.0.1:9000", path);
-            dot_segment(b.as_deref(), k.as_deref())
+            let (b, _) = parse_target("127.0.0.1:9000", path);
+            dot_bucket(b.as_deref())
         };
         // the bucket's place: the store would be asked for a listing of `demo`
         assert!(at("/%2e%2e/demo") && at("/../demo") && at("/./demo/k"));
         assert!(at("/..") && at("/%2E"));
-        assert!(at("/b/a/../k") && at("/b/./k") && at("/b/k/%2e%2e"));
-        assert!(!at("/b/k") && !at("/b/.hidden") && !at("/b/a..b/k...") && !at("/.b/k"));
+        // a key's own: forwarded as sent
+        assert!(!at("/b/a/../k") && !at("/b/./k") && !at("/b/k/%2e%2e"));
+        assert!(!at("/b/k") && !at("/b/.hidden") && !at("/.b/k"));
+        let (b, k) = parse_target("127.0.0.1:9000", "/b/a/%2E%2E/k");
+        assert_eq!((b.as_deref(), k.as_deref()), (Some("b"), Some("a/../k")));
         // virtual-hosted: the path is all key
         let (b, k) = parse_target("data.localhost:9000", "/../k");
-        assert!(dot_segment(b.as_deref(), k.as_deref()));
+        assert!(!dot_bucket(b.as_deref()));
+        assert_eq!(k.as_deref(), Some("../k"));
     }
 }
 
