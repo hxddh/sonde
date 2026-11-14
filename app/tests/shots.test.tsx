@@ -96,6 +96,8 @@ for (const v of variants) {
     const act = async (id: string, label: string, zh: string) => {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
       await app.press("id:session-more");
+      // (a native menu, on macOS, is up a moment after the press)
+      await app.waitUntil(() => app.menu() !== null, { timeout: 5000 });
       await app.chooseMenuItem(v.lang ? zh : label);
     };
     const go = async (area: string) => {
@@ -213,10 +215,14 @@ for (const v of variants) {
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
     // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
-    for (let n = 0; n < 6; n++) {
-      const opened = await app.press("id:trial-slowdown").then(() => app.waitFor("id:trial-note", { timeout: 5000 })).then(() => true, () => false);
-      if (opened) break;
-      await app.scroll("id:history-pane", 300);
+    // (the trial's session can take longer than a press's wait to open: what is on screen decides the next step)
+    for (let n = 0; n < 6 && !app.shows("id:trial-note"); n++) {
+      if (app.shows("id:trial-slowdown")) {
+        await app.press("id:trial-slowdown");
+        await app.waitFor("id:trial-note", { timeout: 5000 }).catch(() => {});
+      } else if (app.shows("id:history-pane")) {
+        await app.scroll("id:history-pane", 300);
+      }
       await app.wait(500);
     }
     await app.waitFor("id:trial-note", { timeout: 20000 });
