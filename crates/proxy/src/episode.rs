@@ -2426,13 +2426,24 @@ fn unchanging_reads<'a>(
         e.2 &= whole && !r.is_error() && (etag.is_none() || e.3.is_none() || etag == e.3);
         e.3 = e.3.or(etag);
     }
+    // each key's writes, in order: whether one falls between a key's first
+    // and last read is a search, not a pass over the bucket's writes (which
+    // made a million requests' analysis quadratic)
+    let mut by_key: HashMap<(&str, &str), Vec<Order>> = HashMap::new();
+    for (b, w) in writes {
+        for (at, k) in w {
+            by_key.entry((*b, *k)).or_default().push(*at);
+        }
+    }
     reads
         .into_iter()
-        .filter(|((b, k), (first, last, same, _))| {
+        .filter(|(place, (first, last, same, _))| {
             *same
-                && !writes
-                    .get(b)
-                    .is_some_and(|w| written_between(w, *first, *last, |written| written == *k))
+                && !by_key.get(place).is_some_and(|at| {
+                    // (already in order: the bucket's writes are)
+                    let from = at.partition_point(|a| a <= first);
+                    at.get(from).is_some_and(|a| a < last)
+                })
         })
         .map(|(place, _)| place)
         .collect()
