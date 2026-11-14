@@ -221,7 +221,9 @@ pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
 pub struct WhatIf {
     /// Before and after.
     pub requests: (usize, usize),
-    pub waiting_ms: (f64, f64),
+    /// None when the session's times cannot say it (an imported log's,
+    /// to the second).
+    pub waiting_ms: Option<(f64, f64)>,
     pub cost: (f64, f64),
     pub currency: String,
     /// The findings it counts, and how many findings there are (all that are
@@ -239,8 +241,15 @@ pub struct WhatIf {
 /// nothing by going), the cost is the price of those left. A finding that
 /// saves time without removing a request (requests sent at once) takes its
 /// own figure off, when none of its requests is among those removed. A
-/// finding that does not name its requests is not counted.
-pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) -> Option<WhatIf> {
+/// finding that does not name its requests is not counted. A session whose
+/// waiting is not known (`timed` false: an imported log's) says none, and
+/// counts no finding that saves only time.
+pub fn what_if(
+    records: &[Record],
+    profile: &Profile,
+    findings: &[Observation],
+    timed: bool,
+) -> Option<WhatIf> {
     let saving: Vec<&Observation> = findings
         .iter()
         .filter(|o| o.saves_requests > 0 || o.saves_ms > 0.0)
@@ -261,7 +270,7 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
     // it does not name. Those left are added up where they are, not copied
     let left = || records.iter().filter(|r| !gone.contains(&r.id));
     let mut waiting = crate::profile::waiting_ms_of(left());
-    for o in saving.iter().filter(|o| o.saves_requests == 0) {
+    for o in saving.iter().filter(|o| timed && o.saves_requests == 0) {
         // its figure was reckoned with every request there: with one of
         // them gone it is another figure, and is left out
         if o.timed_ids.is_empty()
@@ -281,7 +290,7 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
         .sum();
     Some(WhatIf {
         requests: (records.len(), left().count()),
-        waiting_ms: (profile.waiting_ms, waiting.clamp(0.0, profile.waiting_ms)),
+        waiting_ms: timed.then(|| (profile.waiting_ms, waiting.clamp(0.0, profile.waiting_ms))),
         cost: (profile.cost.amount, cost.min(profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),
@@ -323,12 +332,10 @@ impl WhatIf {
                 count_text(self.requests.1)
             ));
         }
-        if ms_text(self.waiting_ms.0) != ms_text(self.waiting_ms.1) {
-            parts.push(format!(
-                "waiting {} → {}",
-                ms_text(self.waiting_ms.0),
-                ms_text(self.waiting_ms.1)
-            ));
+        if let Some((before, after)) = self.waiting_ms
+            && ms_text(before) != ms_text(after)
+        {
+            parts.push(format!("waiting {} → {}", ms_text(before), ms_text(after)));
         }
         let (before, after) = (
             money_text(self.cost.0, &self.currency),
@@ -411,11 +418,12 @@ mod tests {
                 .iter()
                 .any(|f| f.sdk == "python" && f.code.contains("lru_cache"))
         );
-        let w = what_if(&rs, &p, &obs).unwrap();
+        let w = what_if(&rs, &p, &obs, true).unwrap();
         assert_eq!(w.requests, (20, 6));
-        assert!(w.waiting_ms.1 < w.waiting_ms.0 && w.cost.1 < w.cost.0);
+        let waiting = w.waiting_ms.unwrap();
+        assert!(waiting.1 < waiting.0 && w.cost.1 < w.cost.0);
         // 20 reads of 10 ms each, 50 ms apart: the 14 gone took 140 ms
-        assert_eq!(w.waiting_ms, (200.0, 60.0));
+        assert_eq!(w.waiting_ms, Some((200.0, 60.0)));
     }
 
     #[test]
@@ -451,15 +459,15 @@ mod tests {
         let p = profile(&rs, &prices);
         let obs = observations(&rs, &episodes(&rs));
         assert!(obs.iter().any(|o| o.phrases[0].key == "obs.headget"));
-        let w = what_if(&rs, &p, &obs).unwrap();
+        let w = what_if(&rs, &p, &obs, true).unwrap();
         assert_eq!(w.requests, (9, 6));
         // 195 ms of waiting, of which the three HEADs were 6: not a third of it
-        assert_eq!(w.waiting_ms, (195.0, 189.0));
+        assert_eq!(w.waiting_ms, Some((195.0, 189.0)));
         // three reads' price off: 3 × 0.0004 of 0.0174
         assert!((w.cost.0 - 0.0174).abs() < 1e-9, "{:?}", w.cost);
         assert!((w.cost.1 - 0.0162).abs() < 1e-9, "{:?}", w.cost);
         // and it is the same on every reading
-        assert_eq!(what_if(&rs, &p, &obs), Some(w.clone()));
+        assert_eq!(what_if(&rs, &p, &obs, true), Some(w.clone()));
         assert_eq!(
             w.line(),
             "acting on 1 finding: 9 → 6 requests · waiting 195 ms → 189 ms",
@@ -492,7 +500,7 @@ mod tests {
         vague.saved_ids.clear();
         vague.phrases[0].key = "obs.listed";
         obs.push(vague.clone());
-        let w = what_if(&rs, &p, &obs).unwrap();
+        let w = what_if(&rs, &p, &obs, true).unwrap();
         assert_eq!((w.findings, w.of_findings), (1, 2));
         assert_eq!(w.requests, (20, 1));
         assert!(
@@ -503,6 +511,6 @@ mod tests {
             w.line()
         );
         // nothing that can be counted: nothing is said
-        assert_eq!(what_if(&rs, &p, &[vague]), None);
+        assert_eq!(what_if(&rs, &p, &[vague], true), None);
     }
 }

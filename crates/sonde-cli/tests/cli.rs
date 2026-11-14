@@ -2151,3 +2151,34 @@ fn compare_alone_after_a_first_run_says_there_is_no_run_before() {
         stderr(&o)
     );
 }
+
+/// An imported log's what-if says no waiting: the import says it is not known.
+#[test]
+fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("headget.log");
+    let mut text = String::new();
+    for i in 1..=8 {
+        for (op, method) in [("REST.HEAD.OBJECT", "HEAD"), ("REST.GET.OBJECT", "GET")] {
+            text.push_str(&format!(
+                "79a5 lake [06/Feb/2031:00:00:3{i} +0000] 192.0.2.3 - {method}{i} {op} t/k{i} \"{method} /lake/t/k{i} HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n"
+            ));
+        }
+    }
+    std::fs::write(&log, text).unwrap();
+    let session = t.path().join("headget.sonde");
+    let s = session.to_str().unwrap();
+    let o = sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let shown = stdout(&sonde(t.path(), &["show", s]));
+    let line = shown
+        .lines()
+        .find(|l| l.starts_with("acting on"))
+        .unwrap_or_else(|| panic!("{shown}"));
+    assert!(line.contains("16 → 8 requests"), "{line}");
+    assert!(!line.contains("waiting"), "{line}");
+    let j: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["show", s, "-f", "json"]))).unwrap();
+    assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);
+    assert_eq!(j["whatIf"]["requests"], serde_json::json!([16, 8]));
+}

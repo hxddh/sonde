@@ -686,7 +686,11 @@
           "items": false
         },
         "waitingMs": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Null when the session's times cannot say it (an imported log's, to the second).",
           "prefixItems": [
             {
               "type": "number"

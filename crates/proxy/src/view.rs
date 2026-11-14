@@ -177,7 +177,9 @@ impl Analysis {
             .into_iter()
             .map(|(_, n, _, _)| n)
             .collect();
-        let what_if = crate::fixes::what_if(records, &profile, &observations);
+        // (an imported log's times are to the second: its waiting is not known)
+        let what_if =
+            crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
         let mut owner = Vec::with_capacity(records.len());
         for (i, e) in episodes.iter().enumerate() {
             for id in &e.records {
