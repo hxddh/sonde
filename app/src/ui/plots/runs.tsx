@@ -4,7 +4,7 @@
 import { computed, signal, token, View, Text } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from "nsh/base/plot";
-import { change, count, day, duration, factor, percent } from "../../format";
+import { change, count, day, duration, factor, hm, percent } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
 import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, runSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
@@ -89,7 +89,7 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
   );
   return (
     <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <View testID="trial-over-clean" class="gap-2">
+      <View testID="trial-over-clean" class="mt-4 gap-2">
         {plot("sent", sentTop, (v) => t("shape.peak", { n: count(Math.round(v)) }), false, "trial-over-rate")}
         {plot("p50", p50Top, (v) => t("trialOver.median", { t: duration(v) }), true, "trial-over-latency")}
       </View>
@@ -100,9 +100,11 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
 /** What the trial's chart draws: its line, the clean run's dashed under it, and a rule where sonde answered. Two
  * runs compared draw the same, named for what they are (`names`: the earlier, the later). */
 export function trialLegend(faults: boolean, names?: [string, string]): LegendItem[] {
+  const later = { label: names?.[1] ?? t("trialOver.trial"), swatch: "border-chart-1", line: "solid" } as const;
+  const earlier = { label: names?.[0] ?? t("trialOver.clean"), swatch: "border-muted-foreground", line: "dashed" } as const;
+  // two runs compared: the earlier first, as every chart of the two names them
   return [
-    { label: names?.[1] ?? t("trialOver.trial"), swatch: "border-chart-1", line: "solid" },
-    { label: names?.[0] ?? t("trialOver.clean"), swatch: "border-muted-foreground", line: "dashed" },
+    ...(names ? [earlier, later] : [later, earlier]),
     ...(faults ? [{ label: t("trialOver.faults"), swatch: TONE.injected.fill }] : []),
   ];
 }
@@ -215,10 +217,10 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           gutter
           // the dots drawn, and no other: "more" under a run that only fell is a colour nothing has
           items={[
-            { label: t("runBars.before"), swatch: "border border-muted-foreground bg-card" },
+            { label: t("profile.before"), swatch: "border border-muted-foreground bg-card" },
             ...(props.neutral
-              ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }]
-              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-chart-1" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-chart-4" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
+              ? [{ label: t("profile.after"), swatch: "bg-chart-1" }]
+              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-chart-1" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-chart-4" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("profile.after"), swatch: "bg-muted-foreground" }] : [])]),
           ]}
         />
       </If>
@@ -304,8 +306,11 @@ export function trendSaid(runs: { created: string; v: number }[], base: number |
   if (runs.every((r) => format(r.v) === format(last)) && (base === null || format(base) === format(last))) return t("trend.textSame", { v: format(last) });
   const ab = (a: number) => (a === 0 ? t("trend.fromNone") : change(a, last));
   if (base !== null) return t("trend.textBaseline", { change: ab(base), a: format(base), b: format(last) });
-  return t("trend.textFirst", { change: ab(runs[0].v), day: day(runs[0].created), a: format(runs[0].v), b: format(last) });
+  return t("trend.textFirst", { change: ab(runs[0].v), day: when(runs[0].created, runs[runs.length - 1].created), a: format(runs[0].v), b: format(last) });
 }
+
+/** A run's moment beside another's: its time where both are of one day, else its day. */
+const when = (s: string | undefined, other: string | undefined) => (other && day(s) === day(other) ? hm(s) : day(s));
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
 export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
@@ -359,7 +364,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
           // a line through a few runs, not rows; the first and last runs' days under it
           class={`mr-1 ${TICK_ROOM} ${STRIP}`}
         >
-          <PlotAxis tickValues={last() > 0 ? [0, last()] : [0]} format={(i) => day(runs()[i]?.created)} labelClass={LABEL.bucket} />
+          <PlotAxis tickValues={last() > 0 ? [0, last()] : [0]} format={(i) => when(runs()[i]?.created, runs()[i === 0 ? last() : 0]?.created)} labelClass={LABEL.bucket} />
           <If when={base() !== null}>
             {/* the baseline, and up to what sonde check allows */}
             <If when={limit() !== null}>

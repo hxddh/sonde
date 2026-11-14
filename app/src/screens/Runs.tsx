@@ -260,11 +260,17 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const openWindow = () => openRunWindow(props.path);
   /** Another run from here (a trial's, the clean run's, a run of the trend): where this pane's holder shows it. */
   const open = (p: string) => (props.onOpen ? props.onOpen(p) : openRun.set(p));
+  /** What sonde answered of a trial's requests: all of them said as such, else how many of how many. */
+  const trialSaid = (v: RunView, run: string, scenario: string) => {
+    const n = v.summary.requests;
+    const answered = v.injected?.length ?? 0;
+    return answered >= n ? t("trial.noteAll", { run, scenario, n: count(n) }) : t("trial.note", { run, scenario, answered: count(answered), n: count(n) });
+  };
   /** A trial's run says so under its title, with the way back to the run it is a trial of. */
   const trialNote = (v: () => RunView) => (
     <If when={v().trial}>
       {(x) => (
-        <Notice testID="trial-note" icon="flask-conical" text={t("trial.note", { run: program(v().header.command) ?? x().of, scenario: scenarioLabel(x().scenario) })}>
+        <Notice testID="trial-note" icon="flask-conical" text={trialSaid(v(), program(v().header.command) ?? x().of, scenarioLabel(x().scenario))}>
           <If when={x().clean}>
             <Button small variant="outline" icon="chevron-left" label={t("trial.openClean")} onPress={() => open(x().clean!)} testID="trial-open-clean" />
           </If>
