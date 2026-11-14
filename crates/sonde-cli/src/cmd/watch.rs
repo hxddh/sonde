@@ -61,7 +61,7 @@ fn hold_unfinished(records: &mut Vec<Record>) -> Vec<Record> {
     let held: std::collections::HashSet<u64> = episodes(records)
         .iter()
         .filter(|e| {
-            e.kind == sonde_proxy::episode::Kind::Multipart
+            e.shape == sonde_proxy::episode::Shape::Multipart
                 && e.title().ends_with("(not completed)")
                 && newest - e.start < UPLOAD_WAITED
         })

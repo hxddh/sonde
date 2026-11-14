@@ -1282,7 +1282,7 @@ mod tests {
         );
         let upload = eps
             .iter()
-            .find(|e| e.kind == crate::episode::Kind::Multipart && e.records.len() == 3);
+            .find(|e| e.shape == crate::episode::Shape::Multipart && e.records.len() == 3);
         assert!(upload.is_some(), "{eps:?}");
     }
 

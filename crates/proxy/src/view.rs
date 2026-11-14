@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::episode::{
-    Episode, Kind, Observation, Outcome, episodes, observations_of, shared_notes,
+    Episode, Observation, Outcome, Shape, episodes, observations_of, shared_notes,
 };
 use crate::fixes::WhatIf;
 use crate::profile::{Profile, RequestPrices};
@@ -253,7 +253,7 @@ impl Analysis {
         }
         o.insert("index".into(), json!(index));
         o.insert("requests".into(), json!(e.records.len()));
-        if e.kind == Kind::Probe || e.title().contains("found nothing") {
+        if e.shape == Shape::Probe || e.title().contains("found nothing") {
             o.insert("miss".into(), json!(true));
         }
         Some(v)
@@ -413,16 +413,16 @@ impl Analysis {
     /// [`FINDING_EPISODES`].
     pub fn view(&self, path: &str, header: &crate::session::SessionHeader) -> Map<String, Value> {
         let mut formats: std::collections::BTreeMap<&str, usize> = Default::default();
-        let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut shapes: std::collections::BTreeMap<String, usize> = Default::default();
         for e in &self.episodes {
             if let Some(f) = e.format {
                 *formats.entry(f.name()).or_default() += 1;
             }
-            let kind = serde_json::to_value(e.kind)
+            let shape = serde_json::to_value(e.shape)
                 .ok()
                 .and_then(|k| k.as_str().map(String::from))
                 .unwrap_or_default();
-            *kinds.entry(kind).or_default() += 1;
+            *shapes.entry(shape).or_default() += 1;
         }
         let findings: Vec<Value> = self
             .observations
@@ -464,7 +464,7 @@ impl Analysis {
         );
         v.insert(
             "families".into(),
-            json!({ "formats": formats, "kinds": kinds }),
+            json!({ "formats": formats, "kinds": shapes }),
         );
         v.insert("observations".into(), Value::Array(findings));
         v.insert("sharedNotes".into(), json!(self.shared_notes));

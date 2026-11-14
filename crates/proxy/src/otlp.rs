@@ -106,7 +106,7 @@ fn spans_of(
         "endTimeUnixNano": nanos(e.end),
         "attributes": [
             attr("sonde.operation.requests", json!(e.records.len())),
-            attr("sonde.operation.kind", json!(format!("{:?}", e.kind))),
+            attr("sonde.operation.shape", json!(format!("{:?}", e.shape))),
         ],
         "status": { "code": if failed { 2 } else { 1 } },
     }))?;

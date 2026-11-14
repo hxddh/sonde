@@ -473,7 +473,7 @@ impl Tables {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Kind {
+pub enum Shape {
     /// One request that is nothing more.
     Request,
     Multipart,
@@ -501,7 +501,7 @@ pub enum Outcome {
 /// session may have a million operations, and each would hold it twice).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
-    pub kind: Kind,
+    pub shape: Shape,
     pub format: Option<Format>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -524,7 +524,7 @@ impl Serialize for Episode {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Written<'a> {
-            kind: &'a Kind,
+            shape: &'a Shape,
             format: &'a Option<Format>,
             title: String,
             start: &'a DateTime<Utc>,
@@ -539,7 +539,7 @@ impl Serialize for Episode {
             notes_text: &'a [Phrase],
         }
         Written {
-            kind: &self.kind,
+            shape: &self.shape,
             format: &self.format,
             title: self.title(),
             start: &self.start,
@@ -681,7 +681,12 @@ fn parent(key: &str) -> &str {
 }
 
 /// Builds an episode from records (any order).
-fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Record>) -> Episode {
+fn build(
+    shape: Shape,
+    format: Option<Format>,
+    title: Vec<Phrase>,
+    mut rs: Vec<&Record>,
+) -> Episode {
     rs.sort_by_key(|r| (r.time, r.id));
     let start = rs.first().map(|r| r.time).unwrap_or_default();
     let end = rs.iter().map(|r| end_of(r)).max().unwrap_or(start);
@@ -692,7 +697,7 @@ fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Re
         None => Outcome::Ok,
     };
     Episode {
-        kind,
+        shape,
         format,
         title_text: title,
         start,
@@ -892,7 +897,7 @@ fn single(r: &Record, targets: &mut Targets) -> Episode {
     if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
         title.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
     }
-    let mut e = build(Kind::Request, None, title, vec![r]);
+    let mut e = build(Shape::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
     e
 }
@@ -928,7 +933,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     };
     let n = rs.len();
     vec![build(
-        Kind::Probe,
+        Shape::Probe,
         None,
         vec![p("probe", &[("n", n.to_string()), ("dir", dir)])],
         rs,
@@ -943,7 +948,7 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
     let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
     let n = rs.len();
     build(
-        Kind::Listing,
+        Shape::Listing,
         None,
         vec![p(
             "listing",
@@ -1087,7 +1092,7 @@ fn multipart<'a>(
         } else if !completed && begun {
             title.push(p("mpu.open", &[]));
         }
-        let mut e = build(Kind::Multipart, None, title, rs);
+        let mut e = build(Shape::Multipart, None, title, rs);
         if !completed && !aborted && begun {
             e.note(p("mpu.billed", &[]));
         }
@@ -1218,7 +1223,7 @@ fn retries<'a>(
             let n = rs.len() - 1;
             let target = rs[0].key.as_deref().unwrap_or_default().to_string();
             let mut e = build(
-                Kind::Retry,
+                Shape::Retry,
                 None,
                 vec![p(
                     "retry",
@@ -1454,7 +1459,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
             ],
         ));
     }
-    let mut e = build(Kind::Step, Some(f), title, rs.clone());
+    let mut e = build(Shape::Step, Some(f), title, rs.clone());
     conditional_note(&mut e, &[commit]);
     if let Some(d) = listed {
         e.note(p("after.listing", &[("dir", d.to_string())]));
@@ -1480,7 +1485,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     let (writes, bytes) = written(&rs, None);
     if !writes.is_empty() {
         return build(
-            Kind::Step,
+            Shape::Step,
             Some(f),
             vec![p(
                 "loose.uncommitted",
@@ -1501,7 +1506,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         .all(|r| r.method == "DELETE" || r.operation == "DeleteObjects")
     {
         return build(
-            Kind::Step,
+            Shape::Step,
             Some(f),
             vec![p(
                 "loose.deletes",
@@ -1604,7 +1609,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     } else {
         vec![p("loose.reads", &[("n", n.to_string())])]
     };
-    build(Kind::Step, Some(f), title, rs)
+    build(Shape::Step, Some(f), title, rs)
 }
 
 /// Something worth knowing about a session.
@@ -1838,7 +1843,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
-        of_episodes(&|e| e.kind == Kind::Multipart && e.title().ends_with("(not completed)"));
+        of_episodes(&|e| e.shape == Shape::Multipart && e.title().ends_with("(not completed)"));
     if !unfinished.is_empty() {
         let n = unfinished.len();
         let impact = requests_of(&unfinished);
@@ -2560,7 +2565,7 @@ mod tests {
         rs.push(at(4, 900 + 61_000, "a", 503));
         rs.push(at(5, 900 + 200_000, "a", 200));
         let eps = episodes(&rs);
-        let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
+        let retried: Vec<&Episode> = eps.iter().filter(|e| e.shape == Shape::Retry).collect();
         assert_eq!(retried.len(), 1, "{eps:#?}");
         assert_eq!(retried[0].records, [1, 2, 3]);
         assert_eq!(retried[0].title(), "GetObject a retried 2× after 503");
@@ -2609,13 +2614,13 @@ mod tests {
             at(8, 70, "CreateMultipartUpload", &[("uploads", "")], 500),
         ];
         let eps = episodes(&rs);
-        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.shape == Shape::Multipart).collect();
         assert_eq!(uploads.len(), 2, "{eps:#?}");
         assert_eq!(uploads[0].records, [1, 2, 4, 6]);
         assert_eq!(uploads[1].records, [3, 5, 7]);
         assert!(
             eps.iter()
-                .any(|e| e.kind == Kind::Request && e.records == [8])
+                .any(|e| e.shape == Shape::Request && e.records == [8])
         );
     }
 
@@ -2651,7 +2656,7 @@ mod tests {
         let other = rec(4, 100, "GET", "GetObject", Some("other"), 200);
         let eps = episodes(&[slow, slow2, ok, other]);
         assert_eq!(eps.len(), 2);
-        let retry = eps.iter().find(|e| e.kind == Kind::Retry).unwrap();
+        let retry = eps.iter().find(|e| e.shape == Shape::Retry).unwrap();
         assert_eq!(retry.records, vec![1, 2, 3]);
         assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
         assert_eq!(retry.outcome, Outcome::Ok);
@@ -2736,7 +2741,7 @@ mod tests {
         );
         let rs = [create, part, lost, again, abort];
         let eps = episodes(&rs);
-        let upload = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        let upload = eps.iter().find(|e| e.shape == Shape::Multipart).unwrap();
         assert!(
             !upload.title().contains("aborted") && !upload.title().contains("not completed"),
             "{}",
@@ -2827,7 +2832,7 @@ mod tests {
             &[("partNumber", "2"), ("uploadId", "u1")],
         );
         let eps = episodes(&[p1, p2]);
-        let up = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        let up = eps.iter().find(|e| e.shape == Shape::Multipart).unwrap();
         assert!(!up.title().contains("not completed"), "{}", up.title());
         let obs = observations(&[], &eps);
         assert!(
@@ -2910,7 +2915,7 @@ mod tests {
         let eps = episodes(&[spark.clone(), hive.clone()]);
         assert_eq!(eps.len(), 2, "{eps:#?}");
         assert!(eps.iter().all(|e| e.format.is_none()), "{eps:#?}");
-        assert!(eps.iter().all(|e| e.kind == Kind::Request), "{eps:#?}");
+        assert!(eps.iter().all(|e| e.shape == Shape::Request), "{eps:#?}");
 
         // the same reads beside a table's log are that table's
         let log = with_query(

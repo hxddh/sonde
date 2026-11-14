@@ -66,10 +66,6 @@ pub struct CheckArgs {
     /// kept by CI) the comment ends with.
     #[arg(long, value_name = "URL")]
     report_url: Option<String>,
-    /// The program's exit status (CI passes `sonde run`'s): one not 0 is
-    /// said first, with the request the policy refused if one was.
-    #[arg(long, value_name = "CODE")]
-    program_exit: Option<i32>,
     /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
@@ -549,12 +545,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let header = run.3.clone();
     let program = sonde_proxy::program::key_of(&header);
     let dir = s.paths().sessions();
-    // the program failed: as CI says (`--program-exit`), or as the run's
-    // folder kept it when the program ended
-    let failed = a
-        .program_exit
-        .filter(|&c| c != 0)
-        .or_else(|| sonde_proxy::fixloop::failed(&file));
+    // the program failed: as the run's folder kept it when the program ended
+    let failed = sonde_proxy::fixloop::failed(&file);
     // a run that failed holds nothing to: what it did not get to is not there
     if let Some(x) = failed.filter(|_| a.init || a.set_baseline) {
         eprintln!(

@@ -72,9 +72,9 @@
       "type": "object",
       "description": "An operation: requests that belong together.",
       "properties": {
-        "kind": {
+        "shape": {
           "type": "string",
-          "description": "What the requests are together.",
+          "description": "The shape of the operation: what its requests are together (a request alone, a multipart upload, a retry, lookups that found nothing, a listing over pages, a step of a storage format). `kind` is a request's S3 call only.",
           "enum": [
             "request",
             "multipart",
@@ -143,7 +143,7 @@
         }
       },
       "required": [
-        "kind",
+        "shape",
         "format",
         "title",
         "start",

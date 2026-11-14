@@ -404,36 +404,6 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
-    // the program's status heads it; JSON says it too
-    let o = sonde(
-        t.path(),
-        &[
-            "check",
-            &names[1],
-            "--max-requests",
-            "1000",
-            "-f",
-            "markdown",
-            "--program-exit",
-            "3",
-        ],
-    );
-    let md = stdout(&o);
-    assert!(md.contains("> ❌ **The program failed** (exit 3)"), "{md}");
-    let o = sonde(
-        t.path(),
-        &[
-            "check",
-            &names[1],
-            "--max-requests",
-            "1000",
-            "-f",
-            "json",
-            "--program-exit",
-            "3",
-        ],
-    );
-    assert!(stdout(&o).contains("\"programExit\": 3"), "{}", stdout(&o));
 }
 
 #[test]
@@ -2057,8 +2027,8 @@ fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
 }
 
 /// 19.0 passed `check --program-exit 3` "within budget": a run whose
-/// program failed fails its check in every format, by the exit CI passes or
-/// the one the run kept; and it is no baseline, nor `--init`'s source.
+/// program failed fails its check in every format, by the exit the run
+/// kept; and it is no baseline, nor `--init`'s source.
 #[test]
 fn check_fails_a_run_whose_program_failed() {
     let t = tempfile::tempdir().unwrap();
@@ -2067,18 +2037,13 @@ fn check_fails_a_run_whose_program_failed() {
     let ok = sonde_in(t.path(), &w, &["run", "--demo", "--", "true"]);
     assert_eq!(ok.status.code(), Some(0), "{}", stderr(&ok));
     let budget = ["--max-requests", "100"];
-    // CI says the program failed: the run did not
+    // the flag is gone: the session keeps the exit
     let c = sonde_in(
         t.path(),
         &w,
         &[&["check", "--program-exit", "3"][..], &budget].concat(),
     );
-    assert_eq!(c.status.code(), Some(1), "{}", stdout(&c));
-    assert!(
-        stdout(&c).contains("the program failed (exit 3)"),
-        "{}",
-        stdout(&c)
-    );
+    assert_eq!(c.status.code(), Some(64), "{}", stdout(&c));
     // the run kept that its program failed
     let failed = sonde_in(t.path(), &w, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
     assert_eq!(failed.status.code(), Some(3), "{}", stderr(&failed));
@@ -2094,6 +2059,13 @@ fn check_fails_a_run_whose_program_failed() {
             "{format}: {}",
             stdout(&c)
         );
+        if format == "markdown" {
+            assert!(
+                stdout(&c).contains("> ❌ **The program failed** (exit 3)"),
+                "{}",
+                stdout(&c)
+            );
+        }
         if format == "json" {
             let j: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
             assert_eq!(j["passed"], false);

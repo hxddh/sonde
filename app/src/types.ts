@@ -531,7 +531,7 @@ export interface KeyRequest extends RecordSummary {
 }
 
 export interface Episode {
-  kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
+  shape: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
   format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | "Hudi" | "Paimon" | null;
   title: string;
   start: string;

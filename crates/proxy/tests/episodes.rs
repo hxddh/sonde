@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use sonde_proxy::episode::{Format, Kind, Outcome, episodes, observations};
+use sonde_proxy::episode::{Format, Outcome, Shape, episodes, observations};
 use sonde_proxy::session::Session;
 
 fn load(name: &str) -> Session {
@@ -116,7 +116,7 @@ fn sdk_runs_show_one_multipart_upload() {
     for name in ["sdk-python.sonde", "sdk-java.sonde"] {
         let s = load(name);
         let eps = episodes(&s.records);
-        let mpu: Vec<_> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        let mpu: Vec<_> = eps.iter().filter(|e| e.shape == Shape::Multipart).collect();
         assert_eq!(mpu.len(), 1, "{name}: {eps:#?}");
         assert!(
             mpu[0].title().contains("3 parts · 12.0 MiB"),
