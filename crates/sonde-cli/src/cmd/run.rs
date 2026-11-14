@@ -18,9 +18,10 @@ pub struct RunArgs {
     #[command(flatten)]
     rec: Recording,
     /// Send the requests to the built-in demo store (buckets `demo`,
-    /// `demo-large`, `demo-layouts`), as `sonde demo` does: no account or
-    /// secrets needed. It lives in this process and starts afresh each run;
-    /// its times are not meaningful.
+    /// `demo-large`, `demo-layouts`): no account or secrets needed. It lives
+    /// in this process and starts afresh each run; its times are not
+    /// meaningful. Without a command: a tour, a small program of sonde's own
+    /// recorded and explained.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
     /// Print each request on stderr as it happens.
@@ -61,8 +62,12 @@ pub struct RunArgs {
     /// in sonde.toml, else the command itself).
     #[arg(long)]
     name: Option<String>,
-    /// The command, after `--`.
-    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    /// The command, after `--` (none with --demo: the tour).
+    #[arg(
+        required_unless_present = "demo",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
     command: Vec<String>,
 }
 
@@ -250,6 +255,18 @@ fn names_its_place(command: &[String]) -> bool {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+    // `--demo` alone: the tour, a program of sonde's own
+    if a.demo && a.command.is_empty() {
+        if cli.url.is_some() {
+            return Err(super::usage("--demo and --url name two stores: give one"));
+        }
+        if a.trial || a.again || !a.faults.is_empty() || a.name.is_some() {
+            return Err(super::usage(
+                "the tour is not tried or named: give a command after -- (`sonde run --demo --trial -- python etl.py`)",
+            ));
+        }
+        return super::demo::tour(s, a.rec.out.clone()).await;
+    }
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
     let project = load_project(None)?;

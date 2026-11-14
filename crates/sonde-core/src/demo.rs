@@ -63,7 +63,7 @@ struct State {
 }
 
 /// The one key the store is too busy for, once: the first write of it gets
-/// `503 SlowDown`, so that `sonde demo` has a retry to show.
+/// `503 SlowDown`, so that the tour (`sonde run --demo`) has a retry to show.
 pub const BUSY_ONCE: &str = "tour/summary.json";
 
 fn synthetic_key(i: usize) -> String {

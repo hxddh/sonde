@@ -279,7 +279,7 @@ async fn every_json_output_is_as_its_schema_says() {
     let demo = tokio::process::Command::new(env!("CARGO_BIN_EXE_sonde"))
         .env("SONDE_CONFIG_DIR", b.path("config"))
         .env("SONDE_DATA_DIR", b.path("data"))
-        .arg("demo")
+        .args(["run", "--demo"])
         .output()
         .await
         .unwrap();
@@ -303,9 +303,9 @@ async fn every_json_output_is_as_its_schema_says() {
         then.standing = trial::Standing::Broke;
         let dir = session.parent().unwrap();
         let day = chrono::Utc::now() - chrono::Duration::days(1);
-        trial::record(dir, "sonde demo", "earlier.sonde", day, &[then]).unwrap();
+        trial::record(dir, "sonde run --demo", "earlier.sonde", day, &[then]).unwrap();
         let name = session.file_name().unwrap().to_string_lossy();
-        trial::record(dir, "sonde demo", &name, chrono::Utc::now(), &[now]).unwrap();
+        trial::record(dir, "sonde run --demo", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
     // reading a session

@@ -66,7 +66,7 @@ Windows; the app as `.dmg`, a Linux tarball (GTK 4) and a Windows zip. Checksums
 ## Use
 
 ```sh
-sonde demo                              # a tour on a built-in store, no account needed
+sonde run --demo                        # a tour on a built-in store, no account needed
 sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
 sonde endpoints import                  # your ~/.aws/config profiles
 sonde run -- python etl.py              # record

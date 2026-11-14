@@ -243,7 +243,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             if all.is_empty() {
                 eprintln!(
-                    "no sessions yet: `sonde demo` for a tour, `sonde run -- <command>` for your program"
+                    "no sessions yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
                 );
                 return Ok(0);
             }

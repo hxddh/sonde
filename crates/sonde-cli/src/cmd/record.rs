@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy` and `demo` share (the
+//! Recording: what `sonde run`, `proxy` and the tour share (the
 //! recording's arguments, the proxy started, a session's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -22,7 +22,6 @@ use crate::output;
 
 pub use super::check::{CheckArgs, check};
 pub use super::compare::{CompareArgs, compare};
-pub use super::demo::{DemoArgs, demo};
 pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, show_file};
@@ -435,7 +434,7 @@ pub(super) fn print_summary(
 }
 
 /// What a session amounts to, in one fixed shape for `run`, `show` and
-/// `demo`: the head line (requests, operations, the SDK, the store, the
+/// the tour: the head line (requests, operations, the SDK, the store, the
 /// time, the waiting and the cost), the findings first (each with its
 /// saving, its line of code and its fix), what acting on them would leave,
 /// one table of the kinds of request, and the change since the program's

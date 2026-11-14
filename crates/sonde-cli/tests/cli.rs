@@ -74,7 +74,7 @@ fn help_lists_the_commands_by_what_they_are_for() {
 #[test]
 fn the_demo_records_a_session_that_every_command_reads() {
     let t = tempfile::tempdir().unwrap();
-    let demo = sonde(t.path(), &["demo"]);
+    let demo = sonde(t.path(), &["run", "--demo"]);
     assert_eq!(
         demo.status.code(),
         Some(0),
@@ -123,7 +123,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
 #[test]
 fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let out = stdout(&sonde(t.path(), &["show", "--all"]));
     // what sonde reads from requests, each once in the tour
     for line in [
@@ -148,7 +148,7 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
 #[test]
 fn damaged_baselines_are_said_and_neither_written_over_nor_read_as_none() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let file = t.path().join("data/sessions/baselines.json");
     let damaged = "{\"other program\": \"kept.so";
     std::fs::write(&file, damaged).unwrap();
@@ -181,7 +181,7 @@ fn a_probe_run_named_on_the_command_line_is_not_held_to_read_only_mode() {
 #[test]
 fn check_holds_a_run_to_its_programs_baseline() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     // no baseline yet is no mistake (a first run in CI has none): it is
     // said, with the program it is of, and the run is not failed for it
     let first = sonde(t.path(), &["check", "--baseline", "auto"]);
@@ -237,7 +237,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
     );
     assert!(t.path().join("data/sessions/baselines.json").is_file());
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     // the mechanism, not this machine's timing: two runs of the demo may differ by more than 10% in waiting
     let c = sonde(
         t.path(),
@@ -284,7 +284,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
 #[test]
 fn show_by_splits_the_operations_table_and_names_the_sdk() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let o = sonde(t.path(), &["show", "--by", "kind"]);
     assert_eq!(o.status.code(), Some(0));
     let out = stdout(&o);
@@ -315,9 +315,9 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
 #[test]
 fn a_shared_page_of_two_runs_is_their_comparison() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let mut names: Vec<String> = std::fs::read_dir(t.path().join("data/sessions"))
         .unwrap()
         .flatten()
@@ -439,7 +439,7 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
 #[test]
 fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let name = csv.lines().nth(1).unwrap().split(',').next().unwrap();
     let c = sonde(t.path(), &["check", "--max-requests", "20"]);
@@ -471,7 +471,7 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
 #[test]
 fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let dir = t.path().join("data/sessions");
     let name = std::fs::read_dir(&dir)
         .unwrap()
@@ -511,7 +511,7 @@ fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
 #[test]
 fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let cfg = t.path().join("sonde.toml");
     // the budget kept with the code: too few requests allowed
     std::fs::write(&cfg, "[check]\nmax-requests = 1\nmax-waiting = \"60s\"\n").unwrap();
@@ -561,7 +561,7 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
 #[test]
 fn check_init_writes_a_budget_the_run_passes_and_github_annotates_it() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let cfg = t.path().join("sonde.toml");
     let c = sonde(
         t.path(),
@@ -742,7 +742,10 @@ fn every_command_refuses_a_format_it_does_not_write() {
     for (args, says) in [
         (&["sessions", "prune", "--help"][..], None),
         (&["endpoints", "add", "--help"], None),
-        (&["probe", "list", "--help"], Some("written: table or json [")),
+        (
+            &["probe", "list", "--help"],
+            Some("written: table or json ["),
+        ),
         (
             &["sessions", "list", "--help"],
             Some("written: table, json, markdown or csv ["),
@@ -771,7 +774,7 @@ fn every_command_refuses_a_format_it_does_not_write() {
 #[test]
 fn a_flag_that_would_do_nothing_is_a_usage_error() {
     let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     // a format the command does not write
     for args in [
         &["show", "-f", "csv"][..],
@@ -864,7 +867,7 @@ fn stderr(o: &Output) -> String {
 
 /// The name of the one session of the demo.
 fn demo_session(dirs: &Path) -> String {
-    assert_eq!(sonde(dirs, &["demo"]).status.code(), Some(0));
+    assert_eq!(sonde(dirs, &["run", "--demo"]).status.code(), Some(0));
     std::fs::read_dir(dirs.join("data/sessions"))
         .unwrap()
         .flatten()
@@ -972,6 +975,7 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
         vec!["proxy", "--allow-writes"],
         vec!["share", "--json"],
         vec!["export"],
+        vec!["demo"],
         vec!["watch"],
         vec!["replay", "x.sonde"],
         vec!["diff", "a.sonde", "b.sonde"],
@@ -1201,12 +1205,12 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let listed: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
     assert_eq!(listed[0]["requests"], 28, "{listed}");
-    assert_eq!(listed[0]["program"], "sonde demo");
+    assert_eq!(listed[0]["program"], "sonde run --demo");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
     assert!(!counted());
-    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde demo"));
+    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde run --demo"));
     assert!(counted());
     // nothing past the newest five: said, not silence
     let kept = sonde(

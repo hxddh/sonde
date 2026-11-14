@@ -1,8 +1,9 @@
-//! `sonde demo`: a small program's requests to the demo store, recorded and shown.
+//! `sonde run --demo` without a command: the tour, a small program's
+//! requests to the demo store, recorded and shown.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::Args;
 use reqlog::RequestLog;
 use sonde_core::Sonde;
 
@@ -11,16 +12,12 @@ use crate::output::Format;
 use super::record::*;
 use super::show::{ShowArgs, show};
 
-#[derive(Args)]
-pub struct DemoArgs {
-    /// Open the recorded session in the sonde app afterwards.
-    #[arg(long)]
-    app: bool,
-}
+/// The command a tour's session says it ran.
+pub const TOUR: &str = "sonde run --demo";
 
 /// A tour in one command: a small program's requests to the built-in demo
 /// store, recorded as any program's would be, then shown with its findings.
-pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
+pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
     use s3raw::{Body, ClientConfig, Credentials, S3Client, S3Request, StaticProvider};
     let ep = sonde_core::demo::install(s)
         .await
@@ -29,17 +26,10 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         endpoint: Some(ep.id.clone()),
         // the demo store is sonde's own, made for this tour
         policy: Some("allow".into()),
-        out: None,
+        out,
         tls: false,
     };
-    let started = start(
-        s,
-        &rec,
-        "127.0.0.1:0".parse()?,
-        Some("sonde demo".into()),
-        false,
-    )
-    .await?;
+    let started = start(s, &rec, "127.0.0.1:0".parse()?, Some(TOUR.into()), false).await?;
     let (key, secret) = started.proxy.client_keys();
     let app = S3Client::new(
         ClientConfig::new("demo-app", &started.proxy.url(), "us-east-1")?,
@@ -159,7 +149,7 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
     drop(started);
     let _ = sonde_proxy::session::compress(&file);
     eprintln!(
-        "recorded the demo program in {}\n  sonde show {}    the session again\n  sonde run -- <your program>    your own program's requests\n",
+        "recorded the demo program in {}\n  sonde show {}    the session again (--app: in the app)\n  sonde run -- <your program>    your own program's requests\n",
         file.display(),
         file.display()
     );
@@ -171,7 +161,7 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
             errors: false,
             requests: false,
             all: false,
-            app: a.app,
+            app: false,
             by: None,
             format: Format::Table,
         },
