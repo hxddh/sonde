@@ -303,9 +303,9 @@ async fn every_json_output_is_as_its_schema_says() {
         then.standing = trial::Standing::Broke;
         let dir = session.parent().unwrap();
         let day = chrono::Utc::now() - chrono::Duration::days(1);
-        trial::record(dir, "sonde", "earlier.sonde", day, &[then]).unwrap();
+        trial::record(dir, "tour", "earlier.sonde", day, &[then]).unwrap();
         let name = session.file_name().unwrap().to_string_lossy();
-        trial::record(dir, "sonde", &name, chrono::Utc::now(), &[now]).unwrap();
+        trial::record(dir, "tour", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
     // reading a session

@@ -20,8 +20,8 @@ pub struct RunArgs {
     /// Send the requests to the built-in demo store (buckets `demo`,
     /// `demo-large`, `demo-layouts`): no account or secrets needed. It lives
     /// in this process and starts afresh each run; its times are not
-    /// meaningful. Without a command: a tour, a small program of sonde's own
-    /// recorded and explained.
+    /// meaningful. Without a command: the tour, a small job's finding with
+    /// its line of code and fix, then the job fixed and the saving measured.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
     /// Print each request on stderr as it happens.
@@ -272,7 +272,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if let Some(out) = &a.rec.out {
         refuse_existing(out, a.force)?;
     }
-    // `--demo` alone: the tour, a program of sonde's own
+    // `--demo` alone: the tour
     if a.demo && a.command.is_empty() {
         if cli.url.is_some() {
             return Err(super::usage("--demo and --url name two stores: give one"));

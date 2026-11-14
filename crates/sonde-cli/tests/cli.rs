@@ -133,18 +133,34 @@ fn the_demo_records_a_session_that_every_command_reads() {
         "{}",
         String::from_utf8_lossy(&demo.stderr)
     );
-    // the answer is on stdout, the hints on stderr
+    // the whole loop on stdout: a finding, its line of code, its fix, and
+    // the job fixed, measured against the prediction
     let out = stdout(&demo);
+    for said in [
+        "checked with HEAD and then read with GET",
+        "    at export.py:18 read_reports (3 requests)",
+        "    fix for boto3:",
+        "The same job with that fix",
+    ] {
+        assert!(out.contains(said), "no {said:?} in {out}");
+    }
+    let last = out.lines().last().unwrap();
     assert!(
-        out.contains("checked with HEAD and then read with GET"),
+        last.starts_with("  ✓ fixed") && last.ends_with("saved 3 requests (predicted 3)"),
         "{out}"
     );
-    assert!(String::from_utf8_lossy(&demo.stderr).contains("sonde run --"));
+    // the job it names is there, the line it names holds the HEAD
+    let job = std::fs::read_to_string(t.path().join("data/tour/export.py")).unwrap();
+    assert!(
+        job.lines().nth(17).unwrap().contains("s3.head_object"),
+        "{job}"
+    );
 
+    // the newest run is the fixed one: no finding left
     let json = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(v["requests"].as_array().unwrap().len(), 28);
-    assert!(v["findings"].as_array().unwrap().len() >= 2, "{v}");
+    assert_eq!(v["requests"].as_array().unwrap().len(), 9);
+    assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
 
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let mut lines = csv.lines();
@@ -153,6 +169,10 @@ fn the_demo_records_a_session_that_every_command_reads() {
         Some("session,recorded,program,endpoint,requests,took,errors,exit,trials,size")
     );
     let name = lines.next().unwrap().split(',').next().unwrap().to_string();
+    assert!(
+        lines.next().unwrap().contains("-tour.sonde"),
+        "the first run"
+    );
     assert!(lines.next().is_none());
 
     // a session by its name alone
@@ -161,14 +181,14 @@ fn the_demo_records_a_session_that_every_command_reads() {
         &["show", name.trim_end_matches(".sonde"), "--summary"],
     );
     assert_eq!(by_name.status.code(), Some(0));
-    assert!(stdout(&by_name).contains("28 requests"));
+    assert!(stdout(&by_name).contains("9 requests"));
 
     // the same run against itself: no change
     let path = t.path().join("data/sessions").join(&name);
     let p = path.to_str().unwrap();
     let same = stdout(&sonde(t.path(), &["compare", p, p]));
     assert!(same.starts_with("no change"), "{same}");
-    assert!(same.contains("requests   28 (no change)"), "{same}");
+    assert!(same.contains("requests   9 (no change)"), "{same}");
     assert!(!same.contains("0%"), "{same}");
 }
 
@@ -176,24 +196,15 @@ fn the_demo_records_a_session_that_every_command_reads() {
 fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let out = stdout(&sonde(t.path(), &["show", "--all"]));
-    // what sonde reads from requests, each once in the tour
+    let first = tour_first(t.path());
+    let out = stdout(&sonde(t.path(), &["show", &first, "--all"]));
+    // what sonde reads from requests: four lookups are one operation
     for line in [
         "4 lookups in demo/tour/, none found",
-        "multipart upload demo/tour/export.csv · 5 parts",
-        "commit 0 · 3 files",
-        "PutObject tour/summary.json retried 1× after 503 SlowDown",
-        "listed demo/tour/ in 3 pages",
-        "28 requests (11 operations)",
-    ] {
-        assert!(out.contains(line), "no {line:?} in:\n{out}");
-    }
-    // and at least two findings to act on
-    for finding in [
-        "1 request throttled (503 SlowDown or 429)",
+        "12 requests (9 operations) from boto3 1.35",
         "3 objects under demo/reports/ were checked with HEAD and then read with GET",
     ] {
-        assert!(out.contains(finding), "no {finding:?} in:\n{out}");
+        assert!(out.contains(line), "no {line:?} in:\n{out}");
     }
 }
 
@@ -314,7 +325,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
     );
     // over a budget is exit 1
     assert_eq!(
-        sonde(t.path(), &["check", "--max-requests", "10"])
+        sonde(t.path(), &["check", "--max-requests", "5"])
             .status
             .code(),
         Some(1)
@@ -322,7 +333,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
     // the baseline survives pruning
     let pruned = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
     );
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
     assert_eq!(
@@ -342,7 +353,7 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     let out = stdout(&o);
     let lines: Vec<&str> = out.lines().collect();
     // the head line names the SDK; then one table, split
-    assert!(lines[1].contains(" from sonde "), "{out}");
+    assert!(lines[1].contains(" from boto3 "), "{out}");
     assert!(
         lines[2].starts_with("kind") && lines[2].contains("p99") && lines[2].contains("cost"),
         "{out}"
@@ -350,7 +361,7 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     assert!(lines.iter().any(|l| l.starts_with("HeadObject")), "{out}");
     // the summary's head line names it too
     let summary = stdout(&sonde(t.path(), &["show", "--summary"]));
-    assert!(summary.contains(" from sonde "), "{summary}");
+    assert!(summary.contains(" from boto3 "), "{summary}");
     // a dimension it does not know, and a flag it would ignore
     assert_eq!(
         sonde(t.path(), &["show", "--by", "bucket"]).status.code(),
@@ -468,7 +479,7 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let name = csv.lines().nth(1).unwrap().split(',').next().unwrap();
-    let c = sonde(t.path(), &["check", "--max-requests", "20"]);
+    let c = sonde(t.path(), &["check", "--max-requests", "6"]);
     assert_eq!(c.status.code(), Some(1));
     let out = stdout(&c);
     let first = out.lines().next().unwrap();
@@ -476,14 +487,14 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
         first.starts_with(&format!("session {name} · recorded 20")),
         "{out}"
     );
-    // 28 requests against 20
+    // 9 requests against 6
     let fail = out.lines().find(|l| l.starts_with("FAIL")).unwrap();
     assert!(
-        fail.contains("requests") && fail.trim_end().ends_with("+40%"),
+        fail.contains("requests") && fail.trim_end().ends_with("+50%"),
         "{out}"
     );
 
-    // the demo warns (a retry); against itself none of it is new, and the row says so
+    // against itself no warning is new, and the row says so
     let same = sonde(
         t.path(),
         &["check", "--baseline", name, "--no-new-warnings"],
@@ -560,7 +571,7 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        cells.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
+        cells.contains("| **FAIL** +800% | requests | 9 | ≤ 1 |"),
         "{md}"
     );
     // a row that passed is not repeated in a comment
@@ -899,17 +910,34 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
-/// The name of the one session of the demo.
+/// The name of the tour's newest session (its fixed run, the one a command
+/// without one takes).
 fn demo_session(dirs: &Path) -> String {
     assert_eq!(sonde(dirs, &["run", "--demo"]).status.code(), Some(0));
-    std::fs::read_dir(dirs.join("data/sessions"))
+    tour_runs(dirs)[0].clone()
+}
+
+/// The tour's sessions by name, newest first.
+fn tour_runs(dirs: &Path) -> Vec<String> {
+    let listed: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(dirs, &["sessions", "-f", "json"]))).unwrap();
+    listed
+        .as_array()
         .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.ends_with(".sonde"))
-        .unwrap()
-        .trim_end_matches(".sonde")
-        .to_string()
+        .iter()
+        .map(|r| {
+            r["name"]
+                .as_str()
+                .unwrap()
+                .trim_end_matches(".sonde")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The newest tour's first run: the job before its fix, with its finding.
+fn tour_first(dirs: &Path) -> String {
+    tour_runs(dirs)[1].clone()
 }
 
 const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
@@ -936,7 +964,7 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
         ],
     );
     assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
-    assert!(stderr(&r).contains("Replay 28 requests"), "{}", stderr(&r));
+    assert!(stderr(&r).contains("Replay 9 requests"), "{}", stderr(&r));
     // a name that is no session is said, with where it was looked for
     for args in [
         vec!["compare", "nosuch", name.as_str()],
@@ -1005,7 +1033,7 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let shown = sonde(t.path(), &["show", "--summary", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-    assert_eq!(v["summary"]["requests"], 28, "the demo's, not the import's");
+    assert_eq!(v["summary"]["requests"], 9, "the demo's, not the import's");
     let checked = sonde(t.path(), &["check", "--max-requests", "100"]);
     assert!(stdout(&checked).contains(&name), "{}", stdout(&checked));
     // the import is still a session, read by its name
@@ -1023,7 +1051,7 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
         .iter()
         .find(|r| r["name"].as_str().unwrap().starts_with(&name))
         .unwrap();
-    assert_eq!(demo["requests"], 28);
+    assert_eq!(demo["requests"], 9);
     assert!(demo["seconds"].is_number() && demo["errors"].is_number());
 }
 
@@ -1323,9 +1351,9 @@ fn an_exit_code_survives_a_closed_pipe() {
         o.status.code()
     };
     for _ in 0..3 {
-        assert_eq!(closed(&["check", "--max-requests", "10"]), Some(1));
+        assert_eq!(closed(&["check", "--max-requests", "5"]), Some(1));
         assert_eq!(
-            closed(&["check", "--max-requests", "10", "-f", "json"]),
+            closed(&["check", "--max-requests", "5", "-f", "json"]),
             Some(1)
         );
         assert_eq!(closed(&["show", "--all"]), Some(0));
@@ -1351,13 +1379,13 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     assert!(beside.is_empty(), "{beside:?}");
     let listed: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
-    assert_eq!(listed[0]["requests"], 28, "{listed}");
-    assert_eq!(listed[0]["program"], "sonde");
+    assert_eq!(listed[0]["requests"], 9, "{listed}");
+    assert_eq!(listed[0]["program"], "tour");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
     assert!(!counted());
-    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde run --demo"));
+    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("tour"));
     assert!(counted());
     // nothing past the newest five: said, not silence
     let kept = sonde(
@@ -1365,7 +1393,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
         &["sessions", "prune", "--keep", "5", "--confirm", "0"],
     );
     assert!(
-        stdout(&kept).contains("nothing to remove: 1 session here"),
+        stdout(&kept).contains("nothing to remove: 2 sessions here"),
         "{}",
         stdout(&kept)
     );
@@ -1373,12 +1401,12 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // a dry run that would delete: 4, and nothing deleted
     let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
     assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
-    assert!(stderr(&dry).contains("--confirm 1"), "{}", stderr(&dry));
+    assert!(stderr(&dry).contains("--confirm 2"), "{}", stderr(&dry));
     assert!(file.is_file());
     // a count that is not the dry run's deletes nothing: refused, 77
     let wrong = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
     );
     assert_eq!(wrong.status.code(), Some(77), "{}", stderr(&wrong));
     assert!(file.is_file());
@@ -1386,7 +1414,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // removed, and what was counted of it with it
     let gone = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
     );
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
     assert!(!file.exists() && !counted());
@@ -1552,7 +1580,7 @@ fn a_trials_session_is_found_by_its_name() {
     ] {
         let o = sonde(t.path(), &["show", name, "--summary"]);
         assert_eq!(o.status.code(), Some(0), "{name}: {}", stderr(&o));
-        assert!(stdout(&o).contains("28 requests"), "{name}");
+        assert!(stdout(&o).contains("9 requests"), "{name}");
     }
 }
 
