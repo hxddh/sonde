@@ -84,7 +84,7 @@ pub fn plan(records: &[Record], opts: &ReplayOptions) -> Plan {
                 p.requests += 1;
                 match r.method.as_str() {
                     "DELETE" => p.deletes += 1,
-                    "POST" if r.operation == "DeleteObjects" => p.deletes += 1,
+                    "POST" if r.kind == "DeleteObjects" => p.deletes += 1,
                     "PUT" | "POST" => p.writes += 1,
                     _ => {}
                 }
@@ -134,7 +134,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if crate::trial::faulted(r) {
         return Some("failed by sonde on purpose when recorded (a trial)".into());
     }
-    if r.operation == "Unknown" {
+    if r.kind == "Unknown" {
         return Some("not an S3 operation sonde knows".into());
     }
     // by what the request is, not only by the name the session stored
@@ -144,7 +144,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if !opts.prefix.is_empty() && (what == "CreateBucket" || what == "DeleteBucket") {
         return Some("creates or deletes a bucket, outside the prefix".into());
     }
-    if !opts.prefix.is_empty() && (changes_bucket(&r.operation) || changes_bucket(&named(r))) {
+    if !opts.prefix.is_empty() && (changes_bucket(&r.kind) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
     if r.query.iter().any(|(k, _)| k == "versionId") {
@@ -165,9 +165,9 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     {
         return Some("its body was too large to keep when recorded".into());
     }
-    if reqlog::is_control_operation(&r.operation)
-        && r.operation != "CompleteMultipartUpload"
-        && r.operation != "CreateBucket"
+    if reqlog::is_control_operation(&r.kind)
+        && r.kind != "CompleteMultipartUpload"
+        && r.kind != "CreateBucket"
         && r.request_bytes.unwrap_or(0) > 0
         && r.request_body.is_none()
     {
@@ -282,7 +282,7 @@ impl State {
     /// The request to send for `r`, or why it cannot be.
     fn build(&mut self, r: &Record, opts: &ReplayOptions) -> Result<S3Request, String> {
         let method: http::Method = r.method.parse().map_err(|_| "a bad method")?;
-        let mut req = S3Request::new(&r.operation, method).no_retry();
+        let mut req = S3Request::new(&r.kind, method).no_retry();
         let bucket = r.bucket.as_deref().map(|b| opts.bucket(b));
         if let Some(b) = &bucket {
             req = req.bucket(b);
@@ -290,8 +290,7 @@ impl State {
         if let Some(k) = &r.key {
             req = req.key(&format!("{}{k}", opts.prefix));
         }
-        let listing =
-            r.operation.starts_with("List") && r.operation != "ListBuckets" && r.key.is_none();
+        let listing = r.kind.starts_with("List") && r.kind != "ListBuckets" && r.key.is_none();
         let mut has_prefix = false;
         for (k, v) in &r.query {
             match k.as_str() {
@@ -370,7 +369,7 @@ impl State {
             bucket.as_deref().unwrap_or(""),
             r.key.as_deref().unwrap_or("")
         );
-        if r.operation == "CompleteMultipartUpload" {
+        if r.kind == "CompleteMultipartUpload" {
             let upload = req
                 .query
                 .iter()
@@ -399,7 +398,7 @@ impl State {
             xml.push_str("</CompleteMultipartUpload>");
             req = req.body(Body::from(xml));
         } else if let Some(b) = &r.request_body {
-            let body = if r.operation == "DeleteObjects" {
+            let body = if r.kind == "DeleteObjects" {
                 move_keys(b, &opts.prefix)
             } else {
                 b.clone()
@@ -420,7 +419,7 @@ impl State {
             return;
         }
         let bucket = req.bucket.clone().unwrap_or_default();
-        match r.operation.as_str() {
+        match r.kind.as_str() {
             "CreateMultipartUpload" => {
                 if let Some(id) = tags(&resp.text(), "UploadId").first() {
                     self.pending
@@ -611,8 +610,7 @@ pub struct Answer {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Difference {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     pub original: String,
     pub replay: String,
     pub count: usize,
@@ -724,16 +722,16 @@ pub fn compare_answers(
                 }
             }
         }
-        if o.operation == "CreateBucket"
+        if o.kind == "CreateBucket"
             && (b.ends_with("BucketAlreadyOwnedByYou") || b.ends_with("BucketAlreadyExists"))
         {
             c.environment += 1;
             continue;
         }
         let conds = conditions(o);
-        let key = (o.operation.to_string(), a.clone(), b.clone());
+        let key = (o.kind.to_string(), a.clone(), b.clone());
         let g = groups.entry(key).or_insert_with(|| Difference {
-            operation: o.operation.to_string(),
+            kind: o.kind.to_string(),
             original: a.clone(),
             replay: b.clone(),
             count: 0,
@@ -753,7 +751,7 @@ pub fn compare_answers(
     }
     c.differences = groups.into_values().collect();
     c.differences
-        .sort_by(|a, b| b.count.cmp(&a.count).then(a.operation.cmp(&b.operation)));
+        .sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
     c
 }
 
@@ -1075,7 +1073,7 @@ pub fn transcript(records: &[Record]) -> String {
         } else {
             outcome(r)
         };
-        out.push_str(&r.operation);
+        out.push_str(&r.kind);
         out.push(' ');
         out.push_str(&target);
         if !conds.is_empty() {
@@ -1123,7 +1121,7 @@ mod tests {
         let rec = |id: u64, op: &str, method: &str, keys: Option<&str>, bytes: u64| {
             let mut r = Record {
                 id,
-                operation: op.into(),
+                kind: op.into(),
                 method: method.into(),
                 bucket: Some("b".into()),
                 key: (method == "GET" && keys.is_none()).then(|| "k".into()),
@@ -1195,7 +1193,7 @@ mod tests {
         let page = |token: Option<&str>| {
             let mut r = Record {
                 method: "GET".into(),
-                operation: "ListObjectsV2".into(),
+                kind: "ListObjectsV2".into(),
                 bucket: Some("b".into()),
                 query: vec![("prefix".into(), "p/".into())],
                 status: Some(200),
@@ -1240,7 +1238,7 @@ mod tests {
         let mut a = Record {
             id: 1,
             method: "PUT".into(),
-            operation: "PutObject".into(),
+            kind: "PutObject".into(),
             bucket: Some("b".into()),
             key: Some("db/x".into()),
             status: Some(200),

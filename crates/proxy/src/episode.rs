@@ -383,7 +383,7 @@ impl Tables {
         let mut roots = Vec::new();
         for r in records {
             let listed = r
-                .operation
+                .kind
                 .starts_with("ListObjects")
                 .then(|| query(r, "prefix").unwrap_or("").trim_end_matches('/'));
             let Some(path) = r.key.as_deref().or(listed) else {
@@ -456,7 +456,7 @@ impl Tables {
         if r.key.is_some() {
             return self.part(r).map(|p| p.format());
         }
-        if !r.operation.starts_with("ListObjects") {
+        if !r.kind.starts_with("ListObjects") {
             return None;
         }
         let prefix = query(r, "prefix").unwrap_or("");
@@ -646,7 +646,7 @@ pub(crate) fn human_bytes(b: u64) -> String {
 
 /// Payload bytes a request uploads (not the XML of Create / Complete).
 fn data_bytes(r: &Record) -> u64 {
-    match r.operation.as_str() {
+    match r.kind.as_str() {
         "PutObject" | "UploadPart" => r.request_bytes.unwrap_or(0),
         _ => 0,
     }
@@ -774,7 +774,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
             }
             continue;
         }
-        if r.operation == "ListObjectsV2" || r.operation == "ListObjects" {
+        if r.kind == "ListObjectsV2" || r.kind == "ListObjects" {
             let same = listing.last().is_some_and(|l: &&Record| {
                 l.bucket == r.bucket && query(l, "prefix") == query(r, "prefix")
             });
@@ -889,7 +889,7 @@ impl Targets {
 fn single(r: &Record, targets: &mut Targets) -> Episode {
     let mut title = vec![p_shared(
         "request",
-        &[("op", r.operation.clone()), ("target", targets.of(r))],
+        &[("op", r.kind.clone()), ("target", targets.of(r))],
     )];
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
         title.push(p("request.prefix", &[("prefix", x.to_string())]));
@@ -993,7 +993,7 @@ fn multipart<'a>(
         )
     };
     for (i, r) in sorted.iter().enumerate() {
-        match r.operation.as_str() {
+        match r.kind.as_str() {
             // a Create that failed and was tried again is part of the upload that followed
             "CreateMultipartUpload" => {
                 let key = key_of(r);
@@ -1049,7 +1049,7 @@ fn multipart<'a>(
         // Creates that failed and were never tried again began nothing: single requests
         if idx
             .iter()
-            .all(|&i| sorted[i].is_error() && sorted[i].operation == "CreateMultipartUpload")
+            .all(|&i| sorted[i].is_error() && sorted[i].kind == "CreateMultipartUpload")
         {
             continue;
         }
@@ -1059,22 +1059,22 @@ fn multipart<'a>(
         let rs: Vec<&Record> = idx.iter().map(|&i| sorted[i]).collect();
         let parts = rs
             .iter()
-            .filter(|r| r.operation.starts_with("UploadPart"))
+            .filter(|r| r.kind.starts_with("UploadPart"))
             .count();
         let bytes: u64 = rs
             .iter()
-            .filter(|r| r.operation == "UploadPart")
+            .filter(|r| r.kind == "UploadPart")
             .map(|r| r.request_bytes.unwrap_or(0))
             .sum();
         let completed = rs.iter().any(completes);
-        let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
+        let aborted = rs.iter().any(|r| r.kind == "AbortMultipartUpload");
         // parts with no create: begun before the recording (an imported
         // log's window), so whether it completed is not known
-        let begun = rs.iter().any(|r| r.operation == "CreateMultipartUpload");
+        let begun = rs.iter().any(|r| r.kind == "CreateMultipartUpload");
         let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
             let mut unit = rs;
-            unit.sort_by_key(|r| (r.operation == "CompleteMultipartUpload", r.time, r.id));
+            unit.sort_by_key(|r| (r.kind == "CompleteMultipartUpload", r.time, r.id));
             units.push(unit);
             continue;
         }
@@ -1105,7 +1105,7 @@ fn multipart<'a>(
 /// store answered well, the program told so or not (a trial that loses the
 /// answer says what the store's was, in `x-sonde-store-status`).
 fn completes(r: &&Record) -> bool {
-    r.operation == "CompleteMultipartUpload"
+    r.kind == "CompleteMultipartUpload"
         && (!r.is_error()
             || response_header(r, "x-sonde-store-status").is_some_and(|s| s.starts_with('2')))
 }
@@ -1228,7 +1228,7 @@ fn retries<'a>(
                 vec![p(
                     "retry",
                     &[
-                        ("op", rs[0].operation.to_string()),
+                        ("op", rs[0].kind.to_string()),
                         ("target", target),
                         ("n", n.to_string()),
                         ("first", first),
@@ -1376,7 +1376,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         _ => p(
             "step.other",
             &[
-                ("op", commit.operation.to_string()),
+                ("op", commit.kind.to_string()),
                 ("key", commit.key.as_deref().unwrap_or_default().to_string()),
             ],
         ),
@@ -1503,7 +1503,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     // what a commit leaves to clear away afterwards (Hudi's markers)
     if rs
         .iter()
-        .all(|r| r.method == "DELETE" || r.operation == "DeleteObjects")
+        .all(|r| r.method == "DELETE" || r.kind == "DeleteObjects")
     {
         return build(
             Shape::Step,
@@ -1876,11 +1876,11 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     for r in records {
         if let Some(id) = query(r, "uploadId") {
             let u = uploads.entry(id).or_default();
-            if r.operation == "UploadPart" {
+            if r.kind == "UploadPart" {
                 u.0 += 1;
                 u.1 += r.request_bytes.unwrap_or(0);
             }
-            u.2 |= r.operation == "CompleteMultipartUpload" && !r.is_error();
+            u.2 |= r.kind == "CompleteMultipartUpload" && !r.is_error();
             u.3.push(r.id);
         }
     }
@@ -1894,7 +1894,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let mut creates: HashMap<(Option<&str>, Option<&str>), VecDeque<&Record>> = HashMap::new();
         let mut sorted: Vec<&Record> = records
             .iter()
-            .filter(|r| r.operation == "CreateMultipartUpload" && !r.is_error())
+            .filter(|r| r.kind == "CreateMultipartUpload" && !r.is_error())
             .collect();
         sorted.sort_by_key(|r| (r.time, r.id));
         for r in sorted {
@@ -1950,7 +1950,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 small
                     .iter()
                     .flat_map(|u| u.3.iter().copied())
-                    .filter(|id| by_id.get(id).is_some_and(|r| r.operation != "UploadPart"))
+                    .filter(|id| by_id.get(id).is_some_and(|r| r.kind != "UploadPart"))
                     .collect(),
             ),
         );
@@ -2009,7 +2009,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     for r in records.iter().filter(|r| {
         // a later page (ListObjectsV2's token, ListObjects' marker) is the
         // same listing going on
-        r.operation.starts_with("ListObjects")
+        r.kind.starts_with("ListObjects")
             && query(r, "continuation-token").is_none()
             && query(r, "marker").is_none_or(str::is_empty)
     }) {
@@ -2061,7 +2061,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
             continue;
         };
-        match r.operation.as_str() {
+        match r.kind.as_str() {
             "HeadObject" if !r.is_error() => {
                 headed.insert((b, k), (r.id, r.time));
             }
@@ -2133,7 +2133,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // s3a's directory markers: empty objects named `…/`, and their deletes
     let markers: Vec<u64> = records
         .iter()
-        .filter(|r| r.operation == "PutObject" && !r.is_error())
+        .filter(|r| r.kind == "PutObject" && !r.is_error())
         .filter(|r| r.key.as_deref().is_some_and(|k| k.ends_with('/')))
         .filter(|r| r.request_bytes.unwrap_or(0) == 0)
         .map(|r| r.id)
@@ -2142,9 +2142,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let unmarked: Vec<u64> = records
             .iter()
             .filter(|r| {
-                (r.operation == "DeleteObject"
-                    && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
-                    || (r.operation == "DeleteObjects"
+                (r.kind == "DeleteObject" && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
+                    || (r.kind == "DeleteObjects"
                         && r.request_body
                             .as_deref()
                             .is_some_and(|b| b.contains("/</Key>")))
@@ -2365,7 +2364,7 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
         if let Some(k) = r.key.as_deref() {
             w.push((at, k));
         }
-        if r.operation == "DeleteObjects"
+        if r.kind == "DeleteObjects"
             && let Some(body) = r.request_body.as_deref()
         {
             let mut rest = body;
@@ -2446,7 +2445,7 @@ fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
     let mut copies = Vec::new();
     for r in records
         .iter()
-        .filter(|r| r.operation == "CopyObject" && !r.is_error())
+        .filter(|r| r.kind == "CopyObject" && !r.is_error())
     {
         let Some(src) = header(r, "x-amz-copy-source") else {
             continue;
@@ -2465,7 +2464,7 @@ fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
     }
     let deletes = records
         .iter()
-        .filter(|r| r.operation == "DeleteObject")
+        .filter(|r| r.kind == "DeleteObject")
         .filter(|r| match (&r.bucket, &r.key) {
             (Some(b), Some(k)) => sources.contains(&(b.to_string(), k.to_string())),
             _ => false,
@@ -2549,7 +2548,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(status),
@@ -2579,7 +2578,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
             method: if op == "UploadPart" { "PUT" } else { "POST" }.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some("big".into()),
             query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
@@ -2629,7 +2628,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: key.map(Into::into),
             status: Some(status),
@@ -3103,7 +3102,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
             method: if method == "COPY" { "PUT" } else { method }.into(),
-            operation: operation.into(),
+            kind: operation.into(),
             bucket: Some("lake".into()),
             key: Some(key.into()),
             status: Some(if method == "DELETE" { 204 } else { 200 }),
@@ -3321,7 +3320,7 @@ mod tests {
             return true;
         };
         let etag = |r: &Record| response_header(r, "etag").map(str::to_string);
-        let is_listing = |r: &Record| r.operation.starts_with("ListObjects");
+        let is_listing = |r: &Record| r.kind.starts_with("ListObjects");
         let place = |r: &Record| match query(r, "prefix") {
             Some(p) if is_listing(r) => p.to_string(),
             _ => r.key.as_deref().unwrap_or("").to_string(),

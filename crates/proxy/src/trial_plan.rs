@@ -112,7 +112,7 @@ mod tests {
             id,
             time: chrono::Utc::now(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(200),

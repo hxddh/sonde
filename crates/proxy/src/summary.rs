@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpStats {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     pub count: u64,
     pub errors: u64,
     pub misses: u64,
@@ -133,7 +132,7 @@ pub fn summarize(records: &[Record]) -> Summary {
                     };
                     s.refusals.push(Refusal {
                         policy: header("x-sonde-policy").unwrap_or_default(),
-                        request: format!("{}{target}", r.operation),
+                        request: format!("{}{target}", r.kind),
                     });
                 }
             }
@@ -148,10 +147,10 @@ pub fn summarize(records: &[Record]) -> Summary {
         let end = r.time + chrono::Duration::microseconds(r.latency_us());
         first = Some(first.map_or(r.time, |f| f.min(r.time)));
         last = Some(last.map_or(end, |l| l.max(end)));
-        let e = ops.entry(r.operation.as_str()).or_insert_with(|| {
+        let e = ops.entry(r.kind.as_str()).or_insert_with(|| {
             (
                 OpStats {
-                    operation: r.operation.to_string(),
+                    kind: r.kind.to_string(),
                     ..Default::default()
                 },
                 Vec::new(),
@@ -181,7 +180,7 @@ pub fn summarize(records: &[Record]) -> Summary {
         })
         .collect();
     s.operations
-        .sort_by(|a, b| b.count.cmp(&a.count).then(a.operation.cmp(&b.operation)));
+        .sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
     s.error_codes = codes.into_iter().collect();
     s.error_codes
         .sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -535,7 +534,7 @@ mod tests {
 
     fn rec(op: &str, status: u16, ms: f64, at_ms: i64) -> Record {
         Record {
-            operation: op.into(),
+            kind: op.into(),
             status: Some(status),
             latency_ms: ms,
             time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
@@ -586,7 +585,7 @@ mod tests {
         assert_eq!(s.bytes_down, 300);
         assert!(!s.error_codes.iter().any(|(c, _)| c.starts_with("404")));
         assert!((s.seconds - 0.18).abs() < 1e-9);
-        assert_eq!(s.operations[0].operation, "GetObject");
+        assert_eq!(s.operations[0].kind, "GetObject");
         assert_eq!(s.operations[0].count, 3);
         assert_eq!(s.operations[0].p50_ms, 30.0);
         assert_eq!(s.operations[0].max_ms, 80.0);

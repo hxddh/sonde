@@ -396,7 +396,7 @@ fn record(
     Record {
         time,
         method: method.into(),
-        operation: operation.into(),
+        kind: operation.into(),
         bucket: bucket.map(Into::into),
         key: key.map(Into::into),
         query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
@@ -530,8 +530,8 @@ fn access_log(
             r.error_body = Some(format!("<Error><Code>{}</Code></Error>", f[10]));
         }
         // the access log has the operation itself: keep S3's word for a copy
-        if f[6].contains("COPY") && !r.operation.contains("Copy") {
-            r.operation = if f[6].contains("PART") {
+        if f[6].contains("COPY") && !r.kind.contains("Copy") {
+            r.kind = if f[6].contains("PART") {
                 "UploadPartCopy"
             } else {
                 "CopyObject"
@@ -671,7 +671,7 @@ fn cloudtrail(
             r.region = Some(region.into());
         }
         // CloudTrail names the operation itself
-        r.operation = name.into();
+        r.kind = name.into();
         r.request_id = e["requestID"].as_str().map(String::from);
         let who = &e["userIdentity"];
         r.requester = who["arn"]
@@ -788,7 +788,7 @@ fn har(
             status,
             e["time"].as_f64().unwrap_or(0.0),
         );
-        r.operation = crate::op::classify(
+        r.kind = crate::op::classify(
             method,
             r.bucket.as_deref(),
             r.key.as_deref(),
@@ -805,7 +805,7 @@ fn har(
             .collect();
         // sonde's own HAR names the kind
         if let Some(op) = e["_sonde"]["kind"].as_str() {
-            r.operation = op.into();
+            r.kind = op.into();
         }
         // a presigned URL's signature, key and token never reach the session
         let mut shown = url.clone();
@@ -957,7 +957,7 @@ mod tests {
     fn an_access_log_reads_as_requests() {
         assert_eq!(detect(LOG), Some(Source::AccessLog));
         let (_, s) = import(LOG, "prod").unwrap();
-        let ops: Vec<&str> = s.records.iter().map(|r| r.operation.as_str()).collect();
+        let ops: Vec<&str> = s.records.iter().map(|r| r.kind.as_str()).collect();
         assert_eq!(ops, ["GetObject", "HeadObject", "ListObjectsV2"]);
         assert_eq!(s.records[0].latency_ms, 12.0);
         assert_eq!(s.records[0].response_bytes, Some(4096));
@@ -990,7 +990,7 @@ mod tests {
         let (src, s) = import(ct, "trail").unwrap();
         assert_eq!(src, Source::CloudTrail);
         assert_eq!(s.records.len(), 2);
-        assert_eq!(s.records[0].operation, "GetObject");
+        assert_eq!(s.records[0].kind, "GetObject");
         assert_eq!(s.records[0].status, Some(404));
         assert_eq!(
             s.records[0].requester.as_deref(),
@@ -1007,7 +1007,7 @@ mod tests {
         let har = serde_json::to_string(&reqlog::export::to_har(&[Record {
             time: Utc::now(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             url: "https://lake.s3.us-east-1.amazonaws.com/t/k%20x".into(),
             status: Some(200),
             latency_ms: 7.0,
@@ -1087,7 +1087,7 @@ mod tests {
             .session
             .records
             .iter()
-            .map(|r| (r.operation.as_str(), r.key.as_deref()))
+            .map(|r| (r.kind.as_str(), r.key.as_deref()))
             .collect();
         assert_eq!(
             ops,
@@ -1143,7 +1143,7 @@ mod tests {
             .session
             .records
             .iter()
-            .map(|r| r.operation.as_str())
+            .map(|r| r.kind.as_str())
             .collect();
         assert_eq!(ops, ["GetObject", "HeadObject", "ListObjectsV2"]);
         assert_eq!(d.imported.source, Source::AccessLog);
@@ -1221,12 +1221,7 @@ mod tests {
         );
         let i = import_counted(&log, "prod").unwrap();
         assert_eq!((i.malformed, i.not_requests), (1, 2));
-        let ops: Vec<&str> = i
-            .session
-            .records
-            .iter()
-            .map(|r| r.operation.as_str())
-            .collect();
+        let ops: Vec<&str> = i.session.records.iter().map(|r| r.kind.as_str()).collect();
         assert_eq!(
             ops,
             [
@@ -1353,7 +1348,7 @@ mod tests {
         assert_eq!(h("if-match"), Some("\"e1\""));
         assert_eq!(h("x-amz-copy-source"), Some("/lake/src"));
         assert_eq!(h(":authority"), None);
-        assert_eq!(r.operation, "CopyObject");
+        assert_eq!(r.kind, "CopyObject");
         let text = serde_json::to_string(r).unwrap();
         for secret in [
             "deadbeefdeadbeef",

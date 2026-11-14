@@ -668,7 +668,7 @@ mod tests {
             f.add(&Record {
                 id: i,
                 method: "GET".into(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 status: Some(200),
                 latency_ms: 2000.0,
                 ..Default::default()
@@ -854,7 +854,7 @@ mod tests {
         let rec = |h: i64, method: &str, op: &str, q: &[(&str, &str)]| Record {
             time: at(h),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some("big".into()),
             status: Some(200),

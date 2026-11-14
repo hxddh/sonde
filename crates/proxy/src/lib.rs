@@ -191,7 +191,7 @@ impl Written {
     pub fn of(records: &[Record]) -> Written {
         let w = Written::default();
         for r in records {
-            if writes_object(&r.operation)
+            if writes_object(&r.kind)
                 && r.status.is_some_and(|s| (200..300).contains(&s))
                 && let (Some(b), Some(k)) = (&r.bucket, &r.key)
             {
@@ -1313,7 +1313,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         id: 0,
         time: Utc::now(),
         endpoint: cfg.endpoint_id.as_str().into(),
-        operation: operation.as_str().into(),
+        kind: operation.as_str().into(),
         method: method.as_str().into(),
         url: url.clone(),
         bucket: bucket.as_deref().map(Into::into),
@@ -2067,8 +2067,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
     record.first_byte_ms = Some(record.latency_ms);
-    let keys = (reqlog::is_listing(&record.operation) && status.is_success())
-        .then(reqlog::KeyCounter::default);
+    let keys =
+        (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
     let mut pending = Pending {
         keys,
         record: Some(record),

@@ -30,8 +30,7 @@ pub enum StatusFilter {
 pub struct Filter {
     pub status: Option<StatusFilter>,
     /// The request's kind (`GetObject`), matched case-insensitively.
-    #[serde(rename = "kind")]
-    pub operation: Option<String>,
+    pub kind: Option<String>,
     pub endpoint: Option<String>,
     pub job: Option<String>,
     /// Matched against the bucket, the key and the request id.
@@ -53,8 +52,8 @@ impl Filter {
                 return false;
             }
         }
-        if let Some(op) = &self.operation
-            && !r.operation.eq_ignore_ascii_case(op)
+        if let Some(op) = &self.kind
+            && !r.kind.eq_ignore_ascii_case(op)
         {
             return false;
         }
@@ -234,7 +233,7 @@ impl RequestLog {
             .read()
             .records
             .iter()
-            .map(|r| r.operation.to_string())
+            .map(|r| r.kind.to_string())
             .collect();
         ops.sort();
         ops.dedup();
@@ -249,7 +248,7 @@ mod tests {
 
     fn rec(op: &str, status: Option<u16>) -> Record {
         Record {
-            operation: op.into(),
+            kind: op.into(),
             method: "GET".into(),
             endpoint: "e1".into(),
             bucket: Some("b".into()),
@@ -273,7 +272,7 @@ mod tests {
         let all = log.snapshot();
         assert_eq!(all.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3, 4, 5]);
         assert!(log.get(1).is_none());
-        assert_eq!(log.get(4).unwrap().operation, "Op3");
+        assert_eq!(log.get(4).unwrap().kind, "Op3");
         log.set_capacity(1);
         assert_eq!(log.len(), 1);
     }
@@ -303,7 +302,7 @@ mod tests {
         assert_eq!(log.list(&f(StatusFilter::Exact(404)), 10).len(), 1);
         assert_eq!(log.list(&f(StatusFilter::Transport), 10).len(), 1);
         let op = Filter {
-            operation: Some("putobject".into()),
+            kind: Some("putobject".into()),
             ..Default::default()
         };
         assert_eq!(log.list(&op, 10).len(), 2);

@@ -134,7 +134,7 @@ pub fn asked(r: &Record) -> String {
         .unwrap_or_default();
     format!(
         "{} {}/{}?{prefix}",
-        r.operation,
+        r.kind,
         r.bucket.as_deref().unwrap_or(""),
         r.key.as_deref().unwrap_or("")
     )
@@ -185,10 +185,7 @@ pub fn count(records: &[Record], wanted: &HashSet<&str>) -> HashMap<String, usiz
         .filter_map(|a| a.split_once(' ').map(|(op, _)| op))
         .collect();
     let mut out: HashMap<String, usize> = HashMap::new();
-    for r in records
-        .iter()
-        .filter(|r| ops.contains(r.operation.as_str()))
-    {
+    for r in records.iter().filter(|r| ops.contains(r.kind.as_str())) {
         let a = asked(r);
         if wanted.contains(a.as_str()) {
             *out.entry(a).or_default() += 1;

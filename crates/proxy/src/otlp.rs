@@ -117,7 +117,7 @@ fn spans_of(
         let mut attrs = vec![
             attr("rpc.system", json!("aws-api")),
             attr("rpc.service", json!("S3")),
-            attr("rpc.method", json!(r.operation)),
+            attr("rpc.method", json!(r.kind)),
             attr("http.request.method", json!(r.method)),
         ];
         if let Some(st) = r.status {
@@ -143,7 +143,7 @@ fn spans_of(
             "traceId": trace_id,
             "spanId": hex(hash(&["req", &r.id.to_string(), trace_id]), 8),
             "parentSpanId": span_id,
-            "name": format!("S3.{}", r.operation),
+            "name": format!("S3.{}", r.kind),
             "kind": 3,
             "startTimeUnixNano": nanos(r.time),
             "endTimeUnixNano": nanos(end),
@@ -250,7 +250,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(200),
@@ -318,7 +318,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(200),
@@ -362,7 +362,7 @@ mod tests {
                 id: 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000).unwrap(),
                 method: "GET".into(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 status: Some(200),
                 latency_ms: 1e300,
                 ..Default::default()

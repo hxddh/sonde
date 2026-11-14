@@ -1059,7 +1059,7 @@ mod tests {
         let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
         w.write(&Record {
             id: 1,
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         });
         w.flush().unwrap();
@@ -1092,7 +1092,7 @@ mod tests {
             (s.records[0].status, s.records[0].bucket.as_ref()),
             (None, None)
         );
-        assert_eq!(s.records[0].operation, "GetObject");
+        assert_eq!(s.records[0].kind, "GetObject");
         assert_eq!(s.logs.len(), 1);
         assert_eq!(s.header.sonde, None);
         // a line short of a required field is not a record
@@ -1146,7 +1146,7 @@ mod tests {
         for i in 0..3 {
             w.write(&Record {
                 id: i,
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 ..Default::default()
             });
         }
@@ -1175,7 +1175,7 @@ mod tests {
         for i in 0..n {
             w.write(&Record {
                 id: i + 1,
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 method: "GET".into(),
                 url: format!("https://x.r2.dev/b/k{i}"),
                 key: Some(format!("k{i}").into()),
@@ -1434,7 +1434,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 20_000)
                     .unwrap(),
-                operation: "GetObject".into(),
+                kind: "GetObject".into(),
                 method: "GET".into(),
                 bucket: Some("b".into()),
                 key: Some(format!("{long}{}", i % 3).into()),

@@ -188,7 +188,7 @@ async fn no_delete_refuses_a_completion_or_a_copy_over_an_object_there_before() 
 #[tokio::test]
 async fn a_trial_may_write_again_what_its_clean_run_wrote() {
     let mut clean = reqlog::Record {
-        operation: "PutObject".into(),
+        kind: "PutObject".into(),
         bucket: Some("data".into()),
         key: Some("old".into()),
         status: Some(200),

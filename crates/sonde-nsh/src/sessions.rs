@@ -2662,7 +2662,7 @@ mod tests {
                 w.write(&reqlog::Record {
                     id: i + 1,
                     time: chrono::Utc::now(),
-                    operation: "GetObject".into(),
+                    kind: "GetObject".into(),
                     method: "GET".into(),
                     bucket: Some("b".into()),
                     key: Some("hot".into()),
@@ -2711,7 +2711,7 @@ mod tests {
             SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
         w.write(&reqlog::Record {
             id: 1,
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         });
         drop(w);
@@ -2866,7 +2866,7 @@ mod tests {
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             ..Default::default()
         };
         w.flush().unwrap();
@@ -2894,7 +2894,7 @@ mod tests {
                 time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 100)
                     .unwrap(),
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
-                operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
+                kind: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 url: format!("http://s3/b/data/k{i:05}"),
                 bucket: Some("b".into()),
                 key: Some(format!("data/k{i:05}").into()),
@@ -3079,7 +3079,7 @@ mod tests {
             id,
             time: chrono::Utc::now(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(200),
@@ -3116,7 +3116,7 @@ mod tests {
             id,
             time: chrono::Utc::now(),
             method: method.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(if injected.is_some() { 503 } else { 200 }),

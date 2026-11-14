@@ -195,7 +195,7 @@ impl Analysis {
             for r in records {
                 let mut k = by_id.partition_point(|(id, _)| *id < r.id);
                 while k < by_id.len() && by_id[k].0 == r.id {
-                    let name: &str = &r.operation;
+                    let name: &str = &r.kind;
                     let bit = match kind_names.iter().position(|n| n == name) {
                         Some(b) => b,
                         None if kind_names.len() < 63 => {
@@ -488,7 +488,7 @@ mod tests {
                 id: i + 1,
                 time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 100).unwrap(),
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
-                operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
+                kind: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 bucket: Some("b".into()),
                 key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
@@ -590,7 +590,7 @@ mod tests {
         for r in &mut s.records {
             r.key = Some("conf.json".into());
             r.method = "GET".into();
-            r.operation = "GetObject".into();
+            r.kind = "GetObject".into();
             r.status = Some(200);
         }
         let a = Analysis::of(&s, &RequestPrices::default());

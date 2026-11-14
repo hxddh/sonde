@@ -149,7 +149,7 @@ impl Keyer {
 
     fn key(&self, r: &Record) -> String {
         match self.by {
-            Dimension::Kind => r.operation.to_string(),
+            Dimension::Kind => r.kind.to_string(),
             Dimension::Prefix => {
                 let f = folder_of(r);
                 prefix_for(&self.prefixes, &f).unwrap_or(&f).to_string()
@@ -424,7 +424,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 1000).unwrap(),
             method: if op.starts_with("Put") { "PUT" } else { "GET" }.into(),
-            operation: op.into(),
+            kind: op.into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(200),

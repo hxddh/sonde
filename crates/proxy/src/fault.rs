@@ -393,7 +393,7 @@ pub fn kept_body_hash(r: &reqlog::Record) -> Option<String> {
 pub fn identity_of(r: &reqlog::Record) -> String {
     identity(
         &r.method,
-        &r.operation,
+        &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
         &r.query,
@@ -1130,7 +1130,7 @@ mod tests {
     fn a_record_is_named_as_the_fault_named_its_request() {
         let mut r = reqlog::Record {
             method: "POST".into(),
-            operation: "DeleteObjects".into(),
+            kind: "DeleteObjects".into(),
             bucket: Some("b".into()),
             query: vec![("delete".into(), "".into())],
             request_body: Some("cut and redac…".into()),

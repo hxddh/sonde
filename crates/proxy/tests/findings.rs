@@ -14,7 +14,7 @@ fn rec(id: u64, at_ms: i64, op: &str, key: Option<&str>, status: u16, latency: f
         id,
         time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
         method: method.into(),
-        operation: op.into(),
+        kind: op.into(),
         bucket: Some("b".into()),
         key: key.map(Into::into),
         status: Some(status),

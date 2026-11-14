@@ -67,7 +67,7 @@ pub(super) fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool)
         let mut line = format!(
             "{} {:<24} recorded {} → replay {}   ×{}   e.g. {}",
             paint("✗", "33", color),
-            d.operation,
+            d.kind,
             d.original,
             d.replay,
             d.count,
@@ -119,9 +119,9 @@ fn print_latency_of(changes: &[sonde_proxy::profile::LatencyChange], names: (&st
             let ratio = c.p95_ms.1.max(0.01) / c.p95_ms.0.max(0.01);
             vec![
                 if c.missed {
-                    format!("{} (not found)", c.operation)
+                    format!("{} (not found)", c.kind)
                 } else {
-                    c.operation.clone()
+                    c.kind.clone()
                 },
                 format!("{} → {}", ms_text(c.p50_ms.0), ms_text(c.p50_ms.1)),
                 format!("{} → {}", ms_text(c.p95_ms.0), ms_text(c.p95_ms.1)),
@@ -414,9 +414,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         .map(|g| {
             vec![
                 if g.missed {
-                    format!("{} (not found)", g.operation)
+                    format!("{} (not found)", g.kind)
                 } else {
-                    g.operation.clone()
+                    g.kind.clone()
                 },
                 format!(
                     "{} → {}",

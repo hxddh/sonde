@@ -296,7 +296,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
     let mut line = format!(
         "{}  {status}{pad}  {latency:>7}  {bytes:>10}  {:<24} {target}",
         paint(&time, "2", color),
-        r.operation,
+        r.kind,
     );
     if !detail.is_empty() {
         line.push_str(&paint(&format!("  {detail}"), "2", color));
@@ -366,9 +366,9 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
             let star = if mark && few(g) { "*" } else { "" };
             let mut row = vec![
                 if g.missed {
-                    format!("{} (not found)", g.operation)
+                    format!("{} (not found)", g.kind)
                 } else {
-                    g.operation.clone()
+                    g.kind.clone()
                 },
                 output::grouped(g.requests as u64),
                 if g.errors > 0 && !g.missed {

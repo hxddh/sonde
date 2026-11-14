@@ -55,8 +55,8 @@ pub fn to_har(records: &[Record]) -> Value {
                 },
                 "cache": {},
                 "timings": {"send": 0, "wait": r.latency_ms, "receive": 0},
-                "comment": format!("{} retries={} request-id={}", r.operation, r.retries, r.request_id.clone().unwrap_or_default()),
-                "_sonde": {"id": r.id, "endpoint": r.endpoint, "kind": r.operation, "retries": r.retries, "requestId": r.request_id, "hostId": r.host_id},
+                "comment": format!("{} retries={} request-id={}", r.kind, r.retries, r.request_id.clone().unwrap_or_default()),
+                "_sonde": {"id": r.id, "endpoint": r.endpoint, "kind": r.kind, "retries": r.retries, "requestId": r.request_id, "hostId": r.host_id},
             })
         })
         .collect();
@@ -78,7 +78,7 @@ mod tests {
     fn har_shape_and_redaction() {
         let log = RequestLog::new(10);
         log.push(Record {
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             method: "GET".into(),
             url: "https://h/b/k?X-Amz-Signature=secret".into(),
             status: Some(403),

@@ -797,7 +797,7 @@ impl S3Client {
             id: 0,
             time: Utc::now(),
             endpoint: self.cfg.endpoint_id.as_str().into(),
-            operation: req.operation.as_str().into(),
+            kind: req.operation.as_str().into(),
             method: req.method.as_str().into(),
             url: url.to_string(),
             bucket: req.bucket.as_deref().map(Into::into),
@@ -988,7 +988,7 @@ pub fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
 /// A listing answered well says on its record how many keys it listed
 /// ([`reqlog::KEYS_HEADER`]).
 fn listed(record: &mut Record, body: &[u8]) {
-    if reqlog::is_listing(&record.operation) && record.status.is_some_and(|s| s < 300) {
+    if reqlog::is_listing(&record.kind) && record.status.is_some_and(|s| s < 300) {
         let mut k = reqlog::KeyCounter::default();
         k.feed(body);
         record

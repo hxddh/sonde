@@ -161,7 +161,7 @@ fn get(id: u64, key: &str) -> Record {
         id,
         time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
         method: "GET".into(),
-        operation: "GetObject".into(),
+        kind: "GetObject".into(),
         bucket: Some("b".into()),
         key: Some(key.into()),
         status: Some(200),
@@ -216,7 +216,7 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
 
 fn list(id: u64, prefix: &str) -> Record {
     Record {
-        operation: "ListObjectsV2".into(),
+        kind: "ListObjectsV2".into(),
         key: None,
         query: vec![("prefix".into(), prefix.to_string().into())],
         ..get(id, "")

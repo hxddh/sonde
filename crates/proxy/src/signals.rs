@@ -118,8 +118,7 @@ pub struct InFlight {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FirstByteRow {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     /// The requests whose first byte was timed.
     pub count: usize,
     /// Medians.
@@ -151,8 +150,7 @@ pub struct SizeBucket {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Throughput {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     /// The size bucket, by its upper bound in bytes.
     pub bucket: u64,
     pub count: usize,
@@ -193,8 +191,7 @@ pub struct StatusRow {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostRow {
-    #[serde(rename = "kind")]
-    pub operation: String,
+    pub kind: String,
     /// Its price class: "write", "list", "read" or "free".
     pub class: &'static str,
     pub requests: usize,
@@ -473,7 +470,7 @@ struct Op {
 fn class_name(r: &Record) -> &'static str {
     match class(r) {
         Class::Free => "free",
-        Class::Write if r.operation.starts_with("List") => "list",
+        Class::Write if r.kind.starts_with("List") => "list",
         Class::Write => "write",
         Class::Read => "read",
     }
@@ -583,7 +580,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         let cost = price(r, prices);
         // in the records' order, as the profile adds it up: the same figure
         amount += cost;
-        let op = ops.entry(r.operation.as_str()).or_insert_with(|| Op {
+        let op = ops.entry(r.kind.as_str()).or_insert_with(|| Op {
             class: class_name(r),
             requests: 0,
             billed: 0,
@@ -608,7 +605,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         }
 
         // a transfer: the body the operation is about, when it arrived whole
-        let body = match r.operation.as_str() {
+        let body = match r.kind.as_str() {
             "GetObject" => r.response_bytes,
             "PutObject" | "UploadPart" => r.request_bytes,
             _ => None,
@@ -619,7 +616,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         {
             let rate = b as f64 / MIB / (latency_ms / 1000.0);
             moved
-                .entry((r.operation.as_str(), size_bucket(b)))
+                .entry((r.kind.as_str(), size_bucket(b)))
                 .or_default()
                 .push(rate);
             moved_all.push(rate);
@@ -715,7 +712,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let mut kinds = Vec::new();
     for (name, mut o) in ops {
         cost_rows.push(CostRow {
-            operation: name.to_string(),
+            kind: name.to_string(),
             class: o.class,
             requests: o.requests,
             billed: o.billed,
@@ -724,7 +721,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         });
         if !o.first_byte.is_empty() {
             kinds.push(FirstByteRow {
-                operation: name.to_string(),
+                kind: name.to_string(),
                 count: o.first_byte.len(),
                 first_byte_ms: median(&mut o.first_byte),
                 rest_ms: median(&mut o.rest),
@@ -735,9 +732,9 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         b.cost
             .total_cmp(&a.cost)
             .then(b.requests.cmp(&a.requests))
-            .then(a.operation.cmp(&b.operation))
+            .then(a.kind.cmp(&b.kind))
     });
-    kinds.sort_by(|a, b| b.count.cmp(&a.count).then(a.operation.cmp(&b.operation)));
+    kinds.sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
 
     let mut statuses: Vec<StatusRow> = statuses.into_values().collect();
     statuses.sort_by(|a, b| {
@@ -831,7 +828,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             throughput: moved
                 .into_iter()
                 .map(|((operation, bucket), mut v)| Throughput {
-                    operation: operation.to_string(),
+                    kind: operation.to_string(),
                     bucket: bucket_le(bucket),
                     count: v.len(),
                     mib_per_sec: median(&mut v),
@@ -1146,7 +1143,7 @@ pub fn text(s: &Signals, color: bool) -> String {
 
     if let Some(fb) = &s.first_byte {
         let rows = &fb.kinds[..fb.kinds.len().min(TABLE_ROWS)];
-        let w = width(&mut rows.iter().map(|k| k.operation.as_str()));
+        let w = width(&mut rows.iter().map(|k| k.kind.as_str()));
         out.push_str(&heading(format!(
             "first byte  {} of the time is the wait for it",
             percent(fb.share)
@@ -1162,7 +1159,7 @@ pub fn text(s: &Signals, color: bool) -> String {
         for k in rows {
             out.push_str(&format!(
                 "  {:<w$}  {:>9}  {:>10}  {}\n",
-                k.operation,
+                k.kind,
                 count_text(k.count),
                 ms_text(k.first_byte_ms),
                 ms_text(k.rest_ms),
@@ -1180,7 +1177,7 @@ pub fn text(s: &Signals, color: bool) -> String {
         .take(TABLE_ROWS)
         .collect();
     if !paid.is_empty() {
-        let w = width(&mut paid.iter().map(|r| r.operation.as_str()));
+        let w = width(&mut paid.iter().map(|r| r.kind.as_str()));
         out.push_str(&heading(format!(
             "cost  {} for its requests",
             crate::program::money_text(s.cost.amount, &s.cost.currency)
@@ -1196,7 +1193,7 @@ pub fn text(s: &Signals, color: bool) -> String {
         for r in &paid {
             out.push_str(&format!(
                 "  {:<w$}  {:>9}  {:>5}  {}\n",
-                r.operation,
+                r.kind,
                 count_text(r.requests),
                 percent(r.share),
                 crate::program::money_text(r.cost, &s.cost.currency),
@@ -1248,7 +1245,7 @@ mod tests {
             id,
             time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
             method: "GET".into(),
-            operation: "GetObject".into(),
+            kind: "GetObject".into(),
             bucket: Some("b".into()),
             key: Some(key.into()),
             status: Some(status),
@@ -1441,7 +1438,7 @@ mod tests {
             .enumerate()
             .map(|(i, op)| {
                 let mut r = get(i as u64, i as i64 * 400, "k", 200);
-                r.operation = (*op).into();
+                r.kind = (*op).into();
                 r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
                 r.first_byte_ms = Some(2.0);
                 r

@@ -178,10 +178,7 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     let mut records = recorded.list(&Filter::default(), 1000);
     records.reverse();
     assert_eq!(records.len(), 14);
-    let delete = records
-        .iter()
-        .find(|r| r.operation == "DeleteObjects")
-        .unwrap();
+    let delete = records.iter().find(|r| r.kind == "DeleteObjects").unwrap();
     assert!(
         delete
             .request_body
@@ -214,7 +211,7 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     let skipped: Vec<_> = done.iter().filter_map(|d| d.skipped.as_deref()).collect();
     assert_eq!(skipped, ["creates or deletes a bucket, outside the prefix"]);
     let replayed = log.list(&Filter::default(), 1000);
-    assert!(replayed.iter().all(|r| r.operation != "CreateBucket"));
+    assert!(replayed.iter().all(|r| r.kind != "CreateBucket"));
     let c = compare(&records, &replayed, &done);
     assert_eq!(c.compared, 13);
     assert_eq!(c.differ(), 0, "{c:#?}");
@@ -232,7 +229,7 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     assert_eq!(c.differ(), 1, "{c:#?}");
     let d = &c.differences[0];
     assert_eq!(
-        (d.operation.as_str(), d.original.as_str(), d.replay.as_str()),
+        (d.kind.as_str(), d.original.as_str(), d.replay.as_str()),
         ("PutObject", "412 PreconditionFailed", "200")
     );
     assert_eq!(d.conditions, ["if-none-match: *"]);
@@ -359,7 +356,7 @@ async fn answering(status: u16, code: &'static str) -> String {
 fn one_put() -> sonde_proxy::session::Session {
     let r = reqlog::Record {
         id: 1,
-        operation: "PutObject".into(),
+        kind: "PutObject".into(),
         method: "PUT".into(),
         bucket: Some("data".into()),
         key: Some("k".into()),
@@ -434,7 +431,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         .unwrap();
     let put = |id: u64, key: &str| reqlog::Record {
         id,
-        operation: "PutObject".into(),
+        kind: "PutObject".into(),
         method: "PUT".into(),
         bucket: Some("data".into()),
         key: Some(key.into()),
@@ -483,7 +480,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
 fn put_record(id: u64, key: &str) -> reqlog::Record {
     reqlog::Record {
         id,
-        operation: "PutObject".into(),
+        kind: "PutObject".into(),
         method: "PUT".into(),
         bucket: Some("data".into()),
         key: Some(key.into()),
@@ -563,7 +560,7 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
         s.no_abort = true;
     }
     let mut create = put_record(4, "big");
-    create.operation = "CreateMultipartUpload".into();
+    create.kind = "CreateMultipartUpload".into();
     create.method = "POST".into();
     create.query = vec![("uploads".into(), "".into())];
     create.request_bytes = None;
