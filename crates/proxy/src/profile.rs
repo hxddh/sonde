@@ -1411,6 +1411,11 @@ pub struct RunChange {
     /// did): its findings are not compared, a crash is no fix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<i32>,
+    /// How the command changed between two runs of one program (a named
+    /// one's), `--limit 200 → 20`: then less, more and fixed are the
+    /// workload's doing, and no saving is counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_changed: Option<String>,
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
@@ -1441,6 +1446,17 @@ impl RunChange {
             self.resolved.clear();
             self.appeared.clear();
             self.findings.clear();
+        }
+        self
+    }
+
+    /// Says how the command changed between two runs of one program
+    /// ([`crate::program::command_change`]): a finding fixed, less or more
+    /// then counts no saving.
+    pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
+        self.command_changed = crate::program::command_change(a, b);
+        if self.command_changed.is_some() {
+            crate::fixloop::by_command(&mut self.findings);
         }
         self
     }
@@ -1569,9 +1585,12 @@ pub fn stable(s: &str) -> String {
     stable_with(s, true)
 }
 
-/// [`stable`] for a command line: a word is replaced only when the whole of it
-/// is a value (a number, a date, a UUID, an id), so `python3`, `s3://` and
-/// `job1.py` stay what they say.
+/// [`stable`] for a command line: only what is never the same twice is
+/// taken out, a date `{date}`, a time `{time}`, a UUID `{uuid}`, an id
+/// `{id}` (a hex word, a long mixed one, a number of ten digits or more),
+/// wherever it is (`--date=2026-11-14`). A number is an argument
+/// (`--limit 30` and `--limit 5` are two commands), and `python3`, `s3://`
+/// and `job1.py` stay what they say.
 pub fn stable_words(s: &str) -> String {
     stable_with(s, false)
 }
@@ -1581,8 +1600,9 @@ fn stable_with(s: &str, digits_in_words: bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
-        // a folder or file `name=value` (Hive's partitions): its value
-        if i == 0 || b[i - 1] == b'/' {
+        // a folder or file `name=value` (Hive's partitions): its value (of
+        // a key; a command's values are taken out only by what they are)
+        if digits_in_words && (i == 0 || b[i - 1] == b'/') {
             let seg = s[i..].find('/').map_or(&s[i..], |e| &s[i..i + e]);
             if let Some((name, value)) = seg.split_once('=')
                 && !name.is_empty()
@@ -1624,8 +1644,10 @@ fn stable_with(s: &str, digits_in_words: bool) -> String {
             || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
         {
             out.push_str("{id}");
-        } else if !digits_in_words && has(u8::is_ascii_alphabetic) {
+        } else if !digits_in_words && (has(u8::is_ascii_alphabetic) || w.len() < 10) {
             out.push_str(w);
+        } else if !digits_in_words {
+            out.push_str("{id}");
         } else {
             // each run of digits
             let mut digits = false;
@@ -1964,6 +1986,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         findings,
         same_program: true,
         failed: None,
+        command_changed: None,
     }
 }
 

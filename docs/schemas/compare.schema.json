@@ -269,6 +269,10 @@
       "type": "boolean",
       "description": "Both are runs of one program: their findings compare."
     },
+    "commandChanged": {
+      "type": "string",
+      "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `measured` or `saved`."
+    },
     "latency": {
       "type": "array",
       "description": "Each run's latency on the same buckets.",

@@ -281,6 +281,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let mut c = sonde_proxy::profile::compare_runs(&ra, &rb);
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
+        c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
         // a finding fixed by the earlier run or one before it is back, not new
         if let (Some(k), Ok(kept)) = (
             &ka,
@@ -328,6 +329,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     };
     if let Some(t) = failed {
         println!("{}", paint(&t, "33", color));
+    }
+    if let Some(ch) = &c.command_changed {
+        println!("{}", paint(&super::fixloop::command_line(ch), "33", color));
     }
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1
@@ -405,7 +409,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for line in super::fixloop::change_lines(&c.findings, color) {
+    for line in super::fixloop::change_lines(&c.findings, c.command_changed.as_deref(), color) {
         println!("{line}");
     }
     Ok(0)

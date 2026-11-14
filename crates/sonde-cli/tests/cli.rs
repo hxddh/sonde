@@ -1486,13 +1486,13 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
     let monday = session_of(
         t.path(),
         "monday.sonde",
-        "python etl.py --day 1",
+        "python etl.py --date 2026-11-09",
         "2026-11-09T02:00:00Z",
     );
     let tuesday = session_of(
         t.path(),
         "tuesday.sonde",
-        "python etl.py --day 2",
+        "python etl.py --date 2026-11-10",
         "2026-11-10T02:00:00Z",
     );
     let set = sonde(

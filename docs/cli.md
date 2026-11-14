@@ -13,7 +13,7 @@
 | Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. |
 | A session argument | A path or a name, resolved in order: a file; `sessions/<name>[.sonde]`; `sessions/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | The newest session | The default for `show`, `share`: newest from `run` or `proxy` (never a replay, import or trial). `check`'s: the newest run of `[program] name`, else of the newest program recorded in this folder (the session's `cwd`); never another program's (it says which it took, or why none). |
-| A program | `[program] name` in `sonde.toml`, or `--name`; else its command with each word that is a value said as what it is (`etl.py --date 2026-11-14` is `etl.py --date {date}`; numbers, UUIDs and ids too, never the digits in a name: `python3`, `s3://` stay) and a trial's place (`{trial}`, `$SONDE_TRIAL`) left out. Runs, baselines, trial verdicts and `no-delete`'s ledger go by it. |
+| A program | `[program] name` in `sonde.toml`, or `--name`; else its command with each date, time, UUID and id said as what it is (`etl.py --date 2026-11-14` is `etl.py --date {date}`; an id is a hex word, a long mixed word or ten digits or more) and a trial's place (`{trial}`, `$SONDE_TRIAL`) left out. Other numbers stay (`--limit 30` and `--limit 5` are two programs), as do the digits in a name (`python3`, `job1.py`). Runs, baselines, trial verdicts and `no-delete`'s ledger go by it. |
 | Size | Sessions are streamed and analysed once; `compare` reads one session at a time, so two cost what one does. Memory grows with the requests ([what a million cost](performance.md#large-sessions)). |
 | `.index.jsonl` | One per sessions folder: each session's counts (requests, time, errors, program, figures once checked), its trials' verdicts and its exit code. Read by `sessions`, the app and `check`'s history. Counted again when missing, when the session's length or mtime (ns) changed, or the analysis changed; forgotten with the session. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
 
@@ -199,6 +199,8 @@ Between a run and the program's run before it that did not fail, by its counts (
 
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
+
+A named program whose command changed between the two runs beyond its dates and ids says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);

@@ -780,12 +780,13 @@ pub fn since_last(
     let before = previous.as_ref().and_then(|p| {
         let s = crate::session::Session::open_lean(p).ok()?;
         let run = Run::analysed(&s.header, &s.records, &prices(&s.header.endpoint));
-        Some((s.header.created, run))
+        Some((s.header.created, s.header.command.clone(), run))
     });
     let (change, mut findings) = match &before {
-        Some((_, a)) => {
+        Some((_, command, a)) => {
             run.measure(records, a);
-            let c = crate::profile::compare_runs(a, &run);
+            let c = crate::profile::compare_runs(a, &run)
+                .of_commands(command.as_deref(), header.command.as_deref());
             let f = c.findings.clone();
             (Some(c), f)
         }
@@ -819,7 +820,7 @@ pub fn since_last(
     // run itself, when it is the program's first): never by a later one
     let upto = before
         .as_ref()
-        .map_or(header.created, |(at, _)| *at)
+        .map_or(header.created, |(at, _, _)| *at)
         .to_rfc3339();
     let unsaved = match read(dir) {
         // nothing recorded here yet (a run written elsewhere with -o)
@@ -857,6 +858,20 @@ pub fn since_last(
         findings,
         unsaved,
     })
+}
+
+/// Findings between two runs whose command changed
+/// ([`crate::profile::RunChange::command_changed`]): what is fixed, less or
+/// more is the workload's doing as much as a fix's, so none counts a saving.
+pub fn by_command(findings: &mut [FindingChange]) {
+    for f in findings
+        .iter_mut()
+        .filter(|f| matches!(f.state, State::Fixed | State::Less | State::More))
+    {
+        f.measured = None;
+        f.saved = None;
+        f.saved_text = None;
+    }
 }
 
 /// The findings in `states`, as they read.
