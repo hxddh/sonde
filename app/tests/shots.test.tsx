@@ -286,7 +286,8 @@ for (const v of variants) {
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
-    await shot("03b-operation");
+    // (the operation's chart of its requests draws itself in: shot once drawn)
+    await charts("03b-operation");
     // a narrow window's inspector comes in from the edge, its requests under the fold
     if (width < 1000) await app.scroll("id:inspector-scroll", 400);
     await app.press("id:op-request-0");
