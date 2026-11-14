@@ -2189,14 +2189,15 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     );
     assert!(!stdout(&ck).contains("≤ 0"), "{}", stdout(&ck));
     // the same run named: the same
-    let other = err
+    // (named once, first in what check writes)
+    let other = stdout(&ck)
         .lines()
-        .find_map(|l| {
-            l.strip_prefix("checking ")
-                .and_then(|l| l.rsplit(": ").next())
-        })
+        .next()
+        .and_then(|l| l.strip_prefix("run "))
+        .and_then(|l| l.split(" · ").next())
         .unwrap()
         .to_string();
+    assert!(!err.contains(&other), "the path said twice: {err}");
     let ck = sonde_in(t.path(), &c, &["check", &other]);
     assert!(
         stderr(&ck).contains("its [check] is not applied"),

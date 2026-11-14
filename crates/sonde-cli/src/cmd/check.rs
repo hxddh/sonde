@@ -385,7 +385,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Some(f) => super::runs::resolve(s, f),
         None => {
             let (file, why) = super::record::which_run(s, project_name.as_deref())?;
-            eprintln!("checking {why}: {}", file.display());
+            // (the run is named first in what check writes: its path, not again)
+            eprintln!("checking {why}");
             file
         }
     };
@@ -402,8 +403,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             None => format!("recorded outside the folder of {}", toml.display()),
         };
         eprintln!(
-            "note: {} is a run of `{}`, {whose}: its [check] is not applied",
-            file.display(),
+            "note: the run is of `{}`, {whose}: its [check] is not applied",
             sonde_proxy::program::key_of(&h)
                 .as_deref()
                 .unwrap_or("no command"),
