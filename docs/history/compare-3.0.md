@@ -2,7 +2,7 @@
 
 The same states of the app in 2.1.0 (left) and 3.0.0 (right), from `scripts/shots.sh` on a GTK window at 1280×820.
 What changed, and why, is in the [changelog](../../CHANGELOG.md) and decisions D-040 to D-045 in
-[decisions.md](../decisions.md).
+[decisions.md](../dev/decisions.md).
 
 ## Run
 

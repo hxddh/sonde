@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measures `sonde tui` in a pseudo-terminal: time to the first frame, memory
 (VmRSS) idle and with 100 000 rows loaded, and the --fps line while paging
-through the rows. Prints Markdown rows for docs/performance.md.
+through the rows. Prints Markdown rows for docs/dev/performance.md.
 
     python3 scripts/perf.py target/release/sonde
 """

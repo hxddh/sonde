@@ -84,7 +84,7 @@ apache-avro = { version = "0.17", default-features = false }
 async-trait = "0.1"
 tempfile = "3"
 
-# Native Shell, pinned to one commit of longbridge/nsh (docs/decisions.md D-207): its main
+# Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its main
 # at 2ca3b80 (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
 nsh-core = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
 nsh-base = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }

@@ -1,6 +1,6 @@
 # Decisions
 
-Newest last; the decisions in force. Those a later one replaced: [history](history/decisions-superseded.md).
+Newest last; the decisions in force. Those a later one replaced: [history](../history/decisions-superseded.md).
 
 | # | Decision | Options | Choice and reason |
 |---|---|---|---|
@@ -19,7 +19,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](histo
 | D-016 | lakeFS commits | parse KV dumps; trees only | **Trees only**: commits live in lakeFS's KV store, not the bucket; the UI says so. |
 | D-017 | Closed formats | heuristics; cadence only | **Cadence only** (turbopuffer, WarpStream): their formats are not published. |
 | D-018 | Probe verdict "differs" vs "fail" | — | **fail** when a guarantee breaks; **differs** for other statuses or shapes. |
-| D-019 | Exit codes | 0/1; graded | **Graded** ([cli](cli.md#exit-codes)): CI fails on broken guarantees (1) and still reports differences (2). |
+| D-019 | Exit codes | 0/1; graded | **Graded** ([cli](../cli.md#exit-codes)): CI fails on broken guarantees (1) and still reports differences (2). |
 | D-020 | Linux binary | musl; glibc on an old base | **glibc on Ubuntu 22.04** (2.35): only libc/libm/libgcc_s; runs on Debian 12 slim. (A musl build was added later: [packaging](packaging.md).) |
 | D-021 | Config path on macOS | `~/.config/sonde`; Application Support | **`~/Library/Application Support/sonde`**, the platform's convention; `$SONDE_CONFIG_DIR` / `$XDG_CONFIG_HOME` override. |
 | D-022 | App capabilities | `fs`; none | **`clipboard`, `notifications`, `windows`, `picker`**: Rust writes every file; the VM needs no `fs` or `network`. |
@@ -130,7 +130,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](histo
 | D-135 | A trial's policy | allow; the run's | **The run's**. |
 | D-136 | Read-only mode and Run | coupled; separate | **Separate**: read-only covers sonde's own acts; coupling would make every first Run read-only. |
 | D-137 | Where the policy is widened | flag, sonde.toml, setting | **CLI: flag, then `[record] policy`, then no-delete. App: the setting; a project only narrows it.** |
-| D-138 | When the major changes | every release; when a stable thing breaks | **When a stable thing breaks** ([contract.md](contract.md)): session format, JSON outputs, `sonde.toml`, flags, exit codes. |
+| D-138 | When the major changes | every release; when a stable thing breaks | **When a stable thing breaks** ([contract.md](../contract.md)): session format, JSON outputs, `sonde.toml`, flags, exit codes. |
 | D-139 | JSON schemas | closed; open; a `schema` field | **Open objects, no field**, checked by a small validator in a test: adding a field is a minor. |
 | D-141 | Files at rest | umask; 0600 | **0600 when made** (Unix): sessions, caches, verdicts, baselines, audit log. |
 | D-142 | What a request costs in memory | keep everything; keep what analysis reads | **A keep-list of headers, shared text (`reqlog::Text`), keys interned**: 1.1 KB a request (1.75). |

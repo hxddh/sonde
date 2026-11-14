@@ -22,6 +22,6 @@ are stable tokens, so the findings still read; nothing that names the data leave
   print the table.
 - `sonde demo`, `sonde watch`, `sonde sessions`, `sonde check --baseline auto`, `sonde endpoints add`.
 - Sessions are compressed (35× on a million requests) and the app reads a live one in steps
-  ([performance](../performance.md#a-session-of-a-million-requests-800)).
+  ([performance](../dev/performance.md#a-session-of-a-million-requests-800)).
 - Higher contrast, terminal parity (the session's sentence, findings that narrow, sortable columns), and a static
   Linux build.

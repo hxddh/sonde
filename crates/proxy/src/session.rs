@@ -1,6 +1,6 @@
 //! Session files (`.sonde`): one JSON header line, then one redacted record
 //! per line. Written as requests happen, so a crash keeps what came before.
-//! The format is a contract (docs/session-format.md): a field may be added
+//! The format is a contract (docs/dev/session-format.md): a field may be added
 //! within a version, and readers pass over fields they do not know; a change
 //! that would mislead an older reader is a new [`VERSION`], which that reader
 //! refuses by name ([`SessionHeader::readable`]).
@@ -1071,7 +1071,7 @@ mod tests {
         assert_eq!(mode(&path.with_file_name(crate::index::FILE)), 0o600);
     }
 
-    /// docs/session-format.md's promises: the fewest fields a line needs,
+    /// docs/dev/session-format.md's promises: the fewest fields a line needs,
     /// fields not known passed over, a newer format refused by name.
     #[test]
     fn the_format_as_its_spec_says() {

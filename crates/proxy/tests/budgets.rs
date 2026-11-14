@@ -5,7 +5,7 @@
 //! the same code, so a miss is a change, never the runner. Its time, which a
 //! shared runner moves by half and more, is said (a `budget` line each) and
 //! held only at several times what it takes, so a test fails on a time
-//! that is wrong, not on a slow machine. docs/performance.md has the figures.
+//! that is wrong, not on a slow machine. docs/dev/performance.md has the figures.
 //!
 //! Ignored by default (they make sessions of up to a million requests); CI
 //! runs them optimised, each in a process of its own, with the sessions made
@@ -114,7 +114,7 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
 }
 
 /// What a million requests of the lake job may hold at once. Each budget is
-/// what was measured (docs/performance.md) and about an eighth more, for another
+/// what was measured (docs/dev/performance.md) and about an eighth more, for another
 /// machine's threads and allocator: not room for a request held whole again.
 const MILLION_MIB: u64 = 1300;
 

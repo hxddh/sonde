@@ -20,7 +20,7 @@ are two programs); `compare -f json` requires `waitingKnown`; `--again` implies 
 
 | | What | Documented in | Tested by |
 |---|---|---|---|
-| Session files | The `.sonde` format: header, records, log lines, versioning | [session-format.md](session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
+| Session files | The `.sonde` format: header, records, log lines, versioning | [session-format.md](dev/session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
 | JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
 | `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
 | `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `high-contrast`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |

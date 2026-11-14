@@ -1,6 +1,6 @@
 # Superseded decisions
 
-Decisions a later one replaced, moved from [decisions.md](../decisions.md) (which keeps those in force), in their
+Decisions a later one replaced, moved from [decisions.md](../dev/decisions.md) (which keeps those in force), in their
 order.
 
 | # | Decision | Options | Choice and reason | Superseded by |

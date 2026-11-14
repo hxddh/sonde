@@ -213,7 +213,7 @@
     },
     "record": {
       "type": "object",
-      "description": "One request: a line of the session file (docs/session-format.md).",
+      "description": "One request: a line of the session file (docs/dev/session-format.md).",
       "properties": {
         "id": {
           "type": "integer",

@@ -367,7 +367,7 @@
     },
     "sessionHeader": {
       "type": "object",
-      "description": "The session's first line: docs/session-format.md.",
+      "description": "The session's first line: docs/dev/session-format.md.",
       "properties": {
         "format": {
           "type": "string",
@@ -376,7 +376,7 @@
         },
         "version": {
           "type": "integer",
-          "description": "The session format's version (docs/session-format.md)."
+          "description": "The session format's version (docs/dev/session-format.md)."
         },
         "sonde": {
           "type": "string",

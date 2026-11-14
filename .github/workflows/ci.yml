@@ -78,7 +78,7 @@ jobs:
     # sessions of any size, held (optimised, as released): each test's
     # peak memory, the same from run to run, against its budget; its time,
     # which a shared runner moves, said and held only past several times
-    # what it takes (crates/proxy/tests/budgets.rs, docs/performance.md).
+    # what it takes (crates/proxy/tests/budgets.rs, docs/dev/performance.md).
     # Each test is a process of its own, so its peak is its own. A job of
     # its own beside the unit tests: its release build and its sessions of
     # a million take longer than they do.
@@ -124,7 +124,7 @@ jobs:
 
   ui-perf:
     # app/tests/perf.test.tsx: 100,000 rows loaded and scrolled (its numbers
-    # go to docs/performance.md); the PERF line is in the job's summary
+    # go to docs/dev/performance.md); the PERF line is in the job's summary
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     steps:
@@ -366,7 +366,7 @@ jobs:
     with:
       set: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
       release: ${{ github.event_name == 'push' }}
-    # by name: only what signing needs (docs/packaging.md)
+    # by name: only what signing needs (docs/dev/packaging.md)
     secrets:
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}

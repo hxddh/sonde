@@ -32,7 +32,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 24 | Text (Linux) | A text cut in its middle (`textOverflow: "ellipsis-middle"`) on GTK leaves a gap of a few characters between its head and its tail (`slate/db/wal/0000…   0000000000000001.sst`, `GetBucketLif…  Configuration`): the two halves are laid out at the ends of the box as measured, and the text is measured wider than it is drawn (the converse of 15). A cut at the end has no gap. | None that keeps the middle: a cut by a count of characters would need the box's width, and a text sized by its content measures what it holds, so a cut made from it shrinks the box again. sonde keeps the platform's middle cut (both ends of a key or a name tell two apart) and accepts the gap. |
 | 25 | Charts | A `Bar` row whose value is 0 showed no `label` in 17.0's tour: a "0" beside a bar of a pair with a count was not there. | A bar of none that is said is drawn `ZERO_SLIVER` (0.6%) of the scale's top, a sliver on the baseline for its "0" to stand on (the sizes' pairs, the latency histogram's inner buckets). |
 
-18, 19, 22 and 23 are drafted as issues for Native Shell in [docs/nsh-issues.md](docs/nsh-issues.md).
+18, 19, 22 and 23 are drafted as issues for Native Shell in [docs/dev/nsh-issues.md](nsh-issues.md).
 
 ## Taken from Native Shell 0.5.0 (sonde 16.0)
 
@@ -44,7 +44,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | `accessibilityState.invalid`, `accessibilityDescription` | The kit's `Field` has an error state (a refused endpoint id, URL or profile; a confirmation typed wrong): its edge, the reason under it, and both told to a screen reader. A dialog's message is its description (`Modal`'s `describe`). |
 | Per-platform icons | `icon` is an object: macOS artwork inset (824 of 1024), Windows and Linux edge to edge; both made from the one drawing by `scripts/icons.py`. |
 | `initialScrollAtEnd`, `measureScrollPosition()` | Not usable: they are a `List`'s, and what follows its end in sonde is a `DataTable` (finding 23). |
-| Views out of sight made over frames | Nothing to adopt; measured on the Time pane (docs/performance.md). |
+| Views out of sight made over frames | Nothing to adopt; measured on the Time pane (docs/dev/performance.md). |
 | `onWheel`, `onMouseUp` | Not taken, on purpose (D-123). |
 
 ## By design

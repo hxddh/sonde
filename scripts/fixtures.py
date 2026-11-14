@@ -4,7 +4,7 @@
     python3 scripts/fixtures.py          # rewrite them
     python3 scripts/fixtures.py --check  # exit 1 when one is not current
 
-sonde reads its own format only (docs/session-format.md), so when the format
+sonde reads its own format only (docs/dev/session-format.md), so when the format
 changes, the fixtures change with it: set RENAMES to what the new version
 renamed, run this, and commit the fixtures. A compressed fixture stays
 compressed (mtime 0: the same bytes each time); a plain one stays plain.

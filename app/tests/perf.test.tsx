@@ -1,7 +1,7 @@
 // Performance: 100 000 rows in the object table, scrolled end to end.
 // Not part of the regular suites. From app/:
 //   nsh test tests/perf.test.tsx --target tui --trace
-// The numbers are recorded in docs/performance.md.
+// The numbers are recorded in docs/dev/performance.md.
 
 import { expect, open, test } from "nsh/test";
 import { openDemo, desktop, place } from "./helpers";

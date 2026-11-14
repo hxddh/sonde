@@ -64,7 +64,7 @@ from is [docs/history/review-16.0.md](review-16.0.md).
 - **Four trial scenarios**: `skew` (403 RequestTimeTooSkewed), `complete-500` (a completion made but answered 500),
   `slow-first-byte` (a download held 10 s), `stale-list` (a listing that misses a key just written). See
   [trials](../trials.md).
-- **A contract** ([contract.md](../contract.md)): the session format ([spec](../session-format.md)), a JSON
+- **A contract** ([contract.md](../contract.md)): the session format ([spec](../dev/session-format.md)), a JSON
   Schema for each of the 18 `-f json` outputs (checked by tests), `sonde.toml`, flags and exit codes are stable.
   A major version now means one of them broke.
 - **Spark and Flink** are pointed at sonde by `sonde run` (`spark-submit`, `pyspark`, `flink run`, …); recipes for

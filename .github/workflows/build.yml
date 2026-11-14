@@ -11,7 +11,7 @@ on:
       set:
         type: string
         default: all
-    # signing (docs/packaging.md): each step that needs one is skipped, and
+    # signing (docs/dev/packaging.md): each step that needs one is skipped, and
     # says so, while it is not set
     secrets:
       MACOS_CERTIFICATE_P12: { required: false }

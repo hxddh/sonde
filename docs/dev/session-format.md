@@ -1,7 +1,7 @@
 # The session file (`.sonde`)
 
 A session is the file a recording, replay, import or trial leaves. Any later sonde of the same format version reads
-it. This page is its contract ([contract.md](contract.md)); `crates/proxy/src/session.rs` implements it and its test
+it. This page is its contract ([contract.md](../contract.md)); `crates/proxy/src/session.rs` implements it and its test
 `the_format_as_its_spec_says` checks it.
 
 ## The file
@@ -93,7 +93,7 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - **Within a version**, fields may be added to the header, records or log lines. Readers skip unknown fields and
   treat a missing optional field as not known. Required fields are never removed, renamed, retyped or redefined.
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
-  a line kind it cannot skip, another encoding), in a major release ([contract.md](contract.md)).
+  a line kind it cannot skip, another encoding), in a major release ([contract.md](../contract.md)).
 - A sonde reads its own version only and refuses any other by name, never partially:
   `written by sonde 23.0.0, format 3; this sonde (22.0.0) reads format 2: update sonde to read it`
   (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).

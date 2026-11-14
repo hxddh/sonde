@@ -7,7 +7,7 @@ outputs:
 runs:
   using: composite
   steps:
-    # one place for the pin: Cargo.toml (docs/decisions.md D-207)
+    # one place for the pin: Cargo.toml (docs/dev/decisions.md D-207)
     - id: rev
       shell: bash
       run: |

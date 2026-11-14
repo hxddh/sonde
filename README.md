@@ -52,7 +52,7 @@ program ──(AWS_ENDPOINT_URL, a key of sonde's)──▶ sonde on 127.0.0.1 �
   `AWS_ENDPOINT_URL` (current AWS SDKs do; Spark and Flink are configured by sonde). The app is built on
   [Native Shell](https://github.com/longbridge/nsh).
 
-More: [architecture](docs/architecture.md), [security](docs/security.md).
+More: [architecture](docs/dev/architecture.md), [security](docs/security.md).
 
 ## Install
 
@@ -95,7 +95,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 - sonde's own destructive actions (aborting uploads, deleting versions) are each a dry run and a typed
   confirmation, and are written to an audit log.
 - Not supported yet: S3 Express One Zone (refused with a reason), SigV4a, HTTP/2 to the endpoint.
-- Memory grows with a session's requests ([what a million cost](docs/performance.md#large-sessions)).
+- Memory grows with a session's requests ([what a million cost](docs/dev/performance.md#large-sessions)).
 - No telemetry. Credentials stay in sonde; logs and shared pages can be redacted.
 - What is stable between versions — session files, JSON outputs, `sonde.toml` and `config.toml` ([configuration](docs/configuration.md)), flags, exit codes — is in
   [docs/contract.md](docs/contract.md).
@@ -104,16 +104,10 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 
 [CLI](docs/cli.md) · [CI](docs/ci.md) · [Recording](docs/recording.md) · [Trials](docs/trials.md) · [Configuration](docs/configuration.md) ·
 [Credentials](docs/credentials.md) · [Security](docs/security.md) · [Contract](docs/contract.md) ·
-[Session format](docs/session-format.md) · [Probes](docs/probes.md) · [Decoders](docs/decoders.md) ·
-[Performance](docs/performance.md) · [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) ·
-[Packaging](docs/packaging.md) · [Changelog](CHANGELOG.md)
+[Probes](docs/probes.md) · [Decoders](docs/decoders.md) · [Changelog](CHANGELOG.md)
 
-## Develop
-
-```sh
-cargo test --workspace          # Rust 1.95+; the app and `sonde tui` need 1.97
-scripts/ui-tests.sh             # the app's UI tests, headless (needs the nsh CLI)
-scripts/integration.sh          # against Ceph RGW and RustFS in Docker
-```
+To build, test or release sonde: [CONTRIBUTING.md](CONTRIBUTING.md), and for contributors [docs/dev](docs/dev)
+([session format](docs/dev/session-format.md), [architecture](docs/dev/architecture.md),
+[performance](docs/dev/performance.md), [packaging](docs/dev/packaging.md), [decisions](docs/dev/decisions.md)).
 
 Apache-2.0.
