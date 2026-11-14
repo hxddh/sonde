@@ -403,8 +403,7 @@
  "sessions.openRecent": "打开最近的运行",
  "sessions.notSession": "%{name} 不是运行文件",
  "share.ready": "运行已在浏览器中打开",
- "share.where": "网页位于 %{dir}：把这个文件夹放到任意 Web 服务器上即可发给别人。",
- "share.showFolder": "显示所在文件夹",
+ "share.where": "网页是一个文件 %{file}：像发送运行一样发给别人即可。",
  "share.command": "已复制生成网页的命令",
  "profile.notFound": "%{op}（未找到）",
  "profile.shapeText": "等待 S3 %{busy}，共 %{wall} (%{pct})；同时进行的请求最多 %{n} 个，在 +%{at}",
@@ -1077,5 +1076,9 @@
  "live.text.one": "最近半分钟 %{n} 个请求",
  "live.none": "最近半分钟没有请求",
  "split.by.key": "键",
- "byGroup.key": "哪些键最忙、最慢或失败？"
+ "byGroup.key": "哪些键最忙、最慢或失败？",
+ "share.showFile": "显示文件",
+ "viewer.compared": "变化",
+ "viewer.against": "对比 %{name}",
+ "viewer.noRun": "这个页面没有运行：用 sonde share 生成"
 }

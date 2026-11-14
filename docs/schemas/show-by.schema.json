@@ -13,7 +13,7 @@
       "type": "object",
       "properties": {
         "by": {
-          "enum": ["kind", "prefix", "size", "caller", "sdk", "status"]
+          "enum": ["kind", "prefix", "size", "caller", "sdk", "status", "key"]
         },
         "sdk": {
           "type": ["string", "null"],

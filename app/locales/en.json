@@ -403,8 +403,7 @@
  "sessions.openRecent": "Open Recent",
  "sessions.notSession": "%{name} is not a run file",
  "share.ready": "The run is open in your browser",
- "share.where": "The page is in %{dir}: put the folder on any web server to send it.",
- "share.showFolder": "Show the folder",
+ "share.where": "The page is one file, %{file}: send it as you would the run.",
  "share.command": "Copied the command that makes the web page",
  "profile.notFound": "%{op}, not found",
  "profile.shapeText": "Waiting on S3 %{busy} of %{wall} (%{pct}); up to %{n} requests in flight, at +%{at}",
@@ -1077,5 +1076,9 @@
  "live.text.one": "1 request in the last half minute",
  "live.none": "No request in the last half minute",
  "split.by.key": "Key",
- "byGroup.key": "Which keys were busiest, slow or failed?"
+ "byGroup.key": "Which keys were busiest, slow or failed?",
+ "share.showFile": "Show the file",
+ "viewer.compared": "What changed",
+ "viewer.against": "Against %{name}",
+ "viewer.noRun": "This page holds no run: make it with sonde share"
 }

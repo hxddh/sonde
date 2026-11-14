@@ -1,8 +1,8 @@
-//! Embeds the web viewer a shared session is shown with (the site `nsh
-//! package App.tsx --target web` makes in `viewer/`) from `$SONDE_VIEWER_DIR`
-//! or `viewer/.nsh/out/sonde-viewer`, when it was built; the precompressed
-//! copies are left out (any web server compresses). Without it, sharing
-//! writes the session's data alone.
+//! Embeds the web viewer a shared run is shown with (the site `nsh package
+//! App.tsx --target web` makes in `viewer/`) from `$SONDE_VIEWER_DIR` or
+//! `viewer/.nsh/out/sonde-viewer`, when it was built: each file once, its
+//! gzipped copy where Native Shell made one (the page carries it so and the
+//! browser unpacks it). Without it, `sonde share` says how to build it.
 
 use std::path::PathBuf;
 
@@ -35,16 +35,24 @@ fn viewer() {
         }
     }
     files.sort();
-    let mut code = String::from("pub const VIEWER: &[(&str, &[u8])] = &[\n");
+    // (path, gzipped, bytes)
+    let mut code = String::from("pub const VIEWER: &[(&str, bool, &[u8])] = &[\n");
     for f in &files {
         let rel = f
             .strip_prefix(&dir)
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
+        let gz = PathBuf::from(format!("{}.gz", f.display()));
+        // (the page itself is read here as text: never packed)
+        let (packed, from) = if gz.is_file() && rel != "index.html" {
+            (true, &gz)
+        } else {
+            (false, f)
+        };
         code.push_str(&format!(
-            "    ({rel:?}, include_bytes!({:?})),\n",
-            f.canonicalize().unwrap()
+            "    ({rel:?}, {packed}, include_bytes!({:?})),\n",
+            from.canonicalize().unwrap()
         ));
     }
     code.push_str("];\n");

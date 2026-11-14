@@ -82,5 +82,5 @@ would without sonde.
 
 ## Shared sessions
 
-`sonde share` writes a static site: the viewer and the computed document, holding only what the session file holds.
-`--serve` listens on 127.0.0.1 and serves only the site's files.
+`sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds. It
+fetches nothing and runs no server.

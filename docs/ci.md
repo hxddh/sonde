@@ -34,7 +34,7 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
 | Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push, a schedule: the runs of its own event on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
-| Report | `sonde share --html RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
+| Report | `sonde share RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The session, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
 | Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
 | Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
@@ -97,7 +97,7 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 ```sh
 sonde run -o run.sonde -- python etl.py
 sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
-sonde share --html run.sonde --baseline main.sonde -o report.html
+sonde share run.sonde --baseline main.sonde -o report.html
 ```
 
 Keep `run.sonde` from the main branch (an artifact, a bucket) and give it, or its https URL, as `--baseline`.

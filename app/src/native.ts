@@ -114,7 +114,7 @@ export const api = {
     remove: (path: string) => Sessions.remove(path) as Promise<boolean>,
     /** Shows a file or folder in the file manager. */
     reveal: (path: string) => Sessions.reveal(path) as Promise<void>,
-    share: async (path: string) => (await Sessions.share(path)) as { dir: string; url: string },
+    share: async (path: string) => (await Sessions.share(path)) as { file: string; url: string },
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
     input: (data: string) => Sessions.input(data),

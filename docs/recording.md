@@ -246,14 +246,14 @@ and both sessions as transcripts (`Op bucket/key [conditions] → outcome`). Com
 ## Share a session
 
 ```sh
-sonde share                              # newest session → ./<session>-share/
-sonde share --serve                      # http://127.0.0.1:<port>/ until Ctrl-C
-sonde share --html --redact -o run.html  # one HTML file, names replaced
+sonde share                              # newest run → ./<run>.html
+sonde share --redact -o run.html         # names replaced
+sonde share run.sonde --baseline auto    # what changed against the baseline, first
 ```
 
-A static site: the embedded viewer and a precomputed `session.json` (header, summary, operations, observations,
-records, output); nothing runs server-side. It holds what the session holds: share it as you would the file.
-`--redact` and `--html`: [cli](cli.md#read-a-run).
+One HTML file: the app's own views (figures, findings, operations, output, the Time pane with every chart) and the
+run, everything computed. Nothing is fetched: it opens from a disk as from any web server. It holds what the run
+holds: share it as you would the file. `--redact`: [cli](cli.md#read-a-run).
 
 ## Limits
 

@@ -1,47 +1,33 @@
-//! `sonde share`: a session as a web page anyone opens in a browser — the
-//! same views as the app (operations, findings, output lined up, requests),
-//! with nothing to install — or as OpenTelemetry traces (`--otlp`). The page is a static site: sonde's
-//! viewer (built with Native Shell's web target, embedded in this binary)
-//! and the session's `session.json`, everything already computed.
+//! `sonde share`: a run as one HTML file anyone opens in a browser — the
+//! app's own views (findings, operations, output lined up, requests, the
+//! Time pane, and a comparison with another run first), with nothing to
+//! install and nothing to serve — or as OpenTelemetry traces (`--otlp`).
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
 use sonde_core::Sonde;
-use sonde_proxy::share;
 
 #[derive(Args)]
 pub struct ShareArgs {
-    /// The session (default: the newest). Two, with --html: the run before
-    /// and the run after, compared.
+    /// The run (default: the newest). Two: the run before and the run
+    /// after, compared.
     #[arg(num_args = 0..=2)]
     files: Vec<PathBuf>,
-    /// With --html: the run to compare it with, as `sonde check` takes one
-    /// (a session, `auto` for its program's baseline, or an https URL).
+    /// The run to compare it with, as `sonde check` takes one (a run, `auto`
+    /// for its program's baseline, or an https URL).
     #[arg(long, value_name = "FILE|auto|URL")]
     baseline: Option<String>,
-    /// Where to write the site (default: `<session>-share/` here), or the
-    /// file of --html or --otlp.
+    /// The file to write (default: `<run>.html` here), or the file of --otlp.
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    /// With -o and --html or --otlp: write over the file if it is there
-    /// (else it is refused).
-    #[arg(long, requires = "out")]
-    force: bool,
-    /// Serve it on 127.0.0.1 instead of writing it, until Ctrl-C.
+    /// Write over the file if it is there (else it is refused).
     #[arg(long)]
-    serve: bool,
-    /// The port for --serve (default: a free one).
-    #[arg(long, default_value_t = 0)]
-    port: u16,
-    /// One HTML file instead of a site: findings, time, timeline, operations (to --out, or stdout).
-    #[arg(long, conflicts_with = "serve")]
-    html: bool,
+    force: bool,
     /// For a tracing stack: OpenTelemetry traces (OTLP/JSON), each operation
     /// a span with its requests under it (to --out, or stdout).
-    #[arg(long, conflicts_with_all = ["html", "serve", "redact", "baseline"])]
+    #[arg(long, conflicts_with_all = ["redact", "baseline"])]
     otlp: bool,
     /// With --otlp: send them to an OTLP/HTTP collector instead, e.g.
     /// http://localhost:4318/v1/traces.
@@ -51,19 +37,6 @@ pub struct ShareArgs {
     /// the program's output and arguments: safe to send outside.
     #[arg(long)]
     redact: bool,
-}
-
-async fn serve(dir: PathBuf, port: u16) -> anyhow::Result<()> {
-    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
-    eprintln!(
-        "The session is at http://{}/ — Ctrl-C stops.",
-        listener.local_addr()?
-    );
-    tokio::select! {
-        _ = share::serve(listener, dir) => {}
-        _ = tokio::signal::ctrl_c() => {}
-    }
-    Ok(())
 }
 
 /// The run a page is compared with: the first of two, or --baseline.
@@ -108,22 +81,9 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         eprintln!("--otlp takes one session");
         return Ok(64);
     }
-    if compared && !a.html {
-        eprintln!("a run compared with another is a page: add --html");
-        return Ok(64);
-    }
     if a.files.len() == 2 && a.baseline.is_some() {
         eprintln!("two runs, or --baseline: not both");
         return Ok(64);
-    }
-    // a file it is given is not written over unasked (a site's folder is
-    // written into)
-    if let Some(out) = &a.out {
-        if a.html || a.otlp {
-            super::record::refuse_existing(out, a.force)?;
-        } else if a.force {
-            return Err(super::usage("--force is for the file of --html or --otlp"));
-        }
     }
     let file = match a.files.last() {
         Some(f) => super::sessions::resolve(s, f),
@@ -137,93 +97,89 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         )));
     }
     if a.otlp {
+        if let Some(out) = &a.out {
+            super::record::refuse_existing(out, a.force)?;
+        }
         return super::sessions::otlp(s, &file, a.out.as_deref(), a.to.as_deref()).await;
     }
-    // redacting changes every record, so all are read in full; otherwise
-    // the session is read for what it amounts to, and each request is
-    // written from the file as its turn comes
-    let (session, full) = if a.redact {
-        let mut session = super::sessions::read(&file, sonde_proxy::session::Keep::All)?;
-        let prices = super::record::request_prices_for(s, &session.header.endpoint);
-        sonde_proxy::report::redact(&mut session);
-        ((session, prices), None)
-    } else {
-        let session = super::sessions::read(&file, sonde_proxy::session::Keep::Analysis)?;
-        // priced before redaction hides the endpoint
-        let prices = super::record::request_prices_for(s, &session.header.endpoint);
-        ((session, prices), Some(file.as_path()))
-    };
-    let (mut session, prices) = session;
-    if a.html {
-        let base = baseline_of(s, a, &file).await?;
-        let page = match &base {
-            None => sonde_proxy::report::html(&session, &prices),
-            Some((path, _)) => {
-                // both read whole when redacted: their names become the same tokens
-                let mut before = super::sessions::read(
-                    path,
-                    if a.redact {
-                        sonde_proxy::session::Keep::All
-                    } else {
-                        sonde_proxy::session::Keep::Analysis
-                    },
-                )?;
-                let name = super::check::session_line(path, Some(&before.header));
-                if a.redact {
-                    // (the run was redacted alone above: read it again, for one salt)
-                    session = super::sessions::read(&file, sonde_proxy::session::Keep::All)?;
-                    sonde_proxy::report::redact_all(&mut [&mut before, &mut session]);
-                }
-                let run_of = |x: &sonde_proxy::session::Session| {
-                    sonde_proxy::profile::Run::analysed(&x.header, &x.records, &prices)
-                };
-                let change =
-                    sonde_proxy::profile::compare_runs(&run_of(&before), &run_of(&session))
-                        .of_programs(
-                            sonde_proxy::program::key_of(&before.header).as_deref(),
-                            sonde_proxy::program::key_of(&session.header).as_deref(),
-                        );
-                drop(before);
-                sonde_proxy::report::html_against(
-                    &session,
-                    &prices,
-                    Some(&sonde_proxy::report::Against {
-                        change: &change,
-                        name,
-                    }),
-                )
-            }
-        };
-        match &a.out {
-            Some(p) => {
-                std::fs::write(p, page)?;
-                eprintln!("{}", p.display());
-            }
-            None => print!("{page}"),
-        }
-        return Ok(0);
-    }
-    let mut doc = Vec::new();
-    share::write_session_json(&session, full, &prices, &mut doc)?;
-    if a.serve {
-        // a directory of its own, made fresh (no name another user can claim first)
-        let tmp = tempfile::Builder::new().prefix("sonde-share-").tempdir()?;
-        share::write_site(tmp.path(), &doc)?;
-        serve(tmp.path().to_path_buf(), a.port).await?;
-        return Ok(0);
-    }
-    let dir = a.out.clone().unwrap_or_else(|| {
+    // the page: -o, else the run's name here; a file that is there is not written over unasked
+    let out = a.out.clone().unwrap_or_else(|| {
         let stem = file
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "session".into());
-        PathBuf::from(format!("{stem}-share"))
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "run".into());
+        let stem = stem
+            .strip_suffix(".gz")
+            .unwrap_or(&stem)
+            .strip_suffix(".sonde")
+            .unwrap_or(&stem)
+            .to_string();
+        PathBuf::from(format!("{stem}.html"))
     });
-    std::fs::create_dir_all(&dir)?;
-    share::write_site(&dir, &doc)?;
+    super::record::refuse_existing(&out, a.force)?;
+    // redacting changes every record, so all are read in full; otherwise
+    // the run is read for what it amounts to, and each request is
+    // written from the file as its turn comes
+    let keep = if a.redact {
+        sonde_proxy::session::Keep::All
+    } else {
+        sonde_proxy::session::Keep::Analysis
+    };
+    let mut session = super::sessions::read(&file, keep)?;
+    // priced before redaction hides the endpoint
+    let prices = super::record::request_prices_for(s, &session.header.endpoint);
+    let full = (!a.redact).then_some(file.as_path());
+    let base = baseline_of(s, a, &file).await?;
+    let compare = match &base {
+        None => {
+            if a.redact {
+                sonde_proxy::report::redact(&mut session);
+            }
+            None
+        }
+        Some((path, _)) => {
+            let mut before = super::sessions::read(path, keep)?;
+            let name = super::check::session_line(path, Some(&before.header));
+            if a.redact {
+                // both together: their names become the same tokens
+                sonde_proxy::report::redact_all(&mut [&mut before, &mut session]);
+            }
+            let run_of = |x: &sonde_proxy::session::Session| {
+                sonde_proxy::profile::Run::analysed(&x.header, &x.records, &prices)
+            };
+            let change = sonde_proxy::profile::compare_runs(&run_of(&before), &run_of(&session))
+                .of_programs(
+                    sonde_proxy::program::key_of(&before.header).as_deref(),
+                    sonde_proxy::program::key_of(&session.header).as_deref(),
+                );
+            let signals = |x: &sonde_proxy::session::Session| {
+                sonde_proxy::signals::signals(&x.records, &prices)
+            };
+            let profile = |x: &sonde_proxy::session::Session| {
+                sonde_proxy::profile::profile(&x.records, &prices)
+            };
+            let compared = sonde_proxy::share::Compared {
+                name,
+                change,
+                signals: [signals(&before), signals(&session)],
+                profiles: [profile(&before), profile(&session)],
+            };
+            drop(before);
+            Some(compared)
+        }
+    };
+    // written whole beside it, then put in its place: a page that could not be made leaves nothing
+    let part = PathBuf::from(format!("{}.part", out.display()));
+    let written = std::fs::File::create(&part).and_then(|page| {
+        sonde_proxy::share::write_page(&session, full, &prices, compare.as_ref(), page)
+    });
+    if let Err(e) = written.and_then(|()| std::fs::rename(&part, &out)) {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.into());
+    }
     eprintln!(
-        "Wrote {} — put it on any web server (S3 static website hosting works), or run `sonde share --serve`.",
-        dir.display()
+        "Wrote {} — one file: open it in a browser, or send it as you would the run",
+        out.display()
     );
     Ok(0)
 }
