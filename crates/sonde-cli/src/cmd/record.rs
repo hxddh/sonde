@@ -730,7 +730,10 @@ mod tests {
             policy: String::new(),
             request: "GetObject".into(),
         }];
-        assert_eq!(refused_line(&s, 1).unwrap(), "  1 × refused by sonde: GetObject");
+        assert_eq!(
+            refused_line(&s, 1).unwrap(),
+            "  1 × refused by sonde: GetObject"
+        );
     }
 
     #[tokio::test]

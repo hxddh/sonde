@@ -859,6 +859,14 @@ fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
         "{}",
         stdout(&s)
     );
+    // and listed with its exit, not as a clean run
+    let listed = sonde(t.path(), &["sessions", "-f", "json"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
+    assert_eq!(doc[0]["exit"], 143, "{doc}");
+    let table = stdout(&sonde(t.path(), &["sessions"]));
+    let (head, row) = (table.lines().next().unwrap(), table.lines().nth(2).unwrap());
+    let at = head.find("exit").expect("an exit column");
+    assert!(row[at..].starts_with("143"), "{table}");
 }
 
 fn stderr(o: &Output) -> String {
@@ -2395,7 +2403,11 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
     assert!(killed.success());
     let o = child.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(143), "{}", stderr(&o));
-    assert!(stderr(&o).contains("(exit 143)"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("sonde was sent SIGTERM: the program was stopped (exit 143)"),
+        "{}",
+        stderr(&o)
+    );
     assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
 }
 

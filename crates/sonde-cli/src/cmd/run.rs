@@ -910,8 +910,12 @@ async fn run_once(
             false,
             since.as_ref(),
         );
-        if session.records.is_empty() {
-            eprintln!("{}", NO_REQUESTS);
+        // stopped from outside: said as such, not as a program that failed
+        // (nor as one that sent nothing)
+        match stopped_text(signal) {
+            Some(why) => eprintln!("{}", paint(&why, "33", color)),
+            None if session.records.is_empty() => eprintln!("{}", NO_REQUESTS),
+            None => {}
         }
     }
     // what it wrote is the program's to write over next time
@@ -1016,6 +1020,16 @@ fn signal_group(child: &tokio::process::Child, kill: bool) -> bool {
 #[cfg(not(unix))]
 fn signal_group(_child: &tokio::process::Child, _kill: bool) -> bool {
     false
+}
+
+/// What a run stopped by a signal sonde was sent says: `sonde was sent
+/// SIGTERM: the program was stopped (exit 143)`.
+fn stopped_text(signal: Option<i32>) -> Option<String> {
+    match signal? {
+        15 => Some("sonde was sent SIGTERM: the program was stopped (exit 143)".into()),
+        2 => Some("interrupted (Ctrl-C): the program was stopped (exit 130)".into()),
+        _ => None,
+    }
 }
 
 /// The program's exit code as a shell gives it: its own, or 128 and the

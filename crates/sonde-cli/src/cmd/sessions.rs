@@ -67,6 +67,10 @@ struct Row {
     /// `survived`, `untested`. None when it was never tried.
     #[serde(skip_serializing_if = "Option::is_none")]
     trials: Option<&'static str>,
+    /// How its program exited (128 + a signal; 143 when sonde was sent
+    /// SIGTERM). None when not known: a proxy's, a replay's, an import's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit: Option<i32>,
     /// Its first line in the middle that is no record: `show` refuses the
     /// file, so it is not listed as a session that reads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,6 +105,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 seconds: c.seconds,
                 errors: c.errors,
                 trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
+                exit: sonde_proxy::index::get(&p).exit,
                 unreadable: c.unreadable,
             })
         })
@@ -276,6 +281,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                         },
                         output::duration(r.seconds * 1000.0),
                         output::grouped(r.errors),
+                        r.exit.map(|x| x.to_string()).unwrap_or_default(),
                         r.trials.unwrap_or("").to_string(),
                         output::bytes(r.bytes),
                     ]
@@ -289,7 +295,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 const PROGRAM: usize = 2;
                 let heads = [
                     "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "trials", "size",
+                    "exit", "trials", "size",
                 ];
                 let others: usize = (0..heads.len())
                     .filter(|i| *i != PROGRAM)
@@ -311,7 +317,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 format,
                 &[
                     "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "trials", "size",
+                    "exit", "trials", "size",
                 ],
                 &rows,
             );

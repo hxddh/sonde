@@ -41,7 +41,7 @@
 
 | Command | Does |
 |---|---|
-| `sonde sessions [list] [-f json\|csv\|markdown]` | Sessions, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, worst trial verdict. |
+| `sonde sessions [list] [-f json\|csv\|markdown]` | Sessions, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, the program's exit code (blank when not known: a proxy, a replay, an import), worst trial verdict. |
 | `sonde sessions prune --keep N [--confirm COUNT]` | Delete all but the newest N (baselines kept): a dry run (exit 4 when it would delete any) unless `--confirm` repeats the count it prints (another count: 77, nothing deleted). |
 | `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--by DIM] [--app] [-f json]` | The summary, one shape for `run` and `show`: head line (requests, operations, SDK, endpoint, duration, waiting, cost, errors, not found); the findings, each with its saving, code lines (`at file:line`) and the fix for the detected SDK; "Acting on N findings"; one table by kind of request (requests, errors, p95, waiting and its share, cost share; `*` under 20 requests when others have more); the change since the program's run before. |
 | ↳ `--all` | Each operation on its line first; the table with p50 and max and every kind; the four signals (rate, errors, latency, bytes), first byte, cost and the prefixes past half of S3's request limit. |
