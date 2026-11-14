@@ -75,16 +75,9 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
-  // acting on the findings, estimated; a finding pressed says what to change, by SDK
-  expect(app.shows("text:/^Acting on \\d+ findings?: 172 → \\d+ requests/")).toBe(true);
-  await app.press("id:observation-0");
-  await app.waitFor("id:fix");
-  expect(app.shows("id:fix-code")).toBe(true);
-  await app.press("id:fix-sdk-go");
-  await app.waitFor("text:Go SDK v2");
-  // the advice opened inside its own row, under its title: the row is there to press again
-  expect(app.shows("id:finding-advice")).toBe(true);
-  await app.press("id:observation-0");
+  // nothing to act on: SlateDB rewrites what it lists and probes keys that are not there, so no copy kept would
+  // answer as the store does (the findings and their fixes are the fix loop's test, on a run that has one)
+  expect(app.shows("id:observation-0")).toBe(false);
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   expect(app.shows("text:/^requests · 5$/i")).toBe(true);
@@ -97,18 +90,6 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.press("id:inspector-close");
   // the request's sections fold away as the inspector goes
   await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
-  // a line each, so the operations keep the room; the one chosen says why it matters, in place
-  await app.press("id:observation-1");
-  expect(app.texts().some((t) => t.startsWith("Listing the same prefix again and again is slow"))).toBe(true);
-  await app.press("id:observation-1");
-  // ranked by the requests they bear on, with what acting on them saves
-  expect(app.shows("text:/^slate\\/db\\/gc\\/manifest.boundary was read 46 times/")).toBe(true);
-  expect(app.shows("id:observation-saving-0")).toBe(true);
-  expect(app.shows("text:45 fewer requests (26% of the session)")).toBe(true);
-  await app.press("id:observation-0");
-  await app.waitFor("text:28 of 34 operations");
-  await app.press("id:clear-filter");
-  expect(app.shows("id:clear-filter")).toBe(false);
   // a stretch of time is the session's one selection: chosen on the Time pane (here by a link), the Operations
   // strip's too, one chip on both (a headless pointer has no place over a plot to pick a slice by)
   const { api } = await import("../src/native");
@@ -449,7 +430,7 @@ test("quitting ends the program being recorded and leaves its session a finished
  * ("read 10 times") is fixed by the second run. The marker that tells the runs apart is the test's own. */
 function fixable() {
   const marker = `/tmp/sonde-fixed-${Date.now()}`;
-  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/config/app.yaml -o /dev/null";
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null";
   return `if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
 }
 
@@ -463,8 +444,10 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
     await app.waitFor("id:run-ended", { timeout: 20000 });
     // the first run: its finding, and no run before it to be held to
     if (i === 0) {
-      await app.waitFor("text:/demo\\/config\\/app\\.yaml was read 10 times/", { timeout: 10000 });
+      await app.waitFor("text:/demo\\/README\\.md was read 10 times/", { timeout: 10000 });
       expect(app.shows("id:since-run")).toBe(false);
+      // acting on it, estimated
+      expect(app.shows("text:/^Acting on 1 finding: 10 → \\d+ requests/")).toBe(true);
     }
   }
   // the second: what changed since the run before, the finding fixed with what it saved
@@ -538,11 +521,11 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   await app.press("label:Group by");
   await app.press("text:Prefix");
   await app.waitFor("text:Prefix");
-  // a finding chosen narrows the operations: they show again
-  await app.press("id:observation-0");
+  // each operation again: the operations show
+  await app.press("label:Group by");
+  await app.press("text:Each operation");
   await app.waitFor("id:operations");
   expect(app.shows("id:split-table")).toBe(false);
-  await app.press("id:observation-0");
   // the hot key: every one of its requests, the one shown marked, another a press away
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");

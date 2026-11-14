@@ -2,6 +2,42 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [21.0.0] - 2026-11-14
+
+21.0 removes and renames without notice: a break comes in the major that makes it ([contract](docs/contract.md)).
+
+### Changed
+
+- The app, refined on Native Shell's main: every size with its line, Chinese at 12 pt, motion and press feedback,
+  colour only on marks, no boxes inside cards, actions on hover, one header with one primary, dialogs of two widths
+  that keep their size, a narrower sidebar at the least window.
+- Charts: labels off the data, titles across the card, shorter legends of drawn marks only, failure charts fitted to
+  their failures, chart icons on hover. Every chart is kept.
+- A program's key leaves out only dates, times, UUIDs and ids; when its command changed, the fix loop says so and
+  counts no saving.
+- `show`, `compare`, `share`, `check` and `import s3://` choose the run and the budget by one rule; a `sonde.toml`
+  applies to its own program only.
+- `--again` implies `--trial`.
+
+### Removed
+
+- `operations[].kind` is `operations[].shape` (`kind` is only the S3 call); `check --program-exit`.
+
+### Fixed
+
+- A key rewritten between reads, or not found, gets no cache advice; a prefix written between listings is not
+  "listed again"; a chain breaks at a request that needs the one before.
+- A request the policy refused is named, with its policy and `--policy allow`; SIGTERM is said; `sessions` shows each
+  run's exit.
+- `-o` refuses an existing file in `import` and `share` too, unless `--force`; nothing to import is bad data (65).
+- `compare` of two imports no longer contradicts itself or shows unknown waiting; `check --init` warns on a run of
+  no requests.
+- Bucket tools: costs under a cent, no empty uploads table, lifecycle rules as readable lines.
+- Session files are named by their program; deleting a session no longer breaks the list; Open the demo is offered
+  whenever the demo is not in use.
+- The tour fails what it cannot reach and is approved on Linux, macOS and Windows; CI runs the tour's variants side
+  by side and caches Native Shell's build.
+
 ## [20.0.0] - 2026-11-14
 
 20.0 breaks without a 19.x announcing it, by the owner's decision ([contract](docs/contract.md)). It reads 19.0's

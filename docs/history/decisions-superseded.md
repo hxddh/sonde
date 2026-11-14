@@ -5,6 +5,7 @@ order.
 
 | # | Decision | Options | Choice and reason | Superseded by |
 |---|---|---|---|---|
+| D-002 | Native Shell version | crates.io 0.4.0; a git commit | **`longbridge/nsh` tag `v0.5.0`, commit `f4d68f7`**, pinned by full hash in `Cargo.toml` (`rev`) and CI (`NSH_REV`): the CLI must match the crates it links. | D-207 |
 | D-011 | Plugin views in the macOS app | a custom AppKit host; degrade | **Degrade**: views opened in `sonde tui`. | D-031 |
 | D-012 | Plugin capability policy | trust the package; check | **Check at install and on open**: only `sonde.read.*`. | D-031 |
 | D-030 | Navigation | nine sections; a few places and a palette | **Four places and a command palette** (⌘K, `:` in the terminal). | D-040 |

@@ -5,7 +5,6 @@ Newest last; the decisions in force. Those a later one replaced: [history](histo
 | # | Decision | Options | Choice and reason |
 |---|---|---|---|
 | D-001 | Language of the core | Rust; TSX with Rust helpers | **Rust for everything but screens**: the core is testable without a UI and survives a UI change. |
-| D-002 | Native Shell version | crates.io 0.4.0; a git commit | **`longbridge/nsh` tag `v0.5.0`, commit `f4d68f7`**, pinned by full hash in `Cargo.toml` (`rev`) and CI (`NSH_REV`): the CLI must match the crates it links. |
 | D-003 | SigV4 | `aws-sigv4`; our own | **Our own (`s3raw::sigv4`)**, tested against AWS's suite: it exposes the canonical request and allows deliberate skew for probes. |
 | D-004 | HTTP | `reqwest` + rustls; hyper | **reqwest, rustls, native roots**: per-endpoint CAs, no OpenSSL. Redirects are not followed: a 301/307 is a finding. |
 | D-005 | Where the listing lives | rows in JS; rows in Rust | **Rust (`Listing`)**: 100 000 rows never cross into the VM. |
@@ -194,3 +193,14 @@ Newest last; the decisions in force. Those a later one replaced: [history](histo
 | D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |
 | D-205 | Timed tests | nightly with a retry; every change, held | **Every change, held at peak memory with no retry** (each test optimised, in a process of its own); time is said, and held only past several times what it takes ([performance](performance.md)). Supersedes D-155. |
 | D-206 | Breaking a stable thing | announce one version ahead; break in the major that makes it | **In the major that makes it**, without notice, by the owner's decision (21.0): no aliases, shims or "deprecated". Supersedes D-197. |
+| D-207 | Native Shell's pin | a tag; its main | **Its main at 2ca3b80** (after v0.5.1): popups that come and go, quit requests, baselines, menus in the app's language; `"application"` granted. Supersedes D-002. |
+| D-208 | Type | sizes; sizes with their lines | **Each size with its line** (11/16 … 20/28); Chinese captions 12 pt; pages write `TEXT` roles. |
+| D-209 | Motion and depth | per component; tokens | **`TIMING` 120/180/240/360, one ease, three shadows**; a press sinks; nothing moves under reduce-motion. |
+| D-210 | Status colour | paints text and fills; marks | **Marks only**: a dot, an icon or a rule; one `TONE` table; verdicts are quiet words. |
+| D-211 | Surfaces | boxes in cards; bare | **No box inside a card**; row actions and sort arrows on hover or focus; one header (one primary and ⋯); dialogs 480 or 640, one size across states. |
+| D-212 | Charts | labels on the data; beside it | **Off the data** (headroom, scale gutters); legends list drawn marks only; chart icons on hover. |
+| D-213 | A hot key | many reads; reads a kept copy answers alike | **Every read found it whole, one ETag, nothing written between**: a rewritten or missing key gets no cache advice. |
+| D-214 | A program's key | every number out; dates and ids out | **Dates, times, UUIDs and ids only**: other numbers are arguments; a changed command is said and saves nothing. |
+| D-215 | Which run, which budget | per command; one rule | **`[program] name`, else this folder's, else the newest**; a `sonde.toml` applies to its own program only. |
+| D-216 | An operation's type | `kind`; `shape` | **`operations[].shape`**: `kind` is only the S3 call. `check --program-exit` removed (the session keeps the exit). |
+| D-217 | The tour | skips what it cannot reach; fails | **Fails**: every Time chart at every size; Linux, macOS and Windows approved. |

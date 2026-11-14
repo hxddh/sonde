@@ -25,11 +25,11 @@ function command(cmd: boolean, marker?: string) {
   // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
   // a pause first: a trial of it runs long enough to be seen running
   const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
-  // its config read ten times (a finding: a key read again and again)
+  // its README read ten times (a finding: a key read again and again)
   // (with a marker, a file in the temporary folder, it reads it ten times more on the first run and not again on the
   // next: the same command, changed behaviour, as a program fixed between two runs — what "Since the run before" is
   // about, the finding fixed; each shell's form does)
-  const read = `${curl} -o ${sink} ${url}/demo/config/app.yaml`;
+  const read = `${curl} -o ${sink} ${url}/demo/README.md`;
   const again = cmd
     ? marker
       ? `(if not exist %TEMP%\\${marker} (type nul > %TEMP%\\${marker} & for /L %i in (1,1,10) do @${read}))`

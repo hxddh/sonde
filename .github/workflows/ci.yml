@@ -25,7 +25,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Native Shell, pinned (docs/decisions.md D-002): the tag v0.5.0
+  # Native Shell, pinned (docs/decisions.md D-207): its main at 2ca3b80
   NSH_REV: 2ca3b8005cf00907c8c501ad9ba5f21f576fee84
 
 jobs:

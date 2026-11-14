@@ -2,7 +2,7 @@
 // program (or the endpoint), what tells it from its neighbours, its time and
 // requests, and a mark of its requests over its time.
 
-import { type ContextMenuEvent, type JSX, List, Text, View } from "nsh";
+import { computed, type ContextMenuEvent, type JSX, List, Text, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
 import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
@@ -64,18 +64,6 @@ export function SessionList(props: {
     return out;
   };
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
-  // runs of one program are told apart: by the argument that differs, and where the
-  // command is the same to the letter, by the second they started
-  const told = () => {
-    const by = new Map<string, SessionInfo[]>();
-    for (const x of props.sessions) by.set(name(x), [...(by.get(name(x)) ?? []), x]);
-    const out = new Map<string, { args: string; twin: boolean }>();
-    for (const group of by.values()) {
-      const shown = tellApart(group.map(args));
-      group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: group.some((y) => y !== x && args(y) === args(x)) }));
-    }
-    return out;
-  };
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   // how many of a run's trials broke (none: nothing is said)
   const broke = (s: SessionInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
@@ -90,6 +78,24 @@ export function SessionList(props: {
     if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
     return c === p ? "" : c;
   };
+  // runs of one program are told apart: by the argument that differs, and where the
+  // command is the same to the letter, by the second they started
+  // (worked out once per list, each command read once: rows ask for it as they draw)
+  const told = computed(() => {
+    const by = new Map<string, { s: SessionInfo; args: string }[]>();
+    for (const s of props.sessions) {
+      const n = name(s);
+      by.set(n, [...(by.get(n) ?? []), { s, args: args(s) }]);
+    }
+    const out = new Map<string, { args: string; twin: boolean }>();
+    for (const group of by.values()) {
+      const shown = tellApart(group.map((x) => x.args));
+      const times = new Map<string, number>();
+      for (const x of group) times.set(x.args, (times.get(x.args) ?? 0) + 1);
+      group.forEach((x, i) => out.set(x.s.path, { args: shown[i], twin: (times.get(x.args) ?? 0) > 1 }));
+    }
+    return out;
+  });
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
