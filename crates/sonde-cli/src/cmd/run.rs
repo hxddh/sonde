@@ -144,9 +144,9 @@ struct RunCtx {
     /// The runs name the code that sent each request: unless
     /// `--no-callers` or `[record] name-callers = false`.
     callers: bool,
-    /// What the runs wrote: a trial's runs may write again what the clean
-    /// run wrote, under no-delete as under allow.
-    written: Arc<sonde_proxy::Written>,
+    /// What the runs made: a trial's runs may remove what the clean run
+    /// made, under no-delete as under allow.
+    made: Arc<sonde_proxy::Made>,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -368,7 +368,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             ..rec
         },
         callers: !a.no_callers && project.file.record.name_callers != Some(false),
-        written: Arc::default(),
+        made: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
         eprintln!(
@@ -687,7 +687,7 @@ async fn run_once(
         &Of {
             name: ctx.name.clone(),
             under,
-            written: Some(ctx.written.clone()),
+            made: Some(ctx.made.clone()),
         },
     )
     .await?;
@@ -699,10 +699,10 @@ async fn run_once(
     // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
     // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
-    // keys under the run's own place are its own to write over
+    // keys under the run's own place are its own to remove
     if ctx.trying {
         for place in sonde_proxy::trial::places(&a.command, trial) {
-            ctx.written.own_place(&place);
+            ctx.made.own_place(&place);
         }
     }
     let placed = |word: &String| {
@@ -913,10 +913,6 @@ async fn run_once(
             None if session.records.is_empty() => eprintln!("{}", NO_REQUESTS),
             None => {}
         }
-    }
-    // what it wrote is the program's to write over next time
-    if let Err(e) = ctx.written.keep() {
-        eprintln!("warning: what the program wrote could not be kept for its next run: {e}");
     }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();

@@ -31,9 +31,8 @@ Trial: the command runs 3 more times, each under one scenario.
   the terminal's group, to read the keyboard.)
 - Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions. The
   program's verdict history is kept.
-- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places,
-  and remove what it made in that run, its own uploads included
-  ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
+- Under `no-delete`, every run may remove what it or the clean run made and what is under its `{trial}` places, its
+  own uploads included ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
 
 **Matching a trial's requests to the clean run's**: they match when they differ only by the scenario's name in place
 of `clean`, as a whole word (no letter or digit beside it), in bucket, key, query values or control body.
@@ -214,8 +213,8 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 ## Limits
 
 - Only traffic through the proxy is tried.
-- Trials use the run's policy (`no-delete` by default); a program that deletes, or writes over what another program
-  wrote, needs `--policy allow` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
+- Trials use the run's policy (`no-delete` by default); a program that deletes what it did not make needs
+  `--policy allow` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
   place sonde can read: use `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.

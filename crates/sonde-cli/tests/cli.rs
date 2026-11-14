@@ -1265,12 +1265,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // (a program's own state, one file per folder, is no session's)
     let counted = || sonde_proxy::index::get(&file).counted.is_some();
     assert!(counted());
-    let per_program = [
-        "findings.json",
-        "verdicts.json",
-        "written.json",
-        "baselines.json",
-    ];
+    let per_program = ["findings.json", "verdicts.json", "baselines.json"];
     let beside: Vec<String> = std::fs::read_dir(file.parent().unwrap())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -2248,7 +2243,8 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(0), "{}", stderr(&ck));
     assert!(
-        stderr(&ck).contains("the newest run of program \"sh get.sh\" ([program] name in sonde.toml)"),
+        stderr(&ck)
+            .contains("the newest run of program \"sh get.sh\" ([program] name in sonde.toml)"),
         "{}",
         stderr(&ck)
     );

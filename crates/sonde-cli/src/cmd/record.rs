@@ -32,11 +32,11 @@ pub struct Recording {
     #[arg(long, short = 'e')]
     pub(super) endpoint: Option<String>,
     /// What the program may do to the store: `no-delete` refuses what
-    /// removes or replaces data (deletes, aborts, lifecycle rules, bucket
-    /// policies, versioning suspended, a write over an object that neither
-    /// this recording nor this program's earlier recordings wrote);
-    /// `read-only` lets only GET and HEAD through; `allow` lets everything
-    /// through. Default: `[record] policy` in sonde.toml, else no-delete.
+    /// removes data (deletes, aborts, lifecycle rules, bucket policies,
+    /// versioning suspended), but for what the recording made; writes go
+    /// through. `read-only` lets only GET and HEAD through; `allow` lets
+    /// everything through. Default: `[record] policy` in sonde.toml, else
+    /// no-delete.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// The session file (default: a new file in the data directory's sessions/).
@@ -71,9 +71,9 @@ pub(super) struct Under {
 pub(super) struct Of<'a> {
     pub(super) name: Option<String>,
     pub(super) under: Option<&'a Under>,
-    /// What the runs before it wrote (a trial's clean run): no-delete lets
-    /// them be written again.
-    pub(super) written: Option<Arc<sonde_proxy::Written>>,
+    /// What the runs before it made (a trial's clean run): no-delete lets
+    /// it be removed.
+    pub(super) made: Option<Arc<sonde_proxy::Made>>,
 }
 
 impl Recording {
@@ -174,14 +174,9 @@ pub(super) async fn start_under(
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());
     }
-    // under no-delete a program may write over what its earlier runs wrote:
-    // kept beside its runs (a trial's runs share its clean run's)
-    let written = of.written.clone().unwrap_or_default();
-    if under.is_none()
-        && let Some(program) = sonde_proxy::program::key_of(&header)
-    {
-        written.remember(&runs_dir(&path), &program, cfg.endpoint.as_str());
-    }
+    // under no-delete a program may remove what it made (a trial's runs
+    // share its clean run's)
+    let made = of.made.clone().unwrap_or_default();
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -202,7 +197,7 @@ pub(super) async fn start_under(
             allow_remote,
             faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
             tls,
-            written,
+            made,
             ..Default::default()
         },
     )

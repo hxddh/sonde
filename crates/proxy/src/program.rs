@@ -439,13 +439,8 @@ pub fn write_baselines(
 }
 
 /// What a program keeps beside its runs, by its key: its baseline, its
-/// trials' verdicts, its findings, what it wrote.
-pub const KEPT_BY_PROGRAM: &[&str] = &[
-    "baselines.json",
-    "verdicts.json",
-    "findings.json",
-    "written.json",
-];
+/// trials' verdicts, its findings.
+pub const KEPT_BY_PROGRAM: &[&str] = &["baselines.json", "verdicts.json", "findings.json"];
 
 /// Moves what program `from` keeps in `dir` ([`KEPT_BY_PROGRAM`]) to
 /// program `to`: a program given a name keeps its baseline and history.

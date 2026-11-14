@@ -120,24 +120,14 @@ sonde's own destructive acts are each a dry run and a typed confirmation ([secur
 
 | Policy | Allows | Refuses |
 |---|---|---|
-| `no-delete` (default) | reads, listings, new objects, writes over objects this program wrote (below); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that existed before the recording, a write with `If-Match`, any write sonde cannot name |
+| `no-delete` (default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 | `allow` | everything | nothing |
 
-How `no-delete` finds an existing object:
-
-- `PutObject` and `CompleteMultipartUpload` without a condition are sent with `If-None-Match: *` (not recorded); a
-  `412` becomes `403` naming the key.
-- `CopyObject`'s target is checked with an unrecorded `HEAD`; any answer but found / not found refuses the copy.
-- A store that ignores `If-None-Match` (older MinIO and Ceph, some gateways) overwrites anyway: use `read-only`.
-- A program may write over what it wrote: in this recording, in its earlier recordings (kept per
-  [program](cli.md) and endpoint in `written.json` beside its runs, the newest 100,000 objects), and, during a trial,
-  anything under a `{trial}` place of its command (`t{trial}/` → keys under `tclean`, `tslowdown`, …). A refused write
-  names the key; `--policy allow` lets it through.
-- `sonde proxy` and `watch` record no program: only what the recording itself wrote.
-- A program may remove what it made in the same recording: abort an upload it started (`AbortMultipartUpload` of
-  its own upload id), delete an object or a version it wrote (or one under its trial's `{trial}` place), a
-  `DeleteObjects` whose every object is such, a bucket it created. What earlier recordings wrote is not removed.
+A program may remove what it made in the same recording: abort an upload it started, delete an object or a version
+it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
+`DeleteObjects` whose every object is such, a bucket it created. A write over an object goes through: with versioning
+on, the store keeps the old version; without it, use `read-only` to keep what is there.
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy`
 in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
