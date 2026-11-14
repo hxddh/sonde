@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use std::borrow::Cow;
+
 use crate::{Lists, Name};
 
 /// A header's name or value: text that the records repeating it share. A
@@ -327,18 +329,19 @@ struct Written<'a> {
     injected: &'a Option<String>,
 }
 
-/// A record as it is read.
+/// A record as it is read: its text borrowed from the line where it can be,
+/// so that what a lean reading lets go is never made.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Read {
+struct Read<'a> {
     id: u64,
     time: DateTime<Utc>,
-    #[serde(default)]
-    endpoint: String,
+    #[serde(default, borrow)]
+    endpoint: Cow<'a, str>,
     kind: Name,
     method: Name,
-    #[serde(default)]
-    url: String,
+    #[serde(default, borrow)]
+    url: Cow<'a, str>,
     bucket: Option<Name>,
     key: Option<Text>,
     #[serde(default)]
@@ -347,12 +350,14 @@ struct Read {
     latency_ms: f64,
     #[serde(default)]
     retries: u16,
-    request_id: Option<String>,
-    host_id: Option<String>,
-    #[serde(default)]
-    request_headers: Vec<Header>,
-    #[serde(default)]
-    response_headers: Vec<Header>,
+    #[serde(borrow)]
+    request_id: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    host_id: Option<Cow<'a, str>>,
+    #[serde(default, borrow)]
+    request_headers: Vec<ReadHeader<'a>>,
+    #[serde(default, borrow)]
+    response_headers: Vec<ReadHeader<'a>>,
     request_bytes: Option<u64>,
     response_bytes: Option<u64>,
     error_body: Option<String>,
@@ -360,11 +365,72 @@ struct Read {
     #[serde(default)]
     request_body_truncated: bool,
     transport_error: Option<String>,
-    region: Option<String>,
+    #[serde(borrow)]
+    region: Option<Cow<'a, str>>,
     job: Option<String>,
     first_byte_ms: Option<f64>,
     requester: Option<String>,
     injected: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReadHeader<'a> {
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    value: Cow<'a, str>,
+}
+
+impl Read<'_> {
+    /// The record; with `keep`, as [`Record::lean`] leaves it.
+    fn record(self, keep: Option<&dyn Fn(&str) -> bool>) -> Record {
+        let headers = |hs: Vec<ReadHeader>| -> Vec<Header> {
+            hs.into_iter()
+                .filter(|h| keep.is_none_or(|keep| keep(&h.name)))
+                .map(|h| Header::new(h.name, h.value))
+                .collect()
+        };
+        let owned = |t: Option<Cow<str>>| t.filter(|_| keep.is_none()).map(Cow::into_owned);
+        let mut r = Record {
+            id: self.id,
+            time: self.time,
+            status: self.status,
+            kind: self.kind,
+            method: self.method,
+            bucket: self.bucket,
+            retries: self.retries,
+            latency_ms: self.latency_ms,
+            first_byte_ms: self.first_byte_ms,
+            request_bytes: self.request_bytes,
+            response_bytes: self.response_bytes,
+            key: self.key,
+            lists: Lists {
+                query: self.query,
+                request_headers: headers(self.request_headers),
+                response_headers: headers(self.response_headers),
+            }
+            .into(),
+            rare: Rare {
+                endpoint: owned(Some(self.endpoint)).unwrap_or_default(),
+                url: owned(Some(self.url)).unwrap_or_default(),
+                region: owned(self.region),
+                request_id: owned(self.request_id),
+                host_id: owned(self.host_id),
+                error_body: self.error_body,
+                request_body: self.request_body,
+                request_body_truncated: self.request_body_truncated,
+                transport_error: self.transport_error,
+                job: self.job,
+                requester: self.requester,
+                injected: self.injected,
+            }
+            .into(),
+        };
+        if let Some(keep) = keep {
+            r.lean(keep);
+        }
+        r
+    }
 }
 
 impl Serialize for Record {
@@ -405,42 +471,45 @@ impl Serialize for Record {
 
 impl<'de> Deserialize<'de> for Record {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let r = Read::deserialize(d)?;
-        Ok(Record {
-            id: r.id,
-            time: r.time,
-            status: r.status,
-            kind: r.kind,
-            method: r.method,
-            bucket: r.bucket,
-            retries: r.retries,
-            latency_ms: r.latency_ms,
-            first_byte_ms: r.first_byte_ms,
-            request_bytes: r.request_bytes,
-            response_bytes: r.response_bytes,
-            key: r.key,
-            lists: Lists {
-                query: r.query,
-                request_headers: r.request_headers,
-                response_headers: r.response_headers,
+        Ok(Read::deserialize(d)?.record(None))
+    }
+}
+
+impl Record {
+    /// A record from its line in a run's file; with `keep`, as an analysis
+    /// reads it ([`Record::lean`]), what that lets go never made.
+    pub fn from_line(
+        line: &str,
+        keep: Option<&dyn Fn(&str) -> bool>,
+    ) -> serde_json::Result<Record> {
+        Ok(serde_json::from_str::<Read>(line)?.record(keep))
+    }
+
+    /// What an analysis reads of it: of its headers those `keep` names, its
+    /// lists held as recent records holding the same hold them
+    /// ([`Lists::shared`]), and none of its URL, endpoint, region and the
+    /// store's ids. Most of a record's size, most of the time.
+    pub fn lean(&mut self, keep: &dyn Fn(&str) -> bool) {
+        if let Some(l) = &mut self.lists
+            && (l.request_headers.iter())
+                .chain(&l.response_headers)
+                .any(|h| !keep(&h.name))
+        {
+            let l = std::sync::Arc::make_mut(l);
+            l.request_headers.retain(|h| keep(&h.name));
+            l.response_headers.retain(|h| keep(&h.name));
+        }
+        self.lists = Lists::shared(self.lists.take());
+        if let Some(x) = self.rare.as_deref_mut() {
+            x.endpoint = String::new();
+            x.url = String::new();
+            x.region = None;
+            x.host_id = None;
+            x.request_id = None;
+            if x.is_empty() {
+                self.rare = None;
             }
-            .into(),
-            rare: Rare {
-                endpoint: r.endpoint,
-                url: r.url,
-                region: r.region,
-                request_id: r.request_id,
-                host_id: r.host_id,
-                error_body: r.error_body,
-                request_body: r.request_body,
-                request_body_truncated: r.request_body_truncated,
-                transport_error: r.transport_error,
-                job: r.job,
-                requester: r.requester,
-                injected: r.injected,
-            }
-            .into(),
-        })
+        }
     }
 }
 

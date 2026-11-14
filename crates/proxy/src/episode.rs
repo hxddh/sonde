@@ -11,8 +11,6 @@
 //! point; a buffer that sits idle is flushed on its own (reads, or files
 //! written without a commit — which [`observations`] reports).
 
-use std::borrow::Cow;
-
 use chrono::{DateTime, Duration, Utc};
 use reqlog::Record;
 use serde::Serialize;
@@ -844,24 +842,36 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     units.extend(retries(&sorted, &tables, &mut used, &mut out));
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
-    // (a request on its own is a unit as it stands: no list is made of it)
-    let mut items: Vec<Cow<[&Record]>> = units.into_iter().map(Cow::Owned).collect();
+    // (a unit by its place: of the units, or a request on its own)
+    enum Item {
+        Unit(u32),
+        One(u32),
+    }
+    let unit_of = |item: &Item| -> &[&Record] {
+        match *item {
+            Item::Unit(u) => &units[u as usize],
+            Item::One(i) => std::slice::from_ref(&sorted[i as usize]),
+        }
+    };
+    let mut items: Vec<Item> = (0..units.len() as u32).map(Item::Unit).collect();
     items.extend(
-        sorted
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !used[*i])
-            .map(|(_, r)| Cow::Borrowed(std::slice::from_ref(r))),
+        (0..sorted.len())
+            .filter(|i| !used[*i])
+            .map(|i| Item::One(i as u32)),
     );
     drop(used);
-    items.sort_unstable_by_key(|u| (u[0].time, u[0].id));
+    items.sort_unstable_by_key(|item| {
+        let first = unit_of(item)[0];
+        (first.time, first.id)
+    });
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
     // requests that are nothing more: most of a large session, made into
     // operations together once the rest is placed
     let mut alone: Vec<&Record> = Vec::new();
-    for unit in items {
+    for item in &items {
+        let unit = unit_of(item);
         // a unit's last record stands for it: the Complete of an upload
         let r = *unit.last().expect("units are not empty");
         // idle buffers flush before anything newer is placed
@@ -2260,24 +2270,37 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let throttled: Vec<&Record> = records.iter().filter(|r| is_throttle(r)).collect();
     if !throttled.is_empty() {
         let n = throttled.len();
-        let mut starts: Vec<i64> = records.iter().map(|r| r.time.timestamp_micros()).collect();
-        let mut ends: Vec<i64> = records
+        // how many were in flight as each throttled request started: those
+        // started by then and not yet answered (itself included), counted at
+        // those moments alone (a request that took no time still counts
+        // itself; odd latencies never make the count negative)
+        let mut moments: Vec<i64> = throttled
             .iter()
-            .map(|r| r.time.timestamp_micros() + r.latency_us())
+            .map(|r| r.time.timestamp_micros())
             .collect();
-        starts.sort_unstable();
-        ends.sort_unstable();
-        // started by then and not yet answered (itself included)
-        // (a request that took no time still counts itself; odd latencies never
-        // make the count negative)
-        let in_flight = |t: i64| {
-            (starts.partition_point(|s| *s <= t))
-                .saturating_sub(ends.partition_point(|e| *e < t))
-                .max(1)
-        };
-        let least = throttled
+        moments.sort_unstable();
+        moments.dedup();
+        let (mut started, mut answered) =
+            (vec![0usize; moments.len()], vec![0usize; moments.len()]);
+        for r in records {
+            let start = r.time.timestamp_micros();
+            // the first moment at or after it started, and after it was answered
+            if let Some(n) = started.get_mut(moments.partition_point(|m| *m < start)) {
+                *n += 1;
+            }
+            let end = start + r.latency_us();
+            if let Some(n) = answered.get_mut(moments.partition_point(|m| *m <= end)) {
+                *n += 1;
+            }
+        }
+        let (mut by_then, mut done) = (0usize, 0usize);
+        let least = started
             .iter()
-            .map(|r| in_flight(r.time.timestamp_micros()))
+            .zip(&answered)
+            .map(|(s, a)| {
+                (by_then, done) = (by_then + s, done + a);
+                by_then.saturating_sub(done).max(1)
+            })
             .min()
             .unwrap_or(1);
         let phrase = if least >= 4 {

@@ -550,7 +550,19 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let (mut client, mut server, mut throttled, mut transport, mut injected) =
         (zeros(), zeros(), zeros(), zeros(), zeros());
     let mut retries = zeros();
-    let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
+    // each slice's times side by side in one list, made at its size: the
+    // slices' requests counted first
+    let mut slice_at = vec![0usize; bins + 1];
+    if let Some(tl) = &tl {
+        for r in records {
+            slice_at[tl.bin_of(r) + 1] += 1;
+        }
+    }
+    for i in 0..bins {
+        slice_at[i + 1] += slice_at[i];
+    }
+    let mut took = vec![0f64; slice_at[bins]];
+    let mut filled = slice_at.clone();
     let mut all: Vec<f64> = Vec::with_capacity(records.len());
     let mut counts = ErrorCounts::default();
     let (mut up_bytes, mut down_bytes, mut retries_total) = (0u64, 0u64, 0u64);
@@ -582,7 +594,8 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         let s = start_us(r);
         let latency_ms = took_ms(r);
         n[i] += 1.0;
-        took[i].push(latency_ms);
+        took[filled[i]] = latency_ms;
+        filled[i] += 1;
         all.push(latency_ms);
 
         let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
@@ -699,11 +712,11 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         timed.then_some(whole.2),
     );
     let (mut p50, mut p95, mut p99) = (zeros(), zeros(), zeros());
-    for (i, l) in took.iter_mut().enumerate() {
-        if l.is_empty() {
-            continue;
+    for i in 0..bins {
+        let l = &mut took[slice_at[i]..slice_at[i + 1]];
+        if !l.is_empty() {
+            (p50[i], p95[i], p99[i]) = bands(l);
         }
-        (p50[i], p95[i], p99[i]) = bands(l);
     }
 
     // in flight: the requests in the order they started, the ends of those

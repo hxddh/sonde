@@ -805,27 +805,7 @@ pub fn read_by_analysis(name: &str) -> bool {
 
 /// A record as [`Keep::Analysis`] keeps it.
 pub fn lean(r: &mut Record) {
-    if let Some(l) = &mut r.lists
-        && (l.request_headers.iter())
-            .chain(&l.response_headers)
-            .any(|h| !read_by_analysis(&h.name))
-    {
-        let l = std::sync::Arc::make_mut(l);
-        l.request_headers.retain(|h| read_by_analysis(&h.name));
-        l.response_headers.retain(|h| read_by_analysis(&h.name));
-    }
-    // (most requests of a run say the same: those lists are held once)
-    r.lists = reqlog::Lists::shared(r.lists.take());
-    if let Some(x) = r.rare.as_deref_mut() {
-        x.endpoint = String::new();
-        x.url = String::new();
-        x.region = None;
-        x.host_id = None;
-        x.request_id = None;
-        if x.is_empty() {
-            r.rare = None;
-        }
-    }
+    r.lean(&read_by_analysis);
 }
 
 /// A block of a session's lines, read.
@@ -870,13 +850,9 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
             }
             continue;
         }
-        match serde_json::from_str::<Record>(l) {
-            Ok(mut r) => {
-                if keep == Keep::Analysis {
-                    lean(&mut r);
-                }
-                out.records.push(r)
-            }
+        let lean: &dyn Fn(&str) -> bool = &read_by_analysis;
+        match Record::from_line(l, (keep == Keep::Analysis).then_some(lean)) {
+            Ok(r) => out.records.push(r),
             Err(e) => out.bad = Some((i, e.to_string())),
         }
     }

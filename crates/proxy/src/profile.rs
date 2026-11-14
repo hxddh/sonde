@@ -845,12 +845,12 @@ fn tone(r: &Record) -> u8 {
 }
 
 /// A session's prefixes ([`prefix_groups`], the busiest [`MAX_PREFIXES`] and
-/// then "other"), each with its requests and its busiest second; and the
-/// groups they were counted by.
+/// then "other"), each with its requests and its busiest second; the
+/// groups they were counted by; and each request's prefix, by its place.
 pub fn prefix_stats(
     records: &[Record],
     prices: &RequestPrices,
-) -> (Vec<(String, usize)>, Vec<PrefixStat>) {
+) -> (Vec<(String, usize)>, Vec<PrefixStat>, Vec<u8>) {
     // each folder named once, however many requests went to it: a session
     // has far fewer folders than requests
     let mut ids: HashMap<(&str, &str), usize> = HashMap::new();
@@ -929,8 +929,10 @@ pub fn prefix_stats(
     let mut all: Vec<Vec<i64>> = vec![Vec::new(); slots];
     let mut reads: Vec<Vec<i64>> = vec![Vec::new(); slots];
     let mut writes: Vec<Vec<i64>> = vec![Vec::new(); slots];
+    let mut slots = Vec::with_capacity(records.len());
     for (r, id) in records.iter().zip(of) {
         let i = slot[id];
+        slots.push(i as u8);
         let p = &mut prefixes[i];
         p.requests += 1;
         p.errors += usize::from(r.is_error() && !is_miss(r));
@@ -956,7 +958,7 @@ pub fn prefix_stats(
         p.peak_reads = peak(&mut reads[i]);
         p.peak_writes = peak(&mut writes[i]);
     }
-    (shown, prefixes)
+    (shown, prefixes, slots)
 }
 
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
@@ -1065,12 +1067,23 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             bytes_down: 0,
         })
         .collect();
-    let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
+    // each slice's latencies side by side in one list, made at its size:
+    // the slices' requests counted first
+    let mut slice_at = vec![0usize; bins + 1];
+    for r in records {
+        slice_at[tl.bin_of(r) + 1] += 1;
+    }
+    for i in 0..bins {
+        slice_at[i + 1] += slice_at[i];
+    }
+    let mut took = vec![0f64; records.len()];
+    let mut filled = slice_at.clone();
     // the latencies' grid: every request in its slice and bucket
     let mut grid: BTreeMap<(usize, i32), usize> = BTreeMap::new();
     for r in records {
         let i = tl.bin_of(r);
-        took[i].push(r.latency_ms);
+        took[filled[i]] = r.latency_ms;
+        filled[i] += 1;
         *grid
             .entry((i, latency_bucket(r.latency_ms.max(0.0))))
             .or_default() += 1;
@@ -1087,12 +1100,13 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
 
     // how long requests took, slice by slice: the band the live view draws
-    for (b, mut l) in rate.iter_mut().zip(took) {
+    for (i, b) in rate.iter_mut().enumerate() {
+        let l = &mut took[slice_at[i]..slice_at[i + 1]];
         if l.is_empty() {
             continue;
         }
-        l.sort_by(f64::total_cmp);
-        let at = |q: f64| percentile(&l, q);
+        l.sort_unstable_by(f64::total_cmp);
+        let at = |q: f64| percentile(l, q);
         (b.p50_ms, b.p95_ms, b.p99_ms) = (at(0.5), at(0.95), at(0.99));
     }
 
@@ -1229,20 +1243,10 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         amount: records.iter().map(&price).sum(),
         currency: prices.currency.clone(),
     };
-    let (shown, prefixes) = prefix_stats(records, prices);
-    let prefix_index = |r: &Record| {
-        let f = folder_of(r);
-        let p = prefix_for(&shown, &f).unwrap_or("/");
-        prefixes
-            .iter()
-            .take(MAX_PREFIXES)
-            .position(|s| s.prefix == p)
-            .unwrap_or(prefixes.len().saturating_sub(1))
-    };
+    let (_, prefixes, slots) = prefix_stats(records, prices);
     let mut cells: HashMap<(usize, usize), usize> = HashMap::new();
-    for r in records {
-        let b = tl.bin_of(r);
-        *cells.entry((prefix_index(r), b)).or_default() += 1;
+    for (r, slot) in records.iter().zip(&slots) {
+        *cells.entry((*slot as usize, tl.bin_of(r))).or_default() += 1;
     }
     let mut heat: Vec<HeatCell> = cells
         .into_iter()
@@ -1250,40 +1254,42 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         .collect();
     heat.sort_by_key(|c| (c.prefix, c.bin));
 
-    // flows: operation → prefix → outcome
-    let outcome = |r: &Record| match tone(r) {
-        0 => "ok",
-        1 => "not found",
-        2 => "client error",
-        _ => "server error",
-    };
-    let top_ops: Vec<String> =
-        groups
-            .iter()
-            .map(|(g, _)| g.kind.clone())
-            .fold(Vec::new(), |mut v, o| {
-                if !v.contains(&o) {
-                    v.push(o);
-                }
-                v
-            });
-    let op_name = |r: &Record| {
-        if top_ops.iter().take(6).any(|o| *o == r.kind) {
-            r.kind.to_string()
-        } else {
-            "other operations".into()
+    // flows: operation → prefix → outcome (counted by number, named once)
+    let mut top_ops: Vec<&str> = Vec::new();
+    for (g, _) in &groups {
+        if top_ops.len() < 6 && !top_ops.contains(&g.kind.as_str()) {
+            top_ops.push(&g.kind);
         }
+    }
+    let mut to_prefix: HashMap<(usize, u8), usize> = HashMap::new();
+    let mut to_outcome: HashMap<(u8, u8), usize> = HashMap::new();
+    for (r, slot) in records.iter().zip(&slots) {
+        let op = top_ops
+            .iter()
+            .position(|o| *o == r.kind)
+            .unwrap_or(top_ops.len());
+        *to_prefix.entry((op, *slot)).or_default() += 1;
+        *to_outcome.entry((*slot, tone(r))).or_default() += 1;
+    }
+    let prefix_name = |slot: u8| match prefixes[slot as usize].prefix.as_str() {
+        "other" => "other prefixes".to_string(),
+        p => p.to_string(),
     };
     let mut flow: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for r in records {
-        let p = &prefixes[prefix_index(r)].prefix;
-        let p = if p == "other" {
-            "other prefixes".to_string()
-        } else {
-            p.clone()
+    for ((op, slot), n) in to_prefix {
+        let op = top_ops.get(op).map_or("other operations", |o| o);
+        *flow.entry((op.to_string(), prefix_name(slot))).or_default() += n;
+    }
+    for ((slot, tone), n) in to_outcome {
+        let outcome = match tone {
+            0 => "ok",
+            1 => "not found",
+            2 => "client error",
+            _ => "server error",
         };
-        *flow.entry((op_name(r), p.clone())).or_default() += 1;
-        *flow.entry((p, outcome(r).to_string())).or_default() += 1;
+        *flow
+            .entry((prefix_name(slot), outcome.to_string()))
+            .or_default() += n;
     }
     let flows: Vec<Flow> = flow
         .into_iter()
@@ -1899,24 +1905,19 @@ impl Run {
         }
     }
 
-    /// A run of `records` reckoned here: where its time went on one thread
-    /// while its operations and findings are made on this one.
+    /// A run of `records` reckoned: where its time went, its operations and
+    /// its findings.
     pub fn analysed(
         header: &crate::session::SessionHeader,
         records: &[Record],
         prices: &RequestPrices,
     ) -> Run {
-        let (profile, observations, traces) = std::thread::scope(|scope| {
-            let p = scope.spawn(|| profile(records, prices));
-            let episodes = crate::episode::episodes(records);
-            let o = crate::episode::observations_of(header, records, &episodes);
-            let t = crate::episode::traces_of(header, records, &episodes);
-            drop(episodes);
-            match p.join() {
-                Ok(p) => (p, o, t),
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        });
+        // (one after another, as [`crate::view::Analysis::of_records`])
+        let profile = profile(records, prices);
+        let episodes = crate::episode::episodes(records);
+        let observations = crate::episode::observations_of(header, records, &episodes);
+        let traces = crate::episode::traces_of(header, records, &episodes);
+        drop(episodes);
         Run::with(records, profile, observations, traces)
     }
 }

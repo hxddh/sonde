@@ -107,14 +107,6 @@ fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
     (b - a).num_microseconds().unwrap_or(0) as f64 / 1000.0
 }
 
-/// What a thread made, or its panic carried on.
-fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
-    match h.join() {
-        Ok(v) => v,
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
-}
-
 impl Analysis {
     /// `path` (a run, its `header` and `records`, analysed as this) against
     /// its program's run before it ([`crate::fixloop::since_last`]). Its
@@ -150,29 +142,20 @@ impl Analysis {
         Analysis::of_records(&s.header, &s.records, prices)
     }
 
-    /// Everything a session amounts to, worked out once: its operations and
-    /// findings on this thread while its counts, its signals and where its
-    /// time went are reckoned on another (each reads every record, none
-    /// needs another's answer).
+    /// Everything a session amounts to, worked out once: its counts, its
+    /// signals, where its time went, its operations and its findings.
     pub fn of_records(
         header: &crate::session::SessionHeader,
         records: &[reqlog::Record],
         prices: &RequestPrices,
     ) -> Analysis {
-        let ((summary, signals, profile), episodes, observations) = std::thread::scope(|scope| {
-            // (one after another, on one thread: what each lets go the next
-            // uses, where three threads would each keep their own)
-            let counts = scope.spawn(|| {
-                (
-                    crate::summary::summarize(records),
-                    crate::signals::signals(records, prices),
-                    crate::profile::profile(records, prices),
-                )
-            });
-            let episodes = episodes(records);
-            let observations = observations_of(header, records, &episodes);
-            (joined(counts), episodes, observations)
-        });
+        // (one after another: what each lets go the next uses, where threads
+        // would each keep what they let go, a third more memory at a million)
+        let summary = crate::summary::summarize(records);
+        let signals = crate::signals::signals(records, prices);
+        let profile = crate::profile::profile(records, prices);
+        let episodes = episodes(records);
+        let observations = observations_of(header, records, &episodes);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
