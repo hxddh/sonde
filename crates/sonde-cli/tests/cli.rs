@@ -9,9 +9,38 @@ fn sonde(dirs: &Path, args: &[&str]) -> Output {
         .args(args)
         .env("SONDE_CONFIG_DIR", dirs.join("config"))
         .env("SONDE_DATA_DIR", dirs.join("data"))
-        .env("AWS_EC2_METADATA_DISABLED", "true")
+        .no_aws(dirs)
         .output()
         .unwrap()
+}
+
+/// No AWS configuration of the machine's: no credentials in the
+/// environment, no `~/.aws` files, no instance role.
+trait NoAws {
+    fn no_aws(&mut self, dirs: &Path) -> &mut Self;
+}
+
+impl NoAws for Command {
+    fn no_aws(&mut self, dirs: &Path) -> &mut Self {
+        for k in [
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_PROFILE",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        ] {
+            self.env_remove(k);
+        }
+        self.env("AWS_CONFIG_FILE", dirs.join("aws-config"))
+            .env("AWS_SHARED_CREDENTIALS_FILE", dirs.join("aws-credentials"))
+            .env("AWS_EC2_METADATA_DISABLED", "true")
+    }
 }
 
 fn stdout(o: &Output) -> String {
@@ -1168,6 +1197,39 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     file
 }
 
+/// With nothing configured, a recording goes where an AWS SDK would: the
+/// default credential chain and region, said; without credentials either,
+/// the usage error says both ways.
+#[test]
+fn with_no_endpoint_a_run_goes_where_the_aws_default_chain_says() {
+    let t = tempfile::tempdir().unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--", "true"])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .env("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+        .env("AWS_SECRET_ACCESS_KEY", "secret")
+        .env("AWS_REGION", "eu-west-1")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains(
+            "no endpoint configured: the AWS default credentials and region eu-west-1 (AWS_REGION) → https://s3.eu-west-1.amazonaws.com"
+        ),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["run", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no credentials found"),
+        "{}",
+        stderr(&o)
+    );
+}
+
 /// A run of no request is a program whose S3 client went around sonde:
 /// `check` fails it, against a baseline or a budget, and `run` says so.
 #[test]
@@ -2031,7 +2093,7 @@ fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env("SONDE_CONFIG_DIR", dirs.join("config"))
         .env("SONDE_DATA_DIR", dirs.join("data"))
-        .env("AWS_EC2_METADATA_DISABLED", "true")
+        .no_aws(dirs)
         .output()
         .unwrap()
 }

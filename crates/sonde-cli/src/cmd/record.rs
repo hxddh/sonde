@@ -143,7 +143,7 @@ pub(super) async fn start_under(
 ) -> anyhow::Result<Started> {
     let under = of.under;
     let policy = r.policy(&s.paths().config_file())?;
-    let ep = super::endpoint(s, r.endpoint.as_deref())?;
+    let ep = super::endpoint_to_record(s, r.endpoint.as_deref()).await?;
     let client = s.client(&ep)?;
     let cfg = client.config();
     let path = match (&under, &r.out) {
