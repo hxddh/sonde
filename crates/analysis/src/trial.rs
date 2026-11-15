@@ -1758,6 +1758,113 @@ pub fn record(
     })
 }
 
+/// A trial of a clean run under way, as the CLI and the app run it: the
+/// caller runs the command once per scenario (to [`Trying::path`]), and each
+/// run is judged here against the clean one; [`Trying::finish`] keeps the
+/// verdicts beside the run and with its program's.
+pub struct Trying {
+    file: std::path::PathBuf,
+    of: String,
+    program: Option<String>,
+    kept: BTreeMap<String, Vec<Seen>>,
+    at: chrono::DateTime<chrono::Utc>,
+    trials: Vec<Trial>,
+}
+
+impl Trying {
+    /// Begins a trial of the run in `file`: the last trial's verdicts and
+    /// runs go, and its scenarios' runs go in its `trials/` folder (they are
+    /// not runs of the program: no trend, baseline or "newest" counts them).
+    pub fn begin(file: &std::path::Path, clean: &crate::run::RunHeader) -> std::io::Result<Trying> {
+        remove(file);
+        std::fs::create_dir_all(folder_for(file))?;
+        let program = crate::program::key_of(clean);
+        let kept = program
+            .as_deref()
+            .and_then(|p| read_verdicts(&runs_of(file)).remove(p))
+            .unwrap_or_default();
+        Ok(Trying {
+            file: file.to_path_buf(),
+            of: file
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            program,
+            kept,
+            at: chrono::Utc::now(),
+            trials: Vec::new(),
+        })
+    }
+
+    /// Where the run under `scenario` is recorded.
+    pub fn path(&self, scenario: &sonde_proxy::fault::Scenario) -> std::path::PathBuf {
+        crate::run::fresh_path(&folder_for(&self.file), &run_stem(&self.file, scenario))
+    }
+
+    /// The file name of the run tried.
+    pub fn of(&self) -> &str {
+        &self.of
+    }
+
+    /// Judges the run under `scenario` (in `file`, exited `exit`) against the
+    /// clean one: with its scenario's verdicts so far, this one last.
+    pub fn judge(
+        &mut self,
+        scenario: &sonde_proxy::fault::Scenario,
+        clean: &[Record],
+        clean_exit: i32,
+        file: &std::path::Path,
+        run: &[Record],
+        exit: i32,
+    ) -> &mut Trial {
+        let mut t = judge(scenario, clean, clean_exit, run, exit);
+        t.run = file.file_name().map(|n| n.to_string_lossy().into_owned());
+        if self.program.is_some() {
+            t.history = self.kept.get(&t.asked()).cloned().unwrap_or_default();
+            t.history.push(Seen {
+                at: self.at,
+                standing: t.standing,
+                run: self.of.clone(),
+            });
+        }
+        self.trials.push(t);
+        self.trials.last_mut().expect("just pushed")
+    }
+
+    /// Ends a trial cut short: a verdict on half a trial would be read as one.
+    pub fn cancel(self) {
+        remove(&self.file);
+    }
+
+    /// Keeps the verdicts, beside the run and with its program's (the
+    /// history is the program's, not the run's: kept apart). A trial that
+    /// judged nothing leaves no folder. Its trials, and whether keeping
+    /// them with the program's failed (said, not fatal).
+    pub fn finish(mut self) -> std::io::Result<(Vec<Trial>, Option<std::io::Error>)> {
+        if self.trials.is_empty() {
+            let _ = std::fs::remove_dir(folder_for(&self.file));
+            return Ok((self.trials, None));
+        }
+        for t in &mut self.trials {
+            t.history.clear();
+        }
+        save(&self.file, &self.trials)?;
+        let kept = match &self.program {
+            Some(p) => record(&runs_of(&self.file), p, &self.of, self.at, &self.trials).err(),
+            None => None,
+        };
+        Ok((self.trials, kept))
+    }
+}
+
+/// The folder a run is in, where its program's verdicts are kept.
+fn runs_of(run: &std::path::Path) -> std::path::PathBuf {
+    match run.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    }
+}
+
 /// Gives each of a run's trials its scenario's history, up to this run's
 /// verdict (`run`: the run's file name): none for a run the program's
 /// verdicts do not name.

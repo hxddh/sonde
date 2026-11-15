@@ -402,16 +402,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     } else {
         sonde_analysis::trial::choose(&clean_run.records)
     };
-    let of = file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    // trials are kept in a folder of their own: they are not runs of the
-    // program (no trend, baseline or "newest" counts them)
-    let folder = sonde_analysis::trial::folder_for(&file);
-    std::fs::create_dir_all(&folder)?;
-    // where the program's runs are, and its verdicts kept
-    let dir = runs_dir(&file);
+    let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
+    let program = sonde_analysis::program::key_of(&clean_run.header);
     let color = std::io::stderr().is_terminal();
     eprintln!(
         "\nTrial: the command runs {}.",
@@ -420,25 +412,11 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             n => format!("{n} more times, each under one scenario"),
         }
     );
-    let mut trials = Vec::new();
     let mut interrupted = None;
-    // the program's verdicts before this trial, and this one's time: each
-    // row says what changed ("broke on 12 Nov, survived since")
-    let program = sonde_analysis::program::key_of(&clean_run.header);
-    let kept = program
-        .as_deref()
-        .and_then(|p| sonde_analysis::trial::read_verdicts(&dir).remove(p))
-        .unwrap_or_default();
-    let now = chrono::Utc::now();
     for scenario in scenarios {
         let under = Under {
-            // (the run's last trials were removed when it was recorded: the
-            // name is free, and is the one the verdict keeps)
-            path: folder.join(format!(
-                "{}.sonde",
-                sonde_analysis::trial::run_stem(&file, &scenario)
-            )),
-            of: of.clone(),
+            path: trying.path(&scenario),
+            of: trying.of().to_string(),
             scenario,
         };
         let ran = run_once(s, a, Some(&under), &ctx).await?;
@@ -449,41 +427,21 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             break;
         }
         let run = RunFile::open(&ran.file).map_err(|e| anyhow::anyhow!(e))?;
-        let mut t = sonde_analysis::trial::judge(
+        let t = trying.judge(
             &under.scenario,
             &clean_run.records,
             code,
+            &ran.file,
             &run.records,
             ran.code,
         );
         // the command's own time: what a delay costs is not all in requests
         (t.wall_ms, t.clean_wall_ms) = (ran.wall_ms, clean.wall_ms);
-        t.run = ran
-            .file
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned());
-        if program.is_some() {
-            t.history = kept.get(&t.asked()).cloned().unwrap_or_default();
-            t.history.push(sonde_analysis::trial::Seen {
-                at: now,
-                standing: t.standing,
-                run: of.clone(),
-            });
-        }
-        eprintln!("{}", trial_line(&t, color));
-        // (the history is the program's, not the run's: kept apart)
-        t.history.clear();
-        trials.push(t);
+        eprintln!("{}", trial_line(t, color));
     }
-    if trials.is_empty() {
-        let _ = std::fs::remove_dir(&folder);
-    } else {
-        sonde_analysis::trial::save(&file, &trials)?;
-        if let Some(p) = &program
-            && let Err(e) = sonde_analysis::trial::record(&dir, p, &of, now, &trials)
-        {
-            eprintln!("warning: the program's verdicts could not be kept: {e}");
-        }
+    let (trials, unkept) = trying.finish()?;
+    if let Some(e) = unkept {
+        eprintln!("warning: the program's verdicts could not be kept: {e}");
     }
     if let Some((signal, scenario)) = interrupted {
         eprintln!(

@@ -1293,8 +1293,6 @@ async fn try_under(
     // each run may remove what the clean run made, and what is under its
     // own `{trial}` place
     let made = Arc::new(sonde_proxy::Made::of(&clean.records));
-    let runs = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let program = sonde_analysis::program::key_of(&clean.header);
     let words: Vec<String> = plan
         .command
         .split_whitespace()
@@ -1306,17 +1304,11 @@ async fn try_under(
         }
     }
     // a new trial replaces the last one's verdicts and runs
-    sonde_analysis::trial::remove(&file);
-    let dir = sonde_analysis::trial::folder_for(&file);
-    std::fs::create_dir_all(&dir).map_err(err_msg)?;
-    let mut trials = Vec::new();
+    let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean.header).map_err(err_msg)?;
     for scenario in chosen {
         output.post(trial_event(&scenario.name, None));
         let under = Under {
-            path: sonde_analysis::run::fresh_path(
-                &dir,
-                &sonde_analysis::trial::run_stem(&file, &scenario),
-            ),
+            path: trying.path(&scenario),
             of: of.clone(),
             scenario: scenario.clone(),
             made: made.clone(),
@@ -1337,8 +1329,7 @@ async fn try_under(
         let (exit, run_path) = match ran {
             Ok(x) if !stopped => x,
             other => {
-                // cut short: a verdict on half a trial would be read as one
-                sonde_analysis::trial::remove(&file);
+                trying.cancel();
                 return match other {
                     Err(e) if !stopped => Err(e),
                     _ => Ok(json!({ "path": path, "trials": [], "cancelled": true })),
@@ -1346,21 +1337,24 @@ async fn try_under(
             }
         };
         let run = open_run(&run_path)?;
-        let mut t = sonde_analysis::trial::judge(
+        let t = trying.judge(
             &scenario,
             &clean.records,
             clean_exit,
+            Path::new(&run_path),
             &run.records,
             exit.unwrap_or(1),
         );
-        t.run = Some(run_path);
+        // its run by its path, as the app opens it; its history comes with
+        // the trial's end, from what was kept
+        let t = sonde_analysis::trial::Trial {
+            run: Some(run_path.clone()),
+            history: Vec::new(),
+            ..t.clone()
+        };
         output.post(trial_event(&scenario.name, Some(&t)));
-        trials.push(t);
     }
-    sonde_analysis::trial::save(&file, &trials).map_err(err_msg)?;
-    if let Some(p) = &program {
-        let _ = sonde_analysis::trial::record(&runs, p, &of, chrono::Utc::now(), &trials);
-    }
+    trying.finish().map_err(err_msg)?;
     // each with what it was before ("broke on 12 Nov, survived since")
     let trials = trials_of(&file);
     Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
