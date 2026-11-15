@@ -2658,8 +2658,19 @@ fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
         "{listed:?}"
     );
     assert!(listed.iter().all(|r| r["requests"].as_u64() > Some(0)));
+    // each named by the client that sent it (the tour plays boto3)
+    assert!(
+        listed
+            .iter()
+            .all(|r| r["clients"] == serde_json::json!(["boto3"])),
+        "{listed:?}"
+    );
     let table = stdout(&sonde(t.path(), &["runs"]));
     assert!(table.contains(written.to_str().unwrap()), "{table}");
+    assert!(
+        table.lines().next().is_some_and(|h| h.contains(" client ")),
+        "{table}"
+    );
     // a program's run, recorded beside its file and put in its place at the end
     let two = agent.join("two.sonde");
     let o = sonde(

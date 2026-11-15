@@ -31,6 +31,13 @@
       "endpoint": {
         "type": "string"
       },
+      "clients": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The clients that sent its requests, by their user agents, with no version (`boto3`, `object_store`, `Lance`, `Iceberg (pyiceberg)`, `aws-cli`): the one that sent most, and a second when each sent a tenth or more; absent when none said."
+      },
       "bytes": {
         "type": "integer",
         "description": "The file's size."

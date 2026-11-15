@@ -1402,6 +1402,7 @@ impl Runs {
                         "seconds": c.seconds,
                         "errors": c.errors,
                         "program": c.name.or(c.program),
+                        "clients": c.clients,
                     }),
                     None => {
                         let Some(h) = header_of(&p) else { continue };

@@ -220,6 +220,11 @@ pub struct Counted {
     pub bytes_down: u64,
     /// Its requests over its time, in [`SHAPE_BINS`] slices.
     pub shape: Vec<u32>,
+    /// The client that sent its requests, by their user agents
+    /// ([`sonde_proxy::callers::client`]): the one that sent most, and a
+    /// second when each sent a tenth of them or more. None known: empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clients: Vec<String>,
     /// The first line in its middle that is no record, and why: `sonde show`
     /// refuses such a file, and the list says so rather than counting what
     /// is around it as a run. (A torn last line is a recording cut
@@ -245,7 +250,7 @@ pub struct Figures {
     pub warnings: Vec<String>,
 }
 
-pub const COUNTED_VERSION: u32 = 3;
+pub const COUNTED_VERSION: u32 = 4;
 
 /// The analysis a run's [`Figures`] are of: sonde's version, and a number
 /// raised whenever what they hold changes between versions (a finding, a
@@ -273,7 +278,8 @@ struct CountedLine<'a> {
     url: serde::de::IgnoredAny,
     query: serde::de::IgnoredAny,
     retries: serde::de::IgnoredAny,
-    request_headers: serde::de::IgnoredAny,
+    #[serde(borrow)]
+    request_headers: Vec<CountedHeader<'a>>,
     response_headers: serde::de::IgnoredAny,
     #[serde(borrow)]
     method: std::borrow::Cow<'a, str>,
@@ -288,6 +294,15 @@ struct CountedLine<'a> {
     error_body: Option<String>,
     #[serde(default)]
     transport_error: Option<serde::de::IgnoredAny>,
+}
+
+/// A request header as the counts read it: by name, its value.
+#[derive(Deserialize)]
+struct CountedHeader<'a> {
+    #[serde(borrow)]
+    name: std::borrow::Cow<'a, str>,
+    #[serde(borrow)]
+    value: std::borrow::Cow<'a, str>,
 }
 
 /// A run's counts, taken a line at a time: the same figures as
@@ -308,6 +323,10 @@ pub struct Counter {
     lines: u64,
     torn: Option<String>,
     unreadable: Option<String>,
+    /// Requests by the client that sent them; the last user agent read and
+    /// its client (an agent is the same request after request).
+    clients: std::collections::HashMap<String, u64>,
+    last_agent: Option<(String, Option<String>)>,
 }
 
 impl Counter {
@@ -338,6 +357,12 @@ impl Counter {
                 .error_body
                 .as_deref()
                 .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"));
+        let agent = r
+            .request_headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("user-agent"))
+            .map(|h| h.value.as_ref());
+        self.agent(agent);
         let latency_us = (r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS) * 1000.0) as i64;
         self.add(
             r.time.timestamp_micros(),
@@ -350,6 +375,12 @@ impl Counter {
     }
 
     pub fn record(&mut self, r: &Record) {
+        let agent = r
+            .request_headers()
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("user-agent"))
+            .map(|h| h.value.as_str());
+        self.agent(agent);
         self.add(
             r.time.timestamp_micros(),
             r.latency_us(),
@@ -358,6 +389,40 @@ impl Counter {
             r.request_bytes.get().unwrap_or(0),
             r.response_bytes.get().unwrap_or(0),
         );
+    }
+
+    /// A request's user agent, counted by its client.
+    fn agent(&mut self, agent: Option<&str>) {
+        let Some(ua) = agent.map(str::trim).filter(|a| !a.is_empty()) else {
+            return;
+        };
+        if self.last_agent.as_ref().is_none_or(|(a, _)| a != ua) {
+            self.last_agent = Some((ua.to_string(), sonde_proxy::callers::client(ua)));
+        }
+        if let Some((_, Some(c))) = &self.last_agent {
+            match self.clients.get_mut(c) {
+                Some(n) => *n += 1,
+                None => {
+                    self.clients.insert(c.clone(), 1);
+                }
+            }
+        }
+    }
+
+    /// The clients a run is named by: the one that sent most, and the next
+    /// when each sent a tenth of the requests or more.
+    fn clients(&self) -> Vec<String> {
+        let mut by: Vec<(&String, &u64)> = self.clients.iter().collect();
+        by.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let tenth = |n: u64| n * 10 >= self.requests;
+        let mut out: Vec<String> = by.iter().take(1).map(|(c, _)| (*c).clone()).collect();
+        if let [(_, first), (second, n), ..] = by[..]
+            && tenth(*first)
+            && tenth(*n)
+        {
+            out.push(second.clone());
+        }
+        out
     }
 
     fn add(&mut self, start: i64, latency_us: i64, error: bool, miss: bool, up: u64, down: u64) {
@@ -405,6 +470,7 @@ impl Counter {
             },
             bytes_up: self.bytes_up,
             bytes_down: self.bytes_down,
+            clients: self.clients(),
             shape,
             unreadable: self.unreadable,
             figures: None,
@@ -640,6 +706,76 @@ mod tests {
             crate::run::compress(&to).unwrap();
         }
         to
+    }
+
+    #[test]
+    fn a_run_is_named_by_the_clients_that_sent_it() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, clients) in [
+            ("etl-1-base.sonde", &["boto3"][..]),
+            ("sdk-java.sonde", &["aws-sdk-java"]),
+            ("delta.sonde", &["object_store"]),
+            ("slatedb.sonde", &["object_store"]),
+            // pyiceberg through pyarrow: its C++ SDK is what the requests say
+            ("iceberg.sonde", &["aws-sdk-cpp"]),
+            // pylance, and object_store for a quarter of them: both
+            ("lance.sonde", &["Lance", "object_store"]),
+        ] {
+            let c = counted(&fixture(dir.path(), name, false)).unwrap();
+            assert_eq!(c.clients, clients, "{name}");
+            // and the same from the records
+            let run = crate::run::RunFile::open(&dir.path().join(name)).unwrap();
+            let mut n = Counter::default();
+            for r in &run.records {
+                n.record(r);
+            }
+            assert_eq!(n.finish(None, &run.header).clients, clients, "{name}");
+        }
+        // an application on top of an SDK is named, never a version
+        let client = sonde_proxy::callers::client;
+        let named = |ua| client(ua).unwrap();
+        assert_eq!(
+            named("pyiceberg/0.9.1 Boto3/1.44.1 Botocore/1.44.1"),
+            "Iceberg (pyiceberg)"
+        );
+        assert_eq!(
+            named("aws-cli/2.22.0 md/Botocore#2.0 ua/2.1 os/linux"),
+            "aws-cli"
+        );
+        assert_eq!(named("object_store/0.14.2"), "object_store");
+        assert_eq!(named("Boto3/1.44.1 md/Botocore#1.44.1"), "boto3");
+        assert_eq!(
+            named("duckdb/v1.1.3(linux_amd64) aws-sdk-cpp/1.11"),
+            "DuckDB"
+        );
+        // no user agent: none
+        let header = crate::run::RunHeader::new("e", "http://e", "r", None);
+        let mut n = Counter::default();
+        n.record(&Record {
+            id: 1,
+            method: "GET".into(),
+            kind: "GetObject".into(),
+            status: Some(200),
+            ..Default::default()
+        });
+        assert!(n.finish(None, &header).clients.is_empty());
+        // a client of a twentieth beside another: the one
+        let mut n = Counter::default();
+        for i in 0..20u64 {
+            let mut r = Record {
+                id: i + 1,
+                method: "GET".into(),
+                kind: "GetObject".into(),
+                status: Some(200),
+                ..Default::default()
+            };
+            r.lists_mut().request_headers = vec![Header {
+                name: "User-Agent".into(),
+                value: if i == 0 { "curl/8.5" } else { "rclone/v1.68" }.into(),
+            }];
+            n.record(&r);
+        }
+        assert_eq!(n.finish(None, &header).clients, ["rclone"]);
     }
 
     #[test]

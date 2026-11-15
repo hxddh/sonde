@@ -56,6 +56,10 @@ struct Row {
     #[serde(skip)]
     named: Option<String>,
     endpoint: String,
+    /// The clients that sent its requests (`boto3`, `Lance`): the one that
+    /// sent most, and a second that sent a tenth or more.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clients: Vec<String>,
     bytes: u64,
     /// What it holds: its requests, how long they spanned, how many failed.
     requests: u64,
@@ -112,6 +116,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 command: c.command,
                 named: c.name.filter(|n| !n.trim().is_empty()),
                 endpoint: c.endpoint,
+                clients: c.clients,
                 bytes: p.metadata().map(|m| m.len()).unwrap_or(0),
                 requests: c.requests,
                 seconds: c.seconds,
@@ -279,6 +284,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                             .or(r.command.clone())
                             .or(r.program.clone())
                             .unwrap_or_default(),
+                        r.clients.join(" · "),
                         r.endpoint.clone(),
                         if r.unreadable.is_some() {
                             format!("{} !", output::grouped(r.requests))
@@ -294,12 +300,12 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                 })
                 .collect();
             let mut heads = vec![
-                "run", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
-                "trials", "size",
+                "run", "recorded", "program", "client", "endpoint", "requests", "took", "errors",
+                "exit", "trials", "size",
             ];
             // a table has no column with nothing in it (no run's exit is
             // known: imports, replays); a file's columns stay what they are
-            const EXIT: usize = 7;
+            const EXIT: usize = 8;
             if matches!(format, Format::Text) && all.iter().all(|r| r.exit.is_none()) {
                 heads.remove(EXIT);
                 for r in &mut rows {

@@ -113,6 +113,61 @@ pub fn sdk(r: &Record) -> Option<String> {
     Some(format!("{} {version}", name.to_ascii_lowercase()))
 }
 
+/// The client that sent a request, by its user agent, as a run is named by
+/// it: the application on top of an SDK where the agent names one (Lance,
+/// PyIceberg, Spark, DuckDB, Polars, rclone, s5cmd, the AWS CLI), else the
+/// SDK (`boto3`, `object_store`, `aws-sdk-java`), else the agent's first
+/// product; never a version.
+pub fn client(ua: &str) -> Option<String> {
+    const APPS: &[(&str, &str)] = &[
+        ("pylance", "Lance"),
+        ("lance", "Lance"),
+        ("pyiceberg", "Iceberg (pyiceberg)"),
+        ("spark", "Spark"),
+        ("duckdb", "DuckDB"),
+        ("polars", "Polars"),
+        ("rclone", "rclone"),
+        ("s5cmd", "s5cmd"),
+        ("aws-cli", "aws-cli"),
+    ];
+    const SDKS: &[(&str, &str)] = &[
+        ("boto3", "boto3"),
+        ("botocore", "boto3"),
+        ("aws-sdk-java", "aws-sdk-java"),
+        ("aws-sdk-go-v2", "aws-sdk-go"),
+        ("aws-sdk-go", "aws-sdk-go"),
+        ("aws-sdk-js", "aws-sdk-js"),
+        ("aws-sdk-rust", "aws-sdk-rust"),
+        ("aws-sdk-cpp", "aws-sdk-cpp"),
+        ("aws-sdk-dotnet", "aws-sdk-dotnet"),
+        ("aws-sdk-php", "aws-sdk-php"),
+        ("aws-sdk-ruby", "aws-sdk-ruby"),
+        ("object_store", "object_store"),
+        ("minio-go", "minio-go"),
+        ("minio", "minio"),
+        ("s3fs", "s3fs"),
+        ("hadoop-aws", "hadoop-aws"),
+        ("curl", "curl"),
+    ];
+    let products: Vec<&str> = ua
+        .split_whitespace()
+        .filter_map(|p| p.split_once('/').map(|(n, _)| n))
+        .filter(|n| !n.is_empty())
+        .collect();
+    let named = |list: &[(&str, &'static str)]| {
+        list.iter().find_map(|(token, name)| {
+            products
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(token))
+                .then_some(*name)
+        })
+    };
+    named(APPS)
+        .or_else(|| named(SDKS))
+        .map(str::to_string)
+        .or_else(|| products.first().map(|p| p.to_ascii_lowercase()))
+}
+
 /// The SDK that sent most of `records`, by their user agents (a few
 /// thousand of them looked at, spread over the run).
 pub fn sdk_of(records: &[Record]) -> Option<String> {

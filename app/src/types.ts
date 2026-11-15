@@ -423,6 +423,8 @@ export interface RunInfo {
   shape?: number[];
   /** The run's trials, when it was tried under faults: how the program stood in each. */
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
+  /** The clients that sent its requests, by their user agents ("boto3", "Lance", "Iceberg (pyiceberg)"): the one that sent most, and a second that sent a tenth or more. Absent while it is recorded or when none said. */
+  clients?: string[];
   /** Written outside the runs folder (`sonde run -o FILE`, an agent's): listed, opened, never renamed or removed here. */
   elsewhere?: boolean;
 }
