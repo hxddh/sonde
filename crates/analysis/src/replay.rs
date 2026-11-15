@@ -14,6 +14,9 @@
 //!
 //! Every key is moved under a prefix (`replay-<time>/` by default), so the
 //! replay never touches existing objects; bucket-level changes are skipped.
+//! What the run read but had not written (its input) is first written there
+//! as stand-ins of the recorded size ([`seeds`]), so a read of existing data
+//! finds it on the other store too.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -82,6 +85,9 @@ pub fn changes_bucket(op: &str) -> bool {
 /// Whether a record would be replayed (for planning, before anything is sent).
 pub fn plan(records: &[Record], opts: &ReplayOptions) -> Plan {
     let mut p = Plan::default();
+    let seeds = seeds(records, opts);
+    p.seeds = seeds.len();
+    p.seed_bytes = seeds.iter().map(|s| s.size).sum();
     for r in records {
         match skip_reason(r, opts) {
             Some(why) => *p.skipped.entry(why).or_default() += 1,
@@ -106,8 +112,293 @@ pub struct Plan {
     pub requests: usize,
     pub writes: usize,
     pub deletes: usize,
+    /// Stand-ins written first for what the run read but had not written,
+    /// and their bytes ([`seeds`]).
+    pub seeds: usize,
+    pub seed_bytes: u64,
     /// Left out, by reason.
     pub skipped: BTreeMap<String, usize>,
+}
+
+/// An object a replay writes before it starts: one the run read (or
+/// listed, or copied) that it had not written itself. Its original name
+/// (the replay moves it under its prefix), its size as recorded, and the
+/// ETag the original store gave it, if a read said.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Seed {
+    pub bucket: String,
+    pub key: String,
+    pub size: u64,
+    pub etag: Option<String>,
+}
+
+/// Whether the original answer to `r` says its object was there: a read
+/// that found it, a conditional write that failed because it was.
+fn found(r: &Record) -> bool {
+    let Some(status) = r.status else { return false };
+    let ok = (200..300).contains(&status);
+    let if_match = r
+        .request_headers()
+        .iter()
+        .any(|h| h.name.eq_ignore_ascii_case("if-match"));
+    match r.kind.as_str() {
+        // a write makes its object: it was there only if it said so
+        "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
+            status == 412 && !if_match || ok && if_match
+        }
+        "CreateMultipartUpload"
+        | "UploadPart"
+        | "UploadPartCopy"
+        | "AbortMultipartUpload"
+        | "ListParts"
+        | "DeleteObject" => false,
+        _ => ok || matches!(status, 304 | 412 | 416),
+    }
+}
+
+/// The size of the object a read answered for: a HEAD's or a whole GET's
+/// length, a range's total.
+fn size_seen(r: &Record) -> Option<u64> {
+    if !r.status.is_some_and(|s| (200..300).contains(&s)) {
+        return None;
+    }
+    if let Some(total) = r
+        .header("content-range")
+        .and_then(|v| v.rsplit('/').next())
+        .and_then(|t| t.trim().parse().ok())
+    {
+        return Some(total);
+    }
+    if r.status != Some(200) || query(r, "partNumber").is_some() {
+        return None;
+    }
+    match r.kind.as_str() {
+        "HeadObject" | "GetObject" => r
+            .header("content-length")
+            .and_then(|v| v.trim().parse().ok())
+            .or_else(|| {
+                (r.kind == "GetObject")
+                    .then(|| r.response_bytes.get())
+                    .flatten()
+            }),
+        _ => None,
+    }
+}
+
+/// The bucket and key an `x-amz-copy-source` names.
+fn source_of(r: &Record) -> Option<(String, String)> {
+    let v = r
+        .request_headers()
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("x-amz-copy-source"))?
+        .value
+        .to_string();
+    let decoded = percent_encoding::percent_decode_str(&v)
+        .decode_utf8_lossy()
+        .into_owned();
+    let path = decoded.split('?').next()?.trim_start_matches('/');
+    let (b, k) = path.split_once('/')?;
+    Some((b.to_string(), k.to_string()))
+}
+
+/// Keys directly under `prefix` (past a `delimiter`, a folder, not a key).
+fn listed(
+    present: &std::collections::BTreeSet<(String, String)>,
+    bucket: &str,
+    prefix: &str,
+    delimiter: Option<&str>,
+) -> usize {
+    present
+        .range((bucket.to_string(), prefix.to_string())..)
+        .take_while(|(b, k)| b == bucket && k.starts_with(prefix))
+        .filter(|(_, k)| delimiter.is_none_or(|d| d.is_empty() || !k[prefix.len()..].contains(d)))
+        .count()
+}
+
+/// What a replay writes before it starts, so that the run's reads of data
+/// it did not write find it: each object the run found before writing it
+/// (read, copied from, written on a condition it met), of its recorded
+/// size; and, where a listing found more keys than the run had written or
+/// read, as many empty `sonde-seed-N` keys under its prefix.
+pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
+    use std::collections::{BTreeSet, HashSet};
+    let mut sorted: Vec<&Record> = records
+        .iter()
+        .filter(|r| skip_reason(r, opts).is_none())
+        .collect();
+    sorted.sort_by_key(|r| (r.time, r.id));
+    // what each object measured, by any read of it before the run wrote it
+    let mut sizes: HashMap<(String, String), u64> = HashMap::new();
+    let mut touched: HashSet<(String, String)> = HashSet::new();
+    for r in &sorted {
+        let (Some(b), Some(k)) = (&r.bucket, &r.key) else {
+            continue;
+        };
+        let at = (b.to_string(), k.to_string());
+        if touched.contains(&at) {
+            continue;
+        }
+        if let Some(n) = size_seen(r) {
+            let e = sizes.entry(at.clone()).or_default();
+            *e = (*e).max(n);
+        }
+        if matches!(
+            r.kind.as_str(),
+            "PutObject" | "CopyObject" | "CompleteMultipartUpload" | "DeleteObject"
+        ) && r.status.is_some_and(|s| (200..300).contains(&s))
+        {
+            touched.insert(at);
+        }
+    }
+    // the objects it found before writing them, read or copied from
+    let mut out: Vec<Seed> = Vec::new();
+    let mut seeded: HashSet<(String, String)> = HashSet::new();
+    let mut written: HashSet<(String, String)> = HashSet::new();
+    for r in &sorted {
+        let Some(b) = r.bucket.as_deref() else {
+            continue;
+        };
+        let ok = r.status.is_some_and(|s| (200..300).contains(&s));
+        let mut found_here = Vec::new();
+        if let Some(src) = source_of(r).filter(|_| ok) {
+            found_here.push((src, None));
+        }
+        if let Some(k) = r.key.as_deref()
+            && found(r)
+        {
+            found_here.push((
+                (b.to_string(), k.to_string()),
+                r.header("etag").map(String::from),
+            ));
+        }
+        for (at, etag) in found_here {
+            if !written.contains(&at) && seeded.insert(at.clone()) {
+                out.push(Seed {
+                    size: sizes.get(&at).copied().unwrap_or(0),
+                    bucket: at.0,
+                    key: at.1,
+                    etag,
+                });
+            }
+        }
+        if let Some(k) = r.key.as_deref().filter(|_| ok)
+            && matches!(
+                r.kind.as_str(),
+                "PutObject" | "CopyObject" | "CompleteMultipartUpload" | "DeleteObject"
+            )
+        {
+            written.insert((b.to_string(), k.to_string()));
+        }
+        if r.kind == "DeleteObjects" && ok {
+            for k in r
+                .rare()
+                .request_body
+                .as_deref()
+                .map(|x| tags(x, "Key"))
+                .unwrap_or_default()
+            {
+                written.insert((b.to_string(), k.to_string()));
+            }
+        }
+    }
+    // then the keys the replay's store holds as it goes, from those: where a
+    // listing found more, as many empty stand-ins under its prefix
+    let mut present: BTreeSet<(String, String)> = out
+        .iter()
+        .map(|s| (s.bucket.clone(), s.key.clone()))
+        .collect();
+    let mut fillers: HashMap<(String, String), usize> = HashMap::new();
+    for r in sorted {
+        let Some(b) = r.bucket.as_deref() else {
+            continue;
+        };
+        if !r.status.is_some_and(|s| (200..300).contains(&s)) {
+            continue;
+        }
+        if reqlog::is_listing(&r.kind) && r.kind != "ListObjectVersions" && r.key.is_none() {
+            let paged = r.query().iter().any(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "continuation-token" | "marker" | "start-after" | "key-marker"
+                )
+            });
+            let Some(n) = r
+                .header(reqlog::KEYS_HEADER)
+                .and_then(|n| n.parse::<usize>().ok())
+                .filter(|_| !paged)
+            else {
+                continue;
+            };
+            let prefix = query(r, "prefix").unwrap_or("").to_string();
+            let have = listed(&present, b, &prefix, query(r, "delimiter"));
+            for _ in have..n {
+                let i = fillers.entry((b.to_string(), prefix.clone())).or_default();
+                *i += 1;
+                let key = format!("{prefix}sonde-seed-{i}");
+                present.insert((b.to_string(), key.clone()));
+                out.push(Seed {
+                    bucket: b.to_string(),
+                    key,
+                    size: 0,
+                    etag: None,
+                });
+            }
+            continue;
+        }
+        let deleted: Vec<String> = match (r.kind.as_str(), r.key.as_deref()) {
+            ("PutObject" | "CopyObject" | "CompleteMultipartUpload", Some(k)) => {
+                present.insert((b.to_string(), k.to_string()));
+                Vec::new()
+            }
+            ("DeleteObject", Some(k)) => vec![k.to_string()],
+            ("DeleteObjects", _) => r
+                .rare()
+                .request_body
+                .as_deref()
+                .map(|x| tags(x, "Key").iter().map(|k| k.to_string()).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for k in deleted {
+            present.remove(&(b.to_string(), k));
+        }
+    }
+    out
+}
+
+/// Writes `seeds` under the replay's prefix with `base` (whose requests are
+/// not the replay's): what the replay's reads then find. The ETags the
+/// original store gave them, mapped to the replay store's, and how many
+/// were written.
+pub async fn write_seeds(
+    base: &S3Client,
+    seeds: &[Seed],
+    opts: &ReplayOptions,
+) -> (HashMap<String, String>, usize) {
+    let mut etags = HashMap::new();
+    let mut written = 0;
+    for chunk in seeds.chunks(16) {
+        let sent = futures::future::join_all(chunk.iter().map(|s| {
+            let key = format!("{}{}", opts.prefix, s.key);
+            let req = S3Request::new("PutObject", http::Method::PUT)
+                .bucket(&opts.bucket(&s.bucket))
+                .key(&key)
+                .body(Body::Bytes(synthetic(
+                    s.size.min(1 << 30),
+                    &format!("{}/{key}", opts.bucket(&s.bucket)),
+                )));
+            base.send_raw(req)
+        }))
+        .await;
+        for (s, r) in chunk.iter().zip(sent) {
+            let Ok(r) = r else { continue };
+            written += 1;
+            if let (Some(o), Some(n)) = (&s.etag, etag_of(&r.headers)) {
+                etags.insert(o.clone(), n);
+            }
+        }
+    }
+    (etags, written)
 }
 
 fn refused(r: &Record) -> bool {
@@ -522,11 +813,26 @@ pub async fn replay(
     client: &S3Client,
     records: &[Record],
     opts: &ReplayOptions,
+    progress: impl FnMut(usize, usize),
+) -> Vec<Replayed> {
+    replay_seeded(client, records, opts, HashMap::new(), progress).await
+}
+
+/// [`replay`] after [`write_seeds`]: `etags` maps the original store's
+/// ETags of what was seeded to the replay store's.
+pub async fn replay_seeded(
+    client: &S3Client,
+    records: &[Record],
+    opts: &ReplayOptions,
+    etags: HashMap<String, String>,
     mut progress: impl FnMut(usize, usize),
 ) -> Vec<Replayed> {
     let mut sorted: Vec<&Record> = records.iter().collect();
     sorted.sort_by_key(|r| (r.time, r.id));
-    let mut state = State::default();
+    let mut state = State {
+        etags,
+        ..State::default()
+    };
     let mut out = Vec::with_capacity(sorted.len());
     let total = sorted.len();
     for (i, r) in sorted.into_iter().enumerate() {
@@ -977,10 +1283,12 @@ pub async fn replay_to_file(
         let _ = std::fs::remove_file(out);
         return Err(why);
     }
+    // what the run read and had not written, there first (not the replay's requests)
+    let (etags, _) = write_seeds(base, &seeds(&original.records, opts), opts).await;
     let log = reqlog::RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
-    let done = replay(&client, &original.records, opts, progress).await;
+    let done = replay_seeded(&client, &original.records, opts, etags, progress).await;
     writer.flush().map_err(|e| e.to_string())?;
     let (mut removed, mut removed_versions) = (0usize, 0usize);
     let (mut left_objects, mut left_versions, mut left_markers) = (0usize, 0usize, 0usize);

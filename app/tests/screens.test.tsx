@@ -23,7 +23,7 @@ test("a run's request in the inspector: details, copy as curl without a signatur
   expect(app.shows("id:activity-tab-requests")).toBe(false);
 });
 
-test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
+test("multipart: scan, lifecycle verdict, the guard confirms a few plainly", async () => {
   const app = await withDemo("demo");
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
@@ -33,10 +33,9 @@ test("multipart: scan, lifecycle verdict, the guard waits for the typed confirma
   expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.enabled("id:confirm-run")).toBe(false);
-  // what is typed is not the count: still nothing runs
-  await app.type("id:confirm-input", "9");
-  expect(app.enabled("id:confirm-run")).toBe(false);
+  // two uploads: a plain confirm (the count is typed only above 100)
+  expect(app.shows("id:confirm-input")).toBe(false);
+  expect(app.enabled("id:confirm-run")).toBe(true);
   await app.press("id:confirm-cancel");
   await app.waitFor("id:confirm-dialog", { state: "gone" });
 });
@@ -78,26 +77,6 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
   expect(app.texts().some((t) => t.startsWith("SlateDB: manifest"))).toBe(true);
   expect(app.shows("id:replay")).toBe(true);
 });
-
-test("compatibility: checked on an endpoint, every probe, the bucket chosen filled in", async () => {
-  const app = await withDemo("demo");
-  await place(app, "endpoints");
-  await app.press("id:compat-demo");
-  await app.waitFor("id:compat-dialog");
-  // the bucket chosen in Buckets is the one its probes write to; the one choice is temporary buckets
-  expect(await app.value("id:probe-bucket")).toBe("demo");
-  expect(app.shows("id:probe-temp")).toBe(true);
-  expect(app.shows("id:probe-only")).toBe(false);
-  await app.press("id:probe-run");
-  // (Run is busy while the check goes, and free once it has ended)
-  await app.waitUntil(() => !app.enabled("id:probe-run"), { timeout: 10000 });
-  await app.waitUntil(() => app.enabled("id:probe-run"), { timeout: 240000 });
-  await app.waitFor("id:matrix");
-  await app.press("id:cell-consistency.read-after-delete-0");
-  await app.waitFor("id:probe-detail");
-  expect(app.shows("text:/^aws behavior$/i")).toBe(true);
-  expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-}, 300_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
   const app = await withDemo();
@@ -176,8 +155,6 @@ test("settings: no read-only switch; a confirmed abort, the audit log", async ()
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.enabled("id:confirm-run")).toBe(false);
-  await app.type("id:confirm-input", "2");
   await app.press("id:confirm-run");
   await app.waitFor("text:/0 older than 7 days/", { timeout: 10000 });
   await place(app, "audit");

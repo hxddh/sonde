@@ -1478,6 +1478,16 @@ pub struct RunChange {
     /// workload's doing, and no saving is counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_changed: Option<String>,
+    /// How much the workload grew between two runs of one program with the
+    /// same command (`requests 120 → 402, 3.4×`): a fix that does more
+    /// work than before (all 400 files, not 30) is not a fix to count, and
+    /// no saving is counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_changed: Option<String>,
+    /// The two runs' endpoints, when they differ (`rfs`, `demo`): the same
+    /// workload on two stores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<(String, String)>,
     /// Whether both runs' waiting is known: not when either's times are to
     /// the second (an imported log's), and then `waiting_ms` says nothing.
     pub waiting_known: bool,
@@ -1487,6 +1497,19 @@ pub struct RunChange {
     /// The busiest prefixes of either run, each run's requests to them: where
     /// the change happened.
     pub prefixes: Vec<PrefixChange>,
+}
+
+/// A workload that grew by half or more (and by ten requests at least),
+/// said `requests 120 → 402, 3.4×`; none when it did not.
+pub fn workload_grew((a, b): (usize, usize)) -> Option<String> {
+    (a > 0 && b >= a + 10 && b * 2 >= a * 3).then(|| {
+        format!(
+            "requests {} → {}, {:.1}×",
+            sonde_fmt::count(a as u64),
+            sonde_fmt::count(b as u64),
+            b as f64 / a as f64
+        )
+    })
 }
 
 /// One prefix in two runs: its requests in each.
@@ -1516,10 +1539,29 @@ impl RunChange {
     /// then counts no saving.
     pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
         self.command_changed = crate::program::command_change(a, b);
-        if self.command_changed.is_some() {
+        if self.command_changed.is_none() {
+            self.workload_changed = workload_grew(self.requests);
+        }
+        if self.command_changed.is_some() || self.workload_changed.is_some() {
             crate::fixloop::by_command(&mut self.findings);
         }
         self
+    }
+
+    /// Why what moved between the runs is not counted as a fix: the command
+    /// changed, or the workload grew (`whole`: with how much, else in a few
+    /// words, as each finding's line ends).
+    pub fn uncounted(&self, whole: bool) -> Option<String> {
+        if let Some(c) = &self.command_changed {
+            return Some(format!("the command changed ({c})"));
+        }
+        self.workload_changed.as_ref().map(|w| {
+            if whole {
+                format!("the workload grew ({w})")
+            } else {
+                "the workload grew".to_string()
+            }
+        })
     }
 
     /// Says whether a run compared failed (`exits`, as kept: none when not
@@ -1609,7 +1651,13 @@ pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
         let n = seen.entry(id.clone()).or_default();
         *n += 1;
         o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
+        o.kind = kind_of(&o.identity).to_string();
     }
+}
+
+/// A finding's kind, as its identity begins (`obs.hot` of `obs.hot|b/k`).
+pub fn kind_of(identity: &str) -> &str {
+    identity.split('|').next().unwrap_or("")
 }
 
 /// The kinds of finding, as an identity begins (`obs.hot` of `obs.hot|b/k`):
@@ -1632,15 +1680,16 @@ pub const FINDING_KINDS: &[&str] = &[
 /// The version of the rules a finding's identity is made by ([`stable`]
 /// and [`identity`]): kept with a program's findings (`findings.json`), so
 /// findings kept under older rules are made again by these, not read as one
-/// fixed and another new. 1 was 19.0's; 2 takes every number out.
-pub const IDENTITY_RULES: u32 = 2;
+/// fixed and another new. 1 was 19.0's; 2 takes every number out; 3 keeps
+/// a digit inside a word (`s3out`).
+pub const IDENTITY_RULES: u32 = 3;
 
 /// A key or prefix with what changes from one run of a program to the next
 /// taken out: the value of a `name=value` folder `name={v}`, a UUID
 /// `{uuid}`, a date `{date}`, a date and time `{time}`, a word of six or
 /// more hex letters and digits (a commit, a short run id) or a long mixed
 /// id `{id}`, and every other run of digits `{n}` (`part-{n}`, `run-{n}`,
-/// `v{n}`). Two findings of one run that read the same once so are told
+/// `v{n}`) but one with a letter on both sides (`s3out`, `h2o`). Two findings of one run that read the same once so are told
 /// apart by their keys as they were ([`Run::with`]).
 pub fn stable(s: &str) -> String {
     let b = s.as_bytes();
@@ -1691,18 +1740,24 @@ pub fn stable(s: &str) -> String {
         {
             out.push_str("{id}");
         } else {
-            // each run of digits
-            let mut digits = false;
-            for c in w.chars() {
-                if c.is_ascii_digit() {
-                    if !digits {
-                        out.push_str("{n}");
-                    }
-                    digits = true;
-                } else {
-                    out.push(c);
-                    digits = false;
+            // each run of digits, but one inside a word (`s3out`, `h2o`):
+            // a letter on both sides of it is part of the name
+            let wb = w.as_bytes();
+            let mut j = 0;
+            while j < wb.len() {
+                if !wb[j].is_ascii_digit() {
+                    out.push(wb[j] as char);
+                    j += 1;
+                    continue;
                 }
+                let run = wb[j..].iter().take_while(|c| c.is_ascii_digit()).count();
+                let inside = j > 0 && j + run < wb.len();
+                if inside {
+                    out.push_str(&w[j..j + run]);
+                } else {
+                    out.push_str("{n}");
+                }
+                j += run;
             }
         }
         i = end;
@@ -2033,6 +2088,8 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         same_program: true,
         failed: None,
         command_changed: None,
+        workload_changed: None,
+        endpoints: None,
         waiting_known: true,
     }
 }
@@ -2112,6 +2169,9 @@ mod tests {
             // words stay
             ("b/static/config.json", "b/static/config.json"),
             ("b/decade/x", "b/decade/x"),
+            // a digit inside a word is part of its name
+            ("lake/s3out/", "lake/s3out/"),
+            ("b/h2o/v2/x", "b/h2o/v{n}/x"),
             ("b/über/schlüssel", "b/über/schlüssel"),
         ] {
             assert_eq!(stable(key), said, "{key}");
@@ -2141,6 +2201,8 @@ mod tests {
             callers: Vec::new(),
             sdk: None,
             identity: String::new(),
+            kind: String::new(),
+            saves_cost: 0.0,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
         name_findings(&mut two, &[]);
@@ -2180,6 +2242,8 @@ mod tests {
             callers: Vec::new(),
             sdk: None,
             identity: String::new(),
+            kind: String::new(),
+            saves_cost: 0.0,
         };
         let (r, w) = (
             finding_identity(&of("obs.prefixrate.reads")),

@@ -183,8 +183,8 @@ impl Probe for ReadAfterDelete {
                 Verdict::Differs,
                 ph!(
                     "judge.consistency.read-after-delete.differs",
-                    p1 = format!("{:?}", get.status),
-                    p2 = format!("{:?}", head.status)
+                    p1 = crate::model::status_text(get.status),
+                    p2 = crate::model::status_text(head.status)
                 ),
                 s,
             )

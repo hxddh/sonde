@@ -588,51 +588,6 @@ impl Sonde {
         write_export(&format!("du-{}-{}.{ext}", r.bucket, stamp()), &body)
     }
 
-    // --- probes ----------------------------------------------------------------------------
-
-    /// Every probe: id, category, title, description, AWS's behavior.
-    pub fn probe_catalog() -> JsonValue {
-        to_json(probes::catalog())
-    }
-
-    /// Runs probes on several endpoints in parallel: `options` is
-    /// `{ bucket, allowTempBuckets, includeSlow, only }`. The job ids, in
-    /// order. Each run is in the audit log.
-    pub async fn run_probes(
-        endpoints: Vec<String>,
-        options: JsonValue,
-    ) -> Result<Vec<String>, String> {
-        let o: probes::runner::RunOptions = parse(options, "options")?;
-        match background(async move { probes::runner::spawn(&sonde(), &endpoints, o) }).await {
-            Ok(ids) => Ok(ids),
-            Err(e) => Err(err_msg(e)),
-        }
-    }
-
-    /// Saved runs, newest first.
-    pub fn probe_runs() -> JsonValue {
-        to_json(probes::store::list(sonde().paths()))
-    }
-
-    /// One saved run with every result and its exchanges.
-    pub fn probe_run(id: String, endpoint: String) -> JsonValue {
-        to_json(probes::store::load(sonde().paths(), &id, &endpoint))
-    }
-
-    /// The vendor × probe matrix of the newest run of each endpoint (or of `runs`, `["id:endpoint"]`).
-    pub fn probe_matrix(runs: Option<Vec<String>>) -> JsonValue {
-        to_json(probes::report::matrix(&load_runs(runs)))
-    }
-
-    /// What changed between two saved runs.
-    pub fn probe_diff(before: String, after: String) -> Result<JsonValue, String> {
-        let r = load_runs(Some(vec![before, after]));
-        if r.len() != 2 {
-            return Err(err_msg("both runs must exist"));
-        }
-        Ok(to_json(probes::store::diff(&r[0], &r[1])))
-    }
-
     /// Writes a chart's rows (the app's CSV of what the chart draws) into the
     /// exports folder as `<name>-<stamp>.csv`; the file's path. Native
     /// Shell has no save dialog: the file goes where every export goes.
@@ -641,22 +596,6 @@ impl Sonde {
             &format!("{}-{}.csv", csv_name(&name), stamp()),
             text.as_bytes(),
         )
-    }
-
-    /// Writes runs (default: the newest of each endpoint) as `markdown` or `json`; the path.
-    pub fn export_probes(format: String, runs: Option<Vec<String>>) -> Result<String, String> {
-        let r = load_runs(runs);
-        if format == "markdown" {
-            write_export(
-                &format!("probes-{}.md", stamp()),
-                probes::report::markdown(&r).as_bytes(),
-            )
-        } else {
-            write_export(
-                &format!("probes-{}.json", stamp()),
-                &serde_json::to_vec_pretty(&r).unwrap_or_default(),
-            )
-        }
     }
 
     // --- layouts ---------------------------------------------------------------------------
@@ -700,20 +639,6 @@ impl Sonde {
 /// Starts a job on the runtime's threads (where jobs spawn their tasks).
 async fn spawn(f: impl FnOnce() -> String + Send + 'static) -> Result<String, String> {
     background(async move { f() }).await.map_err(err_msg)
-}
-
-fn load_runs(specs: Option<Vec<String>>) -> Vec<probes::Run> {
-    let s = sonde();
-    match specs {
-        None => probes::store::latest(s.paths()),
-        Some(v) => v
-            .iter()
-            .filter_map(|spec| {
-                spec.split_once(':')
-                    .and_then(|(id, ep)| probes::store::load(s.paths(), id, ep))
-            })
-            .collect(),
-    }
 }
 
 fn stamp() -> String {

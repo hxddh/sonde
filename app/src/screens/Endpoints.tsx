@@ -1,15 +1,15 @@
-// Endpoints: add, edit, import from AWS profiles, test connectivity, check compatibility.
+// Endpoints: add, edit, import from AWS profiles, test connectivity. (Whether a program works on one is asked
+// from its run: Compare › On another store…)
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
 import { api, asError } from "../native";
-import { bucket, endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report } from "../store";
+import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
-import { CompatDialog } from "./Probes";
 
 type Draft = {
   id: string;
@@ -204,8 +204,6 @@ export function Endpoints() {
     const m = endpointsMode();
     if (m !== "list") untracked(() => batch(() => (mode.set(m), endpointsMode.set("list"))));
   });
-  // the endpoint whose compatibility is being checked (its dialog open)
-  const checking = signal<EndpointView | null>(null);
   const tests = signal<Record<string, ConnectivityReport | "running">>({});
   const test = async (id: string) => {
     tests.update((x) => ({ ...x, [id]: "running" }));
@@ -262,8 +260,6 @@ export function Endpoints() {
             <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
           <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
-          {/* every probe against it, in a bucket of its own (the one chosen in Buckets, filled in) */}
-          <Button small variant="outline" icon="flask-conical" label={t("compat.open")} onPress={() => checking.set(e)} testID={`compat-${e.id}`} />
           {/* its edit and removal, always there: a list of a few endpoints has the room */}
           <View class="flex-row items-center gap-1">
             <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
@@ -297,7 +293,6 @@ export function Endpoints() {
           </Card>
         </If>
       </View>
-      <If when={checking()}>{(e) => <CompatDialog endpoint={e()} bucket={endpoint() === e().id ? bucket() : null} onClose={() => checking.set(null)} />}</If>
     </Page>
   );
 }

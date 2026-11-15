@@ -82,7 +82,7 @@ function DesktopShell() {
       activityOpen.set(true);
       return true;
     }
-    // (a bucket's tools and compatibility are sections of Buckets: the place itself)
+    // (a bucket's tools are sections of Buckets: the place itself)
     return false;
   });
   return (

@@ -168,6 +168,9 @@ fn grouped(cmd: clap::Command) -> clap::Command {
             help.push_str(&format!("  {name:<width$}  {about}\n"));
         }
     }
+    help.push_str(
+        "\nFor coding agents: sonde run -o r.sonde -- <command>, then sonde show r.sonde -f json\n(the fields and exit codes: https://github.com/hxddh/sonde/blob/main/docs/agents.md)\n",
+    );
     help.push_str("\nOptions:\n{options}");
     scoped(cmd.help_template(help))
 }

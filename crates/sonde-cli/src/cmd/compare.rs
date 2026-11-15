@@ -173,20 +173,36 @@ async fn diff(
         &profile(&original.records, &prices),
         &replay_profile,
     );
+    // what the program relies on, as the replay asked the store
+    let relied: Vec<probes::relies::Relied> =
+        sonde_analysis::index::get(&super::runs::resolve(s, replay))
+            .relies
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
     match format {
-        Format::Json => println!(
-            "{}",
-            output::json(&serde_json::json!({
+        Format::Json => {
+            let mut doc = serde_json::json!({
                 "comparison": c,
                 "latency": latency,
-            }))
-        ),
+            });
+            if !relied.is_empty() {
+                doc["relies"] = serde_json::json!(relied);
+            }
+            println!("{}", output::json(&doc));
+        }
         _ => {
-            print_comparison(&c, std::io::stdout().is_terminal());
+            let color = std::io::stdout().is_terminal();
+            print_comparison(&c, color);
             print_latency_of(
                 &latency,
                 (&original.header.endpoint, &replay_header.endpoint),
             );
+            let program = super::replay::program_of(&original.header);
+            for line in
+                super::replay::relies_lines(&program, &replay_header.endpoint, &relied, color)
+            {
+                println!("{line}");
+            }
         }
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })
@@ -269,6 +285,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     );
     let mut c = sonde_analysis::profile::compare_runs(&ra, &rb);
     c.waiting_known = !ha.whole_seconds && !hb.whole_seconds;
+    c.endpoints = (ha.endpoint != hb.endpoint).then(|| (ha.endpoint.clone(), hb.endpoint.clone()));
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
@@ -330,8 +347,12 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if let Some(t) = failed {
         println!("{}", paint(&t, "33", color));
     }
-    if let Some(ch) = &c.command_changed {
-        println!("{}", paint(&super::fixloop::command_line(ch), "33", color));
+    let uncounted = c.uncounted(false);
+    if let Some(why) = c.uncounted(true) {
+        println!(
+            "{}",
+            paint(&super::fixloop::uncounted_line(&why), "33", color)
+        );
     }
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1
@@ -365,7 +386,15 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     println!(
         "{}",
         paint(
-            &format!("{} → {}", file_name(&before), file_name(&after)),
+            &match &c.endpoints {
+                // two stores: the headline of a move from one to the other
+                Some((x, y)) => format!(
+                    "{} on {x} → {} on {y}",
+                    file_name(&before),
+                    file_name(&after)
+                ),
+                None => format!("{} → {}", file_name(&before), file_name(&after)),
+            },
             "1",
             color
         )
@@ -423,7 +452,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for line in super::fixloop::change_lines(&c.findings, c.command_changed.as_deref(), color) {
+    for line in super::fixloop::change_lines(&c.findings, uncounted.as_deref(), color) {
         println!("{line}");
     }
     Ok(0)

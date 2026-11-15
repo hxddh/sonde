@@ -55,9 +55,9 @@ impl Probe for Bounds {
                 wrong_body.push(label);
             } else if !st.is(206) || st.header("content-range") != Some(cr) {
                 other.push(format!(
-                    "{label}: {:?} {:?}",
-                    st.status,
-                    st.header("content-range")
+                    "{label}: {} {}",
+                    crate::model::status_text(st.status),
+                    crate::model::or_none(st.header("content-range"))
                 ));
             }
         }
@@ -104,7 +104,7 @@ impl Probe for MultiRange {
                 Verdict::Differs,
                 ph!(
                     "judge.range.multi.differs.2",
-                    p1 = format!("{:?}", g.header("content-range"))
+                    p1 = crate::model::or_none(g.header("content-range"))
                 ),
                 s,
             )
@@ -113,8 +113,8 @@ impl Probe for MultiRange {
                 Verdict::Differs,
                 ph!(
                     "judge.range.multi.differs.3",
-                    p1 = format!("{:?}", g.status),
-                    p2 = format!("{:?}", g.code)
+                    p1 = crate::model::status_text(g.status),
+                    p2 = crate::model::or_none(g.code.as_deref())
                 ),
                 s,
             )
@@ -147,7 +147,7 @@ impl Probe for Unsatisfiable {
                 Verdict::Differs,
                 ph!(
                     "judge.range.unsatisfiable.differs",
-                    p1 = format!("{:?}", past.status)
+                    p1 = crate::model::status_text(past.status)
                 ),
                 s,
             );
@@ -159,9 +159,9 @@ impl Probe for Unsatisfiable {
                 Verdict::Differs,
                 ph!(
                     "judge.range.unsatisfiable.differs.2",
-                    p1 = format!("{:?}", past.status),
-                    p2 = format!("{:?}", past.code),
-                    p3 = format!("{:?}", empty.status)
+                    p1 = crate::model::status_text(past.status),
+                    p2 = crate::model::or_none(past.code.as_deref()),
+                    p3 = crate::model::status_text(empty.status)
                 ),
                 s,
             )

@@ -619,7 +619,6 @@ async fn a_program_that_retries_survives_every_scenario() {
             &[
                 "show",
                 b.path("trials/run.slowdown.sonde").to_str().unwrap(),
-                "--summary",
                 "-f",
                 "json",
             ],
@@ -634,7 +633,7 @@ async fn a_program_that_retries_survives_every_scenario() {
         shown.stdout
     );
     // and the summary alone is the summary: no list of requests
-    assert!(doc.get("requests").is_none() && doc["operations"].is_number());
+    assert!(doc.get("requests").is_none() && doc["operationsTotal"].is_number());
     assert!(doc["waiting"]["p95Ms"].is_number() && doc["waiting"]["peakInFlight"].is_number());
     assert!(doc["waiting"]["byKind"].is_array() && doc["cost"]["amount"].is_number());
 }
@@ -2035,7 +2034,6 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
             &[
                 "show",
                 b.path("trials/commits.lost-race.sonde").to_str().unwrap(),
-                "--summary",
                 "-f",
                 "json",
             ],
@@ -2445,12 +2443,10 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert_eq!(history.len(), 2, "{history:#?}");
     assert_eq!(history[1]["standing"], "survived");
     assert_eq!(history[1]["run"], "run.sonde");
-    let s = b.run(None, &["show", "run.sonde", "--summary"]).await;
+    let s = b.run(None, &["show", "run.sonde"]).await;
     assert!(s.stdout.contains("Under faults:"), "{}", s.stdout);
     assert!(s.stdout.contains(", survived since"), "{}", s.stdout);
-    let j = b
-        .run(None, &["show", "run.sonde", "--summary", "-f", "json"])
-        .await;
+    let j = b.run(None, &["show", "run.sonde", "-f", "json"]).await;
     let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
     assert_eq!(doc["trials"][0]["history"].as_array().unwrap().len(), 2);
     // recorded again to the same file: the verdicts are the program's, kept

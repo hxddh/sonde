@@ -227,6 +227,8 @@ delta-rs 1.6 (49 → 5), boto3, the Java SDK.
 
 ## Replay on another endpoint
 
+Will the program work on store X, and what will it cost there?
+
 ```sh
 sonde compare run.sonde --replay ceph                      # the plan: what it would send, where
 sonde compare run.sonde --replay r2 --bucket data=scratch --yes   # replay, clean up, compare
@@ -235,6 +237,9 @@ sonde compare run.sonde replay.sonde                       # a run and its repla
 
 Re-enacted (a run holds no object data):
 
+- What the run read and had not written (its input) is written first under the prefix: a stand-in of the recorded
+  size for each object it read, copied from or wrote on a condition it met, and empty `sonde-seed-N` keys where a
+  listing found more. Reads of existing data then find it, and nothing differs falsely.
 - Payloads: deterministic bytes of the recorded length. Control documents (DeleteObjects, tagging, …): as recorded,
   keys moved under the prefix.
 - Upload ids, part ETags, ETags in `If-Match`/`If-None-Match` and continuation tokens map to the replay endpoint's;
@@ -248,14 +253,27 @@ Re-enacted (a run holds no object data):
 - Compared by status and S3 error code, and for an answer that succeeded, what it carried: a listing's keys
   (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same. Exit 2 when anything differs.
 
+Then what the program relies on: only the [probes](probes.md) that match features its requests used (checksum
+algorithms and types, conditional headers, ranges, multipart, DeleteObjects size, SSE-C, presigned URLs, paged
+listings), run against that store under `sonde-probe/` of the first bucket (removed after, audited), each with its
+verdict. Last, each store's request cost at its vendor's prices. `probe` is the whole catalogue.
+
 ```
 ✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)
+
+cost  0.00026 USD on rfs → 0.00023 USD on r2 (requests, at each store's prices)
+
+What etl relies on, and how r2 answers
+  ✓ pass  checksum.crc32.mpu-composite  CreateMultipartUpload ×1
+  ✓ pass  cond.put-if-none-match        PutObject ×1
 ```
 
-Tested: the SlateDB, pyiceberg, delta-rs and boto3 runs replay with no difference on RustFS and Ceph RGW 16.2.5.
+Tested: the SlateDB, pyiceberg, delta-rs and boto3 runs replay with no difference on RustFS and Ceph RGW 16.2.5, and
+so does a boto3 ETL that reads 40 objects it did not write (RustFS).
 
-In the app, Replay shows the plan, runs it and opens the comparison: grouped differences
-and both runs as transcripts (`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
+In the app it is asked from a run: Compare › On another store… shows the plan, runs it and opens the comparison:
+grouped differences, what the program relies on, the cost on each store, and both runs as transcripts
+(`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
 
 ## Share a run
 

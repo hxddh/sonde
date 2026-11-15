@@ -251,6 +251,8 @@ export interface Plan {
   summary: string;
   summaryText?: CorePhrase[];
   confirm: string;
+  /** whether `confirm` must be typed (more than 100 items, a bucket's lifecycle); otherwise a plain confirm */
+  typed: boolean;
   confirmHint: string;
   confirmHintText?: CorePhrase[];
   created: string;
@@ -328,79 +330,19 @@ export interface DuReport {
 
 export type Verdict = "pass" | "fail" | "differs" | "unsupported" | "error" | "skipped";
 
-export interface ProbeMeta {
-  id: string;
-  category: string;
+/** A feature a run used, the probe that checks it, and how a store answered (a replay's `relies`). */
+export interface Relied {
+  probe: string;
+  /** the kind of request that showed it first, and how many did */
+  kind: string;
+  requests: number;
+  seen: string;
+  seenText?: CorePhrase[];
   title: string;
   titleText?: CorePhrase[];
-  description: string;
-  descriptionText?: CorePhrase[];
-  awsBehavior: string;
-  awsBehaviorText?: CorePhrase[];
-  needs: string[];
-}
-
-export interface Step {
-  label: string;
-  status: number | null;
-  code: string | null;
-  headers: [string, string][];
-  body: string;
-  recordId: number | null;
-}
-
-export interface ProbeResult {
-  id: string;
-  category: string;
   verdict: Verdict;
   summary: string;
   summaryText?: CorePhrase[];
-  observations: string[];
-  observationsText?: CorePhrase[][];
-  steps: Step[];
-  exchanges: RequestRecord[];
-  durationMs: number;
-}
-
-export interface ProbeRun {
-  id: string;
-  endpoint: string;
-  endpointName: string;
-  vendor: string;
-  server: string | null;
-  started: string;
-  finished: string;
-  sondeVersion: string;
-  results: ProbeResult[];
-}
-
-export interface ProbeRunSummary {
-  id: string;
-  endpoint: string;
-  endpointName: string;
-  vendor: string;
-  started: string;
-  pass: number;
-  fail: number;
-  differs: number;
-  unsupported: number;
-  other: number;
-}
-
-export interface Matrix {
-  columns: { endpoint: string; name: string; vendor: string; server: string | null; run: string; started: string }[];
-  rows: { probe: ProbeMeta; cells: ({ verdict: Verdict; summary: string; summaryText?: CorePhrase[]; run: string } | null)[] }[];
-}
-
-export interface Change {
-  probe: string;
-  before: Verdict | null;
-  after: Verdict | null;
-  beforeSummary: string | null;
-  afterSummary: string | null;
-  beforeSummaryText?: CorePhrase[];
-  afterSummaryText?: CorePhrase[];
-  stepsChanged: boolean;
 }
 
 export interface Detection {
@@ -602,7 +544,7 @@ export interface Observation {
   operationsTotal?: number;
   /** Its first operation's start (where it stands on the run's shape); absent when it names none. */
   firstStart?: string;
-  /** The requests it bears on (findings come ranked by it, warnings first). */
+  /** The requests it bears on. Findings come ordered by what they save: money, then time, then requests. */
   impact?: number;
   /** What acting on it would save, when that can be counted. */
   saving?: Phrase;
@@ -610,14 +552,26 @@ export interface Observation {
   /** The saving, counted. */
   savesRequests?: number;
   savesMs?: number;
+  /** What the requests it would save cost, in the run's currency (times `month.times`: a month). */
+  savesCost?: number;
   /** What to change in the program, by SDK. */
   fixes?: { sdk: "python" | "java" | "go" | "js" | "config"; code: string }[];
-  /** Where in the program its requests came from (`x-sonde-caller`), most first. */
-  callers?: { place: string; requests: number }[];
+  /** Where in the program its requests came from (`x-sonde-caller`), most first; an imported log's: who sent them (an IAM principal). `file`, `line` and `function` when `place` is a place in code. */
+  callers?: { place: string; file?: string; line?: number; function?: string; requests: number }[];
   /** The SDK that sent them, from their user agent ("boto3 1.34"). */
   sdk?: string;
   /** The same finding across runs: what sonde.toml's `expect` names. */
   identity?: string;
+  /** What kind of finding it is, as `identity` begins (`obs.headget`). */
+  kind?: string;
+}
+
+/** A run's money a month: an imported log's at the rate of its span, a program's run times `[program] runs-per-month`. */
+export interface Month {
+  times: number;
+  from: "log" | "runs";
+  cost: number;
+  currency: string;
 }
 
 /** A run after acting on every finding that counts a saving: an estimate. */
@@ -974,6 +928,8 @@ export interface RunView {
   summary: RunSummary;
   profile: Profile;
   whatIf?: WhatIf | null;
+  /** Its money a month, when that can be said. */
+  month?: Month | null;
   /** The first page of the run's operations (500 in time order), of `operationsTotal`. */
   operations: EpisodeRow[];
   /** How many operations the run has. */

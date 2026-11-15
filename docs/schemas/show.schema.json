@@ -2,35 +2,73 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show.schema.json",
   "title": "sonde show -f json",
-  "description": "A run: its operations and findings, and with `--requests` its requests. `--errors` keeps the failed ones only.",
+  "description": "A run: what it amounts to and its findings, each cut to what to change and where (`show -f json`). `--all` adds every operation and each finding's operations and fixes whole; `--errors` adds the failed operations; `--requests` adds the requests (with `--errors`, the failed ones).",
   "type": "object",
   "properties": {
-    "operations": {
-      "type": "array",
-      "description": "The operations, in order.",
-      "items": {
-        "$ref": "#/$defs/operation"
-      }
-    },
-    "findings": {
-      "type": "array",
-      "description": "The findings.",
-      "items": {
-        "$ref": "#/$defs/observation"
-      }
-    },
-    "requests": {
-      "type": "array",
-      "description": "With `--requests`: every request, as the file has it.",
-      "items": {
-        "$ref": "#/$defs/record"
-      }
-    },
     "run": {
       "$ref": "#/$defs/runHeader"
     },
     "summary": {
       "$ref": "#/$defs/summary"
+    },
+    "operationsTotal": {
+      "type": "integer",
+      "description": "How many operations the run has."
+    },
+    "waiting": {
+      "type": "object",
+      "description": "How long the program waited on the store.",
+      "properties": {
+        "waitingMs": {
+          "type": "number",
+          "description": "Time with any request in flight."
+        },
+        "wallMs": {
+          "type": "number",
+          "description": "The run's length."
+        },
+        "peakInFlight": {
+          "type": "integer"
+        },
+        "p50Ms": {
+          "type": "number"
+        },
+        "p95Ms": {
+          "type": "number"
+        },
+        "p99Ms": {
+          "type": "number"
+        },
+        "byKind": {
+          "type": "array",
+          "description": "Each kind of request's share.",
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        }
+      },
+      "required": [
+        "waitingMs",
+        "wallMs",
+        "peakInFlight",
+        "p50Ms",
+        "p95Ms",
+        "p99Ms",
+        "byKind"
+      ]
+    },
+    "cost": {
+      "$ref": "#/$defs/cost"
+    },
+    "month": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/month"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "whatIf": {
       "description": "The run with every finding's fix; null when no finding names what its fix saves (none, or none that can be counted).",
@@ -42,6 +80,20 @@
           "type": "null"
         }
       ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation"
+      },
+      "description": "The findings, those that save the most money first, then those that save time, then the rest."
+    },
+    "verify": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new, back or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
@@ -56,102 +108,61 @@
         "null"
       ],
       "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared). Null for a run that is no run of a program."
+    },
+    "operations": {
+      "type": "array",
+      "description": "With `--all`: every operation, in order; with `--errors`: those that failed.",
+      "items": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "requests": {
+      "type": "array",
+      "description": "With `--requests`: every request, as the file has it.",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
     }
   },
   "required": [
-    "operations",
-    "findings",
     "run",
     "summary",
+    "operationsTotal",
+    "waiting",
+    "cost",
+    "month",
     "whatIf",
+    "findings",
+    "verify",
     "trials"
   ],
   "$defs": {
-    "operation": {
+    "cost": {
       "type": "object",
-      "description": "An operation: requests that belong together.",
+      "description": "The requests' cost at the endpoint's prices.",
       "properties": {
-        "shape": {
-          "type": "string",
-          "description": "The shape of the operation: what its requests are together (a request alone, a multipart upload, a retry, lookups that found nothing, a listing over pages, a step of a storage format). `kind` is a request's S3 call only.",
-          "enum": [
-            "request",
-            "multipart",
-            "retry",
-            "probe",
-            "listing",
-            "step"
-          ]
+        "amount": {
+          "type": "number"
         },
-        "format": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "The storage format a step is of (`iceberg`, `delta`, …)."
-        },
-        "title": {
-          "type": "string",
-          "description": "Display text, not stable."
-        },
-        "start": {
+        "currency": {
           "type": "string"
         },
-        "end": {
-          "type": "string"
-        },
-        "records": {
-          "type": "array",
-          "description": "Its requests' ids.",
-          "items": {
-            "type": "integer"
-          }
-        },
-        "bytesUp": {
+        "reads": {
           "type": "integer"
         },
-        "bytesDown": {
+        "writes": {
           "type": "integer"
         },
-        "outcome": {
-          "$ref": "#/$defs/outcome"
-        },
-        "notes": {
-          "type": "array",
-          "description": "Display text, not stable.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "notFound": {
+        "free": {
           "type": "integer"
-        },
-        "titleText": {
-          "type": "array",
-          "description": "Display text, not stable.",
-          "items": {
-            "$ref": "#/$defs/phrase"
-          }
-        },
-        "notesText": {
-          "type": "array",
-          "description": "Display text, not stable.",
-          "items": {
-            "$ref": "#/$defs/phrase"
-          }
         }
       },
       "required": [
-        "shape",
-        "format",
-        "title",
-        "start",
-        "end",
-        "records",
-        "bytesUp",
-        "bytesDown",
-        "outcome",
-        "notes"
+        "amount",
+        "currency",
+        "reads",
+        "writes",
+        "free"
       ]
     },
     "git": {
@@ -174,19 +185,63 @@
         "dirty"
       ]
     },
-    "header": {
+    "group": {
       "type": "object",
+      "description": "A kind of request.",
       "properties": {
-        "name": {
+        "kind": {
           "type": "string"
         },
-        "value": {
-          "type": "string"
+        "missed": {
+          "type": "boolean",
+          "description": "Lookups that found nothing, apart."
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "errors": {
+          "type": "integer"
+        },
+        "waitingMs": {
+          "type": "number",
+          "description": "Time with one of these in flight."
+        },
+        "sumMs": {
+          "type": "number"
+        },
+        "waitedMs": {
+          "type": "number"
+        },
+        "share": {
+          "type": "number"
+        },
+        "p50Ms": {
+          "type": "number"
+        },
+        "p95Ms": {
+          "type": "number"
+        },
+        "maxMs": {
+          "type": "number"
+        },
+        "bytesUp": {
+          "type": "integer"
+        },
+        "bytesDown": {
+          "type": "integer"
+        },
+        "cost": {
+          "type": "number"
         }
       },
       "required": [
-        "name",
-        "value"
+        "kind",
+        "missed",
+        "requests",
+        "errors",
+        "waitingMs",
+        "p50Ms",
+        "p95Ms"
       ]
     },
     "observation": {
@@ -214,10 +269,14 @@
         },
         "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in the run's `operations`).",
+          "description": "The operations it is about (their places in the run's operations): the first 20 (all with `--all`).",
           "items": {
             "type": "integer"
           }
+        },
+        "operationsTotal": {
+          "type": "integer",
+          "description": "How many operations it is about."
         },
         "impact": {
           "type": "integer",
@@ -226,6 +285,10 @@
         "identity": {
           "type": "string",
           "description": "The same finding across runs: what `[check] expect` names."
+        },
+        "kind": {
+          "type": "string",
+          "description": "What kind of finding it is, as `identity` begins (`obs.headget`, `obs.hot`, `obs.listed`, `obs.serial`, …)."
         },
         "saving": {
           "$ref": "#/$defs/phrase"
@@ -240,19 +303,64 @@
         "savesMs": {
           "type": "number"
         },
+        "savesCost": {
+          "type": "number",
+          "description": "What the requests it would save cost, in the run's currency (times `month.times`: a month)."
+        },
         "fixes": {
           "type": "array",
-          "description": "How to fix it.",
+          "description": "How to fix it: the fix for the run's SDK, or a store's setting (each SDK's with `--all`, or when no SDK is known).",
           "items": {
             "type": "object",
-            "description": "A change to the program's code, for an SDK."
+            "properties": {
+              "sdk": {
+                "type": "string",
+                "description": "`python`, `java`, `go`, `js`, or `config` for a store's setting."
+              },
+              "code": {
+                "type": "string",
+                "description": "The change, with placeholders (`b` the bucket, `k` the key)."
+              }
+            },
+            "required": [
+              "sdk",
+              "code"
+            ]
           }
         },
         "callers": {
           "type": "array",
+          "description": "Where its requests were sent from, most first (three at most): a place in the program's code when the run named callers; for an imported log, who sent them (an IAM principal).",
           "items": {
             "type": "object",
-            "description": "A place in the program's code."
+            "properties": {
+              "place": {
+                "type": "string",
+                "description": "As the program or the log said it: `etl.py:25 process`, `arn:aws:iam::1:role/etl`."
+              },
+              "file": {
+                "type": "string",
+                "description": "The file, relative to the folder the program ran in (`run.cwd`), when `place` is a place in code."
+              },
+              "line": {
+                "type": "integer"
+              },
+              "function": {
+                "type": "string"
+              },
+              "requests": {
+                "type": "integer",
+                "description": "How many of its requests were sent from there."
+              },
+              "code": {
+                "type": "string",
+                "description": "The line of code itself, when the file is there to read."
+              }
+            },
+            "required": [
+              "place",
+              "requests"
+            ]
           }
         },
         "sdk": {
@@ -264,7 +372,8 @@
         "text",
         "phrases",
         "operations",
-        "impact"
+        "impact",
+        "operationsTotal"
       ]
     },
     "kindSummary": {
@@ -323,26 +432,6 @@
         "bytesDown"
       ]
     },
-    "outcome": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "ok",
-            "failed",
-            "refused"
-          ]
-        },
-        "detail": {
-          "type": "string",
-          "description": "A failure's status and S3 code."
-        }
-      },
-      "required": [
-        "kind"
-      ]
-    },
     "phrase": {
       "type": "object",
       "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
@@ -361,177 +450,6 @@
       },
       "required": [
         "key"
-      ]
-    },
-    "record": {
-      "type": "object",
-      "description": "One request: a line of the run file (docs/dev/run-format.md).",
-      "properties": {
-        "id": {
-          "type": "integer",
-          "description": "Unique within the run."
-        },
-        "time": {
-          "type": "string",
-          "description": "When the request began (RFC 3339)."
-        },
-        "endpoint": {
-          "type": "string"
-        },
-        "kind": {
-          "type": "string",
-          "description": "The request's kind: the S3 call (`GetObject`, `Unknown`)."
-        },
-        "method": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string",
-          "description": "The URL, signatures masked."
-        },
-        "bucket": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "key": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "query": {
-          "type": "array",
-          "description": "The query's pairs, signatures masked.",
-          "items": {
-            "type": "array",
-            "prefixItems": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "items": false
-          }
-        },
-        "status": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "The HTTP status; null when no answer came."
-        },
-        "latencyMs": {
-          "type": "number"
-        },
-        "retries": {
-          "type": "integer"
-        },
-        "requestId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "hostId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "requestHeaders": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/header"
-          }
-        },
-        "responseHeaders": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/header"
-          }
-        },
-        "requestBytes": {
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "responseBytes": {
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "errorBody": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "The error's body, up to 64 KiB."
-        },
-        "requestBody": {
-          "type": "string",
-          "description": "A control request's body (DeleteObjects, a lifecycle rule)."
-        },
-        "requestBodyTruncated": {
-          "type": "boolean"
-        },
-        "transportError": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "region": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "job": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "firstByteMs": {
-          "type": "number"
-        },
-        "requester": {
-          "type": "string"
-        },
-        "injected": {
-          "type": "string",
-          "description": "The fault scenario that answered or changed it (a trial)."
-        }
-      },
-      "required": [
-        "id",
-        "time",
-        "endpoint",
-        "kind",
-        "method",
-        "url",
-        "bucket",
-        "key",
-        "query",
-        "status",
-        "latencyMs",
-        "retries",
-        "requestId",
-        "hostId",
-        "requestHeaders",
-        "responseHeaders",
-        "requestBytes",
-        "responseBytes",
-        "errorBody",
-        "transportError",
-        "region",
-        "job"
       ]
     },
     "runHeader": {
@@ -823,6 +741,329 @@
         "cleanExit",
         "faults",
         "retried"
+      ]
+    },
+    "operation": {
+      "type": "object",
+      "description": "An operation: requests that belong together.",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "The shape of the operation: what its requests are together (a request alone, a multipart upload, a retry, lookups that found nothing, a listing over pages, a step of a storage format). `kind` is a request's S3 call only.",
+          "enum": [
+            "request",
+            "multipart",
+            "retry",
+            "probe",
+            "listing",
+            "step"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The storage format a step is of (`iceberg`, `delta`, …)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Display text, not stable."
+        },
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "records": {
+          "type": "array",
+          "description": "Its requests' ids.",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "bytesUp": {
+          "type": "integer"
+        },
+        "bytesDown": {
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "notes": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notFound": {
+          "type": "integer"
+        },
+        "titleText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "notesText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        }
+      },
+      "required": [
+        "shape",
+        "format",
+        "title",
+        "start",
+        "end",
+        "records",
+        "bytesUp",
+        "bytesDown",
+        "outcome",
+        "notes"
+      ]
+    },
+    "header": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "refused"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "description": "A failure's status and S3 code."
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "record": {
+      "type": "object",
+      "description": "One request: a line of the run file (docs/dev/run-format.md).",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique within the run."
+        },
+        "time": {
+          "type": "string",
+          "description": "When the request began (RFC 3339)."
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The request's kind: the S3 call (`GetObject`, `Unknown`)."
+        },
+        "method": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "The URL, signatures masked."
+        },
+        "bucket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "array",
+          "description": "The query's pairs, signatures masked.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "items": false
+          }
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The HTTP status; null when no answer came."
+        },
+        "latencyMs": {
+          "type": "number"
+        },
+        "retries": {
+          "type": "integer"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "responseHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "requestBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "responseBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorBody": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The error's body, up to 64 KiB."
+        },
+        "requestBody": {
+          "type": "string",
+          "description": "A control request's body (DeleteObjects, a lifecycle rule)."
+        },
+        "requestBodyTruncated": {
+          "type": "boolean"
+        },
+        "transportError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firstByteMs": {
+          "type": "number"
+        },
+        "requester": {
+          "type": "string"
+        },
+        "injected": {
+          "type": "string",
+          "description": "The fault scenario that answered or changed it (a trial)."
+        }
+      },
+      "required": [
+        "id",
+        "time",
+        "endpoint",
+        "kind",
+        "method",
+        "url",
+        "bucket",
+        "key",
+        "query",
+        "status",
+        "latencyMs",
+        "retries",
+        "requestId",
+        "hostId",
+        "requestHeaders",
+        "responseHeaders",
+        "requestBytes",
+        "responseBytes",
+        "errorBody",
+        "transportError",
+        "region",
+        "job"
+      ]
+    },
+    "month": {
+      "type": "object",
+      "description": "The run's money a month: an imported log's at the rate of its span (`from`: `log`), a program's run times `[program] runs-per-month` (`from`: `runs`). Null when neither says one.",
+      "properties": {
+        "times": {
+          "type": "number",
+          "description": "How many of this run a month is: a finding's `savesCost` times this is its saving a month."
+        },
+        "from": {
+          "type": "string",
+          "enum": [
+            "log",
+            "runs"
+          ]
+        },
+        "cost": {
+          "type": "number",
+          "description": "A month's cost at that rate."
+        },
+        "currency": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "times",
+        "from",
+        "cost",
+        "currency"
       ]
     }
   }

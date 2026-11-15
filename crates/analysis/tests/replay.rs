@@ -597,3 +597,120 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
     );
     assert_eq!(run.unaborted_uploads, 1);
 }
+
+/// A program that reads input it did not write: its replay writes
+/// stand-ins of what it read first, so nothing differs.
+#[tokio::test]
+async fn a_run_that_reads_existing_input_replays_with_no_difference() {
+    let original = MiniS3::start(true).await;
+    let direct = client(&original.url, RequestLog::default());
+    let put = |k: &str, body: &'static str| {
+        S3Request::new("PutObject", http::Method::PUT)
+            .bucket("data")
+            .key(k)
+            .body(Body::from(body))
+    };
+    // what was there before the run
+    direct
+        .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
+        .await
+        .unwrap();
+    for (k, body) in [
+        ("in/a.json", "aaaaaaaaaa"),
+        ("in/b.json", "bbbbbbbbbbbbbbbbbbbb"),
+        ("old/1", "x"),
+        ("old/2", "y"),
+        ("old/3", "z"),
+    ] {
+        direct.send_raw(put(k, body)).await.unwrap();
+    }
+    let recorded = RequestLog::new(1000);
+    let proxy = Proxy::start(
+        client(&original.url, RequestLog::default()),
+        recorded.clone(),
+        ProxyConfig::default(),
+    )
+    .await
+    .unwrap();
+    let app = app(&proxy);
+    let get = |k: &str| {
+        S3Request::new("GetObject", http::Method::GET)
+            .bucket("data")
+            .key(k)
+    };
+    let list = |p: &str| {
+        S3Request::new("ListObjectsV2", http::Method::GET)
+            .bucket("data")
+            .query("list-type", "2")
+            .query("prefix", p)
+    };
+    app.send_raw(list("in/")).await.unwrap();
+    let head = app
+        .send_raw(
+            S3Request::new("HeadObject", http::Method::HEAD)
+                .bucket("data")
+                .key("in/a.json"),
+        )
+        .await
+        .unwrap();
+    let etag = head.header("etag").unwrap().to_string();
+    app.send_raw(get("in/a.json")).await.unwrap();
+    app.send_raw(get("in/b.json").header("range", "bytes=0-4"))
+        .await
+        .unwrap();
+    app.send_raw(list("old/")).await.unwrap();
+    // a compare-and-swap on what it read
+    app.send_raw(put("in/a.json", "edited").header("if-match", &etag))
+        .await
+        .unwrap();
+    let _ = app.send_raw(get("in/missing.json")).await;
+    app.send_raw(put("out/result.json", "done")).await.unwrap();
+    let mut records = recorded.list(&Filter::default(), 1000);
+    records.reverse();
+    let opts = ReplayOptions {
+        prefix: "rp/".into(),
+        buckets: vec![],
+    };
+    // the two it read, of the sizes it read, and three stand-ins for what it listed
+    let seeds = sonde_analysis::replay::seeds(&records, &opts);
+    let named: Vec<(&str, u64)> = seeds.iter().map(|s| (s.key.as_str(), s.size)).collect();
+    assert_eq!(
+        named,
+        [
+            ("in/a.json", 10),
+            ("in/b.json", 20),
+            ("old/sonde-seed-1", 0),
+            ("old/sonde-seed-2", 0),
+            ("old/sonde-seed-3", 0)
+        ]
+    );
+    // ("in/" listed two keys before the run read them: they are the two read)
+    let p = plan(&records, &opts);
+    assert_eq!((p.seeds, p.seed_bytes), (5, 30));
+
+    let twin = MiniS3::start(true).await;
+    let target = client(&twin.url, RequestLog::default());
+    target
+        .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
+        .await
+        .unwrap();
+    let run = sonde_analysis::run::RunFile {
+        header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
+        records,
+        logs: Vec::new(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let done = sonde_analysis::replay::replay_to_file(
+        &target,
+        &run,
+        &opts,
+        &dir.path().join("r.sonde"),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.comparison.differ(), 0, "{:#?}", done.comparison);
+    assert_eq!(done.comparison.compared, 8);
+    // the stand-ins went with the rest
+    assert!(twin.keys("data").is_empty(), "{:?}", twin.keys("data"));
+}
