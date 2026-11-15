@@ -3,7 +3,7 @@
 # SHA-256 and, where gh is installed, its build provenance.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
-#   SONDE_VERSION=23.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=23.0.1 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
 #   SONDE_VERSION=23 sh install.sh    # the newest 23.x
 #   SONDE_VERIFY=1 sh install.sh    # fail unless gh confirms the provenance
 set -eu

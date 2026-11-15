@@ -872,7 +872,6 @@ export function Runs() {
           <RunList
             runs={shown()}
             selected={selected()}
-            endpoint={endpoint()}
             onSelect={choose}
             onContextMenu={isAvailable ? rowMenu : undefined}
             actions={(s) => [

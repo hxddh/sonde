@@ -141,9 +141,11 @@ test("a run as a timeline, replayed from the app, and the answers compared", asy
   // what it relies on, and how that store answered; each store's request cost
   await app.waitFor("id:compare-relies");
   expect(app.shows("text:/^What curl relies on, and how .* answers$/")).toBe(true);
-  expect(app.shows("text:/^Request cost: /")).toBe(true);
+  expect(app.shows("text:/^Request cost: \\S+ USD.* on .+ → \\S+ USD/")).toBe(true);
   // one view: the answers, before and after, and the transcripts on demand
   await app.waitFor("id:run-change", { timeout: 10000 });
+  // no phrase is shown with its placeholders unfilled
+  expect(app.texts().filter((x) => x.includes("%{"))).toEqual([]);
   expect(app.shows("id:compare-diff")).toBe(false);
   await app.press("id:compare-transcripts");
   await app.waitFor("id:compare-diff");
@@ -159,6 +161,8 @@ test("runs are looked after: renamed, searched, deleted, dropped on the window",
   await app.waitFor("id:run-search");
   // the run shown is read first: a menu opened while its pane arrives is closed by it
   await app.waitFor("id:run-summary", { timeout: 10000 });
+  // each row says where its run went and how many requests it sent
+  expect(app.shows("id:run-0 >> text:/^demo · \\d[\\d,]* requests?$/")).toBe(true);
   // a title of the user's, from the row's context menu
   await app.rightClick("id:run-0");
   expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page", "Copy file path", "Rename…", "Delete…"]);
