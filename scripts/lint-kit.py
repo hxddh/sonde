@@ -74,7 +74,7 @@ BASE_ALLOWED = {"DataTable", "DataTableRef", "DataTableSort", "DiffView", "TextV
 # the shared pieces that draw a control of their own, each for the reason beside it
 BASE_OWN = {
     # the title bar's own controls: the endpoint switcher (a combobox), the toolbar's group, the places
-    "ui/shell.tsx": {"Button", "Combobox", "Toolbar"},
+    "ui/shell.tsx": {"Button", "Select", "Toolbar"},
     # the palette is Native Shell's Command in its Dialog
     "ui/palette.tsx": {"Command", "Dialog"},
     # the toasts are Native Shell's stack
