@@ -96,7 +96,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 
 ## Documentation
 
-[CLI](docs/cli.md) · [CI](docs/ci.md) · [Recording](docs/recording.md) · [Trials](docs/trials.md) · [Configuration](docs/configuration.md) ·
+[CLI](docs/cli.md) · [For coding agents](docs/agents.md) · [CI](docs/ci.md) · [Recording](docs/recording.md) · [Trials](docs/trials.md) · [Configuration](docs/configuration.md) ·
 [Credentials](docs/credentials.md) · [Security](docs/security.md) · [Contract](docs/contract.md) ·
 [Probes](docs/probes.md) · [Decoders](docs/decoders.md) · [Changelog](CHANGELOG.md)
 

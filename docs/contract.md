@@ -24,21 +24,25 @@ HTML file (`--html`, `--serve`, `--port`, `--otlp` and `--to` go); `proxy --rota
 `--no-new-warnings` (a baseline always holds a run to no new warning), and the `sonde.toml` keys with them; a program
 is named by `sh -c`'s command and a container's image; all state beside the runs is in the folder's one index.
 
+**23.0** broke: `show -f json` is the compact answer (each finding's first 20 operations and `operationsTotal`, the
+fix for the run's SDK; every operation, operation list and fix with `--all`), `operations` is `operationsTotal` at the
+top, `--summary` and `show-summary.schema.json` go; findings are ordered by what they save; a program's first run's
+findings are `new`; identity rules 3 keep a digit inside a word.
+
 ## Stable
 
 | | What | Documented in | Tested by |
 |---|---|---|---|
 | Run files | The `.sonde` format: header, records, log lines, versioning | [run-format.md](dev/run-format.md) | `the_format_as_its_spec_says` (`crates/analysis/src/run.rs`) |
 | JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
-| `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-errors`, `expect`, `tolerance`, `baseline`), `[program]` (`name`, `runs`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/analysis/src/project.rs` (one reader for CLI and app) |
+| `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-errors`, `expect`, `tolerance`, `baseline`), `[program]` (`name`, `runs`, `runs-per-month`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/analysis/src/project.rs` (one reader for CLI and app) |
 | `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `high-contrast`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
 | Commands and flags | Subcommands, flags, arguments, `-f` formats, the environment a recorded program gets | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
 
 | Command | Schema |
 |---|---|
-| `sonde show -f json` (and `--errors`) | [show](schemas/show.schema.json) |
-| `sonde show --summary -f json` | [show-summary](schemas/show-summary.schema.json) |
+| `sonde show -f json` (and `--all`, `--errors`, `--requests`) | [show](schemas/show.schema.json) |
 | `sonde show --by DIM -f json` | [show-by](schemas/show-by.schema.json) |
 | `sonde check -f json` | [check](schemas/check.schema.json) |
 | `sonde compare -f json` | [compare](schemas/compare.schema.json) |
