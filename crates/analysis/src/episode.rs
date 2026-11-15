@@ -1911,39 +1911,49 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // problem (each a write's price, and a request to read it back). Written
     // as objects of [`SMALL`] or more, a folder's PUTs are as few as its bytes
     // fill. One key written again and again is no small file
-    let mut folders: HashMap<(&str, &str), (std::collections::HashSet<&str>, u64, Vec<u64>)> =
-        HashMap::new();
-    for r in records
+    // a record by its place in `records`: where it is (bucket, key)
+    let place = |i: &u32| {
+        let r = &records[*i as usize];
+        (r.bucket.as_deref(), r.key.as_deref())
+    };
+    // (by key: a folder's keys side by side, no set of them made; their
+    // names beside them, sorted without reaching into the records)
+    let mut smalls: Vec<(&str, &str, u32)> = records
         .iter()
-        .filter(|r| r.kind == "PutObject" && !r.is_error())
-    {
-        let (Some(b), Some(k), Some(bytes)) =
-            (r.bucket.as_deref(), r.key.as_deref(), r.request_bytes.get())
-        else {
-            continue;
-        };
+        .enumerate()
+        .filter(|(_, r)| {
+            r.kind == "PutObject"
+                && !r.is_error()
+                && r.request_bytes.get().is_some_and(|b| b < SMALL)
+        })
+        .filter_map(|(i, r)| Some((r.bucket.as_deref()?, r.key.as_deref()?, i as u32)))
         // a directory marker is its own finding
-        if bytes >= SMALL || k.ends_with('/') {
-            continue;
-        }
-        let f = folders.entry((b, folder_of(k))).or_default();
-        f.0.insert(k);
-        f.1 += bytes;
-        f.2.push(r.id);
+        .filter(|(_, k, _)| !k.ends_with('/'))
+        .collect();
+    smalls.sort_unstable();
+    fn folder<'a>(s: &(&'a str, &'a str, u32)) -> (&'a str, &'a str) {
+        (s.0, folder_of(s.1))
     }
     let (mut put_ids, mut put_saved, mut put_bytes) = (Vec::new(), Vec::new(), 0u64);
     let mut written_to: Option<String> = None;
-    for ((b, dir), (keys, bytes, ids)) in &folders {
+    for g in smalls.chunk_by(|a, b| folder(a) == folder(b)) {
+        let keys = g.chunk_by(|a, b| a.1 == b.1).count();
+        let bytes: u64 = g
+            .iter()
+            .filter_map(|s| records[s.2 as usize].request_bytes.get())
+            .sum();
         let keep = (bytes.div_ceil(SMALL) as usize).max(1);
-        if keys.len() < 2 || ids.len() <= keep {
+        if keys < 2 || g.len() <= keep {
             continue;
         }
-        put_ids.extend_from_slice(ids);
+        let ids: Vec<u64> = g.iter().map(|s| records[s.2 as usize].id).collect();
         put_saved.extend_from_slice(&ids[keep..]);
+        put_ids.extend(ids);
         put_bytes += bytes;
+        let (b, dir) = folder(&g[0]);
         written_to = Some(common_folder(written_to, &format!("{b}/{dir}")));
     }
-    drop(folders);
+    drop(smalls);
     put_ids.sort_unstable();
     put_saved.sort_unstable();
     // many, a fifth of what the run's requests cost or more
@@ -2001,10 +2011,6 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         .collect();
     // each key's reads side by side (sorted by place, in the records' order
     // within a key): no list is made of each
-    let place = |i: &u32| {
-        let r = &records[*i as usize];
-        (r.bucket.as_deref(), r.key.as_deref())
-    };
     let mut reads: Vec<u32> = (0..records.len() as u32)
         .filter(|i| {
             let r = &records[*i as usize];
@@ -2272,41 +2278,48 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // a key read and then written back with no condition (If-Match): a write
     // by another between the read and this one is lost
     {
-        let mut rw: Vec<u32> = (0..records.len() as u32)
-            .filter(|i| {
-                let r = &records[*i as usize];
-                r.bucket.is_some()
-                    && r.key.is_some()
-                    && !r.is_error()
-                    && (r.kind == "PutObject"
-                        || (r.kind == "GetObject" && header(r, "range").is_none()))
+        // each key written: the read of it since its last write, and the
+        // cycles found, the records taken as they were sent
+        type Cycles = (Option<u64>, Vec<u64>);
+        let mut of_key: HashMap<(&str, &str), Cycles> = records
+            .iter()
+            .filter(|r| r.kind == "PutObject" && !r.is_error())
+            .filter_map(|r| {
+                Some((
+                    (r.bucket.as_deref()?, r.key.as_deref()?),
+                    (None, Vec::new()),
+                ))
             })
             .collect();
-        rw.sort_by_cached_key(|i| {
-            let r = &records[*i as usize];
-            (r.bucket.as_deref(), r.key.as_deref(), order_of(r))
-        });
-        let mut cycles: Vec<(String, Vec<u64>)> = Vec::new();
-        for g in rw.chunk_by(|a, b| place(a) == place(b)) {
-            let mut read: Option<u64> = None;
-            let mut ids = Vec::new();
-            for r in g.iter().map(|i| &records[*i as usize]) {
-                if r.kind == "GetObject" {
-                    read = Some(r.id);
+        if !of_key.is_empty() {
+            for r in records.iter().filter(|r| !r.is_error()) {
+                let get = r.kind == "GetObject";
+                if !get && r.kind != "PutObject" {
                     continue;
                 }
-                if let Some(got) = read.take()
+                let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+                    continue;
+                };
+                let Some((read, ids)) = of_key.get_mut(&(b, k)) else {
+                    continue;
+                };
+                if get {
+                    if header(r, "range").is_none() {
+                        *read = Some(r.id);
+                    }
+                } else if let Some(got) = read.take()
                     && header(r, "if-match").is_none()
                     && header(r, "if-none-match").is_none()
                 {
                     ids.extend([got, r.id]);
                 }
             }
-            if let (false, (Some(b), Some(k))) = (ids.is_empty(), place(&g[0])) {
-                cycles.push((format!("{b}/{k}"), ids));
-            }
         }
-        drop(rw);
+        let mut cycles: Vec<(String, Vec<u64>)> = of_key
+            .into_iter()
+            .filter(|(_, (_, ids))| !ids.is_empty())
+            .map(|((b, k), (_, ids))| (format!("{b}/{k}"), ids))
+            .collect();
         let n: usize = cycles.iter().map(|c| c.1.len() / 2).sum();
         if n >= at(3, 1) {
             cycles.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
@@ -2335,10 +2348,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 r.bucket.is_some() && r.key.is_some() && is_miss(r)
             })
             .collect();
-        misses.sort_by_cached_key(|i| {
-            let r = &records[*i as usize];
-            (r.bucket.as_deref(), r.key.as_deref(), order_of(r))
-        });
+        let by_time = |i: &u32| order_of(&records[*i as usize]);
+        misses.sort_unstable_by(|a, b| place(a).cmp(&place(b)).then(by_time(a).cmp(&by_time(b))));
         let mut polled: Vec<(String, Vec<u64>, Vec<u64>)> = Vec::new();
         for g in misses.chunk_by(|a, b| place(a) == place(b)) {
             if g.len() < at(5, 2) {
