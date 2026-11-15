@@ -123,11 +123,12 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
   };
   const command = () => props.view.header.command;
   const acts = () => props.actions?.();
-  // who sent its requests: the SDK most did ("from boto3 1.34"); an import (no command) from several callers (its
+  // who sent its requests: the SDK most did ("from boto3 1.34"); an import (no command, or "imported from …") from several callers (its
   // principals) says how many, not the one SDK most of them used (the profile keeps the busiest 12)
   const from = () => {
     const callers = props.view.profile?.callers?.length ?? 0;
-    if (!command() && callers > 1) return t("run.callers", { n: callers >= 12 ? "12+" : count(callers) });
+    const imported = !command() || command()!.startsWith("imported from ");
+    if (imported && callers > 1) return t("run.callers", { n: callers >= 12 ? "12+" : count(callers) });
     return props.view.sdk ? t("run.sdk", { sdk: props.view.sdk }) : "";
   };
   if (terminal()) {

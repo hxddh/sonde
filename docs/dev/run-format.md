@@ -95,7 +95,7 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
   a line kind it cannot skip, another encoding), in a major release ([contract.md](../contract.md)).
 - A sonde reads its own version only and refuses any other by name, never partially:
-  `written by sonde 24.0.0, format 3; this sonde (23.0.0) reads format 2: update sonde to read it`
+  `written by sonde 25.0.0, format 3; this sonde (24.0.0) reads format 2: update sonde to read it`
   (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).
 - A runs folder's `.index.jsonl` (each run's counts, trial verdicts, exit code) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.
