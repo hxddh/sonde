@@ -17,6 +17,7 @@
  "palette.system": "跟随系统",
  "palette.language": "语言",
  "run.placeholder": "一条命令，例如 python etl.py",
+ "run.cwdPick": "选择文件夹…",
  "run.cwd": "目录",
  "run.start": "启动",
  "run.stop": "停止",

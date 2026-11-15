@@ -101,6 +101,7 @@ export const api = {
     import: (name: string, text: string) => Runs.import(name, text) as string,
     importPath: (path: string) => Runs.importPath(path) as string,
     pick: (runsKind: string, trafficKind: string) => Runs.pick(runsKind, trafficKind) as Promise<string | null>,
+    pickFolder: () => Runs.pickFolder() as Promise<string | null>,
     openCode: (run: string, place: string) => Runs.openCode(run, place) as Promise<void>,
     rename: (path: string, title: string) => Runs.rename(path, title) as boolean,
     /** To the system's trash (deleted where there is none). */

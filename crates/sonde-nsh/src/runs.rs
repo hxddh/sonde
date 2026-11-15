@@ -2331,6 +2331,16 @@ impl Runs {
             .map(Some)
     }
 
+    /// The system's folder dialog, for the folder a program runs in. `None`
+    /// when cancelled.
+    pub async fn pick_folder() -> Result<Option<String>, String> {
+        use nsh_core::file_dialog::OpenDialog;
+        let picked = nsh_core::element::pick_paths(OpenDialog::folders()).await?;
+        Ok(picked
+            .and_then(|p| p.into_iter().next())
+            .map(|p| p.to_string_lossy().into_owned()))
+    }
+
     /// Adds a run file at `path` (dropped on the window) to the runs
     /// directory, as [`Runs::import`]; one already there is opened as it is.
     pub fn import_path(path: String) -> Result<String, String> {

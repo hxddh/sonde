@@ -17,6 +17,7 @@
  "palette.system": "Follow the system",
  "palette.language": "Language",
  "run.placeholder": "a command, e.g. python etl.py",
+ "run.cwdPick": "Choose a folder…",
  "run.cwd": "In",
  "run.start": "Run",
  "run.stop": "Stop",
