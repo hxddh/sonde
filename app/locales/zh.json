@@ -1149,7 +1149,7 @@
  "phrase.loose.reads": "读取了 %{n} 次",
  "phrase.loose.deletes": "删除了 %{n} 个文件",
  "phrase.obs.unfinished": "%{n} 个分片上传既没有完成也没有中止：分片会一直计费，直到生命周期规则清理它们",
- "phrase.obs.orphans": "有 %{n} 次写入了文件但之后没有提交：除非后续提交引用它们，否则就是孤儿文件",
+ "phrase.obs.orphans": "写入了文件但之后没有提交（%{n} 次）：除非后续提交引用它们，否则就是孤儿文件",
  "phrase.obs.small": "%{n} 个小于 64 KiB 的对象写入 %{prefix}，各用一个 PUT（共 %{size}）：把它们合并成更少、更大的对象",
  "phrase.obs.small.parts": "%{n} 个小于 5 MiB 的文件用分片上传：每个 3 个请求，一个 PUT 就够",
  "phrase.obs.rename": "%{n} 个对象从 _temporary/ 复制出来再删除：靠重命名提交（Hadoop 的 FileOutputCommitter）在 S3 上把每个输出文件又写了一遍；S3A committer 只写一遍",

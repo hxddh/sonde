@@ -915,7 +915,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0xe7e1_9496_b2fe_aba9;
+        const FIGURES: u64 = 0x6123_73ef_0572_c511;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

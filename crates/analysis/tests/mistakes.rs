@@ -265,6 +265,19 @@ fn a_key_polled_while_it_is_not_there_is_found_and_fixed_by_backing_off() {
     let late = fixed.add("HeadObject", "job/_DONE", 404);
     late.time += chrono::Duration::seconds(1);
     assert_eq!(state(&job.0, &fixed.0, "obs.polled"), State::Fixed);
+    // a format's own lookups (SlateDB's newest manifest, its GC boundary)
+    // are its way, not a loop to back off from
+    let mut slate = Job::new();
+    slate.other(20);
+    for _ in 0..40 {
+        slate.add("HeadObject", "slate/db/gc/manifest.boundary", 404);
+        slate.add(
+            "GetObject",
+            "slate/db/manifest/00000000000000000005.manifest",
+            404,
+        );
+    }
+    assert!(found(&slate.0, "obs.polled").is_empty());
     // a day of polls (an import's): what backing off would still ask is
     // kept, a try a minute
     let mut day = Job::new();

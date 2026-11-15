@@ -2345,13 +2345,18 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         }
     }
     // a key asked for again and again while it is not there: a loop polling
-    // for a marker. Backing off (a second, doubling to a minute) asks as
+    // for a marker (`_SUCCESS`, `_DONE`). Backing off (a second, doubling to a minute) asks as
     // often over the same time as [`backoff_tries`] says
     {
         let mut misses: Vec<u32> = (0..records.len() as u32)
             .filter(|i| {
                 let r = &records[*i as usize];
-                r.bucket.is_some() && r.key.is_some() && is_miss(r)
+                // a table's or a log's own file looked for is its format's way
+                // (SlateDB's newest manifest, its GC boundaries): not a loop
+                // the program can back off from
+                is_miss(r)
+                    && r.bucket.is_some()
+                    && r.key.as_deref().is_some_and(|k| part_of(k).is_none())
             })
             .collect();
         let by_time = |i: &u32| order_of(&records[*i as usize]);

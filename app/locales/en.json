@@ -1149,7 +1149,7 @@
  "phrase.loose.reads": "%{n} reads",
  "phrase.loose.deletes": "%{n} file%{s} deleted",
  "phrase.obs.unfinished": "%{n} multipart upload%{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them",
- "phrase.obs.orphans": "files were written with no commit after them %{n} time%{s}: orphans unless a later commit adds them",
+ "phrase.obs.orphans": "files were written with no commit after them (%{n} time%{s}): orphans unless a later commit adds them",
  "phrase.obs.small": "%{n} objects of less than 64 KiB were written to %{prefix}, one PUT each (%{size} in all): write them as fewer, larger objects",
  "phrase.obs.small.parts": "%{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do",
  "phrase.obs.rename": "%{n} object%{s} copied out of _temporary/ and deleted: a commit by rename (Hadoop's FileOutputCommitter) writes each output file again on S3; an S3A committer writes it once",
