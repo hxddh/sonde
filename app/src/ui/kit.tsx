@@ -336,9 +336,6 @@ export const COLUMN = {
   matrixWhat: 190,
   matrixRecorded: 90,
   matrixRun: 100,
-  /** the compatibility matrix: a probe, a store's verdict */
-  probe: 288,
-  probeStore: 150,
   /** an operation's title: before measuring, beside the output, and the least it keeps */
   title: 340,
   titleCompact: 220,

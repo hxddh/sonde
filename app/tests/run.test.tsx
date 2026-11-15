@@ -122,19 +122,28 @@ test("an example run reads as operations, each opening on its requests", async (
 test("a run as a timeline, replayed from the app, and the answers compared", async () => {
   const app = await demo();
   await place(app, "run");
-  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t.txt");
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT -H 'If-None-Match: *' --data hello $AWS_ENDPOINT_URL/demo/t1.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t1.txt");
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await runView(app);
   // where each operation fell in time is the operations' own When column
   expect(app.shows("id:run-pane-mode-timeline")).toBe(false);
-  await runAction(app, "Replay on…");
+  // on another store: Compare's last item
+  await runAction(app, "Compare…");
+  await app.waitUntil(() => !!app.menu()?.some((m) => m.label === "On another store…"), { timeout: 5000 });
+  await app.chooseMenuItem("On another store…");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
   expect(app.shows("text:/2 requests \\(1 write, 0 deletes\\) under replay-/")).toBe(true);
+  // and, said before it runs, the probe of what it relies on (a write on a condition)
+  expect(app.shows("text:/^Then 1 probe of what it relies on/")).toBe(true);
   await app.press("id:replay-run");
-  await app.waitFor("id:compare", { timeout: 20000 });
+  await app.waitFor("id:compare", { timeout: 60000 });
   await app.waitFor("text:2 requests compared: 2 the same");
+  // what it relies on, and how that store answered; each store's request cost
+  await app.waitFor("id:compare-relies");
+  expect(app.shows("text:/^What curl relies on, and how .* answers$/")).toBe(true);
+  expect(app.shows("text:/^Request cost: /")).toBe(true);
   // one view: the answers, before and after, and the transcripts on demand
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:compare-diff")).toBe(false);

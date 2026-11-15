@@ -330,79 +330,19 @@ export interface DuReport {
 
 export type Verdict = "pass" | "fail" | "differs" | "unsupported" | "error" | "skipped";
 
-export interface ProbeMeta {
-  id: string;
-  category: string;
+/** A feature a run used, the probe that checks it, and how a store answered (a replay's `relies`). */
+export interface Relied {
+  probe: string;
+  /** the kind of request that showed it first, and how many did */
+  kind: string;
+  requests: number;
+  seen: string;
+  seenText?: CorePhrase[];
   title: string;
   titleText?: CorePhrase[];
-  description: string;
-  descriptionText?: CorePhrase[];
-  awsBehavior: string;
-  awsBehaviorText?: CorePhrase[];
-  needs: string[];
-}
-
-export interface Step {
-  label: string;
-  status: number | null;
-  code: string | null;
-  headers: [string, string][];
-  body: string;
-  recordId: number | null;
-}
-
-export interface ProbeResult {
-  id: string;
-  category: string;
   verdict: Verdict;
   summary: string;
   summaryText?: CorePhrase[];
-  observations: string[];
-  observationsText?: CorePhrase[][];
-  steps: Step[];
-  exchanges: RequestRecord[];
-  durationMs: number;
-}
-
-export interface ProbeRun {
-  id: string;
-  endpoint: string;
-  endpointName: string;
-  vendor: string;
-  server: string | null;
-  started: string;
-  finished: string;
-  sondeVersion: string;
-  results: ProbeResult[];
-}
-
-export interface ProbeRunSummary {
-  id: string;
-  endpoint: string;
-  endpointName: string;
-  vendor: string;
-  started: string;
-  pass: number;
-  fail: number;
-  differs: number;
-  unsupported: number;
-  other: number;
-}
-
-export interface Matrix {
-  columns: { endpoint: string; name: string; vendor: string; server: string | null; run: string; started: string }[];
-  rows: { probe: ProbeMeta; cells: ({ verdict: Verdict; summary: string; summaryText?: CorePhrase[]; run: string } | null)[] }[];
-}
-
-export interface Change {
-  probe: string;
-  before: Verdict | null;
-  after: Verdict | null;
-  beforeSummary: string | null;
-  afterSummary: string | null;
-  beforeSummaryText?: CorePhrase[];
-  afterSummaryText?: CorePhrase[];
-  stepsChanged: boolean;
 }
 
 export interface Detection {

@@ -441,9 +441,11 @@ for (const v of variants) {
     await charts("03h-runs");
     await app.press("id:compare-back");
 
-    // what a replay on another store would send, said before it runs
+    // will it work on another store: Compare's last item, On another store…, says what its replay would send first
+    // (a terminal's header has it as a button)
     await app.waitFor("id:run-more", { timeout: 10000 });
-    await act("replay-open", "Replay on…", "重放到…");
+    if (app.shows("id:compare-another")) await app.press("id:compare-another");
+    else await chooseFrom(() => act("compare-open", "Compare…", "对比…"), v.lang ? "在另一个存储上…" : "On another store…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");
@@ -529,18 +531,6 @@ for (const v of variants) {
     await new Promise((r) => setTimeout(r, 500));
     await settings("05d-endpoint-form");
     await app.press("id:ep-cancel");
-    // an endpoint's compatibility: every probe, in the bucket chosen in Buckets (filled in)
-    await app.press("id:compat-demo");
-    await app.waitFor("id:compat-dialog");
-    await settings("05e-compat");
-    // (macOS can hand the focus back to the main window as the picture is taken, and leave the dialog's foot
-    // unreachable: Settings is brought forward again and the dialog closed as a user would, with Escape)
-    if (app.shows("id:compat-close")) await app.press("id:compat-close");
-    else {
-      await app.keyboard.press("mod+,");
-      await app.keyboard.press("escape");
-    }
-    await app.waitFor("id:compat-dialog", { state: "gone" });
     await app.window("settings").pressClose();
     await app.keyboard.press("mod+k");
     await app.waitFor("id:palette-command");

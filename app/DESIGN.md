@@ -13,8 +13,8 @@ replayed), **Buckets** (the store's side, in one row of sections: objects, size,
 object's versions open from its inspector). The window has two columns and no more: the **sidebar** (the places, and
 under them the current place's own list — the commands run before, the runs, the buckets) and the place; a detail
 opens beside the place as an inspector, and nothing else moves when it does. Everything configured once lives in
-**Settings** (a window: an endpoint's compatibility is checked there, on the endpoint); what sonde itself is doing
-lives in **Activity** (a side panel). The core result is *what stands out in a run*: it gets the space, the words and
+**Settings** (a window; whether a program works on another store is asked from its run: Compare › On another
+store…); what sonde itself is doing lives in **Activity** (a side panel). The core result is *what stands out in a run*: it gets the space, the words and
 the next action; counts and chips support it, they do not replace it.
 
 ## One interaction grammar
@@ -270,14 +270,14 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   typed confirmation, Start recording. Adding, opening, downloading and scanning again
   are outline or ghost.
 - `…` ends a command exactly when it asks something more before it acts: a dialog, a sheet, a menu or a window
-  that needs input (Add endpoint…, Replay on…, Compare…, Rename…, Delete…, Check compatibility…). A command that
+  that needs input (Add endpoint…, Compare…, On another store…, Rename…, Delete…). A command that
   acts at once, or only shows something, has none (Open in a window, Share as a web page, Versions, Measure, Show
   code change). A state has its verb as its label ("Clear baseline", not "Baseline ✓ — clear").
 - Secondary commands live in a visible menu (`⋯`) or a context menu, and every one has
   another path (the palette, a shortcut, the inspector).
 - **One header pattern.** A run's header is its command (one line, regular mono, cut in its middle), a meta
   line, then one primary (Run again; on Run the command bar's Run is the place's one, and the header has none) and
-  `⋯` — Try under faults…, Replay on… and Compare… are there and in the palette's "This run" ("Since the run
+  `⋯` — Try under faults… and Compare… (its last item, On another store…) are there and in the palette's "This run" ("Since the run
   before" keeps its own Compare beside what changed). Every Buckets section opens on the same head (`ToolBar`): its
   title, its scope (the bucket and prefix), its actions at the end, each also in the palette and on its shortcut
   (`⇧⌘R` scans again everywhere); the title bar says the place only, and nothing repeats it.

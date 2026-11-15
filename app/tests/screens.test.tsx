@@ -78,26 +78,6 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
   expect(app.shows("id:replay")).toBe(true);
 });
 
-test("compatibility: checked on an endpoint, every probe, the bucket chosen filled in", async () => {
-  const app = await withDemo("demo");
-  await place(app, "endpoints");
-  await app.press("id:compat-demo");
-  await app.waitFor("id:compat-dialog");
-  // the bucket chosen in Buckets is the one its probes write to; the one choice is temporary buckets
-  expect(await app.value("id:probe-bucket")).toBe("demo");
-  expect(app.shows("id:probe-temp")).toBe(true);
-  expect(app.shows("id:probe-only")).toBe(false);
-  await app.press("id:probe-run");
-  // (Run is busy while the check goes, and free once it has ended)
-  await app.waitUntil(() => !app.enabled("id:probe-run"), { timeout: 10000 });
-  await app.waitUntil(() => app.enabled("id:probe-run"), { timeout: 240000 });
-  await app.waitFor("id:matrix");
-  await app.press("id:cell-consistency.read-after-delete-0");
-  await app.waitFor("id:probe-detail");
-  expect(app.shows("text:/^aws behavior$/i")).toBe(true);
-  expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-}, 300_000);
-
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
   const app = await withDemo();
   await place(app, "endpoints");
