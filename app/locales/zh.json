@@ -1118,7 +1118,7 @@
  "phrase.after.misses": "之前查找了 %{n} 次，均未找到",
  "phrase.after.mixed": "之前读取了 %{n} 次（%{m} 次未找到）",
  "phrase.loose.uncommitted": "写入了 %{n} 个文件，之后没有提交 (%{size})",
- "phrase.slate.walprobe": "查找最新的 WAL：探测了编号 %{lo}…%{hi}",
+ "phrase.slate.walprobe": "查找最新的 WAL：探测了编号 %{lo}–%{hi}",
  "phrase.read.manifest": "读取 manifest %{n}",
  "phrase.read.compactions": "读取 compaction 状态 %{n}",
  "phrase.read.metadata": "读取表元数据 v%{v}",

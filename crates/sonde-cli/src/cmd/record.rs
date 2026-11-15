@@ -191,6 +191,22 @@ pub(super) async fn start_under(
     })
 }
 
+/// Who sent a run's requests, as its head line says it: the SDK most did
+/// (" from boto3 1.34"); an import (no command) from several callers (its
+/// principals) says how many (the profile keeps the busiest 12), as the app
+/// does.
+pub(super) fn from_whom(sdk: Option<&str>, header: &RunHeader, callers: usize) -> String {
+    if header.command.is_none() && callers > 1 {
+        let n = if callers >= 12 {
+            "12+".to_string()
+        } else {
+            callers.to_string()
+        };
+        return format!(" from {n} callers");
+    }
+    sdk.map(|s| format!(" from {s}")).unwrap_or_default()
+}
+
 /// The folder a run is in, where its program's runs are kept.
 pub(super) fn runs_dir(run: &std::path::Path) -> PathBuf {
     match run.parent() {
@@ -465,9 +481,11 @@ pub(super) fn print_summary_of(
             output::count(a.episodes.len(), "operation")
         ));
     }
-    if let Some(sdk) = &a.sdk {
-        head.push_str(&format!(" from {sdk}"));
-    }
+    head.push_str(&from_whom(
+        a.sdk.as_deref(),
+        header,
+        a.profile.callers.len(),
+    ));
     head.push_str(&format!(
         " to {} in {}",
         header.endpoint,

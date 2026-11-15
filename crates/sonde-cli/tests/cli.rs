@@ -1505,13 +1505,13 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
         .arg("runs")
         .env("SONDE_CONFIG_DIR", t.path().join("config"))
         .env("SONDE_DATA_DIR", t.path().join("data"))
-        .env("COLUMNS", "110")
+        .env("COLUMNS", "120")
         .output()
         .unwrap();
     let table = stdout(&narrow);
     let row = table.lines().find(|l| l.starts_with("long.sonde")).unwrap();
     assert!(
-        row.chars().count() <= 110,
+        row.chars().count() <= 120,
         "{} columns:\n{table}",
         row.chars().count()
     );

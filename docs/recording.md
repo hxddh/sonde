@@ -190,7 +190,7 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 
 ```
 01:09:10.149  Iceberg  commit: table metadata v2 · 3 files (7.6 KiB)   20 reqs · 112 ms
-00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1…128        8 reqs · 5 ms
+00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1–128        8 reqs · 5 ms
 ```
 
 | Operation | Made of |

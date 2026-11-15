@@ -66,17 +66,14 @@ fn print_split(
     header: &sonde_analysis::run::RunHeader,
     requests: usize,
     seconds: f64,
+    callers: usize,
     color: bool,
 ) {
     use sonde_analysis::program::money_text;
     if let Some(c) = &header.command {
         println!("{}", paint(&format!("$ {c}"), "1", color));
     }
-    let from = split
-        .sdk
-        .as_deref()
-        .map(|s| format!(" from {s}"))
-        .unwrap_or_default();
+    let from = super::record::from_whom(split.sdk.as_deref(), header, callers);
     println!(
         "{}",
         paint(
@@ -247,6 +244,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 &run.header,
                 all.len(),
                 analysis.summary.seconds,
+                analysis.profile.callers.len(),
                 std::io::stdout().is_terminal(),
             ),
         }

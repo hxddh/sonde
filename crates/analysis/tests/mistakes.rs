@@ -116,7 +116,7 @@ fn small_objects_written_one_each_are_found_priced_and_fixed_by_a_batch() {
     let o = &small[0];
     assert_eq!(
         o.text,
-        "1900 objects of less than 64 KiB were written to data/h5/out/, one PUT each (1.6 MiB in all): write them as fewer, larger objects"
+        "1,900 objects of less than 64 KiB were written to data/h5/out/, one PUT each (1.6 MiB in all): write them as fewer, larger objects"
     );
     // a folder's 17 KiB fit in one object: 18 of each 19 PUTs go
     assert_eq!(o.saves_requests, 1800);

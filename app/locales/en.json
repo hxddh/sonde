@@ -1118,7 +1118,7 @@
  "phrase.after.misses": "after %{n} lookup%{s} that found nothing",
  "phrase.after.mixed": "after %{n} reads (%{m} found nothing)",
  "phrase.loose.uncommitted": "%{n} file%{s} written, no commit followed (%{size})",
- "phrase.slate.walprobe": "looked for the newest WAL: probed ids %{lo}…%{hi}",
+ "phrase.slate.walprobe": "looked for the newest WAL: probed ids %{lo}–%{hi}",
  "phrase.read.manifest": "read manifest %{n}",
  "phrase.read.compactions": "read compaction state %{n}",
  "phrase.read.metadata": "read table metadata v%{v}",
