@@ -217,13 +217,17 @@ fn place(run: &Path) -> Option<(PathBuf, String)> {
 /// folder's runs: `sonde runs` and the app show it (an agent's runs where
 /// people look). A run inside it is listed already.
 pub fn note_elsewhere(runs: &Path, run: &Path) {
-    let (Ok(file), Ok(())) = (run.canonicalize(), std::fs::create_dir_all(runs)) else {
+    // (by its folder: the file may be written whole only when the run ends)
+    let (Some((dir, name)), Ok(())) = (place(run), std::fs::create_dir_all(runs)) else {
         return;
     };
-    if file.parent() == runs.canonicalize().ok().as_deref() {
+    let Ok(dir) = dir.canonicalize() else {
+        return;
+    };
+    if Some(&dir) == runs.canonicalize().ok().as_ref() {
         return;
     }
-    let name = file.to_string_lossy().into_owned();
+    let name = dir.join(name).to_string_lossy().into_owned();
     let _ = update(runs, |now| {
         let fresh = !now.folder.elsewhere.contains(&name);
         (
@@ -238,22 +242,30 @@ pub fn note_elsewhere(runs: &Path, run: &Path) {
 }
 
 /// The runs written elsewhere that the runs folder `runs` lists
-/// ([`note_elsewhere`]) and are still there; those gone are let go.
+/// ([`note_elsewhere`]) and are there (one being recorded may not be yet).
 pub fn elsewhere(runs: &Path) -> Vec<PathBuf> {
-    let all: Vec<String> = of(runs).folder.elsewhere.iter().cloned().collect();
-    let (there, gone): (Vec<String>, Vec<String>) =
-        all.into_iter().partition(|p| Path::new(p).is_file());
-    if !gone.is_empty() {
-        let _ = update(runs, |_| {
-            (
-                gone.into_iter()
-                    .map(|p| (p, Change::Elsewhere(false)))
-                    .collect(),
-                (),
-            )
-        });
-    }
-    there.into_iter().map(PathBuf::from).collect()
+    of(runs)
+        .folder
+        .elsewhere
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Lets go of the runs written elsewhere that are no longer there.
+pub fn forget_gone_elsewhere(runs: &Path) {
+    let _ = update(runs, |now| {
+        (
+            now.folder
+                .elsewhere
+                .iter()
+                .filter(|p| !Path::new(p).exists())
+                .map(|p| (p.clone(), Change::Elsewhere(false)))
+                .collect(),
+            (),
+        )
+    });
 }
 
 pub fn get(run: &Path) -> Entry {
@@ -540,8 +552,16 @@ mod tests {
         let index = of(&runs);
         compact(&runs, &index);
         assert_eq!(elsewhere(&runs).len(), 1);
+        // not there yet (a recording written whole at its end): kept
+        let later = away.join("later.sonde");
+        note_elsewhere(&runs, &later);
+        assert_eq!(elsewhere(&runs).len(), 1);
+        std::fs::write(&later, b"{}").unwrap();
+        assert_eq!(elsewhere(&runs).len(), 2);
         std::fs::remove_file(&run).unwrap();
+        std::fs::remove_file(&later).unwrap();
         assert!(elsewhere(&runs).is_empty());
+        forget_gone_elsewhere(&runs);
         assert!(of(&runs).folder.elsewhere.is_empty());
     }
 }

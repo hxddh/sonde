@@ -344,7 +344,8 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                 sonde_analysis::program::baselines(&dir)
                     .into_values()
                     .collect();
-            // a run written elsewhere is the writer's to keep
+            // a run written elsewhere is the writer's to keep; one gone is let go
+            sonde_analysis::index::forget_gone_elsewhere(&dir);
             let all: Vec<&Row> = all.iter().filter(|r| !r.elsewhere).collect();
             let gone: Vec<&Row> = all
                 .iter()

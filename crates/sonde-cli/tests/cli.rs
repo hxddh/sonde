@@ -2639,7 +2639,12 @@ fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
     let agent = t.path().join("agent");
     std::fs::create_dir_all(&agent).unwrap();
     let out = agent.join("job.sonde");
-    let o = sonde(t.path(), &["run", "--demo", "-o", out.to_str().unwrap()]);
+    // (--force: the run is written whole at its end, then renamed into place)
+    std::fs::write(&out, b"").unwrap();
+    let o = sonde(
+        t.path(),
+        &["run", "--demo", "-o", out.to_str().unwrap(), "--force"],
+    );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let listed = runs_json(t.path());
     // the tour's two runs: the job and the job fixed, beside it
