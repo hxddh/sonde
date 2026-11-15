@@ -2,6 +2,51 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [23.0.0] - 2026-11-15
+
+23.0 makes sonde an agent's tool, answers "will it work on that store?" truthfully, says cost a month, and calms the
+interface. JSON outputs change shape ([contract](docs/contract.md)).
+
+### Changed
+
+- **For coding agents.** `show -f json` is the compact answer by default (a 15,100-request run: 6.6 MB → 6.7 KB; a
+  109,800-line access log: 70 MB → 9 KB); `--all` is the whole. A finding carries its `kind`, what it saves in money,
+  its callers as file, line, function and the code line, and the fix for the run's own SDK only; the run carries the
+  command that verifies a fix. `docs/agents.md`, `llms.txt` and a line in `sonde --help` say the loop.
+- **"✓ fixed" is honest.** When a rerun did much more work (requests 1.5× or more), no saving is counted and that is said.
+- **Will it work on another store?** Replay first writes stand-ins for what the run read but did not write, so a job
+  that reads its input replays with no false differences. It ends with what the program relies on (checksums,
+  conditional writes, ranges, multipart, …) and how the store answers each, and each store's request cost. The app
+  asks it from a run: Compare › On another store….
+- **Money a month.** An import projects a month from its own span; a run uses `[program] runs-per-month`. Findings are
+  ordered by what they save, each with its saving a month; the list ends with their total.
+- An imported request's caller is its requester (the IAM principal). `compare` names both endpoints when they differ.
+- **The interface, calmer:**
+  - one surface level: tables fill their pane, no heading over a titled card;
+  - the run header folds to one line on short panes and on Time and History;
+  - "Since the run before" is one sentence with a Compare link;
+  - dialogs sit under the title bar and grow with their content;
+  - the inspector stays beside the table down to 780 pt;
+  - pressable tiles look pressable;
+  - row actions are quiet, never hidden;
+  - sidebar rows say two things;
+  - long identifiers stay on one line and copy on press.
+- **Controls that did nothing now act:**
+  - a chart pressed with no pointer over a mark (or with Return);
+  - the chart's (i);
+  - the title bar's place;
+  - the sidebar toggle;
+  - the Run folder field's icon (a folder dialog).
+- A plan's count is typed only above 100 items (or for a lifecycle); below that, a plain confirm.
+- Native Shell at its main (e4749c9): a side panel is a named modal dialog; inline code in prose keeps proportion.
+- The demo store answers CreateBucket. Probe text says no `Some(400)`, and its summary counts every probe.
+
+### Removed
+
+- `show --summary` (it is the default now) and its schema.
+- The app's Settings compatibility dialog and its probe screens: compatibility is asked from a run; `sonde probe` stays
+  the full catalogue.
+
 ## [22.0.0] - 2026-11-15
 
 22.0 is the smaller sonde: fewer commands, flags, files, words and doors, each finished. It reads no data of earlier
