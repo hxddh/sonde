@@ -4,9 +4,11 @@
 //! A destructive operation (abort uploads, delete versions or delete
 //! markers, delete objects, change lifecycle) is never executed directly.
 //! It is first *planned*: the plan lists exactly what would change (the
-//! dry run) and names the confirmation the user must type: the number of
-//! items, or the bucket name. [`Guard::take`] hands the plan back for
-//! execution only when the plan is fresh and the confirmation matches. Every execution is appended to the audit log.
+//! dry run) and names its confirmation: the number of items, or the bucket
+//! name. It is typed only for more than [`TYPED_ABOVE`] items or a bucket's
+//! lifecycle; a smaller plan is a plain confirm. [`Guard::take`] hands the
+//! plan back for execution only when the plan is fresh and, where it is
+//! typed, the confirmation matches. Every execution is appended to the audit log.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -23,6 +25,10 @@ use crate::phrase::{self, Phrase, ph};
 
 /// Plans expire after this many seconds.
 pub const PLAN_TTL_SECS: i64 = 600;
+
+/// A plan of more items than this asks for its count typed; one of this
+/// many or fewer, a plain confirm.
+pub const TYPED_ABOVE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,8 +102,11 @@ pub struct Plan {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub summary_text: Vec<Phrase>,
-    /// What the user must type to confirm.
+    /// What confirms it.
     pub confirm: String,
+    /// Whether [`Plan::confirm`] must be typed (more than [`TYPED_ABOVE`]
+    /// items, a bucket's lifecycle); otherwise a plain confirm runs it.
+    pub typed: bool,
     /// "the number of items" or "the bucket name", for the prompt.
     pub confirm_hint: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -140,7 +149,8 @@ impl Guard {
     }
 
     /// Records a plan. Items-based plans confirm with their count; plans of
-    /// one item or of the whole bucket with the bucket name.
+    /// one item or of the whole bucket with the bucket name. Typed only
+    /// past [`TYPED_ABOVE`] items, and for a lifecycle.
     pub fn plan(
         &self,
         action: Action,
@@ -157,6 +167,7 @@ impl Guard {
         } else {
             (items.len().to_string(), vec![ph!("plan.confirm.count")])
         };
+        let typed = action == Action::PutLifecycle || items.len() > TYPED_ABOVE;
         let bytes: u64 = items.iter().filter_map(|i| i.bytes).sum();
         // a sentence an action, so another language orders its own words
         let key = match action {
@@ -186,6 +197,7 @@ impl Guard {
             summary,
             summary_text,
             confirm,
+            typed,
             confirm_hint,
             confirm_hint_text,
             created: Utc::now(),
@@ -214,7 +226,7 @@ impl Guard {
                 "the dry run is older than 10 minutes: run it again",
             ));
         }
-        if confirmation.trim() != plan.confirm {
+        if plan.typed && confirmation.trim() != plan.confirm {
             return Err(S3Error::refused(format!(
                 "confirmation does not match: type {}",
                 plan.confirm_hint
@@ -333,11 +345,12 @@ mod tests {
     fn a_plan_runs_once_fresh_and_confirmed() {
         let dir = tempfile::tempdir().unwrap();
         let g = Guard::new(dir.path().join("audit.jsonl"));
-        let p = g.plan(Action::AbortUploads, "e", "bucket", items(3), None, None);
-        assert_eq!(p.confirm, "3");
+        let p = g.plan(Action::AbortUploads, "e", "bucket", items(101), None, None);
+        assert_eq!(p.confirm, "101");
+        assert!(p.typed);
         assert_eq!(
             p.summary,
-            "Abort multipart uploads 3 item(s) in bucket (3.0 KiB)"
+            "Abort multipart uploads 101 item(s) in bucket (101 KiB)"
         );
         // wrong confirmation refuses and keeps the plan
         assert!(
@@ -347,10 +360,15 @@ mod tests {
                 .contains("number of items")
         );
         // right one passes once
-        assert_eq!(g.take(&p.id, " 3 ").unwrap().items.len(), 3);
-        assert!(g.take(&p.id, "3").is_err());
+        assert_eq!(g.take(&p.id, " 101 ").unwrap().items.len(), 101);
+        assert!(g.take(&p.id, "101").is_err());
+        // a hundred or fewer: a plain confirm, nothing typed
+        let few = g.plan(Action::DeleteObjects, "e", "bucket", items(100), None, None);
+        assert!(!few.typed);
+        assert_eq!(g.take(&few.id, "").unwrap().items.len(), 100);
         let one = g.plan(Action::DeleteVersions, "e", "bucket", items(1), None, None);
         assert_eq!(one.confirm, "bucket");
+        assert!(!one.typed);
         let lc = g.plan(
             Action::PutLifecycle,
             "e",
@@ -360,6 +378,7 @@ mod tests {
             None,
         );
         assert_eq!(lc.confirm_hint, "the bucket name");
+        assert!(lc.typed);
     }
 
     #[test]

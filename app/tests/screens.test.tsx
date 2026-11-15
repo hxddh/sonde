@@ -23,7 +23,7 @@ test("a run's request in the inspector: details, copy as curl without a signatur
   expect(app.shows("id:activity-tab-requests")).toBe(false);
 });
 
-test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
+test("multipart: scan, lifecycle verdict, the guard confirms a few plainly", async () => {
   const app = await withDemo("demo");
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
@@ -33,10 +33,9 @@ test("multipart: scan, lifecycle verdict, the guard waits for the typed confirma
   expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.enabled("id:confirm-run")).toBe(false);
-  // what is typed is not the count: still nothing runs
-  await app.type("id:confirm-input", "9");
-  expect(app.enabled("id:confirm-run")).toBe(false);
+  // two uploads: a plain confirm (the count is typed only above 100)
+  expect(app.shows("id:confirm-input")).toBe(false);
+  expect(app.enabled("id:confirm-run")).toBe(true);
   await app.press("id:confirm-cancel");
   await app.waitFor("id:confirm-dialog", { state: "gone" });
 });
@@ -176,8 +175,6 @@ test("settings: no read-only switch; a confirmed abort, the audit log", async ()
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.enabled("id:confirm-run")).toBe(false);
-  await app.type("id:confirm-input", "2");
   await app.press("id:confirm-run");
   await app.waitFor("text:/0 older than 7 days/", { timeout: 10000 });
   await place(app, "audit");

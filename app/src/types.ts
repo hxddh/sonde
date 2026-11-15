@@ -251,6 +251,8 @@ export interface Plan {
   summary: string;
   summaryText?: CorePhrase[];
   confirm: string;
+  /** whether `confirm` must be typed (more than 100 items, a bucket's lifecycle); otherwise a plain confirm */
+  typed: boolean;
   confirmHint: string;
   confirmHintText?: CorePhrase[];
   created: string;
