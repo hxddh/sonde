@@ -2629,3 +2629,37 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
     assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);
     assert_eq!(j["whatIf"]["requests"], serde_json::json!([16, 8]));
 }
+
+/// A run written elsewhere with `-o` (as agents.md advises) is listed with
+/// the data directory's, by its path: people see an agent's runs. It is the
+/// writer's to keep (never pruned), and let go once it is gone.
+#[test]
+fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
+    let t = tempfile::tempdir().unwrap();
+    let agent = t.path().join("agent");
+    std::fs::create_dir_all(&agent).unwrap();
+    let out = agent.join("job.sonde");
+    let o = sonde(t.path(), &["run", "--demo", "-o", out.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = runs_json(t.path());
+    // the tour's two runs: the job and the job fixed, beside it
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(listed.iter().all(|r| r["elsewhere"] == true), "{listed:?}");
+    let written = out.canonicalize().unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|r| r["path"] == written.to_str().unwrap() && r["name"] == r["path"]),
+        "{listed:?}"
+    );
+    assert!(listed.iter().all(|r| r["requests"].as_u64() > Some(0)));
+    let table = stdout(&sonde(t.path(), &["runs"]));
+    assert!(table.contains(written.to_str().unwrap()), "{table}");
+    // never pruned: the files are the agent's
+    let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
+    assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
+    assert!(out.is_file());
+    // gone from the disk: gone from the list
+    std::fs::remove_file(&out).unwrap();
+    assert_eq!(runs_json(t.path()).len(), 1);
+}

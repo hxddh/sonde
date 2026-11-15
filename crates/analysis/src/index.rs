@@ -56,6 +56,9 @@ pub struct Folder {
     pub imports: BTreeMap<String, String>,
     /// A log source → where its last import got to.
     pub marks: BTreeMap<String, Value>,
+    /// Runs written elsewhere (`-o`), by their whole path: listed with the
+    /// folder's own ([`note_elsewhere`]).
+    pub elsewhere: std::collections::BTreeSet<String>,
 }
 
 /// One line of the index: a change to one run's entry (by its file name),
@@ -84,6 +87,9 @@ pub enum Change {
     Import(Option<String>),
     /// Where a log source's imports got to.
     Mark(Option<Value>),
+    /// A run written elsewhere, by its whole path: listed here (true) or
+    /// no longer (false).
+    Elsewhere(bool),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,6 +125,14 @@ fn apply(index: &mut Index, name: &str, change: Change) {
         Change::Verdicts(v) => return keep(&mut f.verdicts, name, v),
         Change::Import(v) => return keep(&mut f.imports, name, v),
         Change::Mark(v) => return keep(&mut f.marks, name, v),
+        Change::Elsewhere(listed) => {
+            if listed {
+                f.elsewhere.insert(name.to_string());
+            } else {
+                f.elsewhere.remove(name);
+            }
+            return;
+        }
         Change::Gone => {
             index.runs.remove(name);
             return;
@@ -199,6 +213,49 @@ fn place(run: &Path) -> Option<(PathBuf, String)> {
 }
 
 /// What the index of its folder keeps of `run`.
+/// Lists `run`, written outside the runs folder `runs` (`-o`), with that
+/// folder's runs: `sonde runs` and the app show it (an agent's runs where
+/// people look). A run inside it is listed already.
+pub fn note_elsewhere(runs: &Path, run: &Path) {
+    let (Ok(file), Ok(())) = (run.canonicalize(), std::fs::create_dir_all(runs)) else {
+        return;
+    };
+    if file.parent() == runs.canonicalize().ok().as_deref() {
+        return;
+    }
+    let name = file.to_string_lossy().into_owned();
+    let _ = update(runs, |now| {
+        let fresh = !now.folder.elsewhere.contains(&name);
+        (
+            if fresh {
+                vec![(name, Change::Elsewhere(true))]
+            } else {
+                Vec::new()
+            },
+            (),
+        )
+    });
+}
+
+/// The runs written elsewhere that the runs folder `runs` lists
+/// ([`note_elsewhere`]) and are still there; those gone are let go.
+pub fn elsewhere(runs: &Path) -> Vec<PathBuf> {
+    let all: Vec<String> = of(runs).folder.elsewhere.iter().cloned().collect();
+    let (there, gone): (Vec<String>, Vec<String>) =
+        all.into_iter().partition(|p| Path::new(p).is_file());
+    if !gone.is_empty() {
+        let _ = update(runs, |_| {
+            (
+                gone.into_iter()
+                    .map(|p| (p, Change::Elsewhere(false)))
+                    .collect(),
+                (),
+            )
+        });
+    }
+    there.into_iter().map(PathBuf::from).collect()
+}
+
 pub fn get(run: &Path) -> Entry {
     place(run)
         .and_then(|(dir, name)| of(&dir).runs.get(&name).cloned())
@@ -286,7 +343,8 @@ pub fn update<T>(
                 + f.findings.len()
                 + f.verdicts.len()
                 + f.imports.len()
-                + f.marks.len();
+                + f.marks.len()
+                + f.elsewhere.len();
             if r.lines > 64 && r.lines > 4 * things {
                 let index = r.index.clone();
                 drop(read);
@@ -343,6 +401,9 @@ fn compact(dir: &Path, index: &Index) {
     }
     for (k, v) in &f.marks {
         push(k, Change::Mark(Some(v.clone())));
+    }
+    for k in &f.elsewhere {
+        push(k, Change::Elsewhere(true));
     }
     if reqlog::private::replace(&file, &out).is_ok() {
         READ.lock().remove(dir);
@@ -457,5 +518,30 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, [".index.jsonl", ".index.lock"]);
+    }
+
+    #[test]
+    fn a_run_written_elsewhere_is_listed_by_its_path_until_it_is_gone() {
+        let t = tempfile::tempdir().unwrap();
+        let (runs, away) = (t.path().join("runs"), t.path().join("away"));
+        std::fs::create_dir_all(&away).unwrap();
+        let run = away.join("job.sonde");
+        std::fs::write(&run, b"{}").unwrap();
+        note_elsewhere(&runs, &run);
+        // twice is once
+        note_elsewhere(&runs, &run);
+        assert_eq!(elsewhere(&runs), [run.canonicalize().unwrap()]);
+        // one of the folder's own is listed already
+        let own = runs.join("own.sonde");
+        std::fs::write(&own, b"{}").unwrap();
+        note_elsewhere(&runs, &own);
+        assert_eq!(elsewhere(&runs).len(), 1);
+        // kept through a compaction
+        let index = of(&runs);
+        compact(&runs, &index);
+        assert_eq!(elsewhere(&runs).len(), 1);
+        std::fs::remove_file(&run).unwrap();
+        assert!(elsewhere(&runs).is_empty());
+        assert!(of(&runs).folder.elsewhere.is_empty());
     }
 }

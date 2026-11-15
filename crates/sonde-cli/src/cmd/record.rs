@@ -150,6 +150,10 @@ pub(super) async fn start_under(
     // share its clean run's)
     let made = of.made.clone().unwrap_or_default();
     let writer = Arc::new(RunWriter::create(&path, &header)?);
+    // a run written elsewhere is listed with the data directory's
+    if under.is_none() && r.out.is_some() {
+        sonde_analysis::index::note_elsewhere(&s.paths().runs(), &path);
+    }
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let tls = if r.tls {

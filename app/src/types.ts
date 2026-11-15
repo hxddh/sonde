@@ -423,6 +423,8 @@ export interface RunInfo {
   shape?: number[];
   /** The run's trials, when it was tried under faults: how the program stood in each. */
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
+  /** Written outside the runs folder (`sonde run -o FILE`, an agent's): listed, opened, never renamed or removed here. */
+  elsewhere?: boolean;
 }
 
 /** A phrase of what sonde says of a run: a key and its arguments (crates/analysis/src/phrase.rs); its words are

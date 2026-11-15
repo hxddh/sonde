@@ -1366,15 +1366,24 @@ pub struct Runs;
 
 #[module]
 impl Runs {
-    /// The runs in the data directory, newest first.
+    /// The runs in the data directory and those written elsewhere with
+    /// `-o` (`elsewhere`), newest first.
     pub fn list() -> JsonValue {
         let dir = sonde().paths().runs();
         let live = RECORDING.lock().as_ref().map(|r| r.path.clone());
         let mut out: Vec<(String, JsonValue)> = Vec::new();
         let titles = titles();
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for e in entries.flatten() {
-                let p = e.path();
+        // its own runs, and those written elsewhere with `-o` (an agent's)
+        let own = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| (e.path(), false));
+        let elsewhere = sonde_analysis::index::elsewhere(&dir)
+            .into_iter()
+            .map(|p| (p, true));
+        {
+            for (p, elsewhere) in own.chain(elsewhere) {
                 if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
                     continue;
                 }
@@ -1409,11 +1418,16 @@ impl Runs {
                 let created = row["created"].as_str().unwrap_or_default().to_string();
                 row["path"] = json!(p.to_string_lossy());
                 row["name"] = json!(p.file_name().map(|n| n.to_string_lossy().into_owned()));
+                // (titles are given to the folder's own runs, by file name)
                 row["title"] = json!(
                     p.file_name()
+                        .filter(|_| !elsewhere)
                         .and_then(|n| titles.get(&*n.to_string_lossy()))
                 );
                 row["live"] = json!(live.as_deref() == Some(p.as_path()));
+                if elsewhere {
+                    row["elsewhere"] = json!(true);
+                }
                 // a run that was tried says how it stood (the small
                 // verdicts file, not the trials' runs)
                 let marks = trial_marks(&p);
