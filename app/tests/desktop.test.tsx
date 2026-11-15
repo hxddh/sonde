@@ -32,6 +32,17 @@ test("the demo opens from the palette, its one door after the welcome", async ()
   await app.waitFor("id:screen-run");
 });
 
+test("the toolbar's endpoint opens with a press anywhere on it, chooses, and manages", async () => {
+  const app = await open("../App.tsx", desktop);
+  // (the demo chosen by the first test)
+  await app.waitFor("id:endpoint-picker >> text:Demo (built-in)", { timeout: 10000 });
+  // a press on its name, not only its chevron, opens the list
+  await app.press("id:endpoint-picker >> text:Demo (built-in)");
+  await app.waitFor("id:manage-endpoints");
+  await app.press("id:manage-endpoints");
+  await app.waitFor("id:screen-settings-area", { timeout: 10000 });
+});
+
 test("Store: browse the demo bucket and show object details", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");

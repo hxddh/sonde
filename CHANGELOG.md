@@ -59,6 +59,7 @@ versions and keeps no old names ([contract](docs/contract.md)).
 - A chart sentence on few requests says so.
 - `--tls` certificates are accepted by Python 3.13's strict default.
 - While a program runs, Run shows its requests live.
+- The toolbar's endpoint opens with a press anywhere on it, not only on its arrow.
 - `show` of a million is linear again (60 s → 8.5 s).
 - The Action passes over a baseline an earlier sonde wrote (the first CI run after upgrading has none, not a
   failure).

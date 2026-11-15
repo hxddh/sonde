@@ -3,7 +3,7 @@
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
 import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
+import { Button as BaseButton, Select, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, op
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./runview";
-import { BREAK, Button, CONTROL, DOT, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, ListRow, TEXT } from "./kit";
+import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -103,33 +103,45 @@ function Breadcrumb() {
   );
 }
 
-/** The endpoint everything talks to: searchable, with a way to manage them. */
+/** The endpoint everything talks to: a press anywhere on it opens the list (searchable), whose last row
+ * manages them. */
+const MANAGE = "\u0000manage";
 export function EndpointSwitcher(props: { class?: string }) {
-  const items = () => endpoints().map((e) => ({ value: e.id, title: e.name }));
+  const items = () => [...endpoints().map((e) => ({ value: e.id, title: e.name })), { value: MANAGE, title: t("endpoints.manage") }];
   const current = () => endpoints().find((e) => e.id === endpoint());
   return (
-    <Combobox
+    <Select
       testID="endpoint-picker"
       accessibilityLabel={t("common.endpoint")}
       items={items()}
-      value={endpoint() ? [endpoint()!] : []}
-      placeholder={current()?.name ?? t("common.chooseEndpoint")}
+      value={endpoint()}
+      searchable={endpoints().length > 5}
       onChange={({ value }) => {
-        const v = value[value.length - 1];
-        if (v) useEndpoint(v);
+        if (value === MANAGE) go("endpoints");
+        else if (value) useEndpoint(value);
       }}
       offset={4}
-      class={`${CONTROL.trigger} ${FOCUS_WITHIN} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}
-      inputClass={`min-w-0 flex-1 ${TEXT.body} placeholder:text-foreground`}
       popupClass={`${SURFACE.switcherPopup} ${POPUP} ${POPUP_MOTION.class}`}
       popupStyle={glass}
       popupStartingClass={POPUP_MOTION.starting}
       popupEndingClass={POPUP_MOTION.ending}
       itemClass={`group ${ROWS.popup}`}
-      prefix={<Icon name="server" />}
-      triggerButton={<Icon name="chevrons-up-down" size={ICON.small} />}
       empty={<Text class={`px-2 py-2 ${TEXT.note}`}>{t("endpoints.noneYet")}</Text>}
+      trigger={
+        <View class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}>
+          <Icon name="server" />
+          <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{current()?.name ?? t("common.chooseEndpoint")}</Text>
+          <Icon name="chevrons-up-down" size={ICON.small} />
+        </View>
+      }
       renderItem={(item) => {
+        if (item.value === MANAGE)
+          return (
+            <View testID="manage-endpoints" class="flex-row items-center gap-2">
+              <Icon name="settings" size={ICON.small} />
+              <Text class={TEXT.note}>{item.title}</Text>
+            </View>
+          );
         const e = endpoints().find((x) => x.id === item.value);
         return (
           <View class="flex-row items-center gap-2">
@@ -141,12 +153,6 @@ export function EndpointSwitcher(props: { class?: string }) {
           </View>
         );
       }}
-      footer={
-        <ListRow divided testID="manage-endpoints" label={t("endpoints.manage")} onPress={() => go("endpoints")}>
-          <Icon name="settings" size={ICON.small} />
-          <Text class={TEXT.note}>{t("endpoints.manage")}</Text>
-        </ListRow>
-      }
     />
   );
 }
