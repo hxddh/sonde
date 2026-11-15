@@ -109,9 +109,12 @@ fn template(key: &str) -> &'static str {
 /// The arguments that are counts: a figure of four digits or more among
 /// them is said grouped, as every count is ("listed 87,139 times", beside
 /// "87,139 requests"); ids, years and keys are other arguments, left as
-/// written. The same set as the app's (`app/src/phrases.ts`).
+/// written. The app's set (`app/src/phrases.ts`), and a fix's predicted
+/// saving.
 const COUNTS: &[&str] = &[
     "n", "of", "count", "requests", "reads", "writes", "objects", "total", "was", "clean",
+    // a fix's predicted saving (`fix.saved`)
+    "p",
 ];
 
 /// `template` filled with `arg`, its counts grouped ([`COUNTS`]).

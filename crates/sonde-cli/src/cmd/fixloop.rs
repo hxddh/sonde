@@ -169,7 +169,7 @@ pub(super) fn uncounted_line(why: &str) -> String {
 
 /// The figures of a change on one line: requests, waiting, cost.
 fn figures_line(c: &RunChange) -> String {
-    let n = |v: f64| format!("{v:.0}");
+    let n = |v: f64| crate::output::grouped(v.max(0.0).round() as u64);
     format!(
         "requests {} · waiting {} · cost {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),
