@@ -65,8 +65,8 @@ impl Probe for PutIfNoneMatch {
                 Verdict::Differs,
                 ph!(
                     "judge.cond.put-if-none-match.differs.2",
-                    p1 = format!("{:?}", second.status),
-                    p2 = format!("{:?}", second.code)
+                    p1 = crate::model::status_text(second.status),
+                    p2 = crate::model::or_none(second.code.as_deref())
                 ),
                 s,
             )
@@ -133,7 +133,7 @@ impl Probe for PutIfMatch {
                 Verdict::Differs,
                 ph!(
                     "judge.cond.put-if-match.differs",
-                    p1 = format!("{:?}", missing.status)
+                    p1 = crate::model::status_text(missing.status)
                 ),
                 s,
             )
@@ -142,7 +142,7 @@ impl Probe for PutIfMatch {
                 Verdict::Differs,
                 ph!(
                     "judge.cond.put-if-match.differs.2",
-                    p1 = format!("{:?}", stale.status)
+                    p1 = crate::model::status_text(stale.status)
                 ),
                 s,
             )
@@ -214,8 +214,8 @@ impl Probe for CopyIfMatch {
                 Verdict::Differs,
                 ph!(
                     "judge.cond.copy-if-match.differs.2",
-                    p1 = format!("{:?}", wrong.status),
-                    p2 = format!("{:?}", exists.status)
+                    p1 = crate::model::status_text(wrong.status),
+                    p2 = crate::model::status_text(exists.status)
                 ),
                 s,
             )
@@ -290,8 +290,8 @@ impl Probe for CompleteIfNoneMatch {
                 Verdict::Differs,
                 ph!(
                     "judge.cond.complete-if-none-match.differs",
-                    p1 = format!("{:?}", complete.status),
-                    p2 = format!("{:?}", complete.code)
+                    p1 = crate::model::status_text(complete.status),
+                    p2 = crate::model::or_none(complete.code.as_deref())
                 ),
                 s,
             )

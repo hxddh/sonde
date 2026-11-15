@@ -108,6 +108,7 @@ one of three or a scenario sonde cannot run is an error (exit 64), in the CLI an
 [program]
 name = "nightly-etl"      # runs, baseline and trial verdicts go by it
 runs = "etl"              # for the commands that run it (`python3 etl.py 5`); others go by their own
+runs-per-month = 720      # how often it runs: cost and savings said a month (cli.md, money a month)
 
 [check]                   # `sonde check`: cli.md
 max-requests = 5000
@@ -125,7 +126,8 @@ fault = "503 SlowDown"
 on = ["PutObject"]
 ```
 
-- `[program]`: both keys or neither; without it, a program is what its command runs ([cli](cli.md)).
+- `[program]`: `name` and `runs` both or neither; without them, a program is what its command runs ([cli](cli.md)).
+  `runs-per-month` alone applies to every program run in the folder.
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
 - `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
   app, the project's policy may narrow Run's own choice, never widen it.

@@ -397,6 +397,15 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
         out.push_str("</Buckets></ListAllMyBucketsResult>");
         return xml(out);
     }
+    // CreateBucket: a program that makes its own bucket runs on the demo
+    // too (one there already answers 200, as us-east-1 does for its owner)
+    if method == "PUT" && key.is_empty() && q.is_empty() {
+        st.buckets.entry(bucket.clone()).or_insert_with(|| Bucket {
+            created: Some(Utc::now()),
+            ..Default::default()
+        });
+        return (200, vec![("location".into(), format!("/{bucket}"))], vec![]);
+    }
     if !st.buckets.contains_key(&bucket) {
         return err(404, "NoSuchBucket", "The specified bucket does not exist");
     }
@@ -1171,6 +1180,25 @@ mod commits {
             .key(key)
             .body(Body::from(body.to_string()))
             .no_retry()
+    }
+
+    #[tokio::test]
+    async fn a_program_that_makes_its_own_bucket_can_then_write_to_it() {
+        let (_dir, c) = demo().await;
+        let make = || {
+            S3Request::new("CreateBucket", http::Method::PUT)
+                .bucket("mine")
+                .no_retry()
+        };
+        assert_eq!(c.send_raw(make()).await.unwrap().status, 200);
+        // made again: its owner's, as us-east-1 answers
+        assert_eq!(c.send_raw(make()).await.unwrap().status, 200);
+        let put = S3Request::new("PutObject", http::Method::PUT)
+            .bucket("mine")
+            .key("k")
+            .body(Body::from("v".to_string()))
+            .no_retry();
+        assert_eq!(c.send_raw(put).await.unwrap().status, 200);
     }
 
     #[tokio::test]

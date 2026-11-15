@@ -65,8 +65,8 @@ impl Probe for MinPartSize {
                 Verdict::Differs,
                 ph!(
                     "judge.mpu.min-part-size.differs.2",
-                    p1 = format!("{:?}", c.status),
-                    p2 = format!("{:?}", c.code)
+                    p1 = crate::model::status_text(c.status),
+                    p2 = crate::model::or_none(c.code.as_deref())
                 ),
                 s,
             )
@@ -149,8 +149,8 @@ impl Probe for OutOfOrder {
                 Verdict::Differs,
                 ph!(
                     "judge.mpu.out-of-order.differs.2",
-                    p1 = format!("{:?}", desc.status),
-                    p2 = format!("{:?}", desc.code)
+                    p1 = crate::model::status_text(desc.status),
+                    p2 = crate::model::or_none(desc.code.as_deref())
                 ),
                 s,
             )
@@ -217,8 +217,8 @@ impl Probe for DuplicateComplete {
                 Verdict::Differs,
                 ph!(
                     "judge.mpu.duplicate-complete.differs.2",
-                    p1 = format!("{:?}", second.status),
-                    p2 = format!("{:?}", second.code)
+                    p1 = crate::model::status_text(second.status),
+                    p2 = crate::model::or_none(second.code.as_deref())
                 ),
                 s,
             )
@@ -370,7 +370,7 @@ impl Probe for UploadPartCopy {
                 Verdict::Fail,
                 ph!(
                     "judge.mpu.upload-part-copy.fail.2",
-                    p1 = format!("{:?}", head.header("content-length")),
+                    p1 = crate::model::or_none(head.header("content-length")),
                     want = want
                 ),
                 s,

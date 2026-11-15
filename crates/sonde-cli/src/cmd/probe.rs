@@ -246,13 +246,32 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
                 .collect();
             let mut t = output::table(&headers, &rows);
             for r in &runs {
+                // every probe counted: those that erred or were skipped too
+                let counts: Vec<String> = [
+                    Verdict::Pass,
+                    Verdict::Fail,
+                    Verdict::Differs,
+                    Verdict::Unsupported,
+                    Verdict::Error,
+                    Verdict::Skipped,
+                ]
+                .into_iter()
+                .filter_map(|v| {
+                    let n = r.count(v);
+                    let word = match v {
+                        Verdict::Differs => "differ",
+                        Verdict::Error if n != 1 => "errors",
+                        _ => v.label(),
+                    };
+                    (n > 0 || matches!(v, Verdict::Pass | Verdict::Fail))
+                        .then(|| format!("{n} {word}"))
+                })
+                .collect();
                 t.push_str(&format!(
-                    "\n\n{}: {} pass, {} fail, {} differ, {} unsupported — saved as {}:{}",
+                    "\n\n{}: {} probes: {} — saved as {}:{}",
                     r.endpoint_name,
-                    r.count(Verdict::Pass),
-                    r.count(Verdict::Fail),
-                    r.count(Verdict::Differs),
-                    r.count(Verdict::Unsupported),
+                    r.results.len(),
+                    counts.join(", "),
                     r.id,
                     r.endpoint
                 ));

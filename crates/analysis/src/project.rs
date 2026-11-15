@@ -58,6 +58,9 @@ impl Check {
 pub struct Program {
     pub name: Option<String>,
     pub runs: Option<String>,
+    /// How many times a month the program runs: a run's cost and each
+    /// finding's saving are then said a month (`show`, `run`).
+    pub runs_per_month: Option<f64>,
 }
 
 impl Program {
@@ -73,6 +76,13 @@ impl Program {
     /// Both or neither: a name with no program to be for would name every
     /// command run in the folder.
     fn check(&self) -> Result<(), String> {
+        if let Some(n) = self.runs_per_month
+            && !(n.is_finite() && n > 0.0)
+        {
+            return Err(format!(
+                "[program] runs-per-month = {n}: a number of runs, more than 0"
+            ));
+        }
         let given = |v: &Option<String>| v.as_deref().map(|v| !v.trim().is_empty());
         match (given(&self.name), given(&self.runs)) {
             (None, None) | (Some(true), Some(true)) => Ok(()),

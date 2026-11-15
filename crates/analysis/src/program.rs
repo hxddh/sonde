@@ -1660,6 +1660,8 @@ mod tests {
         let job = |key: &str| Observation {
             phrases: vec![crate::phrase::p("obs.hot", &[("key", key.into())])],
             identity: String::new(),
+            kind: String::new(),
+            saves_cost: 0.0,
             ..hot.clone()
         };
         assert!(expected(
