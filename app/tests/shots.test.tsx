@@ -467,7 +467,7 @@ for (const v of variants) {
     await app.press("id:store-section-multipart");
     await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
     await shot("04d-uploads");
-    // a change to the store: the plan, and the typed confirmation
+    // a change to the store: the plan, and its confirmation (two uploads: a plain confirm, typed only above 100)
     await app.press("id:plan-abort");
     await app.waitFor("id:confirm-dialog");
     await shot("04e-confirm");
