@@ -387,7 +387,9 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   expect(app.shows("id:trial-step-slowdown")).toBe(true);
   expect(app.shows("id:trial-step-lost-answer")).toBe(true);
   expect(app.shows("text:Waiting")).toBe(false);
-  // a finished scenario, pressed in the dialog: its own run (it is in no list), in Runs, marked as a trial
+  // a finished scenario, pressed in the dialog: its own run (it is in no list), in Runs, marked as a trial (a row
+  // opens once the whole trial has ended and kept its runs: its verdicts are drawn a moment before)
+  await app.waitUntil(() => app.enabled("id:trial-step-slowdown"), { timeout: 10000 });
   await app.press("id:trial-step-slowdown");
   await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
   await app.waitFor("id:trial-note", { timeout: 10000 });
