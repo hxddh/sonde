@@ -230,7 +230,12 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     let all = &run.records;
     let prices = request_prices_for(s, &run.header.endpoint);
     // what it amounts to, once: every part below reads this
-    let analysis = Analysis::of(&run, &prices);
+    let mut analysis = Analysis::of(&run, &prices);
+    // what the project keeps on purpose, each finding with why
+    sonde_analysis::program::mark_expected(
+        &mut analysis.observations,
+        &super::check::expect_of(&run.header),
+    );
     let eps = &analysis.episodes;
     if let Some(by) = a.by {
         let split = sonde_analysis::split::split(all, by, &prices);

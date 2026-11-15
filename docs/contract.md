@@ -29,6 +29,10 @@ fix for the run's SDK; every operation, operation list and fix with `--all`), `o
 top, `--summary` and `show-summary.schema.json` go; findings are ordered by what they save; a program's first run's
 findings are `new`; identity rules 3 keep a digit inside a word.
 
+**24.0** broke: `[check] expect` says why each finding is kept (`expect = { "<identity>" = "<reason>" }`, the list
+goes), and `check -f json`'s `check.expected` is those findings, each `{identity, text, expected}`; `check` holds no
+`--demo` run to its waiting.
+
 ## Stable
 
 | | What | Documented in | Tested by |

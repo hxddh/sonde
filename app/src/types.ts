@@ -777,7 +777,7 @@ export interface ProgramHistory {
   baseline: string | null;
   baselinePoint?: RunPoint | null;
   limits?: BaselineLimits | null;
-  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: string[] } | null;
+  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: { identity: string; text: string; expected: string }[] } | null;
   /** The check as a pull request's comment (`sonde check -f markdown`). */
   markdown?: string | null;
 }

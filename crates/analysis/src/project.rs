@@ -21,9 +21,11 @@ pub struct Check {
     pub max_requests: Option<usize>,
     pub max_waiting: Option<toml::Value>,
     pub max_errors: Option<usize>,
-    /// Findings kept on purpose: never a new warning.
+    /// Findings kept on purpose, each with why: an identity as `sonde show
+    /// -f json` writes it (or a kind, for all of it) and the reason. Never a
+    /// new warning; every output says the reason.
     #[serde(default)]
-    pub expect: Vec<String>,
+    pub expect: std::collections::BTreeMap<String, String>,
     pub tolerance: Option<f64>,
     pub baseline: Option<String>,
 }
@@ -43,8 +45,8 @@ impl Check {
             max_requests: self.max_requests,
             max_waiting_ms: self.max_waiting_ms()?,
             max_errors: self.max_errors,
-            expect: self.expect.clone(),
             tolerance: None,
+            untimed: false,
         })
     }
 }
@@ -189,6 +191,8 @@ pub fn parse(text: &str) -> Result<Project, String> {
     let file: File = toml::from_str(text).map_err(|e| {
         let hint = if text.contains("[[scenarios]]") {
             "\na scenario is a [[scenario]] table, one for each"
+        } else if text.contains("expect = [") {
+            "\n[check] expect says why each is kept: expect = { \"obs.hot|bucket/key\" = \"the reason\" }"
         } else {
             ""
         };
@@ -199,7 +203,7 @@ pub fn parse(text: &str) -> Result<Project, String> {
         .check
         .expect
         .iter()
-        .find_map(|e| crate::program::expect_error(e))
+        .find_map(|(e, why)| crate::program::expect_error(e, why))
     {
         return Err(why);
     }
@@ -323,10 +327,23 @@ mod tests {
             ("[program]\nruns = \"etl\"\n", "needs a `name`"),
             // words of a finding's text are no identity
             (
-                "[check]\nexpect = [\"read again\"]\n",
+                "[check]\nexpect = { \"read again\" = \"kept\" }\n",
                 "not a finding's identity",
             ),
-            ("[check]\nexpect = [\"obs.retried\"]\n", "obs.retried"),
+            (
+                "[check]\nexpect = { \"obs.retried\" = \"kept\" }\n",
+                "obs.retried",
+            ),
+            // each says why it is kept
+            (
+                "[check]\nexpect = { \"obs.listed\" = \" \" }\n",
+                "needs its reason",
+            ),
+            // the list of before is said as what it is now
+            (
+                "[check]\nexpect = [\"obs.listed\"]\n",
+                "says why each is kept",
+            ),
         ] {
             let e = parse(text).unwrap_err();
             assert!(e.contains(says), "{text}: {e}");

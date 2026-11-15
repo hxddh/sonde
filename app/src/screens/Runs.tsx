@@ -438,7 +438,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       dense={dense()}
       // a narrow pane keeps the line for what was found; what it saves is in the finding once chosen
       narrow={!roomy() || inspecting()}
-      onExpect={(o) => copy(`expect = [${JSON.stringify(o.identity)}]`, t("expect.copied"))}
+      onExpect={(o) => copy(`expect = { ${JSON.stringify(o.identity)} = ${JSON.stringify(t("expect.reason"))} }`, t("expect.copied"))}
       filter={filter()}
       onFilter={(f) => filter.set(f)}
       states={statesOf(since())}

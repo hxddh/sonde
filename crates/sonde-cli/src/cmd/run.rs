@@ -869,7 +869,11 @@ async fn run_once(
         sonde_analysis::index::set(&started.path, sonde_analysis::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &run.header.endpoint);
-        let analysis = sonde_analysis::view::Analysis::of(&run, &prices);
+        let mut analysis = sonde_analysis::view::Analysis::of(&run, &prices);
+        sonde_analysis::program::mark_expected(
+            &mut analysis.observations,
+            &super::check::expect_of(&run.header),
+        );
         // against the program's run before: what the change did
         let since =
             super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);

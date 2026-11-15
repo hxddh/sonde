@@ -2203,6 +2203,7 @@ mod tests {
             identity: String::new(),
             kind: String::new(),
             saves_cost: 0.0,
+            expected: None,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
         name_findings(&mut two, &[]);
@@ -2244,6 +2245,7 @@ mod tests {
             identity: String::new(),
             kind: String::new(),
             saves_cost: 0.0,
+            expected: None,
         };
         let (r, w) = (
             finding_identity(&of("obs.prefixrate.reads")),

@@ -46,9 +46,28 @@
         },
         "expected": {
           "type": "array",
-          "description": "Findings kept on purpose (`[check] expect`).",
+          "description": "The run's findings the project keeps on purpose (`[check] expect`), each with why: leave them.",
           "items": {
-            "type": "string"
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string",
+                "description": "The finding's identity, as `show -f json` writes it."
+              },
+              "text": {
+                "type": "string",
+                "description": "Display text, not stable."
+              },
+              "expected": {
+                "type": "string",
+                "description": "Why it is kept: the reason `[check] expect` gives."
+              }
+            },
+            "required": [
+              "identity",
+              "text",
+              "expected"
+            ]
           }
         }
       },

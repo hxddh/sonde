@@ -600,13 +600,13 @@ pub struct Budget {
     pub max_requests: Option<usize>,
     pub max_waiting_ms: Option<f64>,
     pub max_errors: Option<usize>,
-    /// Findings the project expects (a habit it keeps on purpose): never a
-    /// new warning. Each matches a finding's identity, its kind
-    /// (`obs.hot`) or a part of its text.
-    pub expect: Vec<String>,
     /// Against the baseline: requests, waiting and cost may grow this much.
     /// A baseline also holds the run to no warning it did not have.
     pub tolerance: Option<f64>,
+    /// The run's times are not meaningful (the built-in demo store's): no
+    /// row holds its waiting, to a budget or to a baseline.
+    #[serde(skip)]
+    pub untimed: bool,
 }
 
 /// One line of a check.
@@ -668,27 +668,56 @@ pub struct Check {
     pub verdicts: Vec<Verdict>,
     /// Warnings the baseline did not have, as they read.
     pub new_warnings: Vec<String>,
-    /// Findings of the run the project expects (`expect`), as they read.
+    /// Findings of the run the project keeps on purpose (`expect`), each
+    /// with why.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub expected: Vec<String>,
+    pub expected: Vec<Expected>,
 }
 
-/// Whether the project expects finding `o`: an entry of `expect` is its
-/// identity, or its kind for every finding of that kind. A key in an entry
-/// is read as an identity says it (`jobs/{n}/`) by the rules of now
-/// ([`crate::profile::IDENTITY_RULES`]), whatever it was named in.
-pub fn expected(o: &Observation, expect: &[String]) -> bool {
+/// A finding the project keeps on purpose, as `check` says it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Expected {
+    pub identity: String,
+    pub text: String,
+    /// Why it is kept (`sonde.toml`'s `[check] expect`).
+    pub expected: String,
+}
+
+/// Why the project keeps finding `o` (`expect`), when it does: an entry of
+/// `expect` is its identity, or its kind for every finding of that kind
+/// (its identity first). A key in an entry is read as an identity says it
+/// (`jobs/{n}/`) by the rules of now ([`crate::profile::IDENTITY_RULES`]),
+/// whatever it was named in.
+pub fn expected<'a>(
+    o: &Observation,
+    expect: &'a std::collections::BTreeMap<String, String>,
+) -> Option<&'a str> {
     if expect.is_empty() {
-        return false;
+        return None;
     }
     let id = crate::profile::finding_identity(o);
     let kind = id.split('|').next().unwrap_or("");
     // an entry made by older rules is read by these; one that names what
     // two findings of a run share names both
-    expect.iter().any(|e| {
+    let named = expect.iter().find(|(e, _)| {
         let e = e.trim();
-        e == kind || e == id || expected_identity(e) == id || e == expected_identity(&id)
-    })
+        e == id || expected_identity(e) == id || e == expected_identity(&id)
+    });
+    named
+        .or_else(|| expect.iter().find(|(e, _)| e.trim() == kind))
+        .map(|(_, why)| why.trim())
+}
+
+/// Marks each finding the project keeps on purpose with why
+/// ([`Observation::expected`]): what `show`, `run` and `check` say of it.
+pub fn mark_expected(
+    findings: &mut [Observation],
+    expect: &std::collections::BTreeMap<String, String>,
+) {
+    for o in findings {
+        o.expected = expected(o, expect).map(String::from);
+    }
 }
 
 /// An entry of `expect` as an identity: what it is about made
@@ -700,12 +729,14 @@ fn expected_identity(e: &str) -> String {
     format!("{kind}|{}", about.join("|"))
 }
 
-/// Why an entry of `[check] expect` is no finding's identity, when it is
-/// not: its kind is none sonde finds.
-pub fn expect_error(e: &str) -> Option<String> {
+/// What is wrong with an entry of `[check] expect`, when something is: its
+/// kind is none sonde finds, or it gives no reason.
+pub fn expect_error(e: &str, why: &str) -> Option<String> {
     let kind = e.trim().split('|').next().unwrap_or("");
     if crate::profile::FINDING_KINDS.contains(&kind) {
-        return None;
+        return why.trim().is_empty().then(|| {
+            format!("[check] expect: {e:?} needs its reason, what the team keeps it for (\"{e}\" = \"rewritten by the scheduler\")")
+        });
     }
     Some(format!(
         "[check] expect = {e:?} is not a finding's identity: give one as `sonde show -f json` writes it (\"obs.hot|bucket/key\"), or a kind for all of it ({})",
@@ -845,7 +876,7 @@ pub fn check(
     if let Some(n) = budget.max_requests {
         limit("requests", r.requests as f64, n as f64, "budget");
     }
-    if let Some(ms) = budget.max_waiting_ms {
+    if let Some(ms) = budget.max_waiting_ms.filter(|_| !budget.untimed) {
         limit("waiting", r.waiting_ms, ms, "budget");
     }
     if let Some(n) = budget.max_errors {
@@ -872,7 +903,9 @@ pub fn check(
                 l.requests,
                 base.requests as f64,
             );
-            held("waiting", r.waiting_ms, l.waiting_ms, base.waiting_ms);
+            if !budget.untimed {
+                held("waiting", r.waiting_ms, l.waiting_ms, base.waiting_ms);
+            }
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
@@ -889,7 +922,7 @@ pub fn check(
                 .filter(|o| {
                     o.level == "warn"
                         && !was_warning.contains(&crate::profile::finding_identity(o))
-                        && !expected(o, &budget.expect)
+                        && o.expected.is_none()
                 })
                 .map(|o| o.text.clone())
                 .collect();
@@ -912,8 +945,13 @@ pub fn check(
         expected: run
             .3
             .iter()
-            .filter(|o| expected(o, &budget.expect))
-            .map(|o| o.text.clone())
+            .filter_map(|o| {
+                Some(Expected {
+                    identity: crate::profile::finding_identity(o),
+                    text: o.text.clone(),
+                    expected: o.expected.clone()?,
+                })
+            })
             .collect(),
     }
 }
@@ -1253,6 +1291,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
             &failed,
         ));
     }
+    let kept = |text: &str| c.expected.iter().any(|e| e.text == text);
     let place = |text: &str| {
         m.findings
             .iter()
@@ -1330,8 +1369,14 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                 &kinds,
             ));
         }
-        // new first: what this change brought, as `compare` says it
-        let new: Vec<&str> = ch.appeared.iter().map(|f| f.text.as_str()).collect();
+        // new first: what this change brought, as `compare` says it (one
+        // kept on purpose is said under Expected, with why)
+        let new: Vec<&str> = ch
+            .appeared
+            .iter()
+            .map(|f| f.text.as_str())
+            .filter(|t| !kept(t))
+            .collect();
         if !new.is_empty() {
             md.push_str("\n**New findings**\n\n");
             for t in &new {
@@ -1394,14 +1439,25 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
             if survived == 1 { "" } else { "s" }
         ));
     }
+    // kept on purpose: each with why, for a reviewer and an agent to leave
     if !c.expected.is_empty() {
-        md.push_str(&format!(
-            "\n*Expected (sonde.toml): {}*\n",
-            c.expected.len()
-        ));
+        md.push_str("\n**Expected** (sonde.toml)\n\n");
+        for e in &c.expected {
+            md.push_str(&format!(
+                "- {}{} — expected: {}\n",
+                md_text(&e.text),
+                place(&e.text),
+                md_said(&e.expected)
+            ));
+        }
     }
     // without a baseline, what the run has: its first findings
-    let findings: Vec<_> = m.findings.iter().take(5).collect();
+    let findings: Vec<_> = m
+        .findings
+        .iter()
+        .filter(|f| !kept(&f.text))
+        .take(5)
+        .collect();
     if m.change.is_none() && !findings.is_empty() {
         md.push_str("\n<details><summary>Findings</summary>\n\n");
         for f in findings {
@@ -1628,34 +1684,53 @@ mod tests {
     }
 
     #[test]
-    fn an_expected_finding_is_never_new() {
+    fn an_expected_finding_is_never_new_and_says_why() {
+        use std::collections::BTreeMap;
         let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
         let mut grown = base.clone();
         grown.extend((0..12).map(|i| rec(100 + i, "hot")));
         let (pb, prb, ob) = point(&base);
         let (pg, prg, og) = point(&grown);
-        let new = |expect: Vec<String>| {
+        let new = |expect: &[(&str, &str)]| {
+            let expect: BTreeMap<String, String> = expect
+                .iter()
+                .map(|(e, why)| (e.to_string(), why.to_string()))
+                .collect();
+            let mut og = og.clone();
+            mark_expected(&mut og, &expect);
             check(
                 (&pg, &grown, &prg, &og),
                 Some((&pb, &base, &prb, &ob)),
-                &Budget {
-                    expect,
-                    ..Default::default()
-                },
+                &Budget::default(),
             )
         };
-        assert!(new(Vec::new()).expected.is_empty());
+        assert!(new(&[]).expected.is_empty());
         // the finding, expected by its identity or its kind; never by words
         // of its text, which change
         let hot = og.iter().find(|o| o.text.contains("hot")).unwrap();
         let id = crate::profile::finding_identity(hot);
         for e in [id.clone(), id.split('|').next().unwrap().to_string()] {
-            let c = new(vec![e.clone()]);
+            let c = new(&[(&e, "rewritten by the scheduler")]);
             assert!(c.new_warnings.is_empty(), "{e}: {c:#?}");
-            assert!(!c.expected.is_empty());
+            assert_eq!(c.expected.len(), 1);
+            assert_eq!(c.expected[0].expected, "rewritten by the scheduler");
+            assert_eq!(c.expected[0].identity, id);
             assert!(c.passed);
+            // said with why in the comment, and not again as new
+            let md = check_comment(&c, &Comment::default());
+            assert!(
+                md.contains("**Expected** (sonde.toml)")
+                    && md.contains("expected: rewritten by the scheduler"),
+                "{md}"
+            );
         }
-        assert!(new(vec!["hot".into()]).expected.is_empty());
+        assert!(new(&[("hot", "x")]).expected.is_empty());
+        // its identity is said before its kind
+        let both = BTreeMap::from([
+            ("obs.hot".to_string(), "all of them".to_string()),
+            (id.clone(), "this one".to_string()),
+        ]);
+        assert_eq!(expected(hot, &both), Some("this one"));
         // a key named as the program named it is read as an identity says it
         let job = |key: &str| Observation {
             phrases: vec![crate::phrase::p("obs.hot", &[("key", key.into())])],
@@ -1664,25 +1739,70 @@ mod tests {
             saves_cost: 0.0,
             ..hot.clone()
         };
-        assert!(expected(
-            &job("b/jobs/1794558464595/state.json"),
-            &["obs.hot|b/jobs/1794558465084/state.json".into()]
-        ));
-        assert!(!expected(
-            &job("b/jobs/1794558464595/state.json"),
-            &["obs.hot|b/other".into()]
-        ));
-        // one sonde does not find is no identity
-        assert_eq!(expect_error("obs.hot|b/k"), None);
-        assert_eq!(expect_error("obs.listed"), None);
+        let one = |e: &str| BTreeMap::from([(e.to_string(), "kept".to_string())]);
+        assert_eq!(
+            expected(
+                &job("b/jobs/1794558464595/state.json"),
+                &one("obs.hot|b/jobs/1794558465084/state.json")
+            ),
+            Some("kept")
+        );
+        assert_eq!(
+            expected(
+                &job("b/jobs/1794558464595/state.json"),
+                &one("obs.hot|b/other")
+            ),
+            None
+        );
+        // one sonde does not find is no identity; each gives its reason
+        assert_eq!(expect_error("obs.hot|b/k", "kept"), None);
+        assert_eq!(expect_error("obs.listed", "kept"), None);
+        assert!(
+            expect_error("obs.listed", "")
+                .unwrap()
+                .contains("needs its reason")
+        );
         for e in ["obs.retried", "hot", "obs.hto|b/k"] {
             assert!(
-                expect_error(e)
+                expect_error(e, "kept")
                     .unwrap()
                     .contains("not a finding's identity"),
                 "{e}"
             );
         }
+    }
+
+    #[test]
+    fn a_demo_run_is_never_held_to_its_waiting() {
+        let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let (pb, prb, ob) = point(&base);
+        let (mut pg, prg, og) = point(&base);
+        pg.waiting_ms = pb.waiting_ms * 3.0 + 500.0;
+        let held = |untimed: bool| {
+            check(
+                (&pg, &base, &prg, &og),
+                Some((&pb, &base, &prb, &ob)),
+                &Budget {
+                    max_waiting_ms: Some(1.0),
+                    tolerance: Some(0.1),
+                    untimed,
+                    ..Default::default()
+                },
+            )
+        };
+        let timed = held(false);
+        assert!(!timed.passed);
+        assert_eq!(
+            timed
+                .verdicts
+                .iter()
+                .filter(|v| v.what == "waiting")
+                .count(),
+            2
+        );
+        let demo = held(true);
+        assert!(demo.passed, "{demo:#?}");
+        assert!(demo.verdicts.iter().all(|v| v.what != "waiting"));
     }
 
     #[test]

@@ -415,6 +415,45 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
 }
 
+/// The demo store's times are not meaningful (`run --demo` says so): no
+/// row of `check` holds a demo run's waiting, to a budget or a baseline.
+#[test]
+fn a_demo_run_is_never_held_to_its_waiting() {
+    let t = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
+    }
+    let rows = runs_json(t.path());
+    let (newest, older) = (
+        rows[0]["name"].as_str().unwrap(),
+        rows[1]["name"].as_str().unwrap(),
+    );
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            newest,
+            "--baseline",
+            older,
+            "--max-waiting",
+            "0",
+            "--tolerance",
+            "0",
+            "-f",
+            "json",
+        ],
+    );
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
+    let rows = doc["check"]["verdicts"].as_array().unwrap();
+    assert!(rows.iter().all(|v| v["what"] != "waiting"), "{doc:#}");
+    assert!(rows.iter().any(|v| v["what"] == "requests"), "{doc:#}");
+    assert!(
+        stderr(&c).contains("its times are not meaningful, so max-waiting is not checked"),
+        "{}",
+        stderr(&c)
+    );
+}
+
 #[test]
 fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     let t = tempfile::tempdir().unwrap();
@@ -1964,6 +2003,75 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(!c.contains("✓ fixed"), "{c}");
 }
 
+/// A finding the project keeps on purpose carries why in every output of
+/// `show` and `check`: an agent and a reviewer read it and leave it.
+#[test]
+fn an_expected_finding_says_why_in_every_output() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("data/runs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = dir.join("etl-1-base.sonde");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../analysis/tests/fixtures/etl-1-base.sonde"),
+        &run,
+    )
+    .unwrap();
+    let why = "one at a time on purpose: the store limits us";
+    std::fs::write(
+        t.path().join("sonde.toml"),
+        format!(
+            "[program]\nname = \"etl\"\nruns = \"etl\"\n[check]\nmax-requests = 100000\nexpect = {{ \"obs.serial\" = {why:?} }}\n"
+        ),
+    )
+    .unwrap();
+    let here = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {}", stderr(&o));
+        stdout(&o)
+    };
+    let file = run.to_str().unwrap();
+    let shown: serde_json::Value =
+        serde_json::from_str(&here(&["show", file, "-f", "json"])).unwrap();
+    let serial = shown["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "obs.serial")
+        .unwrap();
+    assert_eq!(serial["expected"], why);
+    // only that one
+    assert_eq!(
+        shown["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f.get("expected").is_some())
+            .count(),
+        1
+    );
+    assert!(here(&["show", file]).contains(&format!("expected: {why}")));
+    let checked: serde_json::Value =
+        serde_json::from_str(&here(&["check", file, "-f", "json"])).unwrap();
+    assert_eq!(checked["check"]["expected"][0]["expected"], why);
+    assert_eq!(checked["check"]["expected"][0]["identity"], "obs.serial|");
+    assert!(here(&["check", file]).contains(&format!("(expected: {why})")));
+    let md = here(&["check", file, "-f", "markdown"]);
+    assert!(md.contains("**Expected** (sonde.toml)"), "{md}");
+    assert!(md.contains(&format!("expected: {why}")), "{md}");
+    // a warning kept on purpose is a notice, never a warning
+    let gh = here(&["check", file, "-f", "github"]);
+    let line = gh.lines().find(|l| l.contains("(expected: ")).unwrap();
+    assert!(line.starts_with("::notice "), "{gh}");
+    assert!(line.contains(why), "{gh}");
+}
+
 /// `[check] expect` names findings by identity: words of a finding's text,
 /// or a kind sonde does not find, are a mistake in sonde.toml.
 #[test]
@@ -1984,7 +2092,7 @@ fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
     ] {
         std::fs::write(
             &cfg,
-            format!("[check]\nmax-requests = 100000\nexpect = [{expect:?}]\n"),
+            format!("[check]\nmax-requests = 100000\nexpect = {{ {expect:?} = \"kept\" }}\n"),
         )
         .unwrap();
         let c = sonde(
