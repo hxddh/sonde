@@ -6,35 +6,19 @@
 //! Rust, and the application never sees them), forwarded, and recorded in a
 //! [`RequestLog`] with the headers the application sent. Responses stream
 //! back unchanged.
+//!
+//! What it records is read by `sonde-analysis`: runs, operations, findings,
+//! programs and trials.
 
 mod asis;
 pub mod callers;
 pub mod chunked;
-pub mod episode;
+pub mod container;
 pub mod fault;
-pub mod fixes;
-pub mod fixloop;
-pub mod import;
-pub mod index;
 pub mod jvm;
-pub mod logs;
 pub mod op;
-pub mod otlp;
-pub mod phrase;
-pub mod profile;
-pub mod program;
-pub mod project;
-pub mod replay;
-pub mod report;
-pub mod session;
-pub mod share;
-pub mod signals;
-pub mod split;
-pub mod summary;
+pub mod part;
 pub mod tls;
-pub mod trial;
-pub mod trial_plan;
-pub mod view;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -56,17 +40,19 @@ use tokio::net::TcpListener;
 
 type Out = BoxBody<Bytes, std::io::Error>;
 
-/// What the proxy lets through. A recording takes [`Policy::NoDelete`]
-/// unless told otherwise (`--policy allow`, `[record] policy`, the app's
-/// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+/// What the proxy lets through. A plain run records under [`Policy::Allow`]
+/// and a trial's runs under [`Policy::NoDelete`], unless told otherwise
+/// (`--policy`, `[record] policy`, the app's Run); a proxy built by hand
+/// ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
-    /// Everything.
-    Allow,
-    /// Nothing that removes or replaces data: deletes, aborts, lifecycle
-    /// rules, bucket policies, versioning suspended, and a write over an
-    /// object the recording did not write itself ([`Written`]).
+    /// Everything: a program does with its data what it would without sonde.
     #[default]
+    Allow,
+    /// Nothing that removes data: deletes, aborts, lifecycle rules, bucket
+    /// policies, versioning suspended, but for what the recording made
+    /// itself ([`Made`]). Writes go through, over an object or not. A
+    /// trial's default.
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,
@@ -131,119 +117,47 @@ impl Policy {
     }
 }
 
-/// Whether `op` writes an object whole at its key (and so may write over one).
+/// Whether `op` writes an object whole at its key.
 pub fn writes_object(op: &str) -> bool {
     matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
 }
 
-/// The objects a recording may write over under no-delete (bucket, key):
-/// what it wrote, what earlier recordings of the same program wrote
-/// ([`Written::remember`]), and what is under a trial's own place
-/// ([`Written::own_place`]). A program that writes a key twice, a run that
-/// rewrites its last run's outputs, and a trial's runs after its clean run
-/// all write over only their own.
+/// What a recording made itself, which no-delete lets it remove: objects
+/// (and their versions) it wrote, uploads it started, buckets it created,
+/// and what is under a trial's own place ([`Made::own_place`]). A program
+/// that writes a temporary file and deletes it, or aborts its own upload,
+/// runs under no-delete as it does anywhere.
 #[derive(Debug, Default)]
-pub struct Written {
-    keys: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
-    /// What this recording wrote, in order, once each: what
-    /// [`Written::keep`] adds to the program's.
-    fresh: parking_lot::Mutex<(Vec<String>, std::collections::HashSet<String>)>,
+pub struct Made {
+    objects: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    versions: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
+    uploads: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
+    buckets: parking_lot::Mutex<std::collections::HashSet<String>>,
     /// Prefixes of `key` or `bucket/key` that are a trial's own place.
     places: parking_lot::Mutex<Vec<String>>,
-    /// Where the program's set is kept: the folder, the program, the endpoint.
-    kept: parking_lot::Mutex<Option<(std::path::PathBuf, String, String)>>,
-    /// What this recording made itself, which no-delete lets it remove.
-    made: parking_lot::Mutex<Made>,
 }
 
-/// What one recording made: objects (and their versions), uploads, buckets.
-#[derive(Debug, Default)]
-struct Made {
-    objects: std::collections::HashSet<(String, String)>,
-    versions: std::collections::HashSet<(String, String, String)>,
-    uploads: std::collections::HashSet<(String, String, String)>,
-    buckets: std::collections::HashSet<String>,
-}
-
-/// The most objects kept per program and endpoint: past it, the ones
-/// written longest ago are forgotten (and refused again).
-pub const WRITTEN_KEPT: usize = 100_000;
-
-/// The file beside a program's runs that keeps what each program wrote.
-pub fn written_file(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.join("written.json")
-}
-
-/// Program → endpoint → `bucket/key`, the newest last.
-type WrittenMap =
-    std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>;
-
-fn read_written(dir: &std::path::Path) -> WrittenMap {
-    std::fs::read(written_file(dir))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
-impl Written {
-    /// What `records` wrote: a trial's runs may write again what its clean
-    /// run wrote, which that run's policy let through.
-    pub fn of(records: &[Record]) -> Written {
-        let w = Written::default();
-        for r in records {
-            if writes_object(&r.operation)
-                && r.status.is_some_and(|s| (200..300).contains(&s))
-                && let (Some(b), Some(k)) = (&r.bucket, &r.key)
-            {
-                w.add(b, k);
-            }
-        }
-        w
-    }
-
-    /// Takes in what earlier recordings of `program` on `endpoint` wrote,
-    /// kept in `dir` (beside its runs), and keeps there what this one
-    /// writes ([`Written::keep`]). A file that does not read is taken as
-    /// none, and written anew.
-    pub fn remember(&self, dir: &std::path::Path, program: &str, endpoint: &str) {
-        let all = read_written(dir);
-        if let Some(keys) = all.get(program).and_then(|e| e.get(endpoint)) {
-            let mut set = self.keys.lock();
-            for bk in keys {
-                if let Some((b, k)) = bk.split_once('/') {
-                    set.insert((b.to_string(), k.to_string()));
+impl Made {
+    /// What `records` made: a trial's runs may remove what its clean run
+    /// made, as that run could.
+    pub fn of(records: &[Record]) -> Made {
+        let m = Made::default();
+        for r in records.iter().filter(|r| !r.is_error()) {
+            let header = |n: &str| {
+                r.response_headers()
+                    .iter()
+                    .find(|h| h.name.eq_ignore_ascii_case(n))
+                    .map(|h| h.value.as_str())
+            };
+            match (r.bucket.as_deref(), r.key.as_deref()) {
+                (Some(b), Some(k)) if writes_object(&r.kind) => {
+                    m.object(b, k, header("x-amz-version-id"))
                 }
+                (Some(b), None) if r.kind == "CreateBucket" => m.bucket(b),
+                _ => {}
             }
         }
-        *self.kept.lock() = Some((dir.to_path_buf(), program.into(), endpoint.into()));
-    }
-
-    /// Adds what this recording wrote to its program's, when it has one
-    /// ([`Written::remember`]): the newest last, at most [`WRITTEN_KEPT`].
-    pub fn keep(&self) -> std::io::Result<()> {
-        let Some((dir, program, endpoint)) = self.kept.lock().clone() else {
-            return Ok(());
-        };
-        let fresh = self.fresh.lock();
-        let (order, set) = &*fresh;
-        if order.is_empty() {
-            return Ok(());
-        }
-        let _held = crate::index::hold(&dir, "written");
-        let mut all = read_written(&dir);
-        let keys = all.entry(program).or_default().entry(endpoint).or_default();
-        keys.retain(|k| !set.contains(k));
-        keys.extend(order.iter().cloned());
-        let over = keys.len().saturating_sub(WRITTEN_KEPT);
-        keys.drain(..over);
-        // a name of its own: two programs may end at once
-        let tmp = dir.join(format!(
-            "written.json.{}.{}.tmp",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        reqlog::private::write(&tmp, serde_json::to_vec(&all)?)?;
-        std::fs::rename(&tmp, written_file(&dir))
+        m
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
@@ -255,56 +169,46 @@ impl Written {
         }
     }
 
-    pub fn has(&self, bucket: &str, key: &str) -> bool {
-        if self
-            .keys
+    /// The recording wrote `bucket/key` (as `version`, when the bucket
+    /// keeps versions): it may delete it.
+    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>) {
+        self.objects
             .lock()
-            .contains(&(bucket.to_string(), key.to_string()))
-        {
-            return true;
-        }
-        self.in_place(bucket, key)
-    }
-
-    /// The recording wrote `bucket/key` itself (as `version`, when the
-    /// bucket keeps versions): it may write it again, and delete it.
-    pub fn made(&self, bucket: &str, key: &str, version: Option<&str>) {
-        self.add(bucket, key);
-        let mut m = self.made.lock();
-        m.objects.insert((bucket.to_string(), key.to_string()));
+            .insert((bucket.to_string(), key.to_string()));
         if let Some(v) = version.filter(|v| !v.is_empty() && *v != "null") {
-            m.versions
+            self.versions
+                .lock()
                 .insert((bucket.to_string(), key.to_string(), v.to_string()));
         }
     }
 
     /// The recording started upload `id` of `bucket/key`: it may abort it.
-    pub fn made_upload(&self, bucket: &str, key: &str, id: &str) {
-        self.made
+    pub fn upload(&self, bucket: &str, key: &str, id: &str) {
+        self.uploads
             .lock()
-            .uploads
             .insert((bucket.to_string(), key.to_string(), id.to_string()));
     }
 
     /// The recording created `bucket`: it may delete it.
-    pub fn made_bucket(&self, bucket: &str) {
-        self.made.lock().buckets.insert(bucket.to_string());
+    pub fn bucket(&self, bucket: &str) {
+        self.buckets.lock().insert(bucket.to_string());
     }
 
     /// Whether removing `bucket/key` (its `version`, if named) takes only
     /// what this recording made: an object it wrote (or one under a trial's
     /// own place), a version it wrote.
     fn own_object(&self, bucket: &str, key: &str, version: Option<&str>) -> bool {
-        let m = self.made.lock();
         match version {
-            Some(v) => m
-                .versions
-                .contains(&(bucket.to_string(), key.to_string(), v.to_string())),
+            Some(v) => {
+                self.versions
+                    .lock()
+                    .contains(&(bucket.to_string(), key.to_string(), v.to_string()))
+            }
             None => {
-                m.objects.contains(&(bucket.to_string(), key.to_string())) || {
-                    drop(m);
-                    self.in_place(bucket, key)
-                }
+                self.objects
+                    .lock()
+                    .contains(&(bucket.to_string(), key.to_string()))
+                    || self.in_place(bucket, key)
             }
         }
     }
@@ -324,9 +228,8 @@ impl Written {
         let q = |n: &str| query.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
         match (op, bucket, key) {
             ("AbortMultipartUpload", Some(b), Some(k)) => q("uploadId").is_some_and(|id| {
-                self.made
+                self.uploads
                     .lock()
-                    .uploads
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
             ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
@@ -337,7 +240,7 @@ impl Written {
                         .all(|(k, v)| self.own_object(b, k, v.as_deref()))
                 })
             }
-            ("DeleteBucket", Some(b), None) => self.made.lock().buckets.contains(b),
+            ("DeleteBucket", Some(b), None) => self.buckets.lock().contains(b),
             _ => false,
         }
     }
@@ -352,17 +255,6 @@ impl Written {
             .lock()
             .iter()
             .any(|p| under(key, p) || under(&full, p))
-    }
-
-    fn add(&self, bucket: &str, key: &str) {
-        self.keys
-            .lock()
-            .insert((bucket.to_string(), key.to_string()));
-        let bk = format!("{bucket}/{key}");
-        let (order, set) = &mut *self.fresh.lock();
-        if set.insert(bk.clone()) {
-            order.push(bk);
-        }
     }
 }
 
@@ -424,7 +316,7 @@ pub struct ProxyConfig {
     /// for the ones before it, so concurrent large uploads queue rather than
     /// hold a gigabyte each.
     pub max_buffered_total: usize,
-    /// Tags every record (the `job` field), e.g. a session id.
+    /// Tags every record (the `job` field), e.g. a run id.
     pub tag: Option<String>,
     /// The keys the application signs with: made for each proxy, so only the
     /// program sonde gave them to can use the endpoint's credentials.
@@ -439,18 +331,15 @@ pub struct ProxyConfig {
     /// TLS as well as plain HTTP, on the same port (a connection that opens
     /// with a TLS handshake is answered in TLS).
     pub tls: Option<Arc<tls::Tls>>,
-    /// What the recording wrote, which no-delete lets it write again.
-    pub written: Arc<Written>,
+    /// What the recording made, which no-delete lets it remove.
+    pub made: Arc<Made>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
 /// random bytes in hex.
 pub fn client_keys() -> (String, String) {
-    use rand::RngCore;
-    let mut k = [0u8; 8];
-    let mut s = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut k);
-    rand::thread_rng().fill_bytes(&mut s);
+    let k: [u8; 8] = rand::random();
+    let s: [u8; 32] = rand::random();
     (format!("SONDE{}", hex_upper(&k)), hex_lower(&s))
 }
 
@@ -476,7 +365,7 @@ impl Default for ProxyConfig {
             allow_remote: false,
             faults: None,
             tls: None,
-            written: Arc::default(),
+            made: Arc::default(),
         }
     }
 }
@@ -487,6 +376,9 @@ struct Shared {
     cfg: ProxyConfig,
     /// The buffering budget, in MiB (`max_buffered_total`).
     buffered: Arc<tokio::sync::Semaphore>,
+    /// The region each bucket the store said is elsewhere is in
+    /// (`x-amz-bucket-region`): its requests are signed for it, as an SDK's.
+    regions: parking_lot::Mutex<std::collections::HashMap<String, String>>,
 }
 
 const MIB: usize = 1 << 20;
@@ -541,6 +433,7 @@ impl Proxy {
             log,
             cfg,
             buffered,
+            regions: Default::default(),
         });
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
@@ -627,6 +520,8 @@ impl Proxy {
         let set = [
             ("AWS_ENDPOINT_URL", url.as_str()),
             ("AWS_ENDPOINT_URL_S3", url.as_str()),
+            // s5cmd reads this one, not AWS_ENDPOINT_URL
+            ("S3_ENDPOINT_URL", url.as_str()),
             ("AWS_ACCESS_KEY_ID", self.keys.0.as_str()),
             ("AWS_SECRET_ACCESS_KEY", self.keys.1.as_str()),
             ("AWS_REGION", region.as_str()),
@@ -660,6 +555,48 @@ impl Proxy {
         .collect();
         (set, unset)
     }
+}
+
+/// The region a store's answer says a bucket is in, when it is not the one
+/// the request was signed for: AWS's redirect (301, 307) or refusal of the
+/// signature's region (400), each with `x-amz-bucket-region`.
+fn bucket_region(status: u16, headers: &http::HeaderMap, signed: &str) -> Option<String> {
+    if !matches!(status, 301 | 307 | 400) {
+        return None;
+    }
+    let region = headers.get("x-amz-bucket-region")?.to_str().ok()?.trim();
+    (!region.is_empty() && region != signed).then(|| region.to_string())
+}
+
+/// The endpoint for `region` when the store is AWS's (`s3.amazonaws.com`,
+/// `s3.<region>.amazonaws.com`, its dual-stack name): the same host in that
+/// region. Any other store's endpoint is its own, whatever the region.
+fn in_region(endpoint: &reqwest::Url, configured: &str, region: &str) -> reqwest::Url {
+    if region == configured {
+        return endpoint.clone();
+    }
+    let Some(host) = endpoint.host_str() else {
+        return endpoint.clone();
+    };
+    let moved = if host == "s3.amazonaws.com" || host == "s3-external-1.amazonaws.com" {
+        Some(format!("s3.{region}.amazonaws.com"))
+    } else {
+        [
+            ("s3.", ".amazonaws.com"),
+            ("s3.dualstack.", ".amazonaws.com"),
+            ("s3.", ".amazonaws.com.cn"),
+        ]
+        .iter()
+        .find_map(|(pre, post)| {
+            let mid = host.strip_prefix(pre)?.strip_suffix(post)?;
+            (mid == configured || !mid.contains('.')).then(|| format!("{pre}{region}{post}"))
+        })
+    };
+    let mut url = endpoint.clone();
+    if let Some(h) = moved {
+        let _ = url.set_host(Some(&h));
+    }
+    url
 }
 
 /// Serves one connection until it closes, or until the proxy stops: then
@@ -914,7 +851,7 @@ fn admit_v2(
     query: &[(String, String)],
 ) -> Result<(), String> {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let header = |k: &str| {
         parts
@@ -1088,7 +1025,7 @@ const DROP_RESPONSE: &[&str] = &[
 ];
 
 /// Query parameters of a presigned URL's own signature (SigV4 and SigV2).
-pub(crate) const PRESIGN_PARAMS: &[&str] = &[
+pub const PRESIGN_PARAMS: &[&str] = &[
     "X-Amz-Algorithm",
     "X-Amz-Credential",
     "X-Amz-Date",
@@ -1199,11 +1136,13 @@ fn full(b: Bytes) -> Out {
 /// A request the policy refuses: recorded as refused, answered 403.
 fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
     record.status = Some(403);
-    record.error_body = Some(msg.clone());
+    record.rare_mut().error_body = Some(msg.clone());
     record
+        .lists_mut()
         .response_headers
         .push(Header::new("x-sonde-proxy", "refused"));
     record
+        .lists_mut()
         .response_headers
         .push(Header::new("x-sonde-policy", shared.cfg.policy.name()));
     shared.log.push(record);
@@ -1212,61 +1151,9 @@ fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
 
 /// Whether the recording policy refused `r` (not the store, not a fault).
 pub fn refused_by_policy(r: &Record) -> bool {
-    r.response_headers
+    r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-policy"))
-}
-
-/// Whether `bucket/key` is in the store: a HEAD of sonde's own, signed
-/// with the endpoint's credentials. Not a request of the program's, so not
-/// recorded.
-async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String> {
-    let client = &shared.client;
-    let cfg = client.config();
-    let (origin, path, host) = client.address(&cfg.endpoint, Some(bucket), Some(key));
-    let mut headers = vec![("host".to_string(), host)];
-    if let Some(creds) = client.credentials().await.map_err(|e| e.to_string())? {
-        sigv4::sign_headers(
-            &mut headers,
-            "HEAD",
-            &path,
-            &[],
-            sigv4::EMPTY_SHA256,
-            &cfg.region,
-            "s3",
-            Utc::now(),
-            &creds,
-        );
-    }
-    let url = format!("{origin}{path}");
-    let send = async {
-        if s3raw::has_dot_segment(key) {
-            let empty = reqwest::Body::from(Vec::new());
-            return asis::send(
-                &http::Method::HEAD,
-                &url,
-                &headers,
-                empty,
-                cfg.ca_pem.as_deref(),
-            )
-            .await;
-        }
-        let mut rb = client.http_streaming().head(&url);
-        for (k, v) in &headers {
-            if !k.eq_ignore_ascii_case("host") {
-                rb = rb.header(k.as_str(), v.as_str());
-            }
-        }
-        rb.send().await.map_err(|e| e.to_string())
-    };
-    let resp = tokio::time::timeout(cfg.timeout, send)
-        .await
-        .map_err(|_| "no answer".to_string())??;
-    match resp.status().as_u16() {
-        200..=299 => Ok(true),
-        404 => Ok(false),
-        s => Err(format!("the store answered {s}")),
-    }
 }
 
 fn header_value(headers: &http::HeaderMap, name: &str) -> String {
@@ -1304,8 +1191,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     let client = &shared.client;
     let cfg = client.config();
+    // a bucket the store said is in another region is signed for it
+    let region = bucket
+        .as_deref()
+        .and_then(|b| shared.regions.lock().get(b).cloned())
+        .unwrap_or_else(|| cfg.region.clone());
+    let endpoint = in_region(&cfg.endpoint, &cfg.region, &region);
     let (origin, path, upstream_host) =
-        client.address(&cfg.endpoint, bucket.as_deref(), key.as_deref());
+        client.address(&endpoint, bucket.as_deref(), key.as_deref());
     let qs = sigv4::canonical_query(&query);
     let url = if qs.is_empty() {
         format!("{origin}{path}")
@@ -1315,43 +1208,42 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     // the request as the application saw it: from its arrival (a buffered
     // body's upload included) to the answer
-    let mut received = Instant::now();
+    let received = Instant::now();
     let mut record = Record {
         id: 0,
         time: Utc::now(),
-        endpoint: cfg.endpoint_id.as_str().into(),
-        operation: operation.as_str().into(),
+        kind: operation.as_str().into(),
         method: method.as_str().into(),
-        url: url.clone(),
         bucket: bucket.as_deref().map(Into::into),
         key: key.as_deref().map(Into::into),
-        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: None,
         latency_ms: 0.0,
         retries: 0,
-        request_id: None,
-        host_id: None,
-        request_headers: app_headers
-            .iter()
-            // (a control body's hash is sonde's to say: see below)
-            .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
-            .map(|(k, v)| Header::new(k, v))
-            .collect(),
-        response_headers: Vec::new(),
-        request_bytes: None,
-        response_bytes: None,
-        error_body: None,
-        request_body: None,
-        request_body_truncated: false,
-        transport_error: None,
-        region: Some(cfg.region.as_str().into()),
-        job: shared.cfg.tag.clone(),
-        first_byte_ms: None,
-        requester: None,
-        injected: None,
+        request_bytes: None.into(),
+        response_bytes: None.into(),
+        first_byte_ms: None.into(),
+        rare: reqlog::Rare {
+            endpoint: cfg.endpoint_id.as_str().into(),
+            url: url.clone(),
+            region: Some(region.as_str().into()),
+            job: shared.cfg.tag.clone(),
+            ..Default::default()
+        }
+        .into(),
+        lists: reqlog::Lists {
+            query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            request_headers: app_headers
+                .iter()
+                // (a control body's hash is sonde's to say: see below)
+                .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
+                .map(|(k, v)| Header::new(k, v))
+                .collect(),
+            ..Default::default()
+        }
+        .into(),
     };
     if presigned {
-        record.request_headers.push(Header::new(
+        record.lists_mut().request_headers.push(Header::new(
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
@@ -1362,8 +1254,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Some(why) = express(bucket.as_deref(), &operation, &parts.headers) {
         let msg = format!("sonde refused the request: {why}");
         record.status = Some(501);
-        record.error_body = Some(msg.clone());
+        record.rare_mut().error_body = Some(msg.clone());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1374,8 +1267,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Err(why) = admit(&shared.cfg, &parts, &host) {
         let msg = format!("sonde refused the request: {why}");
         record.status = Some(403);
-        record.error_body = Some(msg.clone());
+        record.rare_mut().error_body = Some(msg.clone());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1387,8 +1281,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if empty_first_segment(&host, parts.uri.path()) {
         let msg = "sonde refused the request: its path starts with an empty segment (//), so it names no bucket";
         record.status = Some(400);
-        record.error_body = Some(msg.into());
+        record.rare_mut().error_body = Some(msg.into());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1400,8 +1295,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if dot_bucket(bucket.as_deref()) {
         let msg = "sonde refused the request: its bucket is . or .., which would reach the store as another place";
         record.status = Some(400);
-        record.error_body = Some(msg.into());
+        record.rare_mut().error_body = Some(msg.into());
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
@@ -1414,7 +1310,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let mut judge_batch = false;
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let own = mode == "no-delete"
-            && shared.cfg.written.may_remove(
+            && shared.cfg.made.may_remove(
                 &operation,
                 bucket.as_deref(),
                 key.as_deref(),
@@ -1428,58 +1324,22 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
     }
 
-    // under no-delete, an object already there is written over only if
-    // this recording wrote it: a copy's target is looked for first (a HEAD
-    // of sonde's own, not recorded and not timed), a write that says no
-    // condition goes with `If-None-Match: *` and the store's 412 is the
-    // refusal. A write on `If-Match` names an object already there.
-    let mut guarded = false;
-    let mut looked = std::time::Duration::ZERO;
-    if shared.cfg.policy == Policy::NoDelete
-        && writes_object(&operation)
-        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
-        && !shared.cfg.written.has(b, k)
-    {
-        let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
-        let over = |why: &str| {
-            format!(
-                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
-            )
-        };
-        if said("if-match") {
-            return Ok(refuse(
-                &shared,
-                record,
-                over("is an object this recording did not write"),
-            ));
-        }
-        if operation == "CopyObject" {
-            let at = Instant::now();
-            let found = stored(&shared, b, k).await;
-            looked = at.elapsed();
-            match found {
-                Ok(false) => {}
-                Ok(true) => return Ok(refuse(&shared, record, over("was there before"))),
-                Err(e) => {
-                    let why = format!("may be there already (looking for it: {e})");
-                    return Ok(refuse(&shared, record, over(&why)));
-                }
-            }
-        } else {
-            guarded = !said("if-none-match");
-        }
-    }
-    received += looked;
-
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
     let chunked_te = header_value(&parts.headers, "transfer-encoding")
         .to_ascii_lowercase()
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
+    let streaming_sig = chunked::is_signed_streaming(&content_sha);
+    // a signed aws-chunked body is decoded as it arrives, unless it is a
+    // control document (read whole, kept) or its length cannot be told the
+    // store before it ends
+    let streamed = (streaming_sig && !reqlog::is_control_operation(&operation))
+        .then(|| Streamed::of(&parts.headers))
+        .flatten();
     // a body read whole waits its turn in the buffering budget, held until
     // the request is answered
-    let _budget = if chunked::is_signed_streaming(&content_sha) || (has_body && length.is_none()) {
+    let _budget = if (streaming_sig && streamed.is_none()) || (has_body && length.is_none()) {
         let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
             .parse()
             .ok()
@@ -1497,7 +1357,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a control document (DeleteObjects, a lifecycle rule) is read now: it
     // is small, it is kept on the record, and it tells one request without a
     // key from the next (two batches of deletes are two requests to fail)
-    let streaming_sig = chunked::is_signed_streaming(&content_sha);
     let mut body = Some(body);
     let mut early: Option<Bytes> = None;
     let mut body_hash: Option<String> = None;
@@ -1518,16 +1377,18 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // (kept now: a request sonde answers itself has it too)
                 let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
                     Some(Ok(d)) => {
-                        record.request_body =
+                        record.rare_mut().request_body =
                             Some(String::from_utf8_lossy(&d.payload).into_owned());
                         fault::body_hash(&d.payload)
                     }
                     _ => {
-                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                        record.rare_mut().request_body =
+                            Some(String::from_utf8_lossy(&raw).into_owned());
                         fault::body_hash(&raw)
                     }
                 };
                 record
+                    .lists_mut()
                     .request_headers
                     .push(Header::new(fault::BODY_HASH_HEADER, &hash));
                 body_hash = Some(hash);
@@ -1535,19 +1396,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
             Err(e) => {
                 let msg = format!("sonde could not read the request body: {e}");
-                record.transport_error = Some(msg.clone());
+                record.rare_mut().transport_error = Some(msg.clone());
                 shared.log.push(record);
                 return Ok(xml_error(400, "IncompleteBody", &msg));
             }
         }
     }
     if judge_batch
-        && !shared.cfg.written.may_remove(
+        && !shared.cfg.made.may_remove(
             &operation,
             bucket.as_deref(),
             key.as_deref(),
             &query,
-            record.request_body.as_deref(),
+            record.rare().request_body.as_deref(),
         )
     {
         let msg = format!(
@@ -1558,7 +1419,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Some(mode) = shared
         .cfg
         .policy
-        .refuses_document(&operation, record.request_body.as_deref())
+        .refuses_document(&operation, record.rare().request_body.as_deref())
     {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         return Ok(refuse(&shared, record, msg));
@@ -1598,18 +1459,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 while let Some(Ok(_)) = body.frame().await {}
             }
             let msg = format!("sonde answered in the store's place (scenario {name})");
-            record.injected = Some(name.clone());
+            record.rare_mut().injected = Some(name.clone());
             record.status = Some(status);
-            record.error_body = Some(format!("{code}: {msg}"));
+            record.rare_mut().error_body = Some(format!("{code}: {msg}"));
             record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
             record
+                .lists_mut()
                 .response_headers
                 .push(Header::new("x-sonde-fault", &name));
             shared.log.push(record);
             return Ok(fault_error(status, &code, &msg, &name));
         }
         Some((name, fault::Verdict::Wait(d))) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             // a program that stops waiting closes its connection, and this
             // is dropped mid-wait: the record is kept all the same, as an
             // attempt it gave up on, so that a trial reads what followed
@@ -1622,19 +1484,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             held.waited();
         }
         Some((name, fault::Verdict::LoseAnswer)) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::LoseAnswer;
         }
         Some((name, fault::Verdict::LoseRace { met, .. })) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::LoseRace(met);
         }
         Some((name, fault::Verdict::CutBody { met })) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::CutBody(met);
         }
         Some((name, fault::Verdict::HideWritten)) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::HideWritten;
         }
         None => {}
@@ -1646,21 +1508,28 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
-    // (signed, sent, and not on the record: the program did not ask it)
-    if guarded {
-        out.push(("if-none-match".into(), "*".into()));
-    }
     // no time for the whole exchange (a large body takes what it takes), only
     // for one that has stopped moving
     let idle = cfg.timeout;
     let moved = Moved::default();
+    // the payload's bytes, when the body sent is framed otherwise
+    let mut payload_len = None;
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
-        if chunked::is_signed_streaming(&content_sha) {
+        if let (Some(plan), None) = (&streamed, &early) {
+            let incoming = body.take().expect("a body not read early is still here");
+            payload_len = Some(plan.decoded);
+            plan.forward(&mut out);
+            (
+                plan.payload_hash().to_string(),
+                plan.body(incoming, moved.clone()),
+                Some(plan.sent_len()),
+            )
+        } else if streaming_sig {
             let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
                 Ok(raw) => raw,
                 Err(e) => {
                     let msg = format!("sonde could not read the request body: {e}");
-                    record.transport_error = Some(msg.clone());
+                    record.rare_mut().transport_error = Some(msg.clone());
                     shared.log.push(record);
                     return Ok(xml_error(400, "IncompleteBody", &msg));
                 }
@@ -1668,7 +1537,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let decoded = match chunked::decode(&raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    record.transport_error = Some(e.clone());
+                    record.rare_mut().transport_error = Some(e.clone());
                     shared.log.push(record);
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
@@ -1696,7 +1565,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let hash = sigv4::sha256_hex(&decoded.payload);
             let n = decoded.payload.len() as u64;
             if reqlog::is_control_operation(&operation) {
-                record.request_body = Some(String::from_utf8_lossy(&decoded.payload).into_owned());
+                record.rare_mut().request_body =
+                    Some(String::from_utf8_lossy(&decoded.payload).into_owned());
             }
             (hash, moved.body(decoded.payload.into()), Some(n))
         } else if !has_body {
@@ -1718,12 +1588,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
                     match whole(early.take(), body.take(), 1 << 20).await {
                         Ok(raw) => {
-                            record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                            record.rare_mut().request_body =
+                                Some(String::from_utf8_lossy(&raw).into_owned());
                             (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
-                            record.transport_error = Some(msg.clone());
+                            record.rare_mut().transport_error = Some(msg.clone());
                             shared.log.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
@@ -1744,7 +1615,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Ok(raw) => raw,
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
-                            record.transport_error = Some(msg.clone());
+                            record.rare_mut().transport_error = Some(msg.clone());
                             shared.log.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
@@ -1752,19 +1623,23 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     let n = raw.len() as u64;
                     // a control document sent chunked is kept too, for replay
                     if reqlog::is_control_operation(&operation) {
-                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                        record.rare_mut().request_body =
+                            Some(String::from_utf8_lossy(&raw).into_owned());
                     }
                     (hash, moved.body(raw), Some(n))
                 }
             }
         };
-    record.request_bytes = sent_len;
+    record.request_bytes = payload_len.or(sent_len).into();
 
     out.push(("host".into(), upstream_host));
+    // as sent before it is signed: signed again for another region
+    let unsigned = out.clone();
     // signing's credentials may be fetched now (STS, IMDS): not the store's time
     let fetching = Instant::now();
     let credentials = client.credentials().await;
     let fetched = fetching.elapsed();
+    let mut signed_with = None;
     match credentials {
         Ok(Some(creds)) => {
             sigv4::sign_headers(
@@ -1773,16 +1648,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 &path,
                 &query,
                 &payload_hash,
-                &cfg.region,
+                &region,
                 "s3",
                 Utc::now(),
                 &creds,
             );
+            signed_with = Some(creds);
         }
         Ok(None) => {}
         Err(e) => {
             let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));
         }
@@ -1829,11 +1705,67 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         r = send => r,
         _ = moved.quiet_for(idle) => Err(stalled(idle)),
     };
+    let mut sent = sent;
+    // the bucket is in another region (AWS says which): kept for the
+    // bucket's next requests, and a request with no body is sent again,
+    // signed for it, as an SDK would
+    if let Ok(r) = &sent
+        && let Some(b) = bucket.as_deref()
+        && let Some(moved_to) = bucket_region(r.status().as_u16(), r.headers(), &region)
+    {
+        shared
+            .regions
+            .lock()
+            .insert(b.to_string(), moved_to.clone());
+        if sent_len == Some(0)
+            && !as_is
+            && let Some(creds) = &signed_with
+        {
+            let endpoint = in_region(&cfg.endpoint, &cfg.region, &moved_to);
+            let (origin, path, host) = client.address(&endpoint, Some(b), key.as_deref());
+            let url = if qs.is_empty() {
+                format!("{origin}{path}")
+            } else {
+                format!("{origin}{path}?{qs}")
+            };
+            let mut again: Vec<(String, String)> = unsigned
+                .iter()
+                .filter(|(k, _)| !k.eq_ignore_ascii_case("host"))
+                .cloned()
+                .collect();
+            again.push(("host".into(), host));
+            sigv4::sign_headers(
+                &mut again,
+                &method,
+                &path,
+                &query,
+                &payload_hash,
+                &moved_to,
+                "s3",
+                Utc::now(),
+                creds,
+            );
+            if method == "PUT" || method == "POST" {
+                again.push(("content-length".into(), "0".into()));
+            }
+            let mut rb = client.http_streaming().request(parts.method.clone(), &url);
+            for (k, v) in &again {
+                if !k.eq_ignore_ascii_case("host") {
+                    rb = rb.header(k.as_str(), v.as_str());
+                }
+            }
+            if let Ok(r) = rb.body(Bytes::new()).send().await {
+                record.rare_mut().url = url;
+                record.rare_mut().region = Some(moved_to.as_str().into());
+                sent = Ok(r);
+            }
+        }
+    }
     record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
     let resp = match sent {
         Ok(r) => r,
         Err(msg) => {
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         }
@@ -1843,19 +1775,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let headers = s3raw::header_pairs(resp.headers());
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
-    record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
-    if guarded && status.as_u16() == 412 {
-        drain(resp, idle).await;
-        record
-            .response_headers
-            .push(Header::new("x-sonde-store-status", status.as_str()));
-        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
-        let msg = format!(
-            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
-        );
-        return Ok(refuse(&shared, record, msg));
-    }
+    record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1864,13 +1784,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case("x-amz-version-id"))
             .map(|(_, v)| v.as_str());
-        shared.cfg.written.made(b, k, version);
+        shared.cfg.made.object(b, k, version);
     }
     if status.is_success()
         && operation == "CreateBucket"
         && let (Some(b), None) = (bucket.as_deref(), key.as_deref())
     {
-        shared.cfg.written.made_bucket(b);
+        shared.cfg.made.bucket(b);
     }
     // a fault that needed the store's answer first, and cannot be done to
     // this one, was no fault: the answer goes through as the store's own
@@ -1887,7 +1807,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             if let Some(f) = faults {
                 f.unmeet(met);
             }
-            record.injected = None;
+            record.rare_mut().injected = None;
             after = After::Forward;
         }
         After::CutBody(met) => {
@@ -1898,7 +1818,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     if let Some(f) = faults {
                         f.unmeet(met);
                     }
-                    record.injected = None;
+                    record.rare_mut().injected = None;
                     after = After::Forward;
                 }
             }
@@ -1917,8 +1837,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         // the keys left out, and the rest goes as the store wrote it
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's listing stopped part way".to_string();
-            record.injected = None;
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().injected = None;
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
@@ -1929,14 +1849,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let stale = faults
                 .zip(std::str::from_utf8(&body).ok())
                 .and_then(|(f, text)| f.hide(bucket.as_deref().unwrap_or(""), text, url));
-            let name = record.injected.clone().unwrap_or_default();
+            let name = record.rare().injected.clone().unwrap_or_default();
             let sent: Bytes = match stale {
                 Some((text, hidden)) => {
                     record
+                        .lists_mut()
                         .response_headers
                         .push(Header::new("x-sonde-fault", &name));
                     for k in &hidden {
                         record
+                            .lists_mut()
                             .response_headers
                             .push(Header::new(fault::HIDDEN_HEADER, k));
                     }
@@ -1944,7 +1866,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
                 None => {
                     // nothing of this run's in it: the store's own answer
-                    record.injected = None;
+                    record.rare_mut().injected = None;
                     body
                 }
             };
@@ -1952,11 +1874,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             for (k, v) in resp_headers_kept(&headers) {
                 builder = builder.header(k, v);
             }
-            if record.injected.is_some() {
+            if record.rare().injected.is_some() {
                 builder = builder.header("x-sonde-fault", name.as_str());
             }
-            record.response_bytes = Some(sent.len() as u64);
-            record.first_byte_ms = Some(record.latency_ms);
+            record.response_bytes = Some(sent.len() as u64).into();
+            record.first_byte_ms = Some(record.latency_ms).into();
             record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
             shared.log.push(record);
             return Ok(builder
@@ -1967,7 +1889,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     }
     if after == After::HideWritten {
         // an error, or a listing too large or compressed: the store's own
-        record.injected = None;
+        record.rare_mut().injected = None;
         after = After::Forward;
     }
     if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
@@ -1975,7 +1897,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         // (its body read and let go piece by piece: a lost GET of a large
         // object is not held in memory to be thrown away)
         drain(resp, idle).await;
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         let (told, code, msg) = if after == After::LoseAnswer {
             (
                 500,
@@ -1996,13 +1918,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             )
         };
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record.status = Some(told);
-        record.error_body = Some(format!("{code}: {msg}"));
+        record.rare_mut().error_body = Some(format!("{code}: {msg}"));
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         shared.log.push(record);
         return Ok(fault_error(told, code, &msg, &name));
@@ -2016,14 +1940,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a body to be cut: the status and the whole length go out as the
     // store gave them, and the record says where the body will stop
     let cutting = cut.map(|(at, whole)| {
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(CUT_HEADER, at.to_string()));
         builder = std::mem::replace(&mut builder, Response::builder())
@@ -2042,16 +1969,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's answer stopped part way".to_string();
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
         if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
         {
-            shared.cfg.written.made_upload(b, k, &started.upload_id);
+            shared.cfg.made.upload(b, k, &started.upload_id);
         }
-        record.response_bytes = Some(body.len() as u64);
-        record.first_byte_ms = Some(record.latency_ms);
+        record.response_bytes = Some(body.len() as u64).into();
+        record.first_byte_ms = Some(record.latency_ms).into();
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         shared.log.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
@@ -2062,20 +1989,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        record.response_bytes = Some(body.len() as u64);
+        record.response_bytes = Some(body.len() as u64).into();
         if !body.is_empty() {
-            record.error_body = Some(String::from_utf8_lossy(&body).into_owned());
+            record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
         }
         shared.log.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
-    record.response_bytes = resp.content_length();
+    record.response_bytes = resp.content_length().into();
     // the headers are the first byte; the record is logged once the body has
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
-    record.first_byte_ms = Some(record.latency_ms);
-    let keys = (reqlog::is_listing(&record.operation) && status.is_success())
-        .then(reqlog::KeyCounter::default);
+    record.first_byte_ms = Some(record.latency_ms).into();
+    let keys =
+        (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
     let mut pending = Pending {
         keys,
         record: Some(record),
@@ -2158,15 +2085,17 @@ impl Drop for GivenUp {
         let Some(mut record) = self.record.take() else {
             return;
         };
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
-        record.transport_error = Some(format!(
+        record.rare_mut().transport_error = Some(format!(
             "the program stopped waiting while sonde held the request (scenario {name})"
         ));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(fault::GIVEN_UP_HEADER, "1"));
         self.log.log.push(record);
@@ -2236,6 +2165,157 @@ async fn whole(
             .map(|c| c.to_bytes())
             .map_err(|e| e.to_string()),
         (None, None) => Ok(Bytes::new()),
+    }
+}
+
+/// A signed `aws-chunked` body sent on as it arrives: its chunks'
+/// signatures cannot be made again, so the payload goes unsigned, as it is
+/// or, with a trailing checksum, framed again as an unsigned `aws-chunked`
+/// body that carries it to the store. Either way the store is told the
+/// length first, which the request's headers give.
+struct Streamed {
+    /// The payload's bytes (`x-amz-decoded-content-length`).
+    decoded: u64,
+    /// The trailing headers it names (`x-amz-trailer`), with how long each
+    /// value is; none: the payload goes as it is.
+    trailers: Vec<(String, usize)>,
+}
+
+/// The chunks a payload with a trailer is framed in again.
+const RECHUNK: usize = 64 << 10;
+
+impl Streamed {
+    /// How a request's body is streamed, when it can be: its payload's
+    /// length said, and each trailer one whose length is known.
+    fn of(headers: &http::HeaderMap) -> Option<Streamed> {
+        let decoded = header_value(headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok()?;
+        let trailers = header_value(headers, "x-amz-trailer")
+            .split(',')
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty())
+            .map(|t| chunked::checksum_len(&t).map(|n| (t, n)))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Streamed { decoded, trailers })
+    }
+
+    fn payload_hash(&self) -> &'static str {
+        if self.trailers.is_empty() {
+            sigv4::UNSIGNED_PAYLOAD
+        } else {
+            "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+        }
+    }
+
+    fn sent_len(&self) -> u64 {
+        if self.trailers.is_empty() {
+            return self.decoded;
+        }
+        let names: Vec<(usize, usize)> = self.trailers.iter().map(|(t, n)| (t.len(), *n)).collect();
+        chunked::Encoder::len(self.decoded, RECHUNK as u64, &names)
+    }
+
+    /// The headers forwarded: without the framing, when there is none.
+    fn forward(&self, out: &mut Vec<(String, String)>) {
+        if !self.trailers.is_empty() {
+            return;
+        }
+        out.retain(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            k != "x-amz-decoded-content-length" && k != "x-amz-trailer"
+        });
+        for (k, v) in out.iter_mut() {
+            if k.eq_ignore_ascii_case("content-encoding") {
+                *v = v
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|e| !e.eq_ignore_ascii_case("aws-chunked"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+            }
+        }
+        out.retain(|(k, v)| !(k.eq_ignore_ascii_case("content-encoding") && v.is_empty()));
+    }
+
+    /// The body sent: decoded (and framed again) a piece at a time. A body
+    /// that is not aws-chunked, or whose trailers are not the ones named,
+    /// fails the request (the store has not been told all of it).
+    fn body(&self, incoming: Incoming, moved: Moved) -> reqwest::Body {
+        struct At {
+            from: http_body_util::BodyDataStream<Incoming>,
+            decoder: chunked::Decoder,
+            encoder: Option<chunked::Encoder>,
+            named: Vec<(String, usize)>,
+            done: bool,
+        }
+        let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
+        let at = At {
+            from: incoming.into_data_stream(),
+            decoder: chunked::Decoder::default(),
+            encoder: (!self.trailers.is_empty()).then(|| chunked::Encoder::new(RECHUNK)),
+            named: self.trailers.clone(),
+            done: false,
+        };
+        let pieces = futures::stream::unfold(at, move |mut at| {
+            let moved = moved.clone();
+            async move {
+                if at.done {
+                    return None;
+                }
+                loop {
+                    let mut out = Vec::new();
+                    match at.from.next().await {
+                        Some(Ok(piece)) => {
+                            moved.touch();
+                            if let Err(e) = at.decoder.feed(&piece, &mut out) {
+                                at.done = true;
+                                return Some((Err(bad(e)), at));
+                            }
+                            if let Some(e) = &mut at.encoder {
+                                out = e.push(&out);
+                            }
+                            if !out.is_empty() {
+                                return Some((Ok(Bytes::from(out)), at));
+                            }
+                        }
+                        Some(Err(e)) => {
+                            at.done = true;
+                            return Some((Err(std::io::Error::other(e)), at));
+                        }
+                        None => {
+                            at.done = true;
+                            if let Err(e) = at.decoder.finish() {
+                                return Some((Err(bad(e)), at));
+                            }
+                            let Some(e) = &mut at.encoder else {
+                                return None;
+                            };
+                            // the trailers named, in their order, each as long as said
+                            let mut trailers = Vec::new();
+                            for (name, len) in &at.named {
+                                match at.decoder.trailers.iter().find(|(k, _)| k == name) {
+                                    Some((_, v)) if v.len() == *len => {
+                                        trailers.push((name.clone(), v.clone()))
+                                    }
+                                    _ => {
+                                        return Some((
+                                            Err(bad(format!(
+                                                "aws-chunked: no trailer {name} of its length"
+                                            ))),
+                                            at,
+                                        ));
+                                    }
+                                }
+                            }
+                            let tail = e.finish(&trailers);
+                            return Some((Ok(Bytes::from(tail)), at));
+                        }
+                    }
+                }
+            }
+        });
+        reqwest::Body::wrap_stream(pieces)
     }
 }
 
@@ -2364,27 +2444,32 @@ impl Drop for Pending {
                 .saturating_sub(self.fetched)
                 .as_secs_f64()
                 * 1000.0;
-            if r.response_bytes.is_none() || self.read > 0 || self.cut.is_some() {
-                r.response_bytes = Some(self.read);
+            if r.response_bytes.get().is_none() || self.read > 0 || self.cut.is_some() {
+                r.response_bytes = Some(self.read).into();
             }
             // a 200 with fewer bytes is not a clean 200
             if let Some(c) = self.cutting.take() {
                 self.cut = None;
-                r.transport_error = Some(format!(
+                r.rare_mut().transport_error = Some(format!(
                     "sonde cut the response body after {} of {} bytes on purpose (scenario {})",
                     self.read, c.whole, c.name
                 ));
             }
             if let Some(why) = self.cut.take() {
-                r.transport_error = Some(format!(
+                r.rare_mut().transport_error = Some(format!(
                     "the response body was cut after {} byte{}: {why}",
                     self.read,
                     if self.read == 1 { "" } else { "s" }
                 ));
             }
             // (a listing cut short listed no number of keys)
-            if let Some(k) = self.keys.take().filter(|_| r.transport_error.is_none()) {
-                r.response_headers
+            if let Some(k) = self
+                .keys
+                .take()
+                .filter(|_| r.rare().transport_error.is_none())
+            {
+                r.lists_mut()
+                    .response_headers
                     .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
             }
             self.log.log.push(r);
@@ -2395,6 +2480,50 @@ impl Drop for Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bucket_elsewhere_is_reached_in_its_region() {
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        let moved = |u: &str, to: &str| in_region(&url(u), "us-east-1", to).to_string();
+        assert_eq!(
+            moved("https://s3.us-east-1.amazonaws.com/", "eu-west-1"),
+            "https://s3.eu-west-1.amazonaws.com/"
+        );
+        assert_eq!(
+            moved("https://s3.amazonaws.com", "ap-south-1"),
+            "https://s3.ap-south-1.amazonaws.com/"
+        );
+        assert_eq!(
+            moved("https://s3.dualstack.us-east-1.amazonaws.com", "eu-west-1"),
+            "https://s3.dualstack.eu-west-1.amazonaws.com/"
+        );
+        // another store is its own endpoint, whatever the region
+        assert_eq!(
+            moved("http://127.0.0.1:9000", "eu-west-1"),
+            "http://127.0.0.1:9000/"
+        );
+        assert_eq!(
+            moved("https://s3.us-east-1.amazonaws.com", "us-east-1"),
+            "https://s3.us-east-1.amazonaws.com/"
+        );
+        let mut h = http::HeaderMap::new();
+        h.insert("x-amz-bucket-region", "eu-west-1".parse().unwrap());
+        assert_eq!(
+            bucket_region(301, &h, "us-east-1").as_deref(),
+            Some("eu-west-1")
+        );
+        assert_eq!(
+            bucket_region(400, &h, "us-east-1").as_deref(),
+            Some("eu-west-1")
+        );
+        // the region it was signed for, or an answer that is no redirect
+        assert_eq!(bucket_region(301, &h, "eu-west-1"), None);
+        assert_eq!(bucket_region(200, &h, "us-east-1"), None);
+        assert_eq!(
+            bucket_region(301, &http::HeaderMap::new(), "us-east-1"),
+            None
+        );
+    }
 
     #[test]
     fn targets() {
@@ -2517,39 +2646,15 @@ mod budget_tests {
     }
 
     #[test]
-    fn a_program_writes_over_what_its_earlier_runs_and_its_trial_places_hold() {
-        let dir = tempfile::tempdir().unwrap();
-        let dir = dir.path();
-        let first = Written::default();
-        first.remember(dir, "python etl.py", "http://s");
-        first.add("data", "out/1");
-        first.keep().unwrap();
-        let next = Written::default();
-        next.remember(dir, "python etl.py", "http://s");
-        assert!(next.has("data", "out/1"), "the program's last run wrote it");
-        assert!(!next.has("data", "out/2"));
-        for (program, endpoint) in [
-            ("python other.py", "http://s"),
-            ("python etl.py", "http://t"),
-        ] {
-            let other = Written::default();
-            other.remember(dir, program, endpoint);
-            assert!(!other.has("data", "out/1"), "{program} on {endpoint}");
-        }
-        // what it writes this time is kept beside what it wrote before
-        next.add("data", "out/2");
-        next.keep().unwrap();
-        let third = Written::default();
-        third.remember(dir, "python etl.py", "http://s");
-        assert!(third.has("data", "out/1") && third.has("data", "out/2"));
-        // a trial's place is its own, to a word's end
-        let w = Written::default();
-        w.own_place("tclean");
-        w.own_place("b/etl-slowdown");
-        assert!(w.has("data", "tclean/x") && w.has("data", "tclean"));
-        assert!(!w.has("data", "tcleanup/x"));
-        assert!(w.has("b", "etl-slowdown/k") && !w.has("c", "etl-slowdown/k"));
-        // nothing remembered: nothing kept
-        Written::default().keep().unwrap();
+    fn a_trials_place_is_its_own_to_a_words_end() {
+        let m = Made::default();
+        m.own_place("tclean");
+        m.own_place("b/etl-slowdown");
+        let removes = |b: &str, k: &str| m.may_remove("DeleteObject", Some(b), Some(k), &[], None);
+        assert!(removes("data", "tclean/x") && removes("data", "tclean"));
+        assert!(!removes("data", "tcleanup/x"));
+        assert!(removes("b", "etl-slowdown/k") && !removes("c", "etl-slowdown/k"));
+        m.object("data", "tmp/part", None);
+        assert!(removes("data", "tmp/part") && !removes("data", "tmp/other"));
     }
 }

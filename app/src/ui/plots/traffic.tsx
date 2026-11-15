@@ -1,4 +1,4 @@
-// Traffic: what ran when and at once — the lanes, the session's shape and
+// Traffic: what ran when and at once — the lanes, the run's shape and
 // its mark in a row, bytes each way, how large the bodies were.
 
 import { computed, signal, Text, View } from "nsh";
@@ -8,9 +8,9 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER } from "./system";
+import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, runSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER, slotMs, sliceAt } from "./system";
 import { terminal, textual, SimpleTable, TEXT, TONE } from "../kit";
-import { bytesSaid, lanesSaid } from "./answers";
+import { bytesSaid, lanesSaid, slicePeak } from "./answers";
 
 // --- what ran at once ----------------------------------------------------------------
 
@@ -30,7 +30,7 @@ export function lanesOf(samples: { tMs: number; ms: number }[]): number[] {
   return lane;
 }
 
-/** Every request of the session, as its slices count them: more than `samples` holds once a session is sampled. */
+/** Every request of the run, as its slices count them: more than `samples` holds once a run is sampled. */
 export const requestsOf = (p: Profile) => p.rate.reduce((n, b) => n + b.ok + b.miss + b.client + b.server, 0);
 
 const LANES = 24;
@@ -68,12 +68,12 @@ export function laneCells(samples: { tMs: number; ms: number; lane: number; stat
   return [...cells.entries()].sort((p, q) => p[0] - q[0]).map(([, c]) => c);
 }
 
-/** The session's requests lane by lane: each a run of cells from its start
+/** The run's requests lane by lane: each a run of cells from its start
  * to its end, in its outcome's color, on the first lane free. What ran at
  * once is stacked; what waited for the one before follows it on its lane; a
  * long request is a long run. A press opens the request under the pointer. */
 export function Lanes(props: { profile: Profile; domainMs?: [number, number] | null; onRequest?: (id: number) => void; /** the requests a fault scenario answered, by id */ injected?: number[]; /** the moment the pointer rests on, shared by the pane's charts */ focus?: Focus }) {
-  const domain = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
+  const domain = (): [number, number] => props.domainMs ?? runSpan(props.profile, props.profile.rate.length);
   const all = computed(() => {
     const lane = lanesOf(props.profile.samples);
     return props.profile.samples.map((x, i) => ({ ...x, lane: lane[i] }));
@@ -134,7 +134,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
           </Plot>
         </BaseButton>
         </If>
-        {/* the outcomes the session had, and only those: no "Failed" under a run that never failed */}
+        {/* the outcomes the run had, and only those: no "Failed" under a run that never failed */}
         <Legend items={[...OUTCOMES.filter((o) => all().some((x) => toneOf(x, marked()) === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected)]}>
           <If when={all().length < total()}>
             <ChartNote testID="lanes-sampled">{t("plots.sampled", { n: count(all().length), of: count(total()) })}</ChartNote>
@@ -148,13 +148,13 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   );
 }
 
-// --- the shape of a session ---------------------------------------------------
+// --- the shape of a run ---------------------------------------------------
 
 type Slice = { tMs: number; ok: number; miss: number; client: number; server: number; injected: number; inFlight: number };
 /** A slice's count of each outcome, by its field (a failure is the store's: `server`). */
 const FIELD: Record<Exclude<Outcome, "injected">, "ok" | "miss" | "client" | "server"> = { ok: "ok", miss: "miss", client: "client", fail: "server" };
 
-/** The session's slices with the most requests in flight in each. A fault
+/** The run's slices with the most requests in flight in each. A fault
  * scenario's answers (`injected`, by id) are counted apart, in their own
  * tone: taken from the outcome they looked like, never the store's failure. */
 export function slices(p: Profile, injected?: number[]): Slice[] {
@@ -166,7 +166,7 @@ export function slices(p: Profile, injected?: number[]): Slice[] {
   if (marked.size)
     for (const x of p.samples) {
       if (!marked.has(x.id)) continue;
-      const i = Math.min(Math.floor(x.tMs / p.binMs), p.rate.length - 1);
+      const i = Math.min(sliceAt(p, x.tMs), p.rate.length - 1);
       const c = apart.get(i) ?? { ok: 0, miss: 0, client: 0, server: 0 };
       c[FIELD[statusTone(x.status ?? null) as Exclude<Outcome, "injected">]] += 1;
       apart.set(i, c);
@@ -192,11 +192,11 @@ export function shapeSentence(p: Profile): string {
 }
 
 /**
- * Requests over a session: a bar per slice of time, stacked by outcome, and
+ * Requests over a run: a bar per slice of time, stacked by outcome, and
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's session), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; /** the stretch chosen elsewhere (the Time pane's), as slices: marked, the rest quiet */ picked?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number; /** the requests a fault scenario answered, by id: their own tone in the stack */ injected?: number[] }) {
+export function RunShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's run), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; /** the stretch chosen elsewhere (the Time pane's), as slices: marked, the rest quiet */ picked?: [number, number] | null; focus?: Focus; /** the strip under a run's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the run's signals count it */ peak?: number; /** the requests a fault scenario answered, by id: their own tone in the stack */ injected?: number[] }) {
   const hovered = signal<number | null>(null);
   // zoomed: the slices from `range[0]` to `range[1]`, wider each
   const from = () => props.range?.[0] ?? 0;
@@ -208,8 +208,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   // the plot's own top: room over the busiest slice for the scale's words, where it is written
   const room = () => (props.axis && !props.strip ? HEADROOM.plot : 1);
   const ceiling = () => top() * room();
-  // the most in flight: the session's own figure (`peak`, what the In flight tile says) while
-  // the whole session shows, the stretch's own when zoomed
+  // the most in flight: the run's own figure (`peak`, what the In flight tile says) while
+  // the whole run shows, the stretch's own when zoomed
   const flightTop = () => (props.range ? Math.max(0, ...rows().map((r) => r.inFlight)) : (props.peak ?? props.profile.peakInFlight));
   // where the findings happened: their numbers over the slices they start in
   const marked = () => {
@@ -217,8 +217,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     // numbers a few slices apart would print over each other: they share the first one's place
     const near = Math.max(2, Math.round(rows().length / 40));
     const at = (props.marks ?? [])
-      // a finding at the session's last instant is in its last slice
-      .map((k) => ({ n: k.n, i: Math.min(Math.floor(k.tMs / props.profile.binMs), slices(props.profile).length - 1) - from() }))
+      // a finding at the run's last instant is in its last slice
+      .map((k) => ({ n: k.n, i: Math.min(sliceAt(props.profile, k.tMs), slices(props.profile).length - 1) - from() }))
       .filter((k) => k.i >= 0 && k.i < rows().length)
       .sort((a, b) => a.i - b.i || a.n - b.n);
     let last = -Infinity;
@@ -233,11 +233,11 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   // the stretch shown, in ms: what the one time axis names
   const shownMs = (): [number, number] => [rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + props.profile.binMs];
   // the slices a fault scenario answered a request in
-  const faulted = () => new Set((props.faults ?? []).map((ms) => Math.min(Math.floor(ms / props.profile.binMs), slices(props.profile).length - 1) - from()).filter((i) => i >= 0 && i < rows().length));
+  const faulted = () => new Set((props.faults ?? []).map((ms) => Math.min(sliceAt(props.profile, ms), slices(props.profile).length - 1) - from()).filter((i) => i >= 0 && i < rows().length));
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   const peakBin = () => {
     const at = props.profile.peakAtMs;
-    const i = Math.floor(at / props.profile.binMs) - from();
+    const i = sliceAt(props.profile, at) - from();
     return props.profile.peakInFlight > 1 && i >= 0 && i < rows().length ? i : null;
   };
   // a slice pressed, or the stretch chosen (`picked`): what it leaves out turns quiet, it does not go
@@ -259,7 +259,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     // a handful of requests has no shape worth a strip; a chart of its own (the Time pane's, with its axes) draws them
     <If when={!terminal() && rows().length > 1 && ((props.axis && !props.strip) || props.profile.samples.length >= 12)} else={<Text class="hidden text-muted-foreground terminal:flex">{shapeSentence(props.profile)}</Text>}>
       <BaseButton
-        testID={props.testID ?? "session-shape"}
+        testID={props.testID ?? "run-shape"}
         accessibilityLabel={shapeSentence(props.profile)}
         disabled={!props.onSlice}
         onPress={() => {
@@ -298,14 +298,14 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           {/* what sonde answered in the store's place: its own tone, never a failure's */}
           <Bar value="injected" stack="r" color={tone("injected")} cornerRadii={TIP.up} />
           <Line y="inFlight" scale="y2" curve="stepAfter" class={`${IN_FLIGHT.stroke} ${STROKE.line}`} hoverDotClass="hidden" />
-          {/* full width: when (from the session's start) and how many at once */}
+          {/* full width: when (from the run's start) and how many at once */}
           <If when={props.axis}>
             <TimeAxis domain={shownMs()} slices={rows().length} />
           </If>
           {/* how many: zero and the busiest slice's requests; at the far edge, the most in flight in
-              what is shown (the whole session's is the In flight tile's number) */}
+              what is shown (the whole run's is the In flight tile's number) */}
           <If when={props.axis && !props.strip}>
-            <ValueAxis peak={top()} say={(v) => t("shape.peak", { n: count(v) })} />
+            <ValueAxis peak={top()} say={(v) => slicePeak(v, props.profile.binMs)} />
             <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={LABEL.peakEnd} />
           </If>
           {/* the moment another chart rests on */}
@@ -336,7 +336,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   );
 }
 
-/** What the shape's colours and marks stand for: the outcomes the session
+/** What the shape's colours and marks stand for: the outcomes the run
  * had, the line of requests in flight, and (with `marks`) the findings'
  * numbers. The whole legend of the timeline. */
 export function shapeLegend(p: Profile, marks: boolean, injected?: number[]): LegendItem[] {
@@ -349,21 +349,21 @@ export function shapeLegend(p: Profile, marks: boolean, injected?: number[]): Le
   ];
 }
 
-/** The line of requests in flight over a session's slices, and its legend's stroke: quiet, and seen on the card in dark too. */
+/** The line of requests in flight over a run's slices, and its legend's stroke: quiet, and seen on the card in dark too. */
 const IN_FLIGHT = { stroke: "stroke-muted-foreground/80", swatch: "border-muted-foreground/80" } as const;
 
-/** When a fault scenario answered a request, in ms from the session's start:
- * the injected requests among those the session keeps (`samples`). */
+/** When a fault scenario answered a request, in ms from the run's start:
+ * the injected requests among those the run keeps (`samples`). */
 export function faultMoments(p: Profile, injected: number[] | undefined): number[] {
   if (!injected?.length) return [];
   const ids = new Set(injected);
   return p.samples.filter((x) => ids.has(x.id)).map((x) => x.tMs);
 }
 
-// --- a session in a row --------------------------------------------------------------
+// --- a run in a row --------------------------------------------------------------
 
-/** A session's requests over its time, a few points high: drawn once per
- * session, kept as it is when its row scrolls away and back. */
+/** A run's requests over its time, a few points high: drawn once per
+ * run, kept as it is when its row scrolls away and back. */
 export function Sparkline(props: { shape: number[]; id: string; class?: string; /** its tone: a signal's own (failures in the server's), or quiet (the run before, beside the run after) */ tone?: "plain" | "fail" | "client" | "injected" | "quiet"; /** what it draws: counts as bars (the default), a level as steps (requests in flight), a measure as a line (latency) */ kind?: "bars" | "steps" | "line"; /** shown whole at once: a mark beside a figure does not draw itself in */ still?: boolean }) {
   const rows = () => props.shape.map((n, i) => ({ i, n }));
   const stroke = () => (props.tone === "fail" ? "stroke-status-server" : props.tone === "client" ? "stroke-status-client" : props.tone === "injected" ? "stroke-status-injected" : props.tone === "quiet" ? "stroke-muted-foreground" : "stroke-chart-1");
@@ -377,13 +377,29 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string; 
       </If>
     </Plot>
   );
+  // a terminal: the same shape in block characters, as `sonde show` prints it
+  const ink = () => (props.tone === "fail" ? "text-status-server" : props.tone === "client" ? "text-status-client" : props.tone === "injected" ? "text-status-injected" : props.tone === "quiet" ? "text-muted-foreground" : "text-chart-1");
   return (
-    <If when={!terminal() && props.shape.some((n) => n > 0)}>
-      <If when={!props.still} else={plot()}>
-        <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+    <If when={props.shape.some((n) => n > 0)}>
+      <If when={!terminal()} else={<Text class={ink()} accessibilityLabel="">{blocks(props.shape)}</Text>}>
+        <If when={!props.still} else={plot()}>
+          <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+        </If>
       </If>
     </If>
   );
+}
+
+/** The eight heights of a block character, lowest first. */
+const BLOCKS = "▁▂▃▄▅▆▇█";
+/** A shape in block characters, `columns` wide at most (each the most of the slices it stands for, so a burst is
+ * not averaged away); a slice of none is the lowest block, the baseline. */
+export function blocks(shape: number[], columns = 16): string {
+  if (shape.length === 0) return "";
+  const n = Math.min(columns, shape.length);
+  const cols = Array.from({ length: n }, (_, c) => Math.max(...shape.slice(Math.floor((c * shape.length) / n), Math.max(Math.floor(((c + 1) * shape.length) / n), Math.floor((c * shape.length) / n) + 1))));
+  const top = Math.max(...cols, 1e-12);
+  return cols.map((v) => BLOCKS[v <= 0 ? 0 : Math.min(7, Math.max(1, Math.round((v / top) * 7)))]).join("");
 }
 
 // --- how requests were answered ---------------------------------------------------
@@ -392,26 +408,11 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string; 
 // --- the live view ----------------------------------------------------------------
 
 
-/** What the last few seconds of a session looked like: requests a second,
- * the share that failed, in flight now and the p95, for the live view. */
-export function liveFigures(p: Profile, windowMs = 1000) {
-  // the last second (or more, when a slice is longer): a few slices of a
-  // short session are milliseconds, and 4 requests in them are not "200 a second"
-  const slices = Math.max(1, Math.ceil(windowMs / Math.max(p.binMs, 1e-3)));
-  const recent = p.rate.slice(-slices);
-  const n = recent.reduce((s, b) => s + b.ok + b.miss + b.client + b.server, 0);
-  const failed = recent.reduce((s, b) => s + b.client + b.server, 0);
-  const secs = Math.max(slices * p.binMs, windowMs) / 1000;
-  const p95 = Math.max(0, ...recent.map((b) => b.p95Ms));
-  const inFlight = p.inFlight.length ? p.inFlight[p.inFlight.length - 1].n : 0;
-  return { perSecond: n / secs, failedShare: n ? failed / n : 0, inFlight, p95 };
-}
-
-/** Bytes of bodies a second over the session: sent above the line, received
+/** Bytes of bodies a second over the run: sent above the line, received
  * below it, on the timeline's slices. */
 export function BytesOverTime(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {
   const s = () => props.signals;
-  const rows = () => stretch(s().bytes.up.map((up, i) => ({ tMs: i * s().binMs, up, down: -(s().bytes.down[i] ?? 0) })), props.range);
+  const rows = () => stretch(s().bytes.up.map((up, i) => ({ tMs: slotMs(s(), i), up, down: -(s().bytes.down[i] ?? 0) })), props.range);
   // room for the scale's words over the most sent and under the most received: each half a plot of its own
   const top = () => Math.max(1, ...rows().map((r) => r.up)) * HEADROOM.strip;
   const bottom = () => Math.min(-1, ...rows().map((r) => r.down)) * HEADROOM.strip;

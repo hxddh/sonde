@@ -1,27 +1,28 @@
 //! `sonde check`: a run held to a budget and a baseline.
 
+use sonde_analysis::program::{money_text, ms_text};
 use sonde_proxy::callers::code_place;
-use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::project::Project;
+use sonde_analysis::run::{RunFile, RunHeader};
+use sonde_analysis::view::Analysis;
 use sonde_core::Sonde;
-use sonde_proxy::project::Project;
-use sonde_proxy::session::{Session, SessionHeader};
-use sonde_proxy::view::Analysis;
 
-use crate::output::{self, Format};
+use crate::output;
 
 use super::record::*;
 
 #[derive(Args)]
 pub struct CheckArgs {
-    /// The run to check (default: the newest session).
+    /// The run to check (default: the newest run).
     file: Option<PathBuf>,
-    /// A run to hold it to: --tolerance and --no-new-warnings compare with it.
-    /// `auto` is the baseline set for the run's program (in the app, or with --set-baseline).
+    /// A run to hold it to: its requests, waiting, cost and errors with
+    /// --tolerance of room, and no warning it did not have. `auto` is the
+    /// baseline set for the run's program (in the app, or with --set-baseline).
     #[arg(long)]
     baseline: Option<String>,
     /// Make this run its program's baseline, for later `--baseline auto` (and the app).
@@ -39,22 +40,14 @@ pub struct CheckArgs {
     /// writes it (`2s`, `250ms`).
     #[arg(long, value_parser = duration_arg, value_name = "TIME")]
     max_waiting: Option<f64>,
-    /// At most this request cost (in the settings' currency).
-    #[arg(long)]
-    max_cost: Option<f64>,
-    /// At most this many failed requests.
+    /// At most this many requests that failed after their retries (a miss
+    /// is no failure).
     #[arg(long)]
     max_errors: Option<usize>,
-    /// 95% of the requests within this long: ms, or `250ms`, `2s`.
-    #[arg(long, value_parser = duration_arg, value_name = "TIME")]
-    max_p95: Option<f64>,
     /// Against the baseline: requests, waiting and cost may grow this many
     /// percent (10 unless sonde.toml says).
     #[arg(long)]
     tolerance: Option<f64>,
-    /// Against the baseline: fail on a warning it did not have.
-    #[arg(long)]
-    no_new_warnings: bool,
     /// Write `sonde.toml` here with a `[check]` that this run passes (its
     /// figures with --tolerance, 10%, of room) and, when the program has no
     /// name, a `[program] name` for its runs and its baseline to go by.
@@ -66,7 +59,7 @@ pub struct CheckArgs {
     /// kept by CI) the comment ends with.
     #[arg(long, value_name = "URL")]
     report_url: Option<String>,
-    /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
+    /// The format written: text, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
         short = 'f',
@@ -77,20 +70,34 @@ pub struct CheckArgs {
     format: Format,
 }
 
+/// What `check` writes: text and JSON, as every command, and for CI a pull
+/// request's comment and GitHub Actions annotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+pub enum Format {
+    #[default]
+    Text,
+    Json,
+    /// A pull request's comment.
+    Markdown,
+    /// GitHub Actions annotations: on the run's summary and, where a finding
+    /// names its code, on that line of the diff.
+    Github,
+}
+
 /// A run as `check` reads it: its figures, profile, findings and header,
 /// and the run as `compare` holds it when it is compared.
 type Checked = (
-    sonde_proxy::program::RunPoint,
-    sonde_proxy::profile::Profile,
-    Vec<sonde_proxy::episode::Observation>,
-    SessionHeader,
-    Option<sonde_proxy::profile::Run>,
+    sonde_analysis::program::RunPoint,
+    sonde_analysis::profile::Profile,
+    Vec<sonde_analysis::episode::Observation>,
+    RunHeader,
+    Option<sonde_analysis::profile::Run>,
 );
 
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
 /// A duration on the command line, as `sonde.toml` writes one.
 fn duration_arg(text: &str) -> Result<f64, String> {
-    sonde_proxy::project::duration_text(text)
+    sonde_analysis::project::duration_text(text)
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
 }
 
@@ -98,7 +105,7 @@ fn duration_arg(text: &str) -> Result<f64, String> {
 /// program by name when it names one ([`super::record::of_program`]), else
 /// recorded in the project's folder or below it. Another program's run is
 /// never held to the project's `[check]`.
-fn of_project(h: &SessionHeader, project: &Path, name: Option<&str>) -> bool {
+fn of_project(h: &RunHeader, project: &Path, name: Option<&str>) -> bool {
     match name {
         Some(n) => super::record::of_program(h, n),
         None => {
@@ -114,12 +121,7 @@ fn of_project(h: &SessionHeader, project: &Path, name: Option<&str>) -> bool {
 
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
 /// with room to grow, and the CI step that holds every run to it.
-fn init_project(
-    a: &CheckArgs,
-    run: &sonde_proxy::program::RunPoint,
-    header: &SessionHeader,
-    dirs: &[PathBuf],
-) -> anyhow::Result<i32> {
+fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyhow::Result<i32> {
     let path = a
         .config
         .clone()
@@ -131,38 +133,11 @@ fn init_project(
         );
         return Ok(64);
     }
-    // a budget of nothing is a program whose requests went elsewhere
-    if run.requests == 0 {
-        eprintln!(
-            "warning: the run sent sonde no requests, so max-requests = 0: its SDK probably did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` lists how each SDK is pointed at it). Record a run that sends its requests, then `check --init` again"
-        );
-    }
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
-    let waiting = (run.waiting_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
-    let cost = if run.cost > 0.0 {
-        let c = run.cost * grow;
-        let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8);
-        // up, never down: the run it was made from passes it
-        let scale = 10f64.powi(digits);
-        format!("{:.*}", digits as usize, (c * scale).ceil() / scale)
-    } else {
-        "0.0001".into()
-    };
-    // a program without a name goes by its command (what changes between
-    // runs left out): another argument and it is another program, with no
-    // baseline. One is written for it
-    let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
-    let name = (!named)
-        .then(|| {
-            header
-                .command
-                .as_deref()
-                .and_then(sonde_proxy::program::short_name)
-        })
-        .flatten();
-    let mut text = [
+    let waiting = (run.waiting_ms * grow + sonde_analysis::program::WAITING_SLACK_MS).ceil();
+    let text = [
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
             "# Made from a run of {}; edit freely.",
@@ -176,12 +151,6 @@ fn init_project(
             "# max-waiting = \"{waiting}ms\"   # measured {}: time varies run to run, set it with room",
             ms_text(run.waiting_ms)
         ),
-        format!(
-            "# max-p95 = \"{:.0}ms\"   # measured {}",
-            (run.p95_ms * 2.0).ceil().max(1.0),
-            ms_text(run.p95_ms)
-        ),
-        format!("max-cost = {cost}"),
         format!("max-errors = {}", run.errors),
         "# against a baseline run: how much more it may use, in percent".into(),
         format!("tolerance = {tolerance}"),
@@ -190,11 +159,6 @@ fn init_project(
         String::new(),
     ]
     .join("\n");
-    if let Some(name) = &name {
-        text.push_str(&format!(
-            "\n# the name this program's runs and its baseline go by, whatever its arguments\n[program]\nname = \"{name}\"\n"
-        ));
-    }
     std::fs::write(&path, text)?;
     eprintln!(
         "wrote {}: a [check] this run passes ({}, {} of room)",
@@ -202,26 +166,6 @@ fn init_project(
         output::count(run.requests, "request"),
         format_args!("{tolerance}%")
     );
-    if let Some(name) = &name {
-        eprintln!(
-            "  and [program] name = \"{name}\": later runs (`sonde run`, here) and their baseline go by it, not by the command's arguments"
-        );
-        // what the program kept under its command goes with it
-        let mut moved = Vec::new();
-        if let Some(old) = sonde_proxy::program::key_of(header) {
-            for dir in dirs {
-                moved.extend(sonde_proxy::program::rename_program(dir, &old, name)?);
-            }
-            moved.sort();
-            moved.dedup();
-            if !moved.is_empty() {
-                eprintln!(
-                    "  what was kept for `{old}` ({}) now goes by \"{name}\"",
-                    moved.join(", ")
-                );
-            }
-        }
-    }
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
     let uses = action_line();
     eprintln!(
@@ -254,16 +198,16 @@ fn action_line() -> String {
 }
 
 /// The runs of `key` up to `upto` (oldest first, 30 at most), each with
-/// the commit it recorded: what [`sonde_proxy::program::since`] walks.
+/// the commit it recorded: what [`sonde_analysis::program::since`] walks.
 fn program_runs(
     s: &Sonde,
     key: &str,
-    upto: (&Path, &SessionHeader, &sonde_proxy::program::RunPoint),
+    upto: (&Path, &RunHeader, &sonde_analysis::program::RunPoint),
 ) -> Vec<(
-    sonde_proxy::program::RunPoint,
-    Option<sonde_proxy::session::GitStamp>,
+    sonde_analysis::program::RunPoint,
+    Option<sonde_analysis::run::GitStamp>,
 )> {
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let (upto, upto_header, upto_point) = upto;
     let upto_created = upto_header.created;
     let mut found: Vec<(chrono::DateTime<chrono::Utc>, PathBuf)> = std::fs::read_dir(&dir)
@@ -273,8 +217,9 @@ fn program_runs(
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
-            let h = sonde_proxy::session::read_header(&p)?;
-            (sonde_proxy::program::key_of(&h).as_deref() == Some(key) && h.created <= upto_created)
+            let h = sonde_analysis::run::read_header(&p)?;
+            (sonde_analysis::program::key_of(&h).as_deref() == Some(key)
+                && h.created <= upto_created)
                 .then_some((h.created, p))
         })
         .collect();
@@ -283,13 +228,13 @@ fn program_runs(
     found.retain(|(_, p)| p.canonicalize().ok() != upto.canonicalize().ok());
     let from = found.len().saturating_sub(29);
     // an earlier run's figures are kept in its folder's index once
-    // reckoned: thirty runs are thirty entries, not thirty sessions read whole
+    // reckoned: thirty runs are thirty entries, not thirty runs read whole
     let mut runs: Vec<_> = found[from..]
         .iter()
         .filter_map(|(_, p)| {
-            let endpoint = sonde_proxy::session::read_header(p)?.endpoint;
+            let endpoint = sonde_analysis::run::read_header(p)?.endpoint;
             let (counted, figures) =
-                sonde_proxy::summary::figures(p, &request_prices_for(s, &endpoint))?;
+                sonde_analysis::summary::figures(p, &request_prices_for(s, &endpoint))?;
             Some((figures.point, counted.git))
         })
         .collect();
@@ -297,12 +242,12 @@ fn program_runs(
     runs
 }
 
-/// [`sonde_proxy::program::Since`] in a line: "past the baseline since
+/// [`sonde_analysis::program::Since`] in a line: "over the baseline since
 /// a1b2c3d, 2 runs ago; within at 9f8e7d6", or "the run before, at
 /// 9f8e7d6, was within it" when this run is the first past it. None when
 /// this run is the only one known: the verdict says it all.
-fn since_line(s: &sonde_proxy::program::Since) -> Option<String> {
-    let short = |g: &Option<sonde_proxy::session::GitStamp>, path: &str| match g {
+fn since_line(s: &sonde_analysis::program::Since) -> Option<String> {
+    let short = |g: &Option<sonde_analysis::run::GitStamp>, path: &str| match g {
         Some(g) => format!(
             "{}{}",
             &g.commit[..g.commit.len().min(7)],
@@ -321,7 +266,7 @@ fn since_line(s: &sonde_proxy::program::Since) -> Option<String> {
         return within.map(|w| format!("the run before, at {w}, was within it"));
     }
     let mut t = format!(
-        "past the baseline since {}, {} ago",
+        "over the baseline since {}, {} ago",
         short(&s.first_past_commit, &s.first_past),
         output::count(s.runs_ago, "run")
     );
@@ -384,7 +329,7 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
     if !url.starts_with("https://") {
         anyhow::bail!("baseline {shown}: only https URLs are fetched");
     }
-    let client = reqwest::Client::builder()
+    let client = s3raw::http_client()
         .timeout(std::time::Duration::from_secs(60))
         // a redirect keeps to https
         .redirect(reqwest::redirect::Policy::custom(|a| {
@@ -418,24 +363,11 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
 }
 
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(
-        a.format,
-        "check",
-        &[
-            Format::Table,
-            Format::Json,
-            Format::Markdown,
-            Format::Github,
-        ],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     if a.report_url.is_some() && a.format != Format::Markdown {
         eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
         return Ok(64);
     }
-    use sonde_proxy::program::{Budget, check, run_point};
+    use sonde_analysis::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
     let loaded = if a.init {
@@ -451,10 +383,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         .clone()
         .filter(|n| !n.trim().is_empty());
     let file = match &a.file {
-        Some(f) => super::sessions::resolve(s, f),
+        Some(f) => super::runs::resolve(s, f),
         None => {
             let (file, why) = super::record::which_run(s, project_name.as_deref())?;
-            eprintln!("checking {why}: {}", file.display());
+            // (the run is named first in what check writes: its path, not again)
+            eprintln!("checking {why}");
             file
         }
     };
@@ -463,7 +396,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let mut project = loaded.file.check;
     if a.config.is_none()
         && let Some(toml) = &project_path
-        && let Some(h) = sonde_proxy::session::read_header(&file)
+        && let Some(h) = sonde_analysis::run::read_header(&file)
         && !of_project(&h, toml, project_name.as_deref())
     {
         let whose = match &project_name {
@@ -471,9 +404,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             None => format!("recorded outside the folder of {}", toml.display()),
         };
         eprintln!(
-            "note: {} is a run of `{}`, {whose}: its [check] is not applied",
-            file.display(),
-            sonde_proxy::program::key_of(&h)
+            "note: the run is of `{}`, {whose}: its [check] is not applied",
+            sonde_analysis::program::key_of(&h)
                 .as_deref()
                 .unwrap_or("no command"),
         );
@@ -508,45 +440,45 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<Checked> {
-        let session = super::sessions::read(p, sonde_proxy::session::Keep::Analysis)?;
+        let opened = super::runs::read(p, sonde_analysis::run::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
             episodes,
             ..
-        } = Analysis::of(&session, &request_prices_for(s, &session.header.endpoint));
+        } = Analysis::of(&opened, &request_prices_for(s, &opened.header.endpoint));
         let point = run_point(
             &p.to_string_lossy(),
-            &session.header.created.to_rfc3339(),
-            &session.records,
+            &opened.header.created.to_rfc3339(),
+            &opened.records,
             &pr,
             &ob,
         );
         let run = traced.then(|| {
-            sonde_proxy::profile::Run::of_session(
-                &session.header,
-                &session.records,
+            sonde_analysis::profile::Run::of_run(
+                &opened.header,
+                &opened.records,
                 &episodes,
                 pr.clone(),
                 ob.clone(),
             )
         });
-        // (its records are let go here: two sessions are never held at once)
-        Ok((point, pr, ob, session.header, run))
+        // (its records are let go here: two runs are never held at once)
+        Ok((point, pr, ob, opened.header, run))
     };
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             file.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let run = read(&file)?;
     let header = run.3.clone();
-    let program = sonde_proxy::program::key_of(&header);
-    let dir = s.paths().sessions();
+    let program = sonde_analysis::program::key_of(&header);
+    let dir = s.paths().runs();
     // the program failed: as the run's folder kept it when the program ended
-    let failed = sonde_proxy::fixloop::failed(&file);
+    let failed = sonde_analysis::fixloop::failed(&file);
     // a run that failed holds nothing to: what it did not get to is not there
     if let Some(x) = failed.filter(|_| a.init || a.set_baseline) {
         eprintln!(
@@ -559,17 +491,26 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
         return Ok(64);
     }
+    // a run that sent nothing is no program's figures to hold another to
+    if run.0.requests == 0 && (a.init || a.set_baseline) {
+        eprintln!(
+            "{}: the run recorded no request, so it is no {}. {}",
+            sonde_analysis::program::NOTHING_REACHED,
+            if a.init {
+                "budget's source"
+            } else {
+                "baseline"
+            },
+            NOT_THROUGH_SONDE
+        );
+        return Ok(64);
+    }
     if a.init {
-        // the run's folder, and the data directory's when it is another
-        let mut dirs = vec![sonde_proxy::fixloop::folder_of(&file)];
-        if dirs[0].canonicalize().ok() != dir.canonicalize().ok() && dir.is_dir() {
-            dirs.push(dir.clone());
-        }
-        return init_project(a, &run.0, &header, &dirs);
+        return init_project(a, &run.0);
     }
     if a.set_baseline {
         let Some(key) = &program else {
-            eprintln!("this session ran no command, so it is no program's baseline");
+            eprintln!("this run has no command, so it is no program's baseline");
             return Ok(64);
         };
         // compared whole: `x.sonde` given from inside the directory has an empty parent
@@ -578,25 +519,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             .and_then(|f| f.parent().and_then(|p| p.canonicalize().ok()));
         if parent.is_none() || parent != dir.canonicalize().ok() {
             eprintln!(
-                "a baseline is a session in {}: record it there (no -o), or pass --baseline FILE",
+                "a baseline is a run in {}: record it there (no -o), or pass --baseline FILE",
                 dir.display()
             );
             return Ok(64);
         }
-        // a damaged file is not written over: every other baseline would go
-        let mut all = match sonde_proxy::program::read_baselines(&dir) {
-            Ok(all) => all,
-            Err(e) => {
-                eprintln!("sonde: {e} (no baseline was set)");
-                return Ok(64);
-            }
-        };
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        all.insert(key.clone(), name);
-        sonde_proxy::program::write_baselines(&dir, &all)?;
+        sonde_analysis::program::set_baseline(&dir, key, Some(&name))?;
         eprintln!("baseline for `{key}`: {}", file.display());
     }
     let mut no_baseline: Option<String> = None;
@@ -607,25 +539,18 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         None => None,
         Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
         Some("auto") => {
-            // damaged is not "none set": the run would go unchecked
-            let all = match sonde_proxy::program::read_baselines(&dir) {
-                Ok(all) => all,
-                Err(e) => {
-                    eprintln!("sonde: {e}");
-                    return Ok(64);
-                }
-            };
+            let all = sonde_analysis::program::baselines(&dir);
             let found = program
                 .as_ref()
                 .and_then(|k| all.get(k).map(|n| dir.join(n)).filter(|p| p.is_file()));
             if found.is_none() {
                 // no baseline yet is not a mistake: a first run in CI has
                 // none. The budget is checked, and this is said
-                no_baseline = Some(no_baseline_text(program.as_deref(), &header, &all));
+                no_baseline = Some(no_baseline_text(program.as_deref()));
             }
             found
         }
-        Some(p) => Some(super::sessions::resolve(s, &PathBuf::from(p))),
+        Some(p) => Some(super::runs::resolve(s, &PathBuf::from(p))),
     };
     // the baseline: its figures and its findings
     let base = base_path.as_ref().map(read).transpose()?;
@@ -633,24 +558,19 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         eprintln!("{why}");
     }
     // both hold a run to its baseline: without one they would check nothing
-    if base.is_none() && no_baseline.is_none() && (a.tolerance.is_some() || a.no_new_warnings) {
+    if base.is_none() && no_baseline.is_none() && a.tolerance.is_some() {
         eprintln!(
-            "{} needs a baseline: add --baseline FILE|auto|URL (or `baseline` in sonde.toml)",
-            if a.no_new_warnings {
-                "--no-new-warnings"
-            } else {
-                "--tolerance"
-            }
+            "--tolerance needs a baseline: add --baseline FILE|auto|URL (or `baseline` in sonde.toml)"
         );
         return Ok(64);
     }
     let base_program = match &base {
         Some(_) if by_program => program.clone(),
-        Some(b) => sonde_proxy::program::key_of(&b.3),
+        Some(b) => sonde_analysis::program::key_of(&b.3),
         None => None,
     };
     if let Some(b) = &base {
-        let bp = sonde_proxy::program::key_of(&b.3);
+        let bp = sonde_analysis::program::key_of(&b.3);
         if !by_program && bp != program {
             eprintln!(
                 "note: the baseline ran `{}`, this run `{}`",
@@ -670,17 +590,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             Some(v) => Some(v),
             None => project.max_waiting_ms().map_err(in_project)?,
         },
-        max_cost: a.max_cost.or(project.max_cost),
         max_errors: a.max_errors.or(project.max_errors),
-        max_p95_ms: match a.max_p95 {
-            Some(v) => Some(v),
-            None => project.max_p95_ms().map_err(in_project)?,
-        },
         expect: project.expect.clone(),
         tolerance: base
             .as_ref()
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
-        no_new_warnings: a.no_new_warnings || project.no_new_warnings,
     };
     // (a run is held by its figures and its findings: `check` reads no
     // record of it, nor of its baseline)
@@ -691,9 +605,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     );
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
-    use sonde_proxy::program::{run_closing, run_passed, trial_mark};
+    use sonde_analysis::program::{run_closing, run_passed};
     // each scenario with what it was before ("broke on 12 Nov, survived since")
-    let trials = sonde_proxy::trial::load_with_history(&file, program.as_deref());
+    let trials = sonde_analysis::trial::load_with_history(&file, program.as_deref());
     // `c.passed` is of its rows; the whole check also fails on a trial that
     // broke, and on a program that failed
     let passed = run_passed(&c, &trials, failed);
@@ -704,24 +618,32 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         _ => run_closing(&c, &trials, failed),
     };
+    // nothing reached sonde: said on stderr in every format, the verdict says it too
+    if c.empty {
+        eprintln!(
+            "{}: the run recorded no request. {}",
+            sonde_analysis::program::NOTHING_REACHED,
+            NOT_THROUGH_SONDE
+        );
+    }
     // setting a baseline alone is a whole command
     if c.verdicts.is_empty() && trials.is_empty() && a.set_baseline {
         return Ok(0);
     }
     // nothing to hold the run to is a mistake in the command, in every
     // format; a program that failed is held to its exit
-    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() {
+    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() && !c.empty {
         // with `baseline = "auto"` and no baseline yet there is nothing to
         // hold the run to, and nothing wrong with it: the first run passes
         // (the other formats say it below, as they say any verdict: a
         // comment, an annotation, a field)
-        if no_baseline.is_some() && a.format == Format::Table {
+        if no_baseline.is_some() && a.format == Format::Text {
             println!("nothing checked: no budget, and no baseline yet");
             return Ok(0);
         }
         if no_baseline.is_none() {
             eprintln!(
-                "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
+                "nothing to check: give a budget (--max-requests, --max-waiting, --max-errors, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
             );
             return Ok(64);
         }
@@ -729,16 +651,14 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // which program this is, and what it goes by: a baseline is a program's
     let named = match (&program, header.name.as_deref().map(str::trim)) {
         (Some(p), Some(n)) if !n.is_empty() => format!("program {p} (its name)"),
-        (Some(p), _) => format!(
-            "program `{p}` (its command; a name of its own: `name` under [program] in sonde.toml, or `sonde run --name`)"
-        ),
-        (None, _) => "no program (the session ran no command)".to_string(),
+        (Some(p), _) => format!("program `{p}` (what its command runs)"),
+        (None, _) => "no program (the run has no command)".to_string(),
     };
     // past the baseline: since which run, and the commits around it
     let since = match (&base, &program) {
         (Some(b), Some(key)) if !c.passed => {
             let runs = program_runs(s, key, (&file, &header, &run.0));
-            sonde_proxy::program::since(&runs, &b.0, budget.tolerance.unwrap_or(0.1))
+            sonde_analysis::program::since(&runs, &b.0, budget.tolerance.unwrap_or(0.1))
         }
         _ => None,
     };
@@ -747,11 +667,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // is gone, not measured: no record is counted here)
     let change = match (&base, &run.4) {
         (Some(b), Some(r)) => b.4.as_ref().map(|br| {
-            sonde_proxy::profile::compare_runs(br, r)
+            sonde_analysis::profile::compare_runs(br, r)
                 .of_programs(base_program.as_deref(), program.as_deref())
                 .of_exits((
-                    base_path.as_deref().and_then(sonde_proxy::fixloop::failed),
-                    sonde_proxy::fixloop::failed(&file),
+                    base_path
+                        .as_deref()
+                        .and_then(sonde_analysis::fixloop::failed),
+                    sonde_analysis::fixloop::failed(&file),
                 ))
         }),
         _ => None,
@@ -785,9 +707,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         return Ok(if passed { 0 } else { 1 });
     }
     let color = std::io::stdout().is_terminal();
-    let judged = session_line(&file, Some(&header));
+    let judged = run_line(&file, Some(&header));
     let shown = |what: &str, v: f64| match what {
-        "waiting" | "p95" => ms_text(v),
+        "waiting" => ms_text(v),
         "cost" => money_text(v, &run.0.currency),
         _ => format!("{v:.0}"),
     };
@@ -798,6 +720,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // pass in silence
         if let Some(why) = &no_baseline {
             println!("::warning title=sonde check::{}", gh_escape(why));
+        }
+        if c.empty {
+            println!(
+                "::error title=sonde check::{}",
+                gh_escape(&format!(
+                    "{}: the run recorded no request. {NOT_THROUGH_SONDE}",
+                    sonde_analysis::program::NOTHING_REACHED
+                ))
+            );
         }
         if let Some(x) = failed {
             println!(
@@ -833,17 +764,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         for t in trials
             .iter()
-            .filter(|t| t.standing == sonde_proxy::trial::Standing::Broke)
+            .filter(|t| t.standing == sonde_analysis::trial::Standing::Broke)
         {
             println!(
                 "::error title=sonde check::{}",
-                gh_escape(&format!("breaks under {}: {}", t.scenario, t.line()))
+                gh_escape(&format!("broke under {}: {}", t.scenario, t.line()))
             );
         }
         for t in &trials {
             let said = match t.standing {
-                sonde_proxy::trial::Standing::Degraded => "gets through",
-                sonde_proxy::trial::Standing::Refused => "refused by the policy under",
+                sonde_analysis::trial::Standing::Degraded => "degraded under",
+                sonde_analysis::trial::Standing::Refused => "refused by the policy under",
                 _ => continue,
             };
             println!(
@@ -859,11 +790,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         for f in run.2.iter().take(10) {
             // what the project expects is said, never warned of
-            let level = if f.level == "warn" && !sonde_proxy::program::expected(f, &budget.expect) {
-                "warning"
-            } else {
-                "notice"
-            };
+            let level =
+                if f.level == "warn" && !sonde_analysis::program::expected(f, &budget.expect) {
+                    "warning"
+                } else {
+                    "notice"
+                };
             match f.callers.first().and_then(|c| code_place(&c.place)) {
                 Some((file, line)) => println!(
                     "::{level} file={},line={line},title=sonde::{}",
@@ -880,9 +812,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if matches!(a.format, Format::Markdown) {
         print!(
             "{}",
-            sonde_proxy::program::check_comment(
+            sonde_analysis::program::check_comment(
                 &c,
-                &sonde_proxy::program::Comment {
+                &sonde_analysis::program::Comment {
                     currency: &run.0.currency,
                     since: since_text.as_deref(),
                     findings: &run.2,
@@ -894,7 +826,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 }
             )
         );
-        println!("\n*{}*", sonde_proxy::program::md_text(&judged));
+        println!("\n*{}*", sonde_analysis::program::md_text(&judged));
         return Ok(if passed { 0 } else { 1 });
     }
     let rows: Vec<Vec<String>> = c
@@ -903,9 +835,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         .map(|v| {
             vec![
                 if v.ok {
-                    paint("pass", "32", color)
+                    paint("within", "32", color)
                 } else {
-                    paint("FAIL", "31", color)
+                    paint("over", "31", color)
                 },
                 v.label().to_string(),
                 shown(v.what, v.value),
@@ -919,7 +851,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     println!("{judged}");
     println!("{named}");
     if let (Some(b), Some(base)) = (&base_path, &base) {
-        println!("against {}", session_line(b, Some(&base.3)));
+        println!("against {}", run_line(b, Some(&base.3)));
     }
     if !rows.is_empty() {
         println!(
@@ -928,11 +860,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
     }
     for t in &trials {
-        use sonde_proxy::trial::Standing;
+        use sonde_analysis::trial::Standing;
         println!(
-            "{}  {} {}{}",
+            "{}  {}{}",
             paint(
-                trial_mark(t.standing),
+                &format!("{:<8}", t.standing.label()),
                 match t.standing {
                     Standing::Broke => "31",
                     Standing::Degraded => "33",
@@ -942,13 +874,6 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 },
                 color
             ),
-            match t.standing {
-                Standing::Survived => "survives",
-                Standing::Degraded => "gets through",
-                Standing::Broke => "breaks under",
-                Standing::Untested => "untested:",
-                Standing::Refused => "refused by the policy under",
-            },
             t.asked(),
             if t.line().is_empty() {
                 String::new()
@@ -973,49 +898,23 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     Ok(if passed { 0 } else { 1 })
 }
 
-/// Why `baseline = "auto"` found none: which program this is and, when a
-/// baseline is set for the same program run with other arguments, that one
-/// and how to give the program a name the two share.
-fn no_baseline_text(
-    program: Option<&str>,
-    header: &SessionHeader,
-    baselines: &std::collections::BTreeMap<String, String>,
-) -> String {
-    let Some(key) = program else {
-        return "no baseline yet: this session ran no command, so it is no program's run"
-            .to_string();
-    };
-    let mut text = format!(
-        "no baseline yet for program `{key}`: set one with `sonde check FILE --set-baseline` or in the app"
-    );
-    // the same executable and script under another key: its arguments differ
-    let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
-    let of = |command: &str| {
-        (
-            sonde_proxy::program::program_name(command),
-            sonde_proxy::program::short_name(command),
-        )
-    };
-    if !named
-        && let Some(other) = baselines
-            .keys()
-            .find(|k| k.as_str() != key && of(k) == of(key) && of(key).0.is_some())
-    {
-        let name = sonde_proxy::program::short_name(key).unwrap_or_else(|| "NAME".into());
-        text.push_str(&format!(
-            "\n  there is one for `{other}`: the same program with other arguments. A program without a name goes by its whole command; give it one and its runs share a baseline: `name = \"{name}\"` under [program] in sonde.toml, or `sonde run --name {name}`"
-        ));
+/// Why a run records nothing, and where to look.
+const NOT_THROUGH_SONDE: &str = "The program's S3 client did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` says how each SDK is pointed at it), or it sent nothing.";
+
+/// Why `baseline = "auto"` found none: which program this is.
+fn no_baseline_text(program: Option<&str>) -> String {
+    match program {
+        Some(key) => format!(
+            "no baseline yet for program `{key}`: set one with `sonde check FILE --set-baseline` or in the app"
+        ),
+        None => "no baseline yet: this run has no command, so it is no program's run".into(),
     }
-    text
 }
 
-/// A session by name and time, as `sonde check` says which run it judged:
-/// `session 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
-/// as `sonde sessions` lists it.
-pub(super) fn session_line(
-    file: &Path,
-    header: Option<&sonde_proxy::session::SessionHeader>,
-) -> String {
+/// A run by name and time, as `sonde check` says which run it judged:
+/// `run 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
+/// as `sonde runs` lists it.
+pub(super) fn run_line(file: &Path, header: Option<&sonde_analysis::run::RunHeader>) -> String {
     let name = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1024,25 +923,25 @@ pub(super) fn session_line(
     let header = match header {
         Some(h) => Some(h),
         None => {
-            read = Session::open(file).ok().map(|s| s.header);
+            read = RunFile::open(file).ok().map(|s| s.header);
             read.as_ref()
         }
     };
     match header {
         Some(h) => format!(
-            "session {name} · recorded {}",
+            "run {name} · recorded {}",
             h.created
                 .with_timezone(&chrono::Local)
                 .format("%Y-%m-%d %H:%M")
         ),
-        None => format!("session {name}"),
+        None => format!("run {name}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sonde_proxy::program::md_text;
+    use sonde_analysis::program::md_text;
 
     #[test]
     fn a_findings_text_is_shown_as_written_in_a_pr_comment() {
@@ -1052,7 +951,7 @@ mod tests {
         );
         // sonde's own sentence keeps its code spans spans: 20.0 escaped
         // their backticks, and the comment showed them
-        use sonde_proxy::program::md_said;
+        use sonde_analysis::program::md_said;
         assert_eq!(
             md_said("no baseline yet for program `python etl_job.py --x *`"),
             "no baseline yet for program `python etl_job.py --x *`"
@@ -1081,8 +980,8 @@ mod tests {
 
     #[test]
     fn since_says_the_runs_and_commits_around_and_never_this_run_as_a_commit() {
-        use sonde_proxy::program::Since;
-        use sonde_proxy::session::GitStamp;
+        use sonde_analysis::program::Since;
+        use sonde_analysis::run::GitStamp;
         let at = |c: &str| {
             Some(GitStamp {
                 commit: c.into(),
@@ -1105,7 +1004,7 @@ mod tests {
         );
         assert_eq!(
             since_line(&s(2, Some("/s/pr1.sonde"))).as_deref(),
-            Some("past the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6")
+            Some("over the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6")
         );
     }
 

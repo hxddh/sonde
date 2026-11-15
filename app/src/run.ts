@@ -6,11 +6,11 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openSession, paneOnOpen, report, sessionsChanged, wasRead } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openRun, report, runsChanged, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
-import { programOf, scrubCommand } from "./ui/sessionview";
-import type { Policy } from "./ui/session";
+import { programOf, scrubCommand } from "./ui/runview";
+import type { Policy } from "./ui/runparts";
 import { toast } from "./ui/toast";
 
 export interface Running {
@@ -22,12 +22,12 @@ export interface Running {
 /** The running program, or null. */
 export const running = signal<Running | null>(null);
 /** How the last run ended. */
-export const lastRun = signal<(RunResult & { command: string; killed: boolean; removed?: boolean; endpoint: string }) | null>(null);
+export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user: Run is back at its start */ deleted?: boolean; endpoint: string }) | null>(null);
 
-/** A session deleted: if it was the last run's, Run stops offering it. */
+/** A run deleted: if it was the last one, Run stops showing it. */
 export function forgetRun(path: string) {
   const last = lastRun();
-  if (last?.path === path) lastRun.set({ ...last, removed: true });
+  if (last?.path === path) lastRun.set({ ...last, removed: true, deleted: true });
 }
 /** The newest command, for the field. */
 export const command = signal("");
@@ -84,9 +84,9 @@ if (isAvailable && platform.idiom !== "terminal") {
 }
 
 export const cwd = signal("");
-/** What the program may do to the store: Run's choice, no-delete unless
+/** What the program may do to the store: Run's choice, allow unless
  * changed (a project's `[record] policy` in sonde.toml narrows it). */
-export const policy = signal<Policy>("no-delete");
+export const policy = signal<Policy>("allow");
 
 const MAX = 2 * 1024 * 1024;
 let buffer = "";
@@ -106,21 +106,15 @@ let size = { cols: 100, rows: 30 };
 /** The terminal's size: told to the program when it runs. */
 export function resize(cols: number, rows: number) {
   size = { cols, rows };
-  if (running()) api.sessions.resize(cols, rows);
+  if (running()) api.runs.resize(cols, rows);
 }
 
 async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
   try {
-    const v = await api.sessions.view(r.path);
-    // run again from a session: this run, compared with the one before it
+    const v = await api.runs.view(r.path);
+    // run again from a run's view: this run, compared with the one before it, on Run (where its view opens)
     // (a run that made no request has nothing to compare)
-    if (before && !killed && v.summary.requests > 0) {
-      batch(() => {
-        compareOnOpen.set({ before, after: r.path });
-        openSession.set(r.path);
-        go("sessions");
-      });
-    }
+    if (before && !killed && v.summary.requests > 0) compareOnOpen.set({ before, after: r.path });
     // a run that made no request leaves nothing to read: it is not kept, unless asked
     if (v.summary.requests === 0) {
       let keep = false;
@@ -128,13 +122,13 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
       setTimeout(() => {
         // kept, or opened meanwhile by any way in: never removed under its reader
         if (keep || wasRead(r.path)) return;
-        void api.sessions
+        void api.runs
           .remove(r.path)
           .then(() => {
             // nothing left to open from Run
             const last = lastRun();
             if (last?.path === r.path) lastRun.set({ ...last, removed: true });
-            sessionsChanged();
+            runsChanged();
           })
           .catch(() => {
             // already gone
@@ -155,10 +149,10 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
         title,
         description: body,
         action: t("run.toastOpen"),
-        // this run's session, whatever ran since
+        // this run, whatever ran since
         onAction: () => {
-          openSession.set(r.path);
-          go("sessions");
+          openRun.set(r.path);
+          go("runs");
         },
         duration: 8000,
       });
@@ -175,7 +169,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
     if (lifecycle() !== "active" && warnings > 0) await Notifications.setBadge(warnings).catch(() => {});
     // asked for when the run began (something the user did), not now
     if ((await Notifications.permission()) !== "granted") return;
-    // the session in the id: pressed after the app was quit, it still opens that run
+    // the run in the id: pressed after the app was quit, it still opens that run
     await Notifications.show({ id: `${NOTIFY}${r.path}`, title: t("run.notifyTitle", { command: programOf(cmd) ?? scrubCommand(cmd) }), body });
     if (lifecycle() === "active") await Notifications.setBadge(0).catch(() => {});
   } catch {
@@ -184,13 +178,13 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
 }
 
 /** Runs `cmd` against `endpoint`, its requests recorded. */
-/** Runs a session's command again, on its endpoint; once it ends, the new
+/** Runs a run's command again, on its endpoint; once it ends, the new
  * run opens compared with the one before: change the program, then see what
  * the change did. */
 export function runAgain(path: string, cmd: string, endpoint: string, dir?: string | null) {
   if (running() || !cmd.trim()) return;
   command.set(cmd);
-  // where it ran before, when the session says
+  // where it ran before, when the run says
   if (dir) cwd.set(dir);
   go("run");
   // compared with the run before only once this one has started
@@ -210,7 +204,7 @@ export function start(cmd: string, endpoint: string): boolean {
     startedAt.set(Date.now());
     running.set({ command: cmd, path: null, endpoint });
   });
-  api.sessions
+  api.runs
     .run(cmd, cwd() || null, endpoint, policy(), size.cols, size.rows, (e) => {
       if ("started" in e) {
         running.set({ command: cmd, path: e.started.path, endpoint });
@@ -232,7 +226,7 @@ export function start(cmd: string, endpoint: string): boolean {
         running.set(null);
         lastRun.set({ ...r, command: cmd, killed, endpoint });
       });
-      sessionsChanged();
+      runsChanged();
       const before = againOf;
       againOf = null;
       // this run's own: a new run may start before the analysis is back
@@ -250,22 +244,21 @@ export function start(cmd: string, endpoint: string): boolean {
 /** Ends the running program. */
 export function stop() {
   killed = true;
-  api.sessions.kill();
+  api.runs.kill();
 }
 
 /** Text typed into the program's terminal. */
 export function input(data: string) {
-  if (running()) api.sessions.input(data);
+  if (running()) api.runs.input(data);
 }
 
-/** Opens the last run in Sessions, lined up with its output. */
-export function openLastRun(go: (s: "sessions") => void, finding?: number) {
+/** Opens the last run in Runs, lined up with its output. */
+export function openLastRun(go: (s: "runs") => void) {
   const r = lastRun();
   if (!r || r.removed) return;
   batch(() => {
-    if (finding !== undefined) paneOnOpen.set({ path: r.path, pane: "operations", finding });
-    openSession.set(r.path);
-    go("sessions");
+    openRun.set(r.path);
+    go("runs");
   });
 }
 
@@ -280,7 +273,7 @@ function askToNotify() {
     .catch(() => {});
 }
 
-/** A pressed notification opens the session it told of (the one that
+/** A pressed notification opens the run it told of (the one that
  * started the app too); the badge goes as the window comes back. */
 export function followNotifications(open: (path: string) => void) {
   try {
@@ -294,12 +287,12 @@ export function followNotifications(open: (path: string) => void) {
 }
 
 /** The app is quitting: ends the program being recorded (and what it started)
- * and a running trial, and has the recording written as a finished session.
+ * and a running trial, and has the recording written as a finished run.
  * Resolves once the file is whole; the system waits 200 ms for it. A trial
  * cut short keeps nothing, as when it is stopped by hand. */
 export async function endForQuit(): Promise<void> {
   try {
-    await api.sessions.quit();
+    await api.runs.quit();
   } catch {
     // nothing was being recorded, or the bridge has gone first: there is nothing left to end
   }

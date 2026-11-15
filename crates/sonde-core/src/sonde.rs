@@ -324,7 +324,7 @@ impl Sonde {
             .collect()
     }
 
-    /// Request prices for a session on `endpoint`: writes, reads, lists
+    /// Request prices for a run on `endpoint`: writes, reads, lists
     /// (when other than a write) and the currency. The settings', unless they
     /// are still S3 Standard's and the endpoint's vendor charges otherwise
     /// (R2, B2, Wasabi, a store of one's own). Every view prices this way.
@@ -574,6 +574,47 @@ pub fn build_client(e: &EndpointConfig, log: RequestLog) -> Result<S3Client, S3E
     S3Client::new(cfg, creds, log)
 }
 
+/// AWS's S3 endpoint for `region`.
+fn aws_url(region: &str) -> String {
+    if region.starts_with("cn-") {
+        format!("https://s3.{region}.amazonaws.com.cn")
+    } else {
+        format!("https://s3.{region}.amazonaws.com")
+    }
+}
+
+/// The endpoint an AWS SDK uses when nothing is configured, as `id`: the
+/// default credential chain, the region (`AWS_REGION`, `AWS_DEFAULT_REGION`,
+/// else the profile's that `AWS_PROFILE` names or `default`, else
+/// us-east-1) and the S3 endpoint (`AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL`,
+/// else the profile's, else AWS's for the region). With where its region
+/// came from, in words.
+pub fn aws_default(
+    id: &str,
+    files: &AwsFiles,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> (EndpointConfig, String) {
+    let env = |k: &str| env(k).filter(|v| !v.trim().is_empty());
+    let profile = env("AWS_PROFILE").unwrap_or_else(|| "default".into());
+    let of_profile = files
+        .profile(&profile)
+        .and_then(|p| p.get("region").cloned());
+    let (region, from) = match (env("AWS_REGION"), env("AWS_DEFAULT_REGION"), of_profile) {
+        (Some(r), ..) => (r, "AWS_REGION".to_string()),
+        (None, Some(r), _) => (r, "AWS_DEFAULT_REGION".to_string()),
+        (None, None, Some(r)) => (r, format!("profile {profile}")),
+        (None, None, None) => ("us-east-1".to_string(), "no region set".to_string()),
+    };
+    let url = env("AWS_ENDPOINT_URL_S3")
+        .or_else(|| env("AWS_ENDPOINT_URL"))
+        .or_else(|| files.s3_endpoint(&profile))
+        .unwrap_or_else(|| aws_url(&region));
+    let vendor = Vendor::guess(&url);
+    let mut e = EndpointConfig::new(id, "AWS default", &url, &region, vendor);
+    e.credentials = CredentialSource::Default;
+    (e, from)
+}
+
 fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConfig> {
     // ids in use: the configured ones, then each one given out here
     let mut taken: std::collections::HashSet<String> =
@@ -592,13 +633,7 @@ fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConf
                 .get("region")
                 .cloned()
                 .unwrap_or_else(|| "us-east-1".into());
-            let url = files.s3_endpoint(&name).unwrap_or_else(|| {
-                if region.starts_with("cn-") {
-                    format!("https://s3.{region}.amazonaws.com.cn")
-                } else {
-                    format!("https://s3.{region}.amazonaws.com")
-                }
-            });
+            let url = files.s3_endpoint(&name).unwrap_or_else(|| aws_url(&region));
             let vendor = Vendor::guess(&url);
             let stem = format!(
                 "profile-{}",
@@ -628,6 +663,47 @@ fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConf
 mod tests {
     use super::*;
     use crate::credentials::ini;
+
+    #[test]
+    fn with_nothing_configured_the_aws_default_is_the_sdks() {
+        let files = AwsFiles {
+            config: ini::parse(
+                "[default]\nregion = eu-central-1\n[profile cn]\nregion = cn-north-1\n",
+            ),
+            credentials: Default::default(),
+        };
+        let none = |_: &str| None;
+        let (e, from) = aws_default("aws", &files, &none);
+        assert_eq!(
+            (e.url.as_str(), e.region.as_str(), from.as_str()),
+            (
+                "https://s3.eu-central-1.amazonaws.com",
+                "eu-central-1",
+                "profile default"
+            )
+        );
+        assert!(matches!(e.credentials, CredentialSource::Default));
+        let cn = |k: &str| (k == "AWS_PROFILE").then(|| "cn".to_string());
+        assert_eq!(
+            aws_default("aws", &files, &cn).0.url,
+            "https://s3.cn-north-1.amazonaws.com.cn"
+        );
+        let set = |k: &str| match k {
+            "AWS_REGION" => Some("us-west-2".to_string()),
+            "AWS_ENDPOINT_URL" => Some("http://127.0.0.1:9000".to_string()),
+            _ => None,
+        };
+        let (e, from) = aws_default("aws", &files, &set);
+        assert_eq!(
+            (e.url.as_str(), e.region.as_str(), from.as_str()),
+            ("http://127.0.0.1:9000", "us-west-2", "AWS_REGION")
+        );
+        let bare = AwsFiles {
+            config: Default::default(),
+            credentials: Default::default(),
+        };
+        assert_eq!(aws_default("aws", &bare, &none).1, "no region set");
+    }
 
     #[test]
     fn import_profiles() {

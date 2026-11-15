@@ -1,4 +1,4 @@
-//! `sonde show <session>`: a session's operations, requests and findings.
+//! `sonde show <run>`: a run's operations, requests and findings.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use clap::Args;
 use reqlog::Record;
+use sonde_analysis::episode::{Episode, Outcome};
+use sonde_analysis::split::Dimension;
+use sonde_analysis::view::Analysis;
 use sonde_core::Sonde;
-use sonde_proxy::episode::{Episode, Outcome};
-use sonde_proxy::split::Dimension;
-use sonde_proxy::view::Analysis;
 
 use crate::output::{self, Format};
 
@@ -17,7 +17,7 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// A session file (default: the newest in the data directory's sessions/).
+    /// A run's file (default: the newest in the data directory's runs/).
     pub(super) file: Option<PathBuf>,
     /// Only the summary: what a table shows by default; with `-f json`,
     /// the summary without the operations and requests.
@@ -26,7 +26,8 @@ pub struct ShowArgs {
     /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
     pub(super) errors: bool,
-    /// Each request on its line, then the summary.
+    /// Each request on its line, then the summary (with `-f json`, the
+    /// requests whole).
     #[arg(long)]
     pub(super) requests: bool,
     /// Everything: each operation on its line, then the summary with every
@@ -41,7 +42,7 @@ pub struct ShowArgs {
     #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
           conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
     pub(super) by: Option<Dimension>,
-    /// The format written: table or json.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -62,13 +63,13 @@ fn by_arg(text: &str) -> Result<Dimension, String> {
 /// `sonde show --by`: the operations table split by one dimension, and the
 /// sentence that says where the slow and the costly requests are.
 fn print_split(
-    split: &sonde_proxy::split::Split,
-    header: &sonde_proxy::session::SessionHeader,
+    split: &sonde_analysis::split::Split,
+    header: &sonde_analysis::run::RunHeader,
     requests: usize,
     seconds: f64,
     color: bool,
 ) {
-    use sonde_proxy::program::money_text;
+    use sonde_analysis::program::money_text;
     if let Some(c) = &header.command {
         println!("{}", paint(&format!("$ {c}"), "1", color));
     }
@@ -140,8 +141,8 @@ fn print_split(
 }
 
 /// One operation on one line: time, format, what happened, size of it, notes.
-/// `width` pads the title; `hide` lists notes said once for the session.
-/// `formats`: whether the session has format steps (else no format column).
+/// `width` pads the title; `hide` lists notes said once for the run.
+/// `formats`: whether the run has format steps (else no format column).
 pub fn episode_line(
     e: &Episode,
     width: usize,
@@ -179,16 +180,15 @@ pub fn episode_line(
         " ".repeat(pad),
         paint(&format!("{meta:>16}"), "2", color),
     );
-    match &e.outcome {
+    match e.outcome() {
         Outcome::Ok => {}
         Outcome::Failed(why) => line.push_str(&paint(&format!("  ✗ {why}"), "31", color)),
         Outcome::Refused => line.push_str(&paint("  refused by sonde", "33", color)),
     }
-    let notes: Vec<&str> = e
-        .notes
-        .iter()
+    let notes: Vec<String> = e
+        .notes()
+        .into_iter()
         .filter(|n| !hide.contains(n))
-        .map(String::as_str)
         .collect();
     if !notes.is_empty() {
         line.push_str(&paint(&format!("  · {}", notes.join(" · ")), "2", color));
@@ -223,38 +223,34 @@ fn print_lines(n: usize, all: bool, what: &str, line: &dyn Fn(usize) -> String) 
 }
 
 pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(a.format, "show", &[Format::Table, Format::Json]) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let file = match &a.file {
-        Some(f) => super::sessions::resolve(s, f),
+        Some(f) => super::runs::resolve(s, f),
         None => which_run(s, project_name().as_deref())?.0,
     };
     // read for what it amounts to: a request in full (`-f json`) is written
     // from the file, never held with the rest
-    let (file, session) = super::sessions::open_lean(s, &file)?;
+    let (file, run) = super::runs::open_lean(s, &file)?;
     if a.app {
         return open_in_app(&file);
     }
-    let all = &session.records;
-    let prices = request_prices_for(s, &session.header.endpoint);
+    let all = &run.records;
+    let prices = request_prices_for(s, &run.header.endpoint);
     // what it amounts to, once: every part below reads this
-    let analysis = Analysis::of(&session, &prices);
+    let analysis = Analysis::of(&run, &prices);
     let eps = &analysis.episodes;
     if let Some(by) = a.by {
-        let split = sonde_proxy::split::split(all, by, &prices);
+        let split = sonde_analysis::split::split(all, by, &prices);
         match a.format {
             Format::Json => println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "session": session.header,
+                    "run": run.header,
                     "split": split,
                 }))
             ),
             _ => print_split(
                 &split,
-                &session.header,
+                &run.header,
                 all.len(),
                 analysis.summary.seconds,
                 std::io::stdout().is_terminal(),
@@ -263,12 +259,12 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         return Ok(0);
     }
     // how its program stood under faults, each scenario since when
-    let trials = sonde_proxy::trial::load_with_history(
+    let trials = sonde_analysis::trial::load_with_history(
         &file,
-        sonde_proxy::program::key_of(&session.header).as_deref(),
+        sonde_analysis::program::key_of(&run.header).as_deref(),
     );
     // against the program's run before it, as `run` said it: in every format
-    let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
+    let since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -276,7 +272,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "session": session.header,
+                    "run": run.header,
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
@@ -300,24 +296,32 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         Format::Json => {
             use std::io::Write;
             let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
-            let mut w = sonde_proxy::share::JsonOut::new(out, true);
+            let mut w = sonde_analysis::share::JsonOut::new(out, true);
             w.begin_object()?;
-            // one word each: operations, findings, requests
+            // one word each: operations, findings, requests (asked for: a
+            // million of them is a gigabyte of text)
             w.array(
                 "operations",
-                eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
+                eps.iter()
+                    .filter(|e| !a.errors || *e.outcome() != Outcome::Ok),
             )?;
             w.field("findings", &analysis.observations)?;
-            w.key("requests")?;
-            w.begin_array()?;
-            sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
-                if !a.errors || sonde_proxy::summary::is_failure(&r) {
-                    w.value(&r)?;
-                }
-                Ok(())
-            })?;
-            w.end_array()?;
-            w.field("session", &session.header)?;
+            if a.requests {
+                w.key("requests")?;
+                w.begin_array()?;
+                sonde_analysis::share::each_record(
+                    &file,
+                    &mut all.iter().map(|r| r.id),
+                    &mut |r| {
+                        if !a.errors || sonde_analysis::summary::is_failure(&r) {
+                            w.value(&r)?;
+                        }
+                        Ok(())
+                    },
+                )?;
+                w.end_array()?;
+            }
+            w.field("run", &run.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
             w.field("trials", &trials)?;
@@ -329,7 +333,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         }
         _ => {
             let color = std::io::stdout().is_terminal();
-            if let Some(c) = &session.header.command {
+            if let Some(c) = &run.header.command {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
             // a list asked for: the requests (then the summary), or what
@@ -337,7 +341,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             if !a.summary && a.requests {
                 let shown: Vec<&Record> = all
                     .iter()
-                    .filter(|r| !a.errors || sonde_proxy::summary::is_failure(r))
+                    .filter(|r| !a.errors || sonde_analysis::summary::is_failure(r))
                     .collect();
                 if a.errors && shown.is_empty() {
                     println!("no errors: none of its requests failed");
@@ -351,7 +355,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             } else if !a.summary && (a.errors || a.all) {
                 let shown: Vec<&Episode> = eps
                     .iter()
-                    .filter(|e| !a.errors || e.outcome != Outcome::Ok)
+                    .filter(|e| !a.errors || *e.outcome() != Outcome::Ok)
                     .collect();
                 let width = shown
                     .iter()
@@ -373,7 +377,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             }
             print_summary_of(
                 &analysis,
-                &session.header,
+                &run.header,
                 &file,
                 color,
                 true,
@@ -391,7 +395,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Hands `sonde://open?path=…` to the system, which opens the app on the session.
+/// Hands `sonde://open?path=…` to the system, which opens the app on the run.
 fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     let abs = std::fs::canonicalize(file)?;
     // Windows' canonical form starts \\?\ (a verbatim path): the app reads C:/…
@@ -429,7 +433,7 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     }
 }
 
-/// A session's summary and findings on stdout, as `sonde show --summary`.
+/// A run's summary and findings on stdout, as `sonde show --summary`.
 pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
     show(
         s,
@@ -441,7 +445,7 @@ pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
             all: false,
             app: false,
             by: None,
-            format: Format::Table,
+            format: Format::Text,
         },
     )
     .await

@@ -3,18 +3,17 @@
 
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { costColumn, count, date, day, duration, factor, hm, money } from "../format";
+import { costColumn, count, date, day, duration, factor, hm } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
 import { api } from "../native";
-import { copy, report, sessionsChanged, sessionsTick } from "../store";
+import { copy, report, runsChanged, runsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
-import { cost, RunTrend, Sparkline } from "./plots";
-import { tellApart } from "./sessionlist";
-import { programOf, scrubCommand } from "./sessionview";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { cost, RunTrend } from "./plots";
+import { programOf, scrubCommand } from "./runview";
 
 export { scenarioLabel };
 
@@ -48,18 +47,36 @@ export function trialSince(x: Trial): string | null {
   return said.charAt(0).toUpperCase() + said.slice(1);
 }
 
-/** Each distinct piece of advice is said once, under the first verdict that gives it; a later verdict with the
- * same advice refers to that one (its scenario's name), so a trial's result does not repeat a paragraph. */
-export function adviceOnce(trials: (Trial | null | undefined)[]): (Trial | null)[] {
-  const first = new Map<string, Trial>();
-  return trials.map((x) => {
-    const a = !x || x.standing === "survived" ? null : x.advice;
-    if (!a) return null;
-    const key = `${a.key}:${JSON.stringify(a.args ?? {})}`;
-    const was = first.get(key);
-    if (!was) first.set(key, x!);
-    return was ?? null;
-  });
+/** A scenario of a trial as the verdicts list it: its verdict once it has one (`trial`), else how it stands so
+ * far; `onOpen` opens its own run. */
+export interface VerdictRow {
+  scenario: string;
+  trial: Trial | null;
+  state: "waiting" | "running" | "done";
+  onOpen?: () => void;
+}
+
+/** What to change for a verdict, in the reader's language (a sentence of its own: its first letter raised);
+ * none for one that survived or gives no advice. */
+export function adviceOf(x: Trial | null): string | null {
+  const a = !x || x.standing === "survived" ? null : x.advice;
+  const said = a ? say([{ key: a.key, args: a.args ?? {} }], "") : "";
+  return said ? said.charAt(0).toUpperCase() + said.slice(1) : null;
+}
+
+/** The verdicts grouped by their advice, each advice said once over the scenarios it is for, in the order the
+ * advice first comes; then the verdicts with none (survived, untested); then the scenarios not judged yet. */
+export function groupByAdvice<R extends { trial: Trial | null }>(rows: R[]): { advice: string | null; rows: R[] }[] {
+  const groups = new Map<string, { advice: string | null; rows: R[] }>();
+  const plain: R[] = [];
+  const pending: R[] = [];
+  for (const r of rows) {
+    const a = adviceOf(r.trial);
+    if (!r.trial) pending.push(r);
+    else if (!a) plain.push(r);
+    else groups.set(a, { advice: a, rows: [...(groups.get(a)?.rows ?? []), r] });
+  }
+  return [...groups.values(), ...(plain.length ? [{ advice: null, rows: plain }] : []), ...(pending.length ? [{ advice: null, rows: pending }] : [])];
 }
 
 /** What a trial found, in figures: the faults and their retries (and those
@@ -99,113 +116,87 @@ export function trialReasons(x: Trial): string[] {
   });
 }
 
-/** Where a verdict turns, and what to change: the request (its operation and
- * key), the line of the program that sent it when the run named its callers,
- * and the fix in a sentence. Under a trial that broke or degraded. */
-export function TrialWhere(props: { trial: Trial; /** its advice was said under this verdict, above: referred to, not said again */ sameAs?: Trial | null }) {
-  const w = () => props.trial.where;
-  // what to change, said from Rust's phrase in the reader's language (a sentence of its own here: its first letter raised)
-  const advice = () => {
-    const a = props.trial.advice;
-    const said = a ? say([{ key: a.key, args: a.args ?? {} }], "") : "";
-    return said ? said.charAt(0).toUpperCase() + said.slice(1) : null;
+/** A verdict in a line: the scenario and its id, why it is not "survived" (or what it found) and how it stood
+ * over the program's runs, cut at the line's end; its standing at the row's end, and a chevron where a press
+ * opens its run. A scenario not judged yet says how it stands so far. */
+function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; historyID: string }) {
+  const x = () => props.row.trial;
+  const why = () => {
+    const v = x();
+    if (!v) return "";
+    return (v.standing === "survived" ? trialText(v) : (trialReasons(v)[0] ?? trialText(v))) || "";
   };
-  return (
-    <If when={w() || advice()}>
-      <View testID="trial-where" class="gap-1">
-        <If when={w()}>
-          {(x) => (
-            <View class="flex-row items-start gap-2">
-              <View class="min-h-5 justify-center">
-                <Icon name="circle-dot" size={ICON.small} />
-              </View>
-              {/* the request, then (after a dot) the program's line when the run named its callers */}
-              <Text class="min-w-0 flex-1 text-small leading-5 text-foreground">
-                {`${x().kind} `}
-                <Text class={TEXT.code}>{x().key}</Text>
-                <If when={x().caller}>{(c) => <Text class={TEXT.codeQuiet}>{` · ${c()}`}</Text>}</If>
-              </Text>
-            </View>
-          )}
-        </If>
-        <If when={advice()}>
-          {(a) => (
-            <View class="flex-row items-start gap-2">
-              <View class="min-h-5 justify-center">
-                <Icon name="sparkles" size={ICON.small} />
-              </View>
-              <If when={props.sameAs} else={<Text testID="trial-advice" class="min-w-0 flex-1 text-small leading-5 text-foreground">{a()}</Text>}>
-                {(o) => <Text testID="trial-advice-same" class="min-w-0 flex-1 text-small leading-5 text-muted-foreground">{t("trial.adviceSame", { scenario: scenarioLabel(o().scenario) })}</Text>}
-              </If>
-            </View>
-          )}
-        </If>
-      </View>
-    </If>
-  );
-}
-
-/** The run under faults: a row a scenario, its standing first, and under a
- * trial that broke or degraded, why; a press opens the trial's own session
- * (a row whose session is gone only says what it found). */
-function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
-  const same = () => adviceOnce(props.trials);
-  return (
-    <Section testID="history-trials" title={t("trial.title")} action={props.action} plain>
-      <Card pad="none">
-        <Each of={props.trials} key={(x) => x.scenario}>
-          {(x, i) => <TrialRow trial={x()} first={i() === 0} sameAs={same()[i()]} onOpen={props.onOpen && x().session ? () => props.onOpen!(x().session!) : undefined} testID={`trial-${x().scenario}`} historyID={`trial-history-${x().scenario}`} />}
-        </Each>
-      </Card>
-    </Section>
-  );
-}
-
-/** A verdict, one way wherever it is drawn (the trial's dialog, the Runs pane): the scenario and its id, its
- * history over the program's runs, what it found and why it is not "survived" in one quiet line, where it
- * turned and what to change; its standing at the row's end, and a chevron where a press opens its session. */
-export function TrialRow(props: { trial: Trial; first: boolean; sameAs?: Trial | null; onOpen?: () => void; testID: string; historyID: string }) {
-  const x = () => props.trial;
+  const gone = () => !!x() && !x()!.run;
   return (
     <ListRow
       divided
-      top
       first={props.first}
       testID={props.testID}
-      label={`${t(`trial.${x().standing}`)}: ${scenarioLabel(x().scenario)}`}
-      disabled={!props.onOpen}
-      onPress={() => props.onOpen?.()}
+      label={x() ? `${t(`trial.${x()!.standing}`)}: ${scenarioLabel(props.row.scenario)}` : scenarioLabel(props.row.scenario)}
+      disabled={!props.row.onOpen}
+      onPress={() => props.row.onOpen?.()}
       trailing={
         <>
-          <View class="min-h-5 shrink-0 justify-center">
-            <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
-          </View>
-          <If when={props.onOpen}>
+          <If when={x()} else={<Badge label={props.row.state === "running" ? t("trial.running") : t("trial.waiting")} tone={props.row.state === "running" ? "info" : "quiet"} />}>
+            {(v) => <Badge label={t(`trial.${v().standing}`)} tone={STANDING[v().standing]} />}
+          </If>
+          <If when={props.row.onOpen}>
             <Icon name="chevron-right" size={ICON.small} />
           </If>
         </>
       }
     >
-      <View class={`min-w-0 flex-1 gap-1 ${x().session ? "" : "opacity-60"}`}>
-        <View class="flex-row flex-wrap items-baseline gap-x-2">
-          <Text class={TEXT.body}>{scenarioLabel(x().scenario)}</Text>
-          <Text testID="trial-id" class={TEXT.codeQuiet}>{trialAsked(x())}</Text>
+      <View class={`min-w-0 flex-1 flex-row items-baseline gap-2 ${gone() ? "opacity-60" : ""}`}>
+        <Text class={`shrink-0 ${TEXT.body}`}>{scenarioLabel(props.row.scenario)}</Text>
+        <Text testID="trial-id" class={`shrink-0 ${TEXT.codeQuiet}`}>{x() ? trialAsked(x()!) : props.row.scenario}</Text>
+        {/* why, then over the program's runs (or that its run is gone): one quiet line, cut at its end */}
+        <View class="min-w-0 flex-1 flex-row items-baseline gap-2">
+          {/* how it stood over the program's runs (a few words, kept whole), then why, cut at the line's end */}
+          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`shrink-0 ${TEXT.note}`}>{h()}</Text>}</If>
+          <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{[why(), gone() ? t("trial.runGone") : ""].filter(Boolean).join(" · ")}</Text>
         </View>
-        {/* the scenario over the program's runs: how many stood so, since when */}
-        <If when={trialSince(x())}>{(h) => <Text testID={props.historyID} class={TEXT.small}>{h()}</Text>}</If>
-        {/* what it found, and why it is not "survived": one quiet line */}
-        <If when={[trialText(x()), ...(x().standing === "survived" ? [] : trialReasons(x()))].filter(Boolean).join(" · ")}>
-          {(line) => <Muted class="text-small">{line()}</Muted>}
-        </If>
-        {/* where it turned (the request, the program's line), and what to change (said once) */}
-        <If when={x().standing !== "survived"}>
-          <TrialWhere trial={x()} sameAs={props.sameAs} />
-        </If>
-        <If when={!x().session}>
-          <Muted class={TEXT.captionSize}>{t("trial.sessionGone")}</Muted>
-        </If>
       </View>
     </ListRow>
+  );
+}
+
+/** A trial's verdicts, one way wherever they are drawn (the trial's dialog, the Runs pane): grouped by what to
+ * change, each advice said once over its scenarios, a line each. `id` names the rows (`${id}-${scenario}`). */
+export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID: string }) {
+  const groups = () => groupByAdvice(props.rows);
+  return (
+    <Card pad="none" testID={`${props.id}s`}>
+      <Each of={groups()}>
+        {(g, gi) => (
+          <>
+            <If when={g().advice}>
+              {(a) => (
+                <Row first={gi() === 0} testID="trial-advice">
+                  <View class="min-h-5 shrink-0 justify-center">
+                    <Icon name="sparkles" size={ICON.small} />
+                  </View>
+                  <Text class={`min-w-0 flex-1 ${TEXT.small} leading-5`}>{a()}</Text>
+                </Row>
+              )}
+            </If>
+            <Each of={g().rows}>
+              {(r, i) => <VerdictLine row={r()} first={gi() === 0 && i() === 0 && !g().advice} testID={`${props.id}-${r().scenario}`} historyID={`${props.historyID}-${r().scenario}`} />}
+            </Each>
+          </>
+        )}
+      </Each>
+    </Card>
+  );
+}
+
+/** The run under faults, on the Runs pane: its verdicts grouped by what to change; a press opens a trial's own
+ * run (a row whose run is gone only says what it found). */
+function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
+  const rows = (): VerdictRow[] => props.trials.map((x) => ({ scenario: x.scenario, trial: x, state: "done", onOpen: props.onOpen && x.run ? () => props.onOpen!(x.run!) : undefined }));
+  return (
+    <Section testID="history-trials" title={t("trial.title")} action={props.action} plain>
+      <TrialVerdicts rows={rows()} id="trial" historyID="trial-history" />
+    </Section>
   );
 }
 
@@ -278,7 +269,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
   // a failure (no repository, a commit gone) is said in place
   const change = resource(
     () => [props.before, props.after] as const,
-    ([a, b]): Promise<CodeChange> => api.sessions.codeChange(a, b),
+    ([a, b]): Promise<CodeChange> => api.runs.codeChange(a, b),
   );
   const ext = (p: string) => p.split(".").pop() ?? "";
   return (
@@ -326,27 +317,27 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
   );
 }
 
-/** The Runs pane of a session: its program over its runs. */
+/** The Runs pane of a run: its program over its runs. */
 export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
-      return api.sessions.budget(props.path);
+      return api.runs.budget(props.path);
     } catch {
       return null;
     }
   };
   // a failure is said as one (with Try again), never as "one run so far"
-  // read again when the sessions change: a run ended, one was deleted, a baseline set elsewhere
+  // read again when the runs change: a run ended, one was deleted, a baseline set elsewhere
   const h = resource(
-    () => [props.path, sessionsTick()] as const,
-    ([p]) => api.sessions.history(p),
+    () => [props.path, runsTick()] as const,
+    ([p]) => api.runs.history(p),
   );
   const isBase = () => h()?.baseline === props.path;
   const toggle = () => {
     try {
-      api.sessions.setBaseline(props.path, !isBase());
-      sessionsChanged();
+      api.runs.setBaseline(props.path, !isBase());
+      runsChanged();
       h.refetch();
     } catch (e) {
       report(e);
@@ -385,7 +376,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
       <If when={h()} else={<Empty icon="list-clock" text={t("history.none")} />}>
         {(x) => (
           <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
-            {/* the command is the session's header, over this pane: not said again; the dashed line said where one is drawn */}
+            {/* the command is the run's header, over this pane: not said again; the dashed line said where one is drawn */}
             <PageHeader title={t("history.title", { n: x().runs.length })} subtitle={!textual() && x().baseline && x().runs.length > 1 && shown(x()).runs.length > 0 ? t("history.hint") : undefined}>
               <If when={!terminal()}>
                 <DatePicker
@@ -449,91 +440,15 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
                   <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
                   <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
-                  <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="errors" title={t("trend.errors")} format={n} onOpen={props.onOpen} budget={budget()?.maxErrors} />
+                  <RunTrend history={shown(x())} measure="p95Ms" title={t("trend.p95")} format={duration} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="warnings" title={t("trend.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
               </If>
             </If>
           </Scroll>
         )}
       </If>
-    </Await>
-  );
-}
-
-/** A program run here: its runs' trend, its baseline, and whether the newest is past it. */
-export interface ProgramSummary {
-  program: string;
-  runs: number;
-  latest: string | null;
-  created: string;
-  points: { requests: number; waitingMs: number; currency?: string }[];
-  baseline: string | null;
-  regressed: boolean;
-  /** A month of it at the pace it runs. */
-  monthly?: { cost: number; perDay: number } | null;
-}
-
-/** The programs run here, newest first: what each did over its runs, at a
- * glance, and the ones past their baseline marked. A press opens its newest
- * run on its runs. */
-export function ProgramList(props: { onOpen: (path: string) => void; /** the place's search: the programs whose command holds it */ query?: string }) {
-  const matching = (list: ProgramSummary[]) => {
-    const q = (props.query ?? "").trim().toLowerCase();
-    return q ? list.filter((x) => x.program.toLowerCase().includes(q)) : list;
-  };
-  // a failure is said as one, not as "no program has run here yet"
-  const programs = resource(
-    () => sessionsTick(),
-    async () => (await api.sessions.programs()) as ProgramSummary[],
-  );
-  const nameOf = (p: ProgramSummary) => programOf(p.program) ?? scrubCommand(p.program);
-  // programs of one name (two commands of curl) are told apart by what differs in their commands
-  const told = (list: ProgramSummary[]) => {
-    const out = new Map<string, string>();
-    const by = new Map<string, ProgramSummary[]>();
-    for (const p of list) by.set(nameOf(p), [...(by.get(nameOf(p)) ?? []), p]);
-    for (const group of by.values()) {
-      if (group.length < 2) continue;
-      const shown = tellApart(group.map((p) => scrubCommand(p.program)));
-      group.forEach((p, i) => out.set(p.program, shown[i]));
-    }
-    return out;
-  };
-  return (
-    <Await loading={programs.loading() && !programs()} error={programs.error()} retry={() => programs.refetch()}>
-    <If when={programs()}>
-      {(list) => (
-        <If when={matching(list()).length > 0} else={<Empty compact text={list().length > 0 ? t("sessions.noMatch") : t("programs.none")} />}>
-          <List testID="program-list" class="flex-1" each={matching(list())} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
-            {(p) => (
-              <ListRow
-                testID="program-row"
-                label={`${programOf(p().program) ?? scrubCommand(p().program)}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
-                onPress={() => p().latest && props.onOpen(p().latest!)}
-                lines={2}
-                class="mb-1"
-              >
-                {/* (as a run's row: the same insets, the name and what tells it apart on its first line) */}
-                <View class="flex-row items-center gap-2">
-                  <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{nameOf(p())}</Text>
-                  <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told(list()).get(p().program) ?? ""}</Text>
-                  <If when={p().regressed}>
-                    <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>
-                  </If>
-                </View>
-                <View class="flex-row items-center gap-2">
-                  {/* how often it runs, and what a month of it costs at that pace */}
-                  <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: money(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
-                  <If when={p().points.length > 1}>
-                    <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} />
-                  </If>
-                </View>
-              </ListRow>
-            )}
-          </List>
-        </If>
-      )}
-    </If>
     </Await>
   );
 }

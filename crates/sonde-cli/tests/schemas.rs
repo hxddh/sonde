@@ -1,5 +1,5 @@
 //! Every `-f json` output is what its JSON Schema in docs/schemas says
-//! (docs/contract.md): the real binary, the demo's session and a small S3 in
+//! (docs/contract.md): the real binary, the demo's run and a small S3 in
 //! this process. A field a schema requires that goes, or changes its type,
 //! fails here; a field added does not (schemas leave objects open).
 //!
@@ -284,32 +284,36 @@ async fn every_json_output_is_as_its_schema_says() {
         .await
         .unwrap();
     assert_eq!(demo.status.code(), Some(0));
-    let session = std::fs::read_dir(b.path("data/sessions"))
+    let run = std::fs::read_dir(b.path("data/runs"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
         .find(|p| p.extension().is_some_and(|e| e == "sonde"))
         .unwrap();
-    let s = session.to_str().unwrap();
+    let s = run.to_str().unwrap();
     // the run tried under a fault, and its program tried before: a verdict
     // with its history
     {
-        use sonde_proxy::trial;
-        let clean = sonde_proxy::session::Session::open(&session).unwrap();
+        use sonde_analysis::trial;
+        let clean = sonde_analysis::run::RunFile::open(&run).unwrap();
         let slowdown = sonde_proxy::fault::scenario("slowdown").unwrap();
         let now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
-        trial::save(&session, std::slice::from_ref(&now)).unwrap();
+        trial::save(&run, std::slice::from_ref(&now)).unwrap();
         let mut then = now.clone();
         then.standing = trial::Standing::Broke;
-        let dir = session.parent().unwrap();
+        let dir = run.parent().unwrap();
         let day = chrono::Utc::now() - chrono::Duration::days(1);
-        trial::record(dir, "sonde run --demo", "earlier.sonde", day, &[then]).unwrap();
-        let name = session.file_name().unwrap().to_string_lossy();
-        trial::record(dir, "sonde run --demo", &name, chrono::Utc::now(), &[now]).unwrap();
+        trial::record(dir, "tour", "earlier.sonde", day, &[then]).unwrap();
+        let name = run.file_name().unwrap().to_string_lossy();
+        trial::record(dir, "tour", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
-    // reading a session
+    // reading a run
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
+    holds(
+        "show",
+        &b.json(&["show", s, "--requests", "-f", "json"], 0).await,
+    );
     // one with nothing found: no what-if, as the schema says
     {
         let quiet = b.path("quiet.log");
@@ -320,8 +324,8 @@ async fn every_json_output_is_as_its_schema_says() {
         .unwrap();
         let q = b.path("quiet.sonde");
         let text = std::fs::read_to_string(&quiet).unwrap();
-        let (_, session) = sonde_proxy::import::import(&text, "quiet").unwrap();
-        sonde_proxy::import::save(&session, &q).unwrap();
+        let (_, run) = sonde_analysis::import::import(&text, "quiet").unwrap();
+        sonde_analysis::import::save(&run, &q).unwrap();
         let q = q.to_str().unwrap();
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
@@ -330,6 +334,22 @@ async fn every_json_output_is_as_its_schema_says() {
             "show-summary",
             &b.json(&["show", q, "--summary", "-f", "json"], 0).await,
         );
+    }
+    // one kind of request of many: not few, so `few` is left out
+    {
+        let line = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
+        let (_, run) = sonde_analysis::import::import(&line.repeat(30), "many").unwrap();
+        let m = b.path("many.sonde");
+        sonde_analysis::import::save(&run, &m).unwrap();
+        let m = m.to_str().unwrap();
+        let summary = b.json(&["show", m, "--summary", "-f", "json"], 0).await;
+        assert!(
+            summary["summary"]["kinds"][0].get("few").is_none(),
+            "{}",
+            summary["summary"]["kinds"][0]
+        );
+        holds("show-summary", &summary);
+        holds("show", &b.json(&["show", m, "-f", "json"], 0).await);
     }
     holds(
         "show",
@@ -358,7 +378,7 @@ async fn every_json_output_is_as_its_schema_says() {
         "compare",
         &b.json(&["compare", s, s, "-f", "json"], 0).await,
     );
-    holds("sessions", &b.json(&["sessions", "-f", "json"], 0).await);
+    holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
     // replaying it on the small store, and the two compared
     let replayed = b.path("replay.sonde");
@@ -434,10 +454,10 @@ async fn every_json_output_is_as_its_schema_says() {
         .await,
     );
     holds(
-        "layout-inspect",
+        "layout",
         &b.json(
             &[
-                "layout", "inspect", "-e", "a", "-b", "data", "--kind", "generic", "-f", "json",
+                "layout", "-e", "a", "-b", "data", "--kind", "generic", "-f", "json",
             ],
             0,
         )
@@ -510,7 +530,7 @@ fn every_schema_is_checked_and_documented() {
         "show-by",
         "check",
         "compare",
-        "sessions",
+        "runs",
         "compare-replay",
         "compare-replay-stores",
         "compare-answers",
@@ -518,7 +538,7 @@ fn every_schema_is_checked_and_documented() {
         "endpoints-test",
         "bucket-size",
         "bucket-uploads",
-        "layout-inspect",
+        "layout",
         "probe-list",
         "probe",
         "probe-runs",
@@ -548,7 +568,7 @@ fn every_schema_is_checked_and_documented() {
 }
 
 /// The contract promises figures and ids, not wording: every phrase array
-/// (`…Text`) and `layout inspect`'s display tables say so, those tables are
+/// (`…Text`) and `layout`'s display tables say so, those tables are
 /// not required, and no output names an S3 call `operation` (it is a
 /// `kind`; an operation is a program's).
 #[test]
@@ -566,7 +586,7 @@ fn display_text_is_marked_and_an_s3_call_is_a_kind() {
                         let said = p["description"]
                             .as_str()
                             .is_some_and(|d| d.starts_with("Display text, not stable"));
-                        let layout = name == "layout-inspect"
+                        let layout = name == "layout"
                             && ["headline", "facts", "tables"].contains(&k.as_str());
                         if (k.ends_with("Text") || layout) && !said {
                             out.push(format!("{name}: {k} is not marked display text"));

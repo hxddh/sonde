@@ -6,18 +6,16 @@ The app's own decisions on top of Native Shell's Design Guides
 
 ## The product
 
-One task: see what a program does to S3. Three places — **Run** (start a program and
-watch its requests become operations; once it ends, its top findings, what each saves and
-the one figure for acting on them, under a band of two rows — how it ended in figures, then "See the whole run",
-"Try under faults…" and the place's one Run, "Run again", by their words at every width), **Sessions** (what a run did, what stands out and how
-it stands against the run before, grouped, compared and replayed), **Buckets** (the store's side, in one row of sections: objects, size,
-incomplete uploads, versions, layouts, compatibility). The window has two columns
-and no more: the **sidebar** (the places, and under them the current place's own list —
-the commands run before, the sessions, the buckets) and the place; a detail opens
-beside the place as an inspector, and nothing else moves when it does. Everything configured once
-lives in **Settings** (a window); what sonde itself is doing lives in **Activity** (a
-side panel). The core result is *what stands out in a session*: it gets the space, the
-words and the next action; counts and chips support it, they do not replace it.
+One task: see what a program does to S3. Three places — **Run** (the command bar, and the program running
+beside its operations as they arrive; once it ends, the run's own view takes the room, as Runs shows it, opened on
+its Output), **Runs** (what a run did, what stands out and how it stands against the run before, grouped, compared and
+replayed), **Buckets** (the store's side, in one row of sections: objects, size, incomplete uploads, layouts; an
+object's versions open from its inspector). The window has two columns and no more: the **sidebar** (the places, and
+under them the current place's own list — the commands run before, the runs, the buckets) and the place; a detail
+opens beside the place as an inspector, and nothing else moves when it does. Everything configured once lives in
+**Settings** (a window: an endpoint's compatibility is checked there, on the endpoint); what sonde itself is doing
+lives in **Activity** (a side panel). The core result is *what stands out in a run*: it gets the space, the words and
+the next action; counts and chips support it, they do not replace it.
 
 ## One interaction grammar
 
@@ -29,9 +27,14 @@ words and the next action; counts and chips support it, they do not replace it.
 - **Inspect**: its detail opens in **the one inspector** beside what it details (an operation, a request, an
   object), from the edge where the pane is narrow. Never a second panel, never a dialog; Escape closes it.
 - **Act**: what can be done with it stands at the end of its row or of the inspector — the primary, the rest
-  behind `⋯` — and every act is also in the palette (⌘K, `:` in a terminal) or on a shortcut: nothing only a
-  pointer reaches. A dialog is for a short decision only. A tool has one door: Buckets' sections are reached
-  from their row (a tile or a finding whose fix is one of them leads to the same section, not to a window).
+  behind `⋯` — and every act is also in the palette (⌘K, `:` in a terminal), most on a shortcut: nothing only a
+  pointer reaches. What is on screen offers its commands with `offerCommands` (store.ts): the palette lists them
+  under its name ("This run", "Objects", an object's name) with their shortcuts, and the shortcuts are bound while it
+  shows. A dialog is for a short decision only.
+- **One door each.** A thing is reached one way per surface: recent runs from Runs' sidebar list and the palette's
+  "Recent runs"; the example and the demo from the welcome and the palette; Buckets' sections from their row (and
+  `⌥⌘1`–`⌥⌘4`; a finding whose fix is one of them leads to the same section); "See the whole run" in the palette on
+  Run only.
 
 ## Platforms
 
@@ -40,7 +43,7 @@ words and the next action; counts and chips support it, they do not replace it.
 | macOS | Hidden title bar with the app's toolbar; the window's sidebar material behind the sidebar (`window.backdrop: "sidebar"`); glass on floating surfaces |
 | Linux, Windows | The same layout with opaque fills; the menus behind the toolbar's menu button |
 | Terminal (`sonde tui`) | A home list and a navigation stack; tables and sentences instead of charts; text labels for actions |
-| Web (`sonde share`) | The app's session page, read-only: its header, its tabs, the pane — the shape strip and the findings over the operations |
+| Web (`sonde share`) | The app's run page, read-only: its header, its tabs, the pane — the shape strip and the findings over the operations |
 
 Where a terminal only spaces or colours a view differently, the class says so (`gap-4 terminal:gap-2`, Native
 Shell's `terminal:` variant); `terminal()` in code is for what a terminal draws differently (a sentence for a
@@ -71,13 +74,6 @@ code and the columns of times. Figures outside tables use `tabular-nums` so live
 counters do not jitter. (A shipped face was tried and dropped: text in a registered
 font is measured narrower than it is drawn — FINDINGS 15.)
 
-**Two weights, and no third**: regular, and bold (700) for a heading, a figure and words
-that must stand out (`EMPHASIS`). Not medium and not semibold: the CJK faces a system
-falls back to have a regular and a bold and nothing between (Noto Sans CJK and WenQuanYi
-on Linux, Microsoft YaHei on Windows; on macOS PingFang's heaviest, its semibold, stands
-for bold), and a face with no bold is emboldened by the system only when bold itself is
-asked for. At 600 a Chinese title was drawn regular beside the bold Latin in it.
-
 ## Color
 
 **One tone table** (`TONE` in the kit) draws every tone each way it is drawn: its words (`text`), a solid mark (`fill`),
@@ -90,10 +86,8 @@ or a tile's figure (both stay in the text's colour, a quiet one muted). A verdic
 "Missing") is a `Badge`: its tone on a dot, its word in the text's colour (muted when neutral), no pill. What is merely done says nothing (Activity has no
 "Finished"). The one coloured words are a finding's saving ("↘ 10 fewer requests", `info`).
 
-Theme tokens only (`theme.json`, light and dark). Status has its own roles —
-`status-ok`, `status-miss`, `status-client`, `status-server`, `status-refused`,
-`status-injected` (a fault scenario's answer, never the store's), `warn`, `info` — and formats theirs (`fmt-*`); never a palette color in a page. The
-scrim under modal layers is `bg-scrim`. Color never carries meaning alone: a dot sits
+Theme tokens only (`theme.json`, light and dark; the system's own contrast settings, not one of the app's), the
+formats theirs (`fmt-*`); the scrim under modal layers is `bg-scrim`. Color never carries meaning alone: a dot sits
 next to a status code, a warning has its icon and its words.
 
 ## The kit
@@ -109,12 +103,12 @@ piece wraps one nsh export with the theme's tokens:
 | `ActionRow`, `More`, `popupMenu` | `Button`, the system's menu | commands in one row that never wraps: in rank order as many as the row has room for (each measures itself), the rest behind `⋯`; `More` alone is the `⋯`; `popupMenu(actions, anchor)` the one way to show the system's menu, under the button that opened it (at the pointer for a context menu) |
 | `Pressable`, `Crumb`, `Scrubber`, `confirmAlert` | `Button`, `Link`, `Slider`, `AlertDialog` | a press area around what is not a label; a part of a path as a link; a value dragged along a range; the system's short question before something goes |
 | `Title`, `Heading`, `Strong` | `Text` | the two heading levels (`page` for an introduction's one title; `quiet` over a list), and words set heavier that are not a heading |
-| `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own. A `Field` that is refused says so in one way: `error` (its edge in `fail`, the reason under it, and to a screen reader the field is `invalid` with the reason as its description); `invalid` alone where the reason stands elsewhere |
+| `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own. A `Field` that is refused says so in one way: `error` (its edge in `fail`, the reason under it, and to a screen reader the field is `invalid` with the reason as its description); `invalid` alone where the reason stands elsewhere; `rest` keeps its text at its start without the focus (Run's command) |
 | `Segmented`, `Options` | `Tabs`, `RadioGroup` | what a place shows (a tab with nothing to show here is `disabled`, dimmed in its place: it does not go); a value of a few (a set of radios: one is checked) |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
 | `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end. A `Modal` that asks or warns gives its sentence as `describe`: a screen reader hears it after the dialog's name |
 | `FocusRest` | `Input` | where the keyboard rests in a window on Linux when no field has it (FINDINGS 22): each window's first element, nothing to see or hear |
-| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its session). No third figure. `Tiles` lays tiles in rows of equal count and tells each how much of itself to show (`TileLook`: `full`, `tight`, `line`) |
+| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its run). No third figure. `Tiles` lays tiles in rows of equal count and tells each how much of itself to show (`TileLook`: `full`, `tight`, `line`) |
 | `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
 | `Notice` | — | the one banner: a note, a caution or what went wrong, with what can be done at its end |
 | `Await` | — | anything fetched, in its three states said truly: on its way, failed (why, Try again), there |
@@ -128,8 +122,11 @@ Rules: a page passes no classes of its own to an `nsh/base` control; a class str
 belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
 after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it). One of each state: `SELECTED` the
 selection, `HIGHLIGHT` a popup's row under the keyboard, `DISABLED` the one dimming (0.4), `DOT` the one dot (8 pt),
-`active:bg-muted` and `PRESS` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
-`percent` and `change`, `cost` (`costColumn`: a column's costs in one unit, said once in its title), `clock`, `count`, `bytes` (never four digits: 999 B, then 1.0 KiB), `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date` (a day with its time, one writing: "Nov 7, 2026, 00:22", and to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
+`active:bg-muted` and `PRESS` the press. One formatter per kind of value (`format.ts`, `[number]` and `[duration]`
+below): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding; as an `age`, 86 d, and a `counter`, 0:07),
+`percent` and `change`, `cost` (`costColumn`: a column's costs in one unit, said once in its title), `clock`, `count`,
+`bytes` (never four digits: 999 B, then 1.0 KiB), `transfer` (`↑ 78.1 KiB ↓ 75.1 KiB`), `date` ("Nov 7, 2026, 00:22",
+to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `copy()` is the one way to copy, `useEndpoint()`
 the one way to change endpoint.
 
 ### One of each, and the lint that keeps it so
@@ -142,7 +139,7 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 |---|---|---|
 | Figures | Two renderings, `Stat` and `Figure`, both the kit's. No component named Figure or Stat elsewhere, no large tabular number set by hand | `[figure]` |
 | Headings | `Title`, `Heading`, `Section` only: no `role="header"` and no `font-semibold`/`font-bold` in a page. Weight that is not a heading is `Strong`; where only classes can be given, `EMPHASIS` with an `emphasis:` comment saying why | `[heading]` |
-| Weights | Two: regular and bold. `font-medium`, `font-semibold` and every other weight fail, the kit included | `[weight]` |
+| Weights | Two: regular, and bold (700) for a heading, a figure and words that must stand out (`EMPHASIS`). The CJK faces a system falls back to have nothing between (at 600 a Chinese title drew regular beside bold Latin), so `font-medium`, `font-semibold` and every other weight fail, the kit included | `[weight]` |
 | Rows | `ListRow` for every row a press opens, `Row` for every row only read; `ROW_STATE` stays in the kit, no hairline row by hand | `[row]` |
 | Base controls | A page takes from `nsh/base` only what has structure and no look (a table, a split, a tree, a terminal, an editor, a diff); a control comes from the kit. The shared pieces that draw one of their own are listed in the lint, each with why | `[base]` |
 | Open and close | `Disclosure` (with `trailing` for what stands beside its title): the findings use it | `[heading]` (its title is the kit's) |
@@ -151,8 +148,8 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Presses | Nothing pressable by hand: no `role="button"` on a `Text` or a `View` (it has no focus ring); `Button`, `ListRow` or `Back` | `[press]` |
 | Duration | `duration()` in `format.ts`, under that name only: no alias, no milliseconds written by hand, no other function that writes one (`elapsed`, `days` and `ago` are gone: an age and a counter are forms of `duration`), an age's words used nowhere else | `[duration]` |
 | Numbers | Every count through `count()`, every share through `percent()`/`pct()`, a ratio through `factor()`, a rate through `rate()`: no `String(` and no `.toFixed(` in `src/ui`, `src/screens` or `viewer` | `[number]` |
-| Spacing | 4, 8, 12, 16, 24 (`gap-1 2 3 4 6`, and `p-`, `m-` alike), every value checked, not two; in the kit an off-scale inset carries an `off-scale:` comment | `[spacing]` |
-| Control heights | Two, `h-8` and `h-7`; a button inside a field is `IconButton inField` (as high as the field) | `[control]`, `[control-height]` |
+| Spacing | 4 inside a control, 8 between related controls, 12 inside a group, 16 between groups and as a page's gutter and a panel's padding (`p-4` everywhere), 24 between sections and around a centered introduction or a dialog's edge (`gap-1 2 3 4 6`, `p-`, `m-` alike), every value checked; in the kit an off-scale inset carries an `off-scale:` comment; widths off the scale belong to a component (`SidePanel`, the palette, a chart's `GUTTER`) | `[spacing]` |
+| Control heights | Two: `h-8` for a field, a choice, a button; `h-7` for a small button, an icon button, a picker's trigger and a row of segments (each segment `h-6` in its track); a button inside a field is `IconButton inField` (as high as the field) | `[control]`, `[control-height]` |
 | Icons | Three sizes (`ICON.small` 12, default 16, `ICON.large` 20), by name, never a number; one tile (`IconTile`); an `<Icon` is written on one line, so the size rule reads it | `[icon-size]`, `[icon-tile]`, `[icon]` |
 | Motion, shadows, type, tones | No `duration-N` (`TIMING` and the kit's transitions), no `shadow-*` (`SHADOW`), no `text-caption` (a `TEXT` role), no tone table of a page's own (`TONE`) | `[motion]`, `[shadow]`, `[type]`, `[tone]` |
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
@@ -162,8 +159,6 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 
 Sizes (`CONTROL`, `ROW`, `FORM`):
 
-- **Two control heights.** h-8 for a field, a choice, a button; h-7 for a small button, an icon button, a picker's
-  trigger and a row of segments (each segment h-6 in its track). Nothing between.
 - **One middle.** Controls in a row share their vertical middle (`items-center`); no control sets its own
   `self-start` (`Badge` and `Back` included) — a column that wants it left says so where it places it.
 - **Three row heights.** 30 for a table of rows to press, 26 for a short summary table or program output, 44 for a
@@ -171,16 +166,16 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Baseline.** Text in one row shares a baseline: one type size per row where it can, sizes that differ on their
   first baseline (`items-baseline`: a one-line tile's name and figure), figures at the end of their
   cell in a `flex-1 items-end justify-center` box, an icon in a `shrink-0` box beside its text.
-- **Four thresholds** (`BREAK`), and no others: two widths — `toolbar` (1040), from which the window's toolbar shows
+- **Four thresholds** (`BREAK`, `[threshold]`): two widths — `toolbar` (1040), from which the window's toolbar shows
   the endpoint's name in full and the search field rather than its button, and `inspector` (900), from which a pane
   holds an inspector beside what it details (under it the inspector comes in from the edge); two heights of a
-  session's pane — under `short` (600) the shape strip goes, the signal tiles keep to what they count
+  run's pane — under `short` (600) the shape strip goes, the signal tiles keep to what they count
   and the figure, and the findings keep to a line or two, from `tall` (880)
   each finding has its lines in full. A pane measures itself (`onLayout`); nothing reads the focused window's size.
 - **A pane that narrows reflows by rule**, never by clipping:
   - *figures first*: a row of ranked tiles (`Tiles ranked`) holds as many as fit, in rank order; the last ranked
-    go, none wraps. A session's header is its **four signals — rate, errors, latency,
-    bytes — and in flight**, a tile each (a figure, its line over the session, one line of detail; a press opens
+    go, none wraps. A run's header is its **four signals — rate, errors, latency,
+    bytes — and in flight**, a tile each (a figure, its line over the run, one line of detail; a press opens
     its chart on the Time pane): in flight goes first, then bytes. A figure a log without times cannot give says
     "Not timed", never 0. **A short run says totals, not rates**: under a second, or under twenty requests, the
     tiles read "9 requests", "2 of 9", "3.0 MiB", and draw no line over a time that is a moment; a percentile of
@@ -193,7 +188,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     and size stay; then Modified, Class, Parts. Ranked columns stand last, in rank order, because DataTable keeps a
     column's state by its place;
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
-  - a session's sentence wraps to two lines and is cut only at the second line's end;
+  - a run's sentence wraps to two lines and is cut only at the second line's end;
   - tiles (`Tiles`) go in rows of equal count, each as high as its row: four are four abreast or two and two,
     never three and one; five that do not fit go in rows as even as they can (three and two, not four and one). They never stand
     one per row in a pane 560 pt wide or more; under it each takes a line of its own — what it counts at its start,
@@ -201,15 +196,12 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
     no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
     goes to the next line;
-  - a session's header **folds to one line** while the pane under it is scrolled from its top: what ran, its first
+  - a run's header **folds to one line** while the pane under it is scrolled from its top: what ran, its first
     three figures said with what they count ("172 requests · 0% errors · 1.4 ms", quiet words, each still opens its
     chart), its commands; at the top again it opens;
-  - Run's output yields to its result once the program has ended (`PANE.terminalDone`);
+  - Run's terminal yields room to why when a program sent nothing (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
-    as fit, the rest behind `⋯` by their words — never a row of unlabelled icons (a session's header narrower than
-    `inspector` keeps Run again and `⋯`); they never wrap to a second line. Run's band is the one exception: where its two
-    next steps do not fit beside Run again, they take the row by their words (no icons), and `⋯` and Run again a
-    line under them — the loop's next step is never behind `⋯`;
+    as fit, the rest behind `⋯` by their words — never a row of unlabelled icons; they never wrap to a second line;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
     in a short pane that room is bounded so the operations under it keep rows, ending on a whole finding, and
     says how many are in view;
@@ -217,19 +209,19 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
-- **Nothing appears and goes.** What a place may show has its room from the start: the
-  sessions' search field, a pane's four tabs (With output and Runs are dimmed for a session that has none, they
-  do not go). A value arrives in its place; the layout does not change to make it.
+- **Nothing appears and goes.** What a place may show has its room from the start: the runs' search field, a
+  pane's four tabs (Output and History are dimmed for a run that has none, they do not go). A value arrives in its
+  place; the layout does not change to make it.
 - **One settings width.** Settings and Endpoints are `FORM` wide, so their edges line up across the tabs.
 - **Tables fit their own width.** The operation's name takes the room the others leave; notes, then bars go as
   the table (not the window) narrows — from the end only: DataTable keeps a column's state by its place. A
   table whose columns are set by hand gives its free width to the column that would be cut (a request's
   target, an upload's key), and a column of dates is as wide as the widest date in either language.
-- **A session of any size.** A session's view carries its totals, its signals, its findings and the first page
+- **A run of any size.** A run's view carries its totals, its signals, its findings and the first page
   of its operations; the table holds a window of rows over however many there are (`Operations`, `paged.ts`)
   and asks for the rest as it scrolls, sorts or is narrowed — sorted and narrowed where the operations are
   kept, never in the interface. The inspector reads one operation whole when it is chosen. A shared page holds
-  its session whole and answers the same table from it (`operations.ts`).
+  its run whole and answers the same table from it (`operations.ts`).
 
 ## One rendering per concept
 
@@ -244,7 +236,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 | Key or path | `Path`: mono, on one line, cut in its middle with no space against the cut, never cut and wrapped; keys listed together share their prefix as `…/` (`shortKeys`), each keeping its folder and what tells it apart |
 | Command | mono, `$ ` before it, variables' values hidden |
 | Opening | "Open …", a chevron on rows |
-| Removing | "Delete" for data (a session, a version, objects), "Remove" for configuration (an endpoint); the trash icon, a confirmation, so both end with `…` |
+| Removing | "Delete" for data (a run, a version, objects), "Remove" for configuration (an endpoint); the trash icon, a confirmation, so both end with `…` |
 
 ## Surfaces
 
@@ -272,15 +264,6 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   pointer, on the selected row, or while the keyboard is inside the row; a table's sort mark shows on its sorted
   column and under the pointer, right after its title (`titleCells`: every DataTable's titles, drawn one way).
 
-## Spacing and size
-
-Tailwind's 4-point scale by relationship, and only these: 4 inside a control, 8 between related controls, 12 inside
-a group, 16 between groups and as panel padding, 24 between sections and around a centered introduction or a
-dialog's edge. **The page gutter is 16** (`p-4`) everywhere: a place, a sheet, a window's page, the shared page —
-20 was not on the scale. Rows: 28 (a list's row, a chart's row), 30 (operations, objects), 44 (two lines). Widths
-that are not on the scale belong to a component (`SidePanel`, the palette, the inspector, a chart's `GUTTER`) and
-nowhere else.
-
 ## Actions
 
 - **Primary** is the default commit of its area, the one Return runs: Run, Save, the
@@ -292,10 +275,18 @@ nowhere else.
   code change). A state has its verb as its label ("Clear baseline", not "Baseline ✓ — clear").
 - Secondary commands live in a visible menu (`⋯`) or a context menu, and every one has
   another path (the palette, a shortcut, the inspector).
-- **One header pattern.** A session's header is its command (one line, regular mono, cut in its middle), a meta
-  line, then one primary (Run again) and `⋯` — Try under faults…, Replay on… and Compare… are there and in the
-  palette's "This session". Every Buckets section opens on the same head (`ToolBar`): its title, its scope (the
-  bucket and prefix), its actions at the end; the title bar says the place only, and nothing repeats it.
+- **One header pattern.** A run's header is its command (one line, regular mono, cut in its middle), a meta
+  line, then one primary (Run again; on Run the command bar's Run is the place's one, and the header has none) and
+  `⋯` — Try under faults…, Replay on… and Compare… are there and in the palette's "This run" ("Since the run
+  before" keeps its own Compare beside what changed). Every Buckets section opens on the same head (`ToolBar`): its
+  title, its scope (the bucket and prefix), its actions at the end, each also in the palette and on its shortcut
+  (`⇧⌘R` scans again everywhere); the title bar says the place only, and nothing repeats it.
+- **The object inspector** is one list (`KeyValue`: size, type, modified, class, then ETag, checksums and encryption
+  where the object has them, and its metadata), its response headers the one section that opens; Download and
+  Versions on its row, what copies it (its S3 URI, a presigned URL for an hour) behind `⋯`. Versions open in its
+  place, with the way back; a key deleted, which lists nowhere, is found by its name from the filter that finds none.
+- **One filter mode**: a field narrows what is listed; where nothing listed matches, the empty list offers every key
+  under the prefix searched (and that key's versions), and the matches take the listing's place until closed.
 - Destructive actions are read-only by default and go through a dry run and a typed
   confirmation; the result is in the audit log (Activity › Changes).
 
@@ -316,27 +307,33 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **One reading order** on the Time pane: four titled groups, **Traffic, Latency, Errors, Where**, every chart
   shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last
   one alone takes the row.
+- **No hidden views**: a chart has no switch between views. A view of its own is a card of its own (the latencies as
+  a grid, the requests by size, the bodies' speed by size, the prefixes by their busiest second); a view another
+  chart already gives is not drawn twice (the kinds over time are the table by kind; the waiting by line of the
+  program is Group by's; the prefixes by cost are "What did the requests cost?").
 - **One selection**: the stretch of time chosen — a slice pressed on the Operations strip, or two on the Time pane's
-  timeline — is one state of the session, said as one chip (what narrows, and its ✕) over both panes. Charts over time
+  timeline — is one state of the run, said as one chip (what narrows, and its ✕) over both panes. Charts over time
   zoom to a stretch of two slices or more (one slice is marked, the rest quiet); every other chart is
-  reckoned again from the requests that started in it (`sessions.stretch`). Every chart keeps its sentence,
+  reckoned again from the requests that started in it (`runs.stretch`). Every chart keeps its sentence,
   reckoned over the stretch, with the stretch beside it ("… · in +200 ms – +400 ms"); a shared page, which cannot
-  reckon, says "of the whole session". A slice or stretch where no request began does not become the stretch.
+  reckon, says "of the whole run". A slice or stretch where no request began does not become the stretch.
+  A sentence that states a percentile of fewer than twenty requests carries the tile's mark ("· of only 8
+  requests"), over the stretch it is of.
 - **One frame** (`Chart`), used by every chart — the Time pane's, Capacity's, Compare's, the trends, the
   waterfall, Run's live panel, the shared page: a card with the question as its title, a sentence that answers it
-  (it wraps, never cut), how it is cut at the title's end (`action`), the plot, its `legend`, and `empty` said in
+  (it wraps, never cut), an act at the title's end (`action`: the timeline's let-go), the plot, its `legend`, and `empty` said in
   the plot's room. A card is as high as its content: a chart of two bars is not stretched to its neighbour's
   height. The Time pane is a list of chart descriptors drawn by one loop. `CHARTS` names the chart
   components (a `Plot` anywhere else fails the lint, as does a chart used outside a frame); `FRAMED` those that
-  draw their own frame (`RunTrend`); `MARKS` what is not a chart and stands in none: a session's `Sparkline` in its
-  row and the shape strip under a session's header (`SessionShape strip`).
+  draw their own frame (`RunTrend`); `MARKS` what is not a chart and stands in none: a run's `Sparkline` in its
+  row and the shape strip under a run's header (`RunShape strip`).
 - **One left edge**: rows' names in one gutter (`GUTTER`, 176 pt, `AXIS_LABEL`), wide enough for
   "GetObject, not found" whole; a legend or a note under a chart of rows starts at the plot's edge (`gutter`). Flows
   have the same gutter either side.
 - **One row pitch**: 28 (`PITCH`, `rowsHeight(n)`) for every chart of rows (time spent, chains, the waterfall, the
-  heat map, the dumbbells, the kinds over time, Capacity's bars). Charts that are not rows have a height of their
-  own, each named once: a map of areas (`TREEMAP`, one height for all three), requests against time or size
-  (`PLOT`), the timeline (`SHAPE`) and the strip under a session's header (`SHAPE_STRIP`), lanes (as many as ran
+  heat map, the dumbbells, Capacity's bars). Charts that are not rows have a height of their
+  own, each named once: a map of areas (`TREEMAP`, one height for every one), requests against time or size
+  (`PLOT`), the timeline (`SHAPE`) and the strip under a run's header (`SHAPE_STRIP`), lanes (as many as ran
   at once), flows (`FLOWS`), the thin strips (`STRIP`: the trends, Run's live panel, a trial over its clean run),
   the stack (`STACK`) and a mark (`MARK`). **A bar's thickness** is one of `BARS` (rows, pairs, slices, buckets)
   or `CELLS`, **its tip** one of `TIP` (across, up, down, a span, a cell, an area, a mark): no literal padding,
@@ -351,15 +348,16 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like: on the timeline's
   stack, an operation's row, the Errors tile and its line, never a store failure's red) — one failure one
   colour everywhere: errors all the program's own (4xx) are `status-client` on the tiles and figures too; a quantity in
-  `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
-  `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
-  `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
-  turns `bar-track`, it does not disappear.
+  `chart-1`, a second in `chart-4` (blue and orange: apart for every eye); tails and percentiles in a quiet
+  `muted-foreground` (dashed for a line), never an error's color; retries in `info`; a throttle in `warn`, lighter,
+  apart from the other 5xx; before is `muted-foreground/30`, after by how it moved (`chart-1` fewer, `chart-4` more:
+  never green against red). lint-charts holds these pairs apart under deuteranopia and protanopia. What a selection
+  leaves out turns `bar-track`, it does not disappear.
 - **One time axis** (`TimeAxis`), under every chart over time — the timeline and the strip on Operations, lanes,
-  bytes, latency's bands and its heat map, the scatter, the kinds, errors and their rate, chains, the prefix heat
+  bytes, latency's bands and its grid, the scatter, errors and their rate, chains, the prefix heat
   map, a trial over its clean run (`OVER_TIME` names them): the same round moments (`timeTicks`: 1, 2 or 5 of a
-  power of ten apart, three or four of them) over the same stretch (`sessionSpan`, or the zoom), each said from
-  the session's start (`+200 ms`, `sinceTick`). A chart of slices puts a tick on the slice its moment falls in.
+  power of ten apart, three or four of them) over the same stretch (`runSpan`, or the zoom), each said from
+  the run's start (`+200 ms`, `sinceTick`). A chart of slices puts a tick on the slice its moment falls in.
   A length of time on an axis (the waterfall, from its operation's first request) has the same ticks, said as
   lengths. lint-charts fails a `PlotAxis` that writes a moment anywhere else.
 - **One value scale** (`ValueAxis`) on every chart of counts (`COUNTS`: the timeline, the bands, the histogram,
@@ -381,8 +379,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   one with a count says "0" on a sliver (`ZERO_SLIVER`): a bar of no value is not drawn, nor its label.
 - **Latency's bands**: the median a line, the body (median to p95) and the tail (p95 to p99) two tones of their
   own (`latency-body`, `latency-tail`) that pass 3:1 against each other and against the card, in light and in
-  dark (lint-charts computes it). Beside the bands, the same latencies as a grid (slices by buckets of
-  latency, a cell's tone how many): what a band averages away.
+  dark (lint-charts computes it). Beside them, a card of its own, the same latencies as a grid (slices by buckets
+  of latency, a cell's tone how many): what a band averages away.
 - **Quiet frames**: hairline grids (`stroke-border`), no axis lines, small tabular labels in `text-caption`
   `muted-foreground`; bars' tips rounded, their bases square; labels at the bars' ends rather than a value axis.
 - **A press acts on what the pointer is over** (a slice narrows the operations; a dot or a bar opens its request);
@@ -392,7 +390,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **Findings on the shape**: a number over a slice is the finding of that number, where it begins (several that
   begin together are said in order, "1, 2, 3"); the frame's legend says so, and the slice's tooltip names the
   findings that begin in it.
-- **A trial against its clean run**: on a trial's session the Time pane opens its Traffic with the trial drawn
+- **A trial against its clean run**: on a trial's run the Time pane opens its Traffic with the trial drawn
   over the clean run on one axis (the requests sent so far — a count, never a rate a few requests would leap — then the median latency), and a rule in the injected tone
   at every moment sonde answered in the store's place — on that chart, on the timeline and on the strip.
 - **By kind of request**: Latency opens with a table (`GroupTable`) — requests, error share, median, p95, p99, the
@@ -420,7 +418,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   (`HEAT_RAMP`, tones of its own that lint-charts holds apart from the card, so one request reads in dark too) by
   the square root of its counts.
 - **Annotations over legends**: a chart names its notable point in place (`PlotLabel`), a baseline is a dashed line.
-- Times read from the session's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
+- Times read from the run's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
 
 ## Pictures
 
@@ -455,21 +453,21 @@ it, as `sonde run --trial` takes it, and what it does and how hard it presses in
 (`scenario.about.<name>`; a project's own scenario keeps the line its `sonde.toml` gives). The trial's dialog
 says the limit the program runs under and lets it be changed; **Stop** ends a running trial and is its own
 word (nothing dismisses the dialog while it runs), the time it has taken counts beside its progress, and a
-finished scenario opens its own session. A verdict that is not "survived" says where it turned (the request,
-the program's line) and what to change, from Rust's phrase — each piece of advice once, a later verdict with the same
-referring to it. A verdict is drawn one way (`TrialRow`) in the dialog and on the Runs pane: its standing at the row's
-end, what it found and why in one quiet line, its history as a count and a time ("Broke in 3 of 3 runs, since 08:33").
+finished scenario opens its own run. Verdicts are drawn one way (`TrialVerdicts`) in the dialog and on the History
+pane: grouped by what to change (Rust's phrase), each advice said once over the scenarios it is for, a line each — the
+scenario and its id, why it is not "survived" and its history ("Broke in 3 of 3 runs, since 08:33") in one quiet line
+cut at its end, its standing at the row's end.
 A run and its trials are apart: a run's row says quietly how many of its trials broke ("2 of 5 broke"), never a
-red "Broke" on a run that exited as it did. The session header says what found nothing beside what failed
+red "Broke" on a run that exited as it did. The run header says what found nothing beside what failed
 ("0%", and under it "67% not found"). A dialog that acts is titled and committed by its act and count ("Abort 2
 uploads"), and a section's fix is its primary (Buckets' "Add abort rule…"; aborting by hand is outline); a
 figure's place holds a figure or says there is none ("Not measured"), never a verb. Chinese keeps a figure with
-its unit (`duration`, `bytes`: a space that does not break). Every literal a reader sees goes through `t()`, in both languages; a key
-nothing uses fails `check-locales.py`. Nouns
-for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
-not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
-their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
+its unit (`duration`, `bytes`: a space that does not break). A recording is a **run**, in every word a
+reader or a developer sees. One word for the example and one for the demo ("Open
+the example", "Start the demo"). Nouns for places (Run, Runs, Buckets, Activity), verbs for commands. Chinese is
+written, not translated: `桶`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
+their own (运行 the place Run, 运行记录 the place Runs, 启动 its button, 历史 a run's History tab; 操作 what
 a program did (an operation), 请求类型 a kind of request (GetObject: "kind of request", never "operation"), 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
-broke trial, 失败 a failed request, job or budget). What sonde says about a session comes from
-phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
-holds the app's to, letter for letter.
+broke trial, 失败 a failed request, job or budget). What sonde says about a run comes from
+phrases, whose words in both languages are the locale files' `phrase.` and `core.` keys: Rust reads the English
+there too, so a sentence lives in one place.

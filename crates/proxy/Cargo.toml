@@ -3,20 +3,18 @@ name = "sonde-proxy"
 description = "A local S3 endpoint that records every request an application makes, re-signs it with sonde's credentials and forwards it."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-sonde-fmt.workspace = true
 s3raw.workspace = true
 reqlog.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 chrono.workspace = true
 rand.workspace = true
-flate2.workspace = true
 hmac.workspace = true
 sha1.workspace = true
 base64.workspace = true
@@ -27,19 +25,14 @@ reqwest.workspace = true
 http.workspace = true
 percent-encoding.workspace = true
 parking_lot.workspace = true
-toml.workspace = true
-tracing.workspace = true
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls.workspace = true
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-native-certs = "0.8"
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [dev-dependencies]
-hmac.workspace = true
-sha1.workspace = true
-base64.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

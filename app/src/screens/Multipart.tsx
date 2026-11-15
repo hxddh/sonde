@@ -9,7 +9,7 @@ import { type Key, t } from "../i18n";
 import { core } from "../phrases";
 import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
-import { bucket, endpoint, prefix, report, settings } from "../store";
+import { bucket, endpoint, offerCommands, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
 import { sectionLabel } from "../labels";
 import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
@@ -98,6 +98,15 @@ export function Multipart() {
   // no rule is a caution (uploads may be kept and billed), not an error: nothing failed
   const tone = (s: string) => (s === "covered" ? "ok" : s === "unknown" ? "quiet" : "warn");
   const age = (r: MpuReport) => t("common.days", { n: r.thresholdDays });
+  // the section's commands: in the palette and on their shortcuts, as on its row
+  offerCommands(
+    () => sectionLabel("multipart"),
+    () => [
+      { id: "mpu-scan", label: report_() ? t("overview.rescan") : t("common.scan"), icon: "refresh-cw", shortcut: "mod+shift+r", disabled: !bucket() || progress() !== null, run: () => void scan() },
+      { id: "mpu-rule", label: t("mpu.generateRule"), icon: "plus", shortcut: "mod+shift+n", disabled: !report_() || report_()!.lifecycle.status === "covered", run: () => void planRule() },
+      { id: "mpu-abort", label: report_() ? t("mpu.abortOlder", { age: age(report_()!) }) : t("mpu.abort"), icon: "trash", shortcut: "mod+shift+backspace", disabled: !report_() || report_()!.staleUploads === 0, run: planAbort },
+    ],
+  );
   if (!terminal() && !report_()) void scan();
 
   return (
@@ -108,7 +117,11 @@ export function Multipart() {
           <BucketPicker />
           <Field bare class={WIDTH.field} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={scan} mono />
         </If>
-        <Button small variant={report_() ? "outline" : "primary"} label={report_() ? t("overview.rescan") : t("common.scan")} onPress={scan} disabled={!bucket() || progress() !== null} testID="mpu-scan" />
+        {/* once, by hand: beside the rule that does it for good (its dialog says what goes) */}
+        <If when={report_()}>
+          {(r) => <Button small variant="outline" label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />}
+        </If>
+        <Button small variant={report_() ? "outline" : "primary"} label={report_() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={scan} disabled={!bucket() || progress() !== null} testID="mpu-scan" />
         <If when={progress()}>
           <Button small variant="ghost" label={t("common.cancel")} onPress={cancel} testID="mpu-cancel" />
         </If>
@@ -155,13 +168,6 @@ export function Multipart() {
                 </If>
               </Card>
               <If when={r().uploads.length > 0} else={<Empty text={t("mpu.noneFound")} />}>
-                <View class="flex-row items-center gap-2">
-                  {/* what the table under it lists, and where */}
-                  <Heading class="shrink-0">{t("mpu.uploads", { n: count(r().totalUploads) })}</Heading>
-                  <Path path={`${r().bucket}/${r().prefix}`} class="min-w-0 flex-1 text-muted-foreground" />
-                  {/* once, by hand: beside the rule that does it for good, the second act (its dialog says what goes) */}
-                  <Button variant="outline" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
-                </View>
                 {/* the table takes the sheet's remaining height: no box of its own to scroll in a scroll */}
                 <Card pad="none" class={TABLE_BOX} onWidth={(w) => tableWidth.set(w)}>
                   <DataTable
@@ -192,7 +198,7 @@ export function Multipart() {
                         : (c) =>
                             c.key === "flag" ? (
                               c.text ? (
-                                <Icon name="triangle-alert" size={ICON.small} tint="warn" />
+                                <Icon name="triangle-exclamation-point" size={ICON.small} tint="warn" />
                               ) : (
                                 <View />
                               )

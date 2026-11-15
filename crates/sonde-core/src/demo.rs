@@ -61,13 +61,7 @@ struct Bucket {
 struct State {
     buckets: BTreeMap<String, Bucket>,
     seq: u64,
-    /// Whether [`BUSY_ONCE`] has had its one refusal.
-    slowed: bool,
 }
-
-/// The one key the store is too busy for, once: the first write of it gets
-/// `503 SlowDown`, so that the tour (`sonde run --demo`) has a retry to show.
-pub const BUSY_ONCE: &str = "tour/summary.json";
 
 fn synthetic_key(i: usize) -> String {
     format!(
@@ -405,10 +399,6 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
     }
     if !st.buckets.contains_key(&bucket) {
         return err(404, "NoSuchBucket", "The specified bucket does not exist");
-    }
-    if method == "PUT" && bucket == "demo" && key == BUSY_ONCE && !st.slowed {
-        st.slowed = true;
-        return err(503, "SlowDown", "Please reduce your request rate.");
     }
     let seq_id = st.next();
     let b = st.buckets.get_mut(&bucket).unwrap();

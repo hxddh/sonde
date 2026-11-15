@@ -1,14 +1,14 @@
-//! `sonde compare --replay`: a session's requests sent again, to one store or several.
+//! `sonde compare --replay`: a run's requests sent again, to one store or several.
 
-use sonde_proxy::program::ms_text;
+use sonde_analysis::program::ms_text;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::profile::{Profile, profile};
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
-use sonde_proxy::profile::{Profile, profile};
-use sonde_proxy::session::Session;
 
 use crate::output::{self, Format};
 
@@ -22,7 +22,7 @@ fn bucket_pair(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("{s:?}: expected original=target"))
 }
 
-/// How a session is replayed: where its writes go. It writes under a prefix
+/// How a run is replayed: where its writes go. It writes under a prefix
 /// of its own and removes what it wrote there, always.
 #[derive(Args, Clone, Default, PartialEq)]
 pub struct ReplayOpts {
@@ -32,15 +32,15 @@ pub struct ReplayOpts {
     /// The key prefix the replay writes under (default: replay-<time>/).
     #[arg(long)]
     pub(super) prefix: Option<String>,
-    /// Replay without asking first (what it writes, under its prefix, it removes).
+    /// Replay what the dry run says (what it writes, under its prefix, it removes).
     #[arg(long)]
     pub(super) yes: bool,
-    /// The replay's session file (default: in the data directory's sessions/).
+    /// The replay's file (default: in the data directory's runs/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
 }
 
-/// A session to replay, where, and how.
+/// A run to replay, where, and how.
 struct ReplayArgs {
     file: PathBuf,
     endpoint: Vec<String>,
@@ -67,19 +67,11 @@ pub async fn replay(
 }
 
 async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
-    use sonde_proxy::replay::{self as rp, ReplayOptions};
+    use sonde_analysis::replay::{self as rp, ReplayOptions};
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
     }
-    if let Some(why) = output::unsupported(
-        a.format,
-        "replay on one endpoint",
-        &[Format::Table, Format::Json],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
-    let (asked, original) = super::sessions::open(s, &a.file)?;
+    let (asked, original) = super::runs::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
     let prefix = match &a.how.prefix {
@@ -116,24 +108,15 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     }
     eprintln!("  Afterwards, everything under {prefix} is deleted.");
     if !a.how.yes {
-        if !std::io::stdin().is_terminal() {
-            eprintln!("sonde: replay writes to {ep}: pass --yes to confirm");
-            return Ok(77);
-        }
-        eprint!("Type yes to replay: ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if answer.trim() != "yes" {
-            eprintln!("Nothing was sent.");
-            return Ok(77);
-        }
+        eprintln!("\ndry run: to replay, run again with --yes");
+        return Ok(4);
     }
     let path = match &a.how.out {
         Some(p) => p.clone(),
         None => {
-            let dir = s.paths().sessions();
+            let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
-            sonde_proxy::session::fresh_path(
+            sonde_analysis::run::fresh_path(
                 &dir,
                 &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
             )
@@ -147,7 +130,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     })
     .await
     .map_err(|e| anyhow::anyhow!(e))?;
-    let _ = sonde_proxy::session::compress(&path);
+    let _ = sonde_analysis::run::compress(&path);
     if show {
         eprint!("\r\x1b[2K");
     }
@@ -198,7 +181,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             "{}",
             output::json(&serde_json::json!({
                 "plan": plan,
-                "session": path,
+                "run": path,
                 "comparison": c,
                 "removed": run.removed,
                 "removedVersions": run.removed_versions,
@@ -211,7 +194,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         ),
         _ => {
             print_comparison(&c, std::io::stdout().is_terminal());
-            if let Ok(replayed) = Session::open(&path) {
+            if let Ok(replayed) = RunFile::open(&path) {
                 print_latency(
                     &original.records,
                     &replayed.records,
@@ -219,10 +202,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                     &request_prices_for(s, &original.header.endpoint),
                 );
             }
-            eprintln!(
-                "{}",
-                paint(&format!("session: {}", path.display()), "2", color)
-            );
+            eprintln!("{}", paint(&format!("run: {}", path.display()), "2", color));
         }
     }
     // what it wrote and could not remove is a failure, whatever the answers
@@ -235,20 +215,12 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     })
 }
 
-/// One session replayed on several stores at once: each answers under its
+/// One run replayed on several stores at once: each answers under its
 /// own prefix (cleaned up after), and the stores are compared side by side:
 /// how many answers differ from the recording, and each kind's p95.
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
-    use sonde_proxy::replay::{self as rp, ReplayOptions};
-    if let Some(why) = output::unsupported(
-        a.format,
-        "replay",
-        &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
-    let (asked, original) = super::sessions::open(s, &a.file)?;
+    use sonde_analysis::replay::{self as rp, ReplayOptions};
+    let (asked, original) = super::runs::open(s, &a.file)?;
     let prefix = match &a.how.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
         None => rp::default_prefix(),
@@ -272,30 +244,18 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         output::count(plan.deletes, "delete")
     );
     if !a.how.yes {
-        if !std::io::stdin().is_terminal() {
-            eprintln!(
-                "sonde: replay writes to {}: pass --yes to confirm",
-                a.endpoint.join(", ")
-            );
-            return Ok(77);
-        }
-        eprint!("Type yes to replay: ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if answer.trim() != "yes" {
-            eprintln!("Nothing was sent.");
-            return Ok(77);
-        }
+        eprintln!("\ndry run: to replay, run again with --yes");
+        return Ok(4);
     }
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     std::fs::create_dir_all(&dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let runs = futures::future::join_all(targets.iter().map(|(id, client)| {
-        let path = sonde_proxy::session::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
+        let path = sonde_analysis::run::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
         let (original, opts) = (&original, &opts);
         async move {
             let run = rp::replay_to_file(client, original, opts, &path, |_, _| {}).await;
-            let _ = sonde_proxy::session::compress(&path);
+            let _ = sonde_analysis::run::compress(&path);
             (id.clone(), path, run)
         }
     }))
@@ -325,7 +285,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             );
             failed += 1;
         }
-        let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+        let replayed = RunFile::open(&path).map_err(|e| anyhow::anyhow!(e))?;
         columns.push(id.clone());
         stores.push((
             id,
@@ -337,12 +297,12 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let kinds: Vec<(String, bool)> = before
         .groups
         .iter()
-        .map(|g| (g.operation.clone(), g.missed))
+        .map(|g| (g.kind.clone(), g.missed))
         .collect();
     let p95 = |p: &Profile, op: &str, missed: bool| {
         p.groups
             .iter()
-            .find(|g| g.operation == op && g.missed == missed)
+            .find(|g| g.kind == op && g.missed == missed)
             .map(|g| g.p95_ms)
     };
     if matches!(a.format, Format::Json) {
@@ -350,9 +310,9 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             "plan": plan,
             "stores": stores.iter().map(|(id, path, c, p)| serde_json::json!({
                 "endpoint": id,
-                "session": path,
+                "run": path,
                 "comparison": c,
-                "latency": sonde_proxy::profile::latency_changes(&before, p),
+                "latency": sonde_analysis::profile::latency_changes(&before, p),
             })).collect::<Vec<_>>(),
         });
         println!("{}", output::json(&doc));
@@ -385,7 +345,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         }
         let mut headers = vec![""];
         headers.extend(columns.iter().map(String::as_str));
-        output::print(a.format, &headers, &rows);
+        output::print(&headers, &rows);
         for (id, path, _, _) in &stores {
             eprintln!("{id}: {}", path.display());
         }
@@ -406,7 +366,7 @@ fn replay_exit(failed: usize, differ: usize) -> i32 {
     }
 }
 
-fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
+fn opts_bucket(o: &sonde_analysis::replay::ReplayOptions, b: &str) -> String {
     o.buckets
         .iter()
         .find(|(from, _)| from == b)

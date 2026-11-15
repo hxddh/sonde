@@ -43,7 +43,7 @@ export function ConfigNotice() {
   };
   const reveal = () => {
     try {
-      void api.sessions.reveal(`${api.paths().config}`).catch(report);
+      void api.runs.reveal(`${api.paths().config}`).catch(report);
     } catch (e) {
       report(e);
     }
@@ -162,12 +162,6 @@ export function SettingsScreen() {
                   }}
                   testID="language"
                 />
-                <If when={!terminal()}>
-                  <Labeled class={CELL} label={t("settings.contrastLabel")}>
-                    <SwitchRow label={t("settings.contrast")} hint={t("settings.contrastHint")} checked={d()["high-contrast"] ?? false} onChange={(v) => change({ ...d(), "high-contrast": v }, true)} testID="high-contrast" />
-                  </Labeled>
-                  <View class={CELL} />
-                </If>
               </View>
             </Section>
 

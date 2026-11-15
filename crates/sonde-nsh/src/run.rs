@@ -11,7 +11,7 @@ pub struct Running {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
-    /// The program's process id: in its terminal it leads a session, and
+    /// The program's process id: in its terminal it leads a run, and
     /// so a process group, of its own.
     pid: Option<u32>,
 }
@@ -204,7 +204,7 @@ mod tests {
     }
 
     // a POSIX shell's words; on Windows the pseudo-console's output does not
-    // end with the program (FINDINGS 16), which `Sessions::run` handles
+    // end with the program (FINDINGS 16), which `Runs::run` handles
     #[cfg(unix)]
     #[tokio::test]
     async fn runs_in_a_terminal_with_the_environment() {

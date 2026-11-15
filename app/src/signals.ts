@@ -1,11 +1,11 @@
 // A run by its four signals — rate, errors, latency, bytes — and how many
-// requests were in flight: what the session's header says of each (a figure,
-// its line over the session, one line of detail), in words. Rust counts them
-// (crates/proxy/src/signals.rs).
+// requests were in flight: what the run's header says of each (a figure,
+// its line over the run, one line of detail), in words. Rust counts them
+// (crates/analysis/src/signals.rs).
 
 import { bytes, count, duration, percent, rate, transfer } from "./format";
 import { type Key, t } from "./i18n";
-import type { SessionView, Signals } from "./types";
+import type { RunView, Signals } from "./types";
 
 export type SignalId = "rate" | "errors" | "latency" | "bytes" | "inFlight";
 
@@ -18,7 +18,7 @@ export interface SignalTile {
   /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have;
    * `injected`: every one sonde's own answer (a trial), never the store's failure */
   tone: "plain" | "fail" | "client" | "injected" | "quiet";
-  /** Its line over the session, slice by slice (empty: nothing to draw). */
+  /** Its line over the run, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
   kind: "bars" | "steps" | "line";
@@ -38,15 +38,15 @@ export function brief(s: Signals): boolean {
  * stray ticks), and counts where a run has shares ("2 of 9"). */
 export const handful = (s: Signals): boolean => s.rate.requests < FEW;
 
-/** A session's signals, as Rust counted them. */
-export function signalsOf(v: Pick<SessionView, "signals">): Signals {
+/** A run's signals, as Rust counted them. */
+export function signalsOf(v: Pick<RunView, "signals">): Signals {
   return v.signals;
 }
 
 /** Bytes a second: "575 KiB/s". */
 export const bytesRate = (perSecond: number) => `${bytes(perSecond)}/s`;
 
-/** The kinds of failure a session had, most telling first: "1 server · 2 client". */
+/** The kinds of failure a run had, most telling first: "1 server · 2 client". */
 function failures(s: Signals): string[] {
   const c = s.errors.counts;
   const parts: [number, Key][] = [
@@ -142,7 +142,7 @@ export interface KindStats {
 }
 
 /** A run by kind of request: Rust's own table (`summary.kinds`). */
-export function kindStats(v: Pick<SessionView, "summary">): KindStats[] {
+export function kindStats(v: Pick<RunView, "summary">): KindStats[] {
   return v.summary.kinds.map((o) => ({ kind: o.kind, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
 }
 
@@ -158,7 +158,7 @@ export function sizeRange(leBytes: number): string {
   return leBytes <= 1 ? "1 B" : `${bytes(leBytes / 2)} – ${bytes(leBytes)}`;
 }
 
-/** The share of S3's limit for a prefix a session's busiest second reached: the nearer of reads and writes. */
+/** The share of S3's limit for a prefix a run's busiest second reached: the nearer of reads and writes. */
 export function nearestLimit(x: { readShare: number; writeShare: number }): { share: number; kind: "reads" | "writes" } {
   return x.writeShare > x.readShare ? { share: x.writeShare, kind: "writes" } : { share: x.readShare, kind: "reads" };
 }

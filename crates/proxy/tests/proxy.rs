@@ -20,12 +20,42 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use tokio::net::TcpListener;
 
 const REAL_KEY: &str = "AKIDREALKEY";
+
+/// A header of the answer sonde recorded.
+fn answer_header<'a>(r: &'a reqlog::Record, name: &str) -> Option<&'a str> {
+    r.response_headers()
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_ref())
+}
+
+/// Answered by a fault of sonde's, and marked so in the answer.
+fn faulted(r: &reqlog::Record) -> bool {
+    r.rare().injected.is_some() && answer_header(r, "x-sonde-fault").is_some()
+}
 const REAL_SECRET: &str = "real-secret-only-sonde-knows";
 
 #[derive(Default)]
 struct Upstream {
     objects: Mutex<HashMap<String, (Vec<u8>, Vec<(String, String)>)>>,
     calls: Mutex<Vec<String>>,
+    /// A bucket in another region, as AWS has it: a request signed for any
+    /// other is redirected with `x-amz-bucket-region`.
+    elsewhere: Mutex<Option<(String, String)>>,
+}
+
+/// The region a request was signed for: its credential's scope.
+fn signed_region(req: &http::request::Parts) -> String {
+    let auth = req
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    auth.split("Credential=")
+        .nth(1)
+        .and_then(|c| c.split('/').nth(2))
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Verifies the request's SigV4 signature; `Err` says why it is wrong.
@@ -69,7 +99,10 @@ fn verify(req: &http::request::Parts, body_hash: &str) -> Result<(), String> {
         .collect();
     let query = sonde_proxy::parse_query(req.uri.query());
     let payload = req.headers["x-amz-content-sha256"].to_str().unwrap();
-    if payload != body_hash && payload != sigv4::UNSIGNED_PAYLOAD {
+    if payload != body_hash
+        && payload != sigv4::UNSIGNED_PAYLOAD
+        && payload != "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+    {
         return Err(format!(
             "payload hash {payload} but the body hashes to {body_hash}"
         ));
@@ -117,9 +150,21 @@ async fn serve(
             .unwrap());
     }
     let path = parts.uri.path().to_string();
+    if let Some((bucket, region)) = up.elsewhere.lock().clone()
+        && path.starts_with(&format!("/{bucket}"))
+        && signed_region(&parts) != region
+    {
+        return Ok(Response::builder()
+            .status(301)
+            .header("x-amz-bucket-region", region)
+            .body(Full::new(Bytes::from(
+                "<Error><Code>PermanentRedirect</Code></Error>",
+            )))
+            .unwrap());
+    }
     let resp = match parts.method.as_str() {
         "PUT" => {
-            let checksums: Vec<(String, String)> = parts
+            let mut checksums: Vec<(String, String)> = parts
                 .headers
                 .iter()
                 .filter(|(k, _)| {
@@ -127,7 +172,22 @@ async fn serve(
                 })
                 .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
                 .collect();
-            up.objects.lock().insert(path, (body.to_vec(), checksums));
+            // an unsigned aws-chunked body, read as S3 reads it: the payload,
+            // and its trailing checksums as the object's
+            let mut data = body.to_vec();
+            if parts.headers["x-amz-content-sha256"] == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
+                let d = sonde_proxy::chunked::decode(&body).expect("aws-chunked");
+                let said: usize = parts.headers["x-amz-decoded-content-length"]
+                    .to_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                assert_eq!(d.payload.len(), said, "the decoded length said");
+                data = d.payload;
+                checksums.retain(|(k, _)| k != "content-encoding");
+                checksums.extend(d.trailers);
+            }
+            up.objects.lock().insert(path, (data, checksums));
             Response::builder().status(200).header("etag", "\"e\"")
         }
         // a listing of the bucket: every object's key
@@ -291,33 +351,65 @@ async fn put_get_list_are_resigned_and_recorded() {
 
     let records = log.list(&reqlog::Filter::default(), 100);
     // a listing's record says how many keys it listed
-    let listed = records
-        .iter()
-        .find(|r| r.operation == "ListObjectsV2")
-        .unwrap();
+    let listed = records.iter().find(|r| r.kind == "ListObjectsV2").unwrap();
     assert_eq!(
         listed.header(reqlog::KEYS_HEADER),
         Some(keys.to_string().as_str())
     );
-    let ops: Vec<&str> = records.iter().rev().map(|r| r.operation.as_str()).collect();
+    let ops: Vec<&str> = records.iter().rev().map(|r| r.kind.as_str()).collect();
     assert_eq!(ops, ["PutObject", "GetObject", "ListObjectsV2"]);
     let put = records.last().unwrap();
     assert_eq!(put.key.as_deref(), Some("dir/a b+c.txt"));
     assert_eq!(put.request_bytes, Some(19));
-    assert_eq!(put.endpoint, "target");
+    assert_eq!(put.rare().endpoint, "target");
     // what the application sent is kept; its signature is masked
     let auth = put
-        .request_headers
+        .request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("authorization"))
         .unwrap();
     assert!(!auth.value.contains("dummy"));
     assert!(up.calls.lock().len() == 3);
     // a body read to its end: logged with its first byte inside its whole time
-    let get = records.iter().find(|r| r.operation == "GetObject").unwrap();
-    let first = get.first_byte_ms.expect("first byte measured");
+    let get = records.iter().find(|r| r.kind == "GetObject").unwrap();
+    let first = get.first_byte_ms.get().expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
+}
+
+/// A bucket in another region than the endpoint's: the store's redirect
+/// says which, the request with no body is sent again signed for it, and
+/// the bucket's next requests (a write too) are signed for it from the start.
+#[tokio::test]
+async fn a_bucket_in_another_region_is_signed_for_its_region() {
+    let (_proxy, app, log, up) = setup(Policy::Allow).await;
+    up.objects
+        .lock()
+        .insert("/far/k".into(), (b"far away".to_vec(), Vec::new()));
+    *up.elsewhere.lock() = Some(("far".into(), "ap-southeast-2".into()));
+    let get = S3Request::new("GetObject", http::Method::GET)
+        .bucket("far")
+        .key("k");
+    let r = app.send_raw(get).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(&r.body[..], b"far away");
+    let put = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("far")
+        .key("new")
+        .body(Body::from("written"));
+    let r = app.send_raw(put).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    // one redirect, then the region the store said
+    let calls = up.calls.lock().clone();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    let records = log.list(&reqlog::Filter::default(), 10);
+    assert!(
+        records
+            .iter()
+            .all(|r| r.rare().region.as_deref() == Some("ap-southeast-2")),
+        "{:?}",
+        records.iter().map(|r| &r.rare().region).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -335,7 +427,7 @@ async fn signed_aws_chunked_bodies_are_decoded() {
         &[],
         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER",
     );
-    let resp = reqwest::Client::new()
+    let resp = web()
         .put(format!("{}/data/chunked", proxy.url()))
         .header(
             "x-amz-content-sha256",
@@ -356,8 +448,76 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     assert!(headers.contains(&("x-amz-checksum-crc32".into(), "Ufg6kA==".into())));
     assert!(!headers.iter().any(|(k, _)| k == "content-encoding"));
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "PutObject");
+    assert_eq!(r.kind, "PutObject");
     assert_eq!(r.request_bytes, Some(15));
+}
+
+/// A large signed body goes on as it comes, in pieces of any size: without
+/// a trailer as its payload, unsigned; with one, framed again with the
+/// client's checksum. Neither is read whole first.
+#[tokio::test]
+async fn signed_aws_chunked_bodies_stream_with_and_without_a_trailer() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let sig = "0".repeat(64);
+    let payload: Vec<u8> = (0..(3 << 20) + 17).map(|i: u32| (i % 251) as u8).collect();
+    for (key, trailer) in [
+        ("plain", None),
+        ("trailed", Some("x-amz-checksum-crc64nvme")),
+    ] {
+        let mut body = Vec::new();
+        for c in payload.chunks(64 << 10) {
+            body.extend(format!("{:x};chunk-signature={sig}\r\n", c.len()).as_bytes());
+            body.extend(c);
+            body.extend(b"\r\n");
+        }
+        body.extend(format!("0;chunk-signature={sig}\r\n").as_bytes());
+        if let Some(t) = trailer {
+            body.extend(
+                format!("{t}:AAAAAAAAAAA=\r\nx-amz-trailer-signature:{sig}\r\n").as_bytes(),
+            );
+        }
+        body.extend(b"\r\n");
+        let sha = if trailer.is_some() {
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+        } else {
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+        };
+        let path = format!("/data/{key}");
+        let (date, auth) = signed(&proxy, "PUT", &path, &[], &[], sha);
+        // sent in pieces of an odd size: chunk headers fall across them
+        let pieces: Vec<Result<Bytes, std::io::Error>> = body
+            .chunks(7919)
+            .map(|c| Ok(Bytes::copy_from_slice(c)))
+            .collect();
+        let mut req = web()
+            .put(format!("{}{path}", proxy.url()))
+            .header("x-amz-content-sha256", sha)
+            .header("x-amz-date", date)
+            .header("content-encoding", "aws-chunked")
+            .header("content-length", body.len())
+            .header("x-amz-decoded-content-length", payload.len())
+            .header("authorization", auth);
+        if let Some(t) = trailer {
+            req = req.header("x-amz-trailer", t);
+        }
+        let resp = req
+            .body(reqwest::Body::wrap_stream(futures::stream::iter(pieces)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{key}: {}", resp.text().await.unwrap());
+        let (data, headers) = up.objects.lock().get(&path).cloned().unwrap();
+        assert!(data == payload, "{key}: the payload, whole");
+        assert_eq!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-amz-checksum-crc64nvme" && v == "AAAAAAAAAAA="),
+            trailer.is_some(),
+            "{key}: {headers:?}"
+        );
+        let r = &log.list(&reqlog::Filter::default(), 1)[0];
+        assert_eq!(r.request_bytes, Some(payload.len() as u64), "{key}");
+    }
 }
 
 #[tokio::test]
@@ -370,7 +530,7 @@ async fn presigned_urls_are_resigned() {
     app.send(put).await.unwrap();
     let url = app.presign("GET", "data", "p", 60, &[]).await.unwrap();
     assert!(url.starts_with(&proxy.url()));
-    let resp = reqwest::get(&url).await.unwrap();
+    let resp = web().get(&url).send().await.unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "x");
 }
@@ -386,7 +546,7 @@ async fn no_delete_refuses_without_calling_upstream() {
     assert!(r.text().contains("no-delete"));
     assert!(up.calls.lock().is_empty());
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.operation, "DeleteObject");
+    assert_eq!(rec.kind, "DeleteObject");
     assert_eq!(rec.status, Some(403));
 }
 
@@ -471,7 +631,7 @@ async fn upstream_errors_keep_their_body() {
         .await
         .unwrap();
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -481,9 +641,10 @@ async fn upstream_errors_keep_their_body() {
         .unwrap();
     assert_eq!(resp.status(), 403);
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.request_id.as_deref(), Some("UP403"));
+    assert_eq!(rec.rare().request_id.as_deref(), Some("UP403"));
     assert!(
-        rec.error_body
+        rec.rare()
+            .error_body
             .as_deref()
             .unwrap()
             .contains("SignatureDoesNotMatch")
@@ -504,7 +665,7 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
         &[],
         "UNSIGNED-PAYLOAD",
     );
-    let resp = reqwest::Client::new()
+    let resp = web()
         .post(format!("{}/data?delete", proxy.url()))
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
         .header("x-amz-date", date)
@@ -515,8 +676,8 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
         .unwrap();
     assert_ne!(resp.status(), 400, "{}", resp.text().await.unwrap());
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "DeleteObjects");
-    assert_eq!(r.request_body.as_deref(), Some(doc));
+    assert_eq!(r.kind, "DeleteObjects");
+    assert_eq!(r.rare().request_body.as_deref(), Some(doc));
 }
 
 #[tokio::test]
@@ -524,7 +685,9 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
     let (proxy, _app, log, up) = setup(Policy::Allow).await;
     let calls = || up.calls.lock().len();
     // not signed at all
-    let r = reqwest::get(format!("{}/data/k", proxy.url()))
+    let r = web()
+        .get(format!("{}/data/k", proxy.url()))
+        .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 403);
@@ -551,7 +714,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
     assert_eq!(r.status, 403, "{}", r.text());
     // the right signature from a page that rebound its own name to 127.0.0.1
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let r = reqwest::Client::new()
+    let r = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("host", "evil.example")
         .header("x-amz-date", date)
@@ -562,12 +725,13 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
         .unwrap();
     assert_eq!(r.status(), 403);
     assert_eq!(calls(), 0, "nothing reached the store");
-    // each refusal is in the session, saying why
+    // each refusal is in the run, saying why
     let refused = log.list(&reqlog::Filter::default(), 10);
     assert_eq!(refused.len(), 3);
     assert!(refused.iter().all(|r| r.status == Some(403)));
     assert!(refused.iter().any(|r| {
-        r.error_body
+        r.rare()
+            .error_body
             .as_deref()
             .is_some_and(|b| b.contains("not this machine's"))
     }));
@@ -576,7 +740,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
 #[test]
 fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let cfg = ProxyConfig::default();
     let sign = |secret: &str, resource: &str, expires: &str| {
         let mut mac = Hmac::<sha1::Sha1>::new_from_slice(secret.as_bytes()).unwrap();
@@ -811,7 +975,7 @@ async fn get_with_timeout(
         .await
         .unwrap();
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -852,8 +1016,9 @@ async fn a_body_that_stops_moving_is_cut_after_the_timeout() {
         records = log.snapshot();
     }
     let r = records.first().expect("the request is recorded");
-    assert_eq!((r.status, r.response_bytes), (Some(200), Some(1)));
+    assert_eq!((r.status, r.response_bytes.get()), (Some(200), Some(1)));
     let why = r
+        .rare()
         .transport_error
         .as_deref()
         .expect("a cut body is an error");
@@ -891,7 +1056,7 @@ async fn an_upload_slower_than_the_timeout_but_still_moving_goes_through() {
         Some((Ok::<_, std::io::Error>(Bytes::from_static(b"x")), i + 1))
     });
     let (date, auth) = signed(&proxy, "PUT", "/data/slow", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .put(format!("{}/data/slow", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -969,7 +1134,7 @@ async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
     assert_eq!(records[0].response_bytes, Some(6));
     assert_eq!(reading.await.unwrap().unwrap(), 6);
     // and nothing new is taken
-    assert!(reqwest::get(proxy.url()).await.is_err());
+    assert!(web().get(proxy.url()).send().await.is_err());
 }
 
 async fn setup_faults(scenario: &str) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
@@ -1049,17 +1214,17 @@ async fn a_request_held_past_the_programs_patience_is_kept_as_given_up() {
     let mut held = None;
     for _ in 0..50 {
         let recs = log.list(&reqlog::Filter::default(), 10);
-        held = recs.into_iter().find(|r| r.injected.is_some());
+        held = recs.into_iter().find(|r| r.rare().injected.is_some());
         if held.is_some() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let held = held.expect("the given-up attempt is recorded");
-    assert!(held.transport_error.is_some(), "{held:?}");
-    assert!(sonde_proxy::trial::faulted(&held));
+    assert!(held.rare().transport_error.is_some(), "{held:?}");
+    assert!(faulted(&held));
     assert!(
-        held.response_headers
+        held.response_headers()
             .iter()
             .any(|h| h.name == sonde_proxy::fault::GIVEN_UP_HEADER),
         "{held:?}"
@@ -1078,10 +1243,13 @@ async fn a_fault_is_answered_without_the_store_and_the_retry_goes_through() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(up.calls.lock().len(), 1);
     let recs = log.list(&reqlog::Filter::default(), 10);
-    let injected: Vec<_> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    let injected: Vec<_> = recs
+        .iter()
+        .filter(|r| r.rare().injected.is_some())
+        .collect();
     assert_eq!(injected.len(), 1);
     assert_eq!(injected[0].status, Some(503));
-    assert_eq!(injected[0].injected.as_deref(), Some("slowdown"));
+    assert_eq!(injected[0].rare().injected.as_deref(), Some("slowdown"));
 }
 
 #[tokio::test]
@@ -1091,9 +1259,9 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     assert_eq!(r.status, 500);
     assert_eq!(up.calls.lock().len(), 1, "the store took the write");
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.injected.as_deref(), Some("lost-answer"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("lost-answer"));
     assert!(
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-store-status" && h.value == "200")
     );
@@ -1141,7 +1309,7 @@ async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.key.as_deref(), Some(".."));
     assert!(
-        !rec.response_headers
+        !rec.response_headers()
             .iter()
             .any(|h| h.name == "x-sonde-proxy"),
         "not refused"
@@ -1186,23 +1354,12 @@ async fn two_batches_of_deletes_each_meet_the_fault_and_each_has_its_retry() {
     names.dedup();
     assert_eq!(names.len(), 2, "{names:?}");
     assert!(
-        recs.iter().all(|r| r.request_body.is_some()),
+        recs.iter().all(|r| r.rare().request_body.is_some()),
         "kept on a failed one too"
     );
-    // read as a trial: both failed, both sent again
-    let clean: Vec<reqlog::Record> = recs
-        .iter()
-        .filter(|r| r.injected.is_none())
-        .cloned()
-        .collect();
-    let t = sonde_proxy::trial::judge(
-        &sonde_proxy::fault::scenario("slowdown").unwrap(),
-        &clean,
-        0,
-        &recs,
-        0,
-    );
-    assert_eq!((t.faults, t.retried), (2, 2), "{}", t.line());
+    // both failed, both sent again
+    assert_eq!(recs.iter().filter(|r| faulted(r)).count(), 2);
+    assert_eq!(recs.iter().filter(|r| r.status == Some(204)).count(), 2);
 }
 
 #[tokio::test]
@@ -1287,7 +1444,7 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
         "the store had sent {sent} bytes: the whole body was read"
     );
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(rec.injected.as_deref(), Some("lose-all"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("lose-all"));
 }
 
 #[tokio::test]
@@ -1309,7 +1466,7 @@ async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
     for rec in log.list(&reqlog::Filter::default(), 10) {
         assert_eq!(rec.status, Some(400));
         assert!(
-            rec.response_headers
+            rec.response_headers()
                 .iter()
                 .any(|h| h.name == "x-sonde-proxy" && h.value == "refused")
         );
@@ -1345,7 +1502,7 @@ async fn a_body_hash_the_program_sends_is_not_the_requests_name() {
     assert_eq!(names.len(), 2, "{names:?}");
     for r in &recs {
         let kept: Vec<&str> = r
-            .request_headers
+            .request_headers()
             .iter()
             .filter(|h| {
                 h.name
@@ -1389,13 +1546,13 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     let rec = log
         .list(&reqlog::Filter::default(), 10)
         .into_iter()
-        .find(|r| r.injected.is_some())
+        .find(|r| r.rare().injected.is_some())
         .expect("recorded as injected");
     assert_eq!(rec.status, Some(200));
     assert_eq!(rec.response_bytes, Some(500));
-    assert_eq!(rec.injected.as_deref(), Some("cut-body"));
+    assert_eq!(rec.rare().injected.as_deref(), Some("cut-body"));
     let header = |n: &str| {
-        rec.response_headers
+        rec.response_headers()
             .iter()
             .find(|h| h.name == n)
             .map(|h| h.value.as_str())
@@ -1404,10 +1561,10 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     assert_eq!(header(sonde_proxy::CUT_HEADER), Some("500"));
     assert_eq!(header("x-sonde-store-status"), Some("200"));
     assert_eq!(
-        rec.transport_error.as_deref(),
+        rec.rare().transport_error.as_deref(),
         Some("sonde cut the response body after 500 of 1000 bytes on purpose (scenario cut-body)")
     );
-    assert!(sonde_proxy::trial::faulted(&rec));
+    assert!(faulted(&rec));
 
     // the next read of it is whole: the cut is met once
     let get = |key: &str| {
@@ -1427,7 +1584,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
     let injected = log
         .list(&reqlog::Filter::default(), 20)
         .iter()
-        .filter(|r| r.injected.is_some())
+        .filter(|r| r.rare().injected.is_some())
         .count();
     assert_eq!(injected, 1);
 }
@@ -1467,33 +1624,28 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
     assert_eq!(app.send_raw(swap()).await.unwrap().status, 200);
 
     let recs = log.list(&reqlog::Filter::default(), 20);
-    let lost: Vec<&reqlog::Record> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    let lost: Vec<&reqlog::Record> = recs
+        .iter()
+        .filter(|r| r.rare().injected.is_some())
+        .collect();
     assert_eq!(lost.len(), 2);
     for r in &lost {
         assert_eq!(r.status, Some(412));
-        assert!(sonde_proxy::trial::faulted(r));
+        assert!(faulted(r));
     }
     let forwarded = lost
         .iter()
         .find(|r| r.key.as_deref() == Some(log_key(1).as_str()))
         .unwrap();
-    assert_eq!(sonde_proxy::trial::store_status(forwarded), Some(200));
+    assert_eq!(
+        answer_header(forwarded, "x-sonde-store-status"),
+        Some("200")
+    );
     let unsent = lost
         .iter()
         .find(|r| r.key.as_deref() == Some("pointer"))
         .unwrap();
-    assert_eq!(sonde_proxy::trial::store_status(unsent), None);
-    // what sonde answered itself is not on the store's bill, and is not one
-    // of the store's races
-    assert!(sonde_proxy::profile::reached_store(forwarded));
-    assert!(!sonde_proxy::profile::reached_store(unsent));
-    let eps = sonde_proxy::episode::episodes(&recs);
-    let obs = sonde_proxy::episode::observations(&recs, &eps);
-    assert!(
-        !obs.iter()
-            .any(|o| o.phrases.first().is_some_and(|p| p.key == "obs.races")),
-        "{obs:?}"
-    );
+    assert_eq!(answer_header(unsent, "x-sonde-store-status"), None);
 }
 
 #[tokio::test]
@@ -1521,11 +1673,11 @@ async fn tls_and_plain_http_are_served_on_one_port() {
     assert_eq!(var("AWS_ENDPOINT_URL"), Some(proxy.url()));
     assert!(var("AWS_CA_BUNDLE").is_some() && var("NODE_EXTRA_CA_CERTS").is_some());
 
-    let trusting = reqwest::Client::builder()
-        .add_root_certificate(reqwest::Certificate::from_pem(&ca).unwrap())
+    let trusting = s3raw::http_client()
+        .tls_certs_merge([reqwest::Certificate::from_pem(&ca).unwrap()])
         .build()
         .unwrap();
-    let plain = reqwest::Client::new();
+    let plain = web();
     for (http, base) in [(&trusting, proxy.url()), (&plain, proxy.plain_url())] {
         let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
         let resp = http
@@ -1543,12 +1695,36 @@ async fn tls_and_plain_http_are_served_on_one_port() {
     assert_eq!(log.list(&reqlog::Filter::default(), 10).len(), 2);
     // a client that does not trust the certificate is not answered
     assert!(
-        reqwest::Client::new()
+        web()
             .get(format!("{}/data/k", proxy.url()))
             .send()
             .await
             .is_err()
     );
+    // --ca-file: sonde's own client trusts what it is given, beside the system's roots
+    let key = var("AWS_ACCESS_KEY_ID").unwrap();
+    let secret = var("AWS_SECRET_ACCESS_KEY").unwrap();
+    let through = |ca_pem: Option<Vec<u8>>| {
+        let mut cfg = ClientConfig::new("tls", &proxy.url(), "eu-west-1").unwrap();
+        cfg.ca_pem = ca_pem;
+        let creds = Credentials::new(&key, &secret, None);
+        S3Client::new(
+            cfg,
+            Arc::new(StaticProvider(Some(creds))),
+            RequestLog::default(),
+        )
+        .unwrap()
+    };
+    // (answered by the stand-in store, through the TLS endpoint)
+    through(Some(ca.clone()))
+        .head_object("data", "k", None)
+        .await
+        .unwrap();
+    let e = through(None)
+        .head_object("data", "k", None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind, s3raw::ErrorKind::Transport, "{e}");
 }
 
 #[tokio::test]
@@ -1557,7 +1733,7 @@ async fn s3_express_is_refused_with_its_reason() {
     let bucket = "/logs--usw2-az1--x-s3";
     let q = vec![("session".to_string(), String::new())];
     let (date, auth) = signed(&proxy, "GET", bucket, &q, &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}{bucket}?session", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -1568,9 +1744,14 @@ async fn s3_express_is_refused_with_its_reason() {
     assert_eq!(resp.status(), 501);
     assert!(resp.text().await.unwrap().contains("S3 Express One Zone"));
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
-    assert_eq!(r.operation, "CreateSession");
+    assert_eq!(r.kind, "CreateSession");
     assert!(up.calls.lock().is_empty());
     assert!(sonde_proxy::is_directory_bucket("logs--usw2-az1--x-s3"));
     assert!(!sonde_proxy::is_directory_bucket("logs--x-s3"));
     assert!(!sonde_proxy::is_directory_bucket("plain-bucket"));
+}
+
+/// A client as sonde's are made (ring, the system's verifier).
+fn web() -> reqwest::Client {
+    s3raw::http_client().build().expect("an HTTP client")
 }

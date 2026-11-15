@@ -1,14 +1,14 @@
 // The first launch: no endpoint yet, so nothing can run or be browsed. One
 // screen says what sonde does and offers one way in: the built-in demo,
 // which lands on Run with a command ready to press Return on. The AWS
-// profiles already on this machine, an endpoint by hand and an example
-// session are a line below, for those who know what they want.
+// profiles already on this machine, an endpoint by hand and the example
+// run are a line below, for those who know what they want.
 
 import { platform, signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { command } from "../run";
-import { endpointsMode, go, notify, openSession, openSessionFile, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
+import { endpointsMode, go, notify, openExample, openRunFile, refreshEndpoints, report, startDemo } from "../store";
 import type { EndpointView } from "../types";
 import { Actions, Button, Card, Check, Heading, READING, terminal, Title, TEXT } from "../ui/kit";
 
@@ -54,15 +54,6 @@ export function Welcome() {
       report(e);
     }
   };
-  const example = () => {
-    try {
-      openSession.set(api.sessions.example());
-      sessionsChanged();
-      go("sessions");
-    } catch (e) {
-      report(e);
-    }
-  };
 
   return (
     <View testID="welcome" class="flex-1 items-center justify-center p-6">
@@ -75,7 +66,7 @@ export function Welcome() {
           <Heading>{t("welcome.demo")}</Heading>
           <Text class="text-small leading-5 text-muted-foreground">{t("welcome.demoText")}</Text>
           <View class="flex-row">
-            <Button variant="primary" icon="play" label={t("welcome.demoStart")} onPress={demo} loading={busy()} testID="welcome-demo" />
+            <Button variant="primary" icon="play" label={t("demo.start")} onPress={demo} loading={busy()} testID="welcome-demo" />
           </View>
         </Card>
         {/* the other ways in, for those who know what they want */}
@@ -103,9 +94,9 @@ export function Welcome() {
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
             <If when={!terminal()}>
-              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" class="justify-start" />
+              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
             </If>
-            <Button small variant="ghost" icon="list-clock" label={t("welcome.example")} onPress={example} testID="open-example" class="justify-start" />
+            <Button small variant="ghost" icon="scroll-text" label={t("example.open")} onPress={openExample} testID="open-example" class="justify-start" />
           </View>
           <If when={showProfiles()}>
             <Card>

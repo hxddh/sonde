@@ -103,7 +103,7 @@ pub fn condition<'a>(mut headers: impl Iterator<Item = (&'a str, &'a str)>) -> O
 /// [`condition`] of a recorded request.
 pub fn condition_of(r: &reqlog::Record) -> Option<Condition> {
     condition(
-        r.request_headers
+        r.request_headers()
             .iter()
             .map(|h| (h.name.as_str(), h.value.as_str())),
     )
@@ -126,8 +126,8 @@ pub fn commit_family(bucket: Option<&str>, key: Option<&str>) -> String {
 
 /// Which table log a key is a commit of, if any.
 fn log_kind(key: &str) -> Option<&'static str> {
-    use crate::episode::Part;
-    Some(match crate::episode::part_of(key)? {
+    use crate::part::Part;
+    Some(match crate::part::part_of(key)? {
         Part::SlateManifest(_) => "manifest",
         Part::SlateWal(_) => "wal",
         Part::SlateCompactions(_) => "compactions",
@@ -379,24 +379,29 @@ pub fn identity<K: AsRef<str>, V: AsRef<str>>(
 /// with it, or, for a record from elsewhere (an import), the hash of the
 /// body itself.
 pub fn kept_body_hash(r: &reqlog::Record) -> Option<String> {
-    r.request_headers
+    r.request_headers()
         .iter()
         // sonde's own is the last: the proxy drops one the program sent, and
         // a record from elsewhere is not trusted to have done so
         .rev()
         .find(|h| h.name.eq_ignore_ascii_case(BODY_HASH_HEADER))
         .map(|h| h.value.to_string())
-        .or_else(|| r.request_body.as_deref().map(|b| body_hash(b.as_bytes())))
+        .or_else(|| {
+            r.rare()
+                .request_body
+                .as_deref()
+                .map(|b| body_hash(b.as_bytes()))
+        })
 }
 
 /// [`identity`] of a recorded request.
 pub fn identity_of(r: &reqlog::Record) -> String {
     identity(
         &r.method,
-        &r.operation,
+        &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query,
+        r.query(),
         kept_body_hash(r).as_deref(),
     )
 }
@@ -589,18 +594,6 @@ pub fn project_scenarios(
     Ok(all)
 }
 
-/// A program's name as `[program] name` of `sonde.toml` gives it: an empty
-/// one is a mistake (its runs are found by it), not no name.
-pub fn project_program_name(name: Option<&str>) -> Result<Option<String>, String> {
-    match name {
-        Some(n) if n.trim().is_empty() => Err(
-            "[program] name = \"\": a program's name is what its runs are found by; give it one or leave the line out"
-                .into(),
-        ),
-        n => Ok(n.map(str::to_string)),
-    }
-}
-
 /// A fault as written in `sonde.toml` or on the command line: `503 SlowDown`,
 /// `500`, `lost-answer`, `cut-body`, `lost-race`, `stale-list`, `delay 200ms`. Nothing
 /// may follow it: `503 Slow Down` is a mistake, not a code named `Slow`.
@@ -744,7 +737,7 @@ fn matches_op(on: &[String], op: &str) -> bool {
 
 /// A key's prefix for the rate: the bucket and the key's folder, three
 /// levels at most, as the rate finding has it
-/// ([`crate::profile::prefix_of`]). S3 partitions by load and tells no one
+/// (`sonde_analysis::profile::prefix_of`). S3 partitions by load and tells no one
 /// where; the folder is the reading both keep to.
 pub fn rate_prefix(bucket: Option<&str>, key: Option<&str>) -> String {
     let b = bucket.unwrap_or("");
@@ -1130,14 +1123,23 @@ mod tests {
     fn a_record_is_named_as_the_fault_named_its_request() {
         let mut r = reqlog::Record {
             method: "POST".into(),
-            operation: "DeleteObjects".into(),
+            kind: "DeleteObjects".into(),
             bucket: Some("b".into()),
-            query: vec![("delete".into(), "".into())],
-            request_body: Some("cut and redac…".into()),
+            rare: reqlog::Rare {
+                request_body: Some("cut and redac…".into()),
+                ..Default::default()
+            }
+            .into(),
+            lists: reqlog::Lists {
+                query: vec![("delete".into(), "".into())],
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let sent = body_hash(b"<Delete>the whole of it</Delete>");
-        r.request_headers
+        r.lists_mut()
+            .request_headers
             .push(reqlog::Header::new(BODY_HASH_HEADER, &sent));
         assert_eq!(
             identity_of(&r),
@@ -1146,7 +1148,7 @@ mod tests {
                 "DeleteObjects",
                 Some("b"),
                 None,
-                &r.query,
+                r.query(),
                 Some(&sent)
             )
         );
@@ -1183,15 +1185,11 @@ mod tests {
         assert!(at(1050, "p/c").is_some(), "a fixed window would let it by");
         assert!(at(1899, "p/d").is_some());
         assert_eq!(at(1901, "p/e"), None, "the first has left the second");
-        // the prefix is the finding's: three levels of folder at most
-        let r = reqlog::Record {
-            bucket: Some("b".into()),
-            key: Some("a/b/c/d/e.parquet".into()),
-            ..Default::default()
-        };
+        // the prefix is the finding's (the analysis's prefix_of): three
+        // levels of folder at most
         assert_eq!(
-            rate_prefix(r.bucket.as_deref(), r.key.as_deref()),
-            crate::profile::prefix_of(&r)
+            rate_prefix(Some("b"), Some("a/b/c/d/e.parquet")),
+            "b/a/b/c/"
         );
         assert_eq!(rate_prefix(Some("b"), Some("a/b/c/d/e")), "b/a/b/c/");
         assert_eq!(rate_prefix(Some("b"), Some("top")), "b/");
@@ -1340,9 +1338,6 @@ mod tests {
         }
         let twice = project_scenarios([made("a", "500", &[]), made("a", "503", &[])]);
         assert_eq!(twice.unwrap_err(), "scenario a: named twice");
-        assert!(project_program_name(Some(" ")).is_err());
-        assert_eq!(project_program_name(None), Ok(None));
-        assert_eq!(project_program_name(Some("etl")), Ok(Some("etl".into())));
     }
 
     #[test]

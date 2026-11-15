@@ -74,7 +74,7 @@ BASE_ALLOWED = {"DataTable", "DataTableRef", "DataTableSort", "DiffView", "TextV
 # the shared pieces that draw a control of their own, each for the reason beside it
 BASE_OWN = {
     # the title bar's own controls: the endpoint switcher (a combobox), the toolbar's group, the places
-    "ui/shell.tsx": {"Button", "Combobox", "Toolbar"},
+    "ui/shell.tsx": {"Button", "Select", "Toolbar"},
     # the palette is Native Shell's Command in its Dialog
     "ui/palette.tsx": {"Command", "Dialog"},
     # the toasts are Native Shell's stack
@@ -82,7 +82,7 @@ BASE_OWN = {
     # the range of days over a program's runs
     "ui/history.tsx": {"DatePicker"},
     # a plot takes no presses itself: it sits in a pressable view (the chart system's)
-    "ui/plots/traffic.tsx": {"Button"}, "ui/plots/latency.tsx": {"Button"}, "ui/plots/runs.tsx": {"Button"}, "ui/plots/operation.tsx": {"Button"},
+    "ui/plots/traffic.tsx": {"Button"}, "ui/plots/latency.tsx": {"Button"}, "ui/plots/runs.tsx": {"Button"}, "ui/plots/operation.tsx": {"Button"}, "ui/plots/errors.tsx": {"Button"},
 }
 UI_RULES = [
     ("number", r"(?<![\w.])String\(", "a number as text by hand: count(), percent(), duration() (an id: a template)"),
@@ -99,8 +99,6 @@ EXEMPT = {
     ("ui/plots/system.tsx", "gutter"),
     # the format's own file is where milliseconds and decimals are written
     ("format.ts", "duration"), ("format.ts", "number"),
-    # sentences of the engine, in Chinese: their `{ms} ms` are the engine's templates
-    ("phrases.ts", "duration"), ("corephrases.ts", "duration"),
     # the chart system names its own sizes (a chart's heights and gutters are its constants)
     ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
     # a terminal's toast is Native Shell's: its one action is a word in its line, pressed or reached by its key

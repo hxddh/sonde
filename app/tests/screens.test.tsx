@@ -1,12 +1,12 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, desktop, place, withDemo } from "./helpers";
+import { openDemo, openExample, desktop, place, withDemo } from "./helpers";
 
-test("a session's request in the inspector: details, copy as curl without a signature", async () => {
+test("a run's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   await app.press("id:op-request-0");
@@ -27,8 +27,9 @@ test("multipart: scan, lifecycle verdict, the guard waits for the typed confirma
   const app = await withDemo("demo");
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
-  // the figure is the count; its line says how much they hold and how many are old
+  // the figure is the count, said once; its line says how much they hold and how many are old
   expect(app.shows("text:/2 older than 7 days/")).toBe(true);
+  expect(app.shows("text:/incomplete uploads$/")).toBe(false);
   expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
@@ -40,11 +41,16 @@ test("multipart: scan, lifecycle verdict, the guard waits for the typed confirma
   await app.waitFor("id:confirm-dialog", { state: "gone" });
 });
 
-test("versions: the timeline of a deleted key", async () => {
+test("versions open from the object: a deleted key's, found by its name", async () => {
   const app = await withDemo("demo");
-  await place(app, "versions");
-  await app.type("id:version-key", "config/app.yaml");
-  await app.press("id:load-versions");
+  // Buckets' sections are the objects, size, incomplete uploads and layouts: versions are an object's
+  expect(app.shows("id:store-section-versions")).toBe(false);
+  expect(app.shows("id:store-section-probes")).toBe(false);
+  await app.waitFor("text:README.md", { timeout: 10000 });
+  // a key deleted lists nowhere: the filter that finds none offers its versions by name
+  await app.type("id:listing-filter", "config/app.yaml");
+  await app.waitFor("id:versions-of", { timeout: 5000 });
+  await app.press("id:versions-of");
   await app.waitFor("id:timeline", { timeout: 10000 });
   expect(app.shows("text:The key reads as deleted")).toBe(true);
   expect(app.count("text:Delete marker")).toBeGreaterThanOrEqual(1);
@@ -73,21 +79,25 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
   expect(app.shows("id:replay")).toBe(true);
 });
 
-test("compatibility: runs probes on the demo and fills the matrix", async () => {
-  const app = await withDemo();
-  // probes write to the scratch bucket named: naming it is the consent
-  await place(app, "probes");
-  // the endpoint in use comes chosen
-  await app.type("id:probe-bucket", "demo");
-  await app.type("id:probe-only", "range.,consistency.");
+test("compatibility: checked on an endpoint, every probe, the bucket chosen filled in", async () => {
+  const app = await withDemo("demo");
+  await place(app, "endpoints");
+  await app.press("id:compat-demo");
+  await app.waitFor("id:compat-dialog");
+  // the bucket chosen in Buckets is the one its probes write to; the one choice is temporary buckets
+  expect(await app.value("id:probe-bucket")).toBe("demo");
+  expect(app.shows("id:probe-temp")).toBe(true);
+  expect(app.shows("id:probe-only")).toBe(false);
   await app.press("id:probe-run");
-  await app.waitFor("id:matrix", { timeout: 60000 });
-  await app.waitFor("text:Range boundaries", { timeout: 60000 });
-  await app.press("id:cell-range.bounds-0");
+  // (Run is busy while the check goes, and free once it has ended)
+  await app.waitUntil(() => !app.enabled("id:probe-run"), { timeout: 10000 });
+  await app.waitUntil(() => app.enabled("id:probe-run"), { timeout: 240000 });
+  await app.waitFor("id:matrix");
+  await app.press("id:cell-consistency.read-after-delete-0");
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-}, 120_000);
+}, 300_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
   const app = await withDemo();
@@ -102,29 +112,38 @@ test("endpoints: adding never replaces one; a name in another script gets an id 
     await app.waitUntil(() => !app.shows("id:ep-save"), { timeout: 10000 });
     await app.waitFor("id:add-endpoint");
   }
-  // each its own: the second Prod beside the first, the Chinese names apart
+  // its id is made from its name, never asked for: the second Prod beside the first, the Chinese names apart
+  expect(app.shows("id:ep-id")).toBe(false);
   for (const id of ["prod", "prod-2", "endpoint", "endpoint-2"]) await app.waitFor(`id:endpoint-${id}`);
   expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9001 /")).toBe(true);
   expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9002 /")).toBe(true);
 });
 
-test("browse: an object's detail is its own, never the one chosen before", async () => {
+test("browse: an object's detail is one list of its own, never the one chosen before", async () => {
   const app = await withDemo("demo");
   await app.waitFor("text:README.md", { timeout: 10000 });
   await app.press("text:README.md");
   await app.waitFor("text:s3://demo/README.md", { timeout: 10000 });
-  // its sections are there once the object has been read
-  await app.waitFor("text:Presigned URL", { timeout: 10000 });
-  await app.press("text:Presigned URL");
-  await app.press("id:presign");
-  await app.waitFor("text:/README\\.md\\?X-Amz-/", { timeout: 10000 });
+  // one list, the response headers its one section that opens; a presigned URL is copied from ⋯
+  await app.waitFor("text:ETag", { timeout: 10000 });
+  expect(app.shows("text:Response headers")).toBe(true);
+  expect(app.shows("text:Presigned URL")).toBe(false);
+  await app.press("id:object-more");
+  await app.chooseMenuItem("Copy presigned URL");
+  await app.waitUntil(() => /README\.md\?X-Amz-/.test(app.clipboard() ?? ""), { timeout: 10000 });
   await app.press("id:flat");
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
   await app.press("text:images/logo.png");
   await app.waitFor("text:s3://demo/images/logo.png", { timeout: 10000 });
-  await app.waitFor("text:Presigned URL", { timeout: 10000 });
-  // the URL asked for README.md went with it
-  expect(app.shows("text:/README\\.md\\?X-Amz-/")).toBe(false);
+  await app.waitFor("text:ETag", { timeout: 10000 });
+  expect(app.shows("text:s3://demo/README.md")).toBe(false);
+  // the filter is one mode: a key no row matches offers every key under the prefix searched
+  await app.type("id:listing-filter", "no-such-key");
+  await app.waitFor("id:search", { timeout: 5000 });
+  await app.press("id:search");
+  await app.waitFor("id:search-hits", { timeout: 10000 });
+  await app.press("id:search-close");
+  await app.clear("id:listing-filter");
   // Refresh lists the same place again
   await app.press("id:listing-refresh");
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
@@ -160,23 +179,17 @@ test("settings: no read-only switch; a confirmed abort, the audit log", async ()
   expect(app.enabled("id:confirm-run")).toBe(false);
   await app.type("id:confirm-input", "2");
   await app.press("id:confirm-run");
-  await app.waitFor("text:1 incomplete upload", { timeout: 10000 });
+  await app.waitFor("text:/0 older than 7 days/", { timeout: 10000 });
   await place(app, "audit");
   await app.waitFor("text:Abort uploads · demo/demo");
   await app.press("id:activity-close");
 });
 
-test("appearance: higher contrast, kept with the settings", async () => {
+test("appearance: the theme and the language; contrast is the system's", async () => {
   const app = await withDemo();
   await place(app, "settings");
-  await app.waitFor("id:high-contrast");
-  // secondary text reads stronger, and back
-  const hint = "text:Stronger borders and secondary text";
-  const before = app.spanStyle(hint).color;
-  await app.press("id:high-contrast");
-  await app.waitUntil(() => app.spanStyle(hint).color !== before);
-  await app.press("id:high-contrast");
-  await app.waitUntil(() => app.spanStyle(hint).color === before);
+  await app.waitFor("id:theme");
+  expect(app.shows("id:high-contrast")).toBe(false);
 });
 
 test("sonde:// links: a bucket's folder opens in the store; an unknown endpoint is said", async () => {
@@ -189,23 +202,22 @@ test("sonde:// links: a bucket's folder opens in the store; an unknown endpoint 
   await app.waitFor("text:/nowhere/");
 });
 
-test("sonde:// links keep a stretch of time: a session opens on its Time pane over it", async () => {
+test("sonde:// links keep a stretch of time: a run opens on its Time pane over it", async () => {
   const app = await withDemo();
-  await app.press("id:nav-sessions");
-  await app.press("id:open-example");
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   const { api } = await import("../src/native");
   // (the example: 172 requests over 467 ms, slices enough for a stretch of 200 ms)
-  const example = api.sessions.list().find((s) => (s.command ?? "").includes("gen-slatedb"));
+  const example = api.runs.list().find((s) => (s.command ?? "").includes("gen-slatedb"));
   expect(!!example).toBe(true);
   const name = example!.path.split(/[\\/]/).pop()!;
-  await app.openWithUrl(`sonde://session/${encodeURIComponent(name)}?range=0-200`);
+  await app.openWithUrl(`sonde://run/${encodeURIComponent(name)}?range=0-200`);
   await app.waitFor("id:time-pane", { timeout: 10000 });
-  // the stretch is the session's one selection of time: its chip says it, and offers the whole session back
+  // the stretch is the run's one selection of time: its chip says it, and offers the whole run back
   await app.waitFor("id:clear-filter", { timeout: 5000 });
   // the stretch is the pane's selection: a chart not drawn over time is reckoned again from the
   // requests that started in it, and says so
-  const held = await api.sessions.stretch(example!.path, 0, 200);
+  const held = await api.runs.stretch(example!.path, 0, 200);
   expect(held.summary.requests).toBeGreaterThan(0);
   expect(held.summary.requests).toBeLessThan(172);
   await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
@@ -217,9 +229,8 @@ test("language: Chinese strings", async () => {
   await app.press("label:Language");
   await app.press("text:中文");
   await app.waitFor("text:通用");
-  // what sonde says about a session is said in Chinese too
-  await app.press("id:nav-sessions");
-  await app.press("id:open-example");
+  // what sonde says about a run is said in Chinese too
+  await openExample(app, true);
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
   await app.press("text:写入 manifest 3");
   await app.waitFor("id:operation-detail");
@@ -311,25 +322,25 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
   await app.waitFor("id:buckets-error", { state: "gone" });
 });
 
-test("a session file that cannot be read says so, and why", async () => {
-  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.view": async () => {
+test("a run file that cannot be read says so, and why", async () => {
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.view": async () => {
     throw new Error("line 3 is cut short: not a whole record");
   } } } });
-  await app.press("id:open-example");
-  await app.waitFor("id:session-pane", { timeout: 10000 });
-  await app.waitFor("id:session-error", { timeout: 10000 });
+  await openExample(app);
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  await app.waitFor("id:run-error", { timeout: 10000 });
   expect(app.shows("text:Could not load this")).toBe(true);
   expect(app.shows("text:/line 3 is cut short/")).toBe(true);
-  // no figure of a session that was not read
-  expect(app.shows("id:session-summary")).toBe(false);
+  // no figure of a run that was not read
+  expect(app.shows("id:run-summary")).toBe(false);
 });
 
-// --- a session of any size: its operations come in pages, as the table scrolls, sorts and narrows
+// --- a run of any size: its operations come in pages, as the table scrolls, sorts and narrows
 
-/** A session of `n` operations as the bridge would answer for it, whatever file is asked for (the
- * calls that answer at once are the bridge's own, so the session opened is a real one): the view
+/** A run of `n` operations as the bridge would answer for it, whatever file is asked for (the
+ * calls that answer at once are the bridge's own, so the run opened is a real one): the view
  * carries the totals and the first page only; a page is made when it is asked for, and every ask is kept. */
-function bigSession(n: number) {
+function bigRun(n: number) {
   const t0 = Date.parse("2026-11-07T00:00:00Z");
   const row = (i: number) => ({ index: i, shape: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
   const zeros = [0, 0];
@@ -352,7 +363,7 @@ function bigSession(n: number) {
     return all;
   };
   const modules = {
-    "Sessions.view": async (path: string) => ({
+    "Runs.view": async (path: string) => ({
       path, header: { endpoint: "demo", url: "http://127.0.0.1:9000", region: "us-east-1", created: new Date(t0).toISOString(), command: "etl --all" },
       summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, kinds: [{ kind: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
       profile, signals, whatIf: null, injected: [], sharedNotes: [],
@@ -360,7 +371,7 @@ function bigSession(n: number) {
       span: { start: new Date(t0).toISOString(), end: new Date(t0 + n * 10).toISOString() }, families: { formats: {}, kinds: { request: n } },
       observations: [{ level: "info", text: "300 operations of every third", operations: Array.from({ length: 200 }, (_, k) => k * 3), operationsTotal: 300, firstStart: new Date(t0).toISOString() }],
     }),
-    "Sessions.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
+    "Runs.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
       const offset = q.offset ?? 0;
       const limit = Math.min(q.limit ?? 500, 5000);
       asked.push({ offset, limit, sort: q.sort, descending: q.descending, finding: q.finding });
@@ -371,14 +382,14 @@ function bigSession(n: number) {
   return { modules, asked };
 }
 
-test("a session of a hundred thousand operations opens on its totals and first page, and reads on in pages", async () => {
+test("a run of a hundred thousand operations opens on its totals and first page, and reads on in pages", async () => {
   const N = 100000;
-  const big = bigSession(N);
+  const big = bigRun(N);
   const began = Date.now();
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: big.modules } });
-  await app.press("id:open-example");
+  await openExample(app);
   // its totals at once, from the view: nothing waits for the operations to be whole
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.waitFor("text:operation 0", { timeout: 10000 });
   expect(app.shows("label:/100,000 requests · 100,000 operations/")).toBe(true);
   // (opened and drawn well inside the budget; the window's own start is most of it here)

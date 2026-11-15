@@ -14,7 +14,7 @@ use serde::Serialize;
 pub const CALLER_HEADER: &str = "x-sonde-caller";
 
 fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.request_headers
+    r.request_headers()
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.trim())
@@ -110,7 +110,7 @@ pub fn sdk(r: &Record) -> Option<String> {
 }
 
 /// The SDK that sent most of `records`, by their user agents (a few
-/// thousand of them looked at, spread over the session).
+/// thousand of them looked at, spread over the run).
 pub fn sdk_of(records: &[Record]) -> Option<String> {
     let mut sdks: HashMap<String, usize> = HashMap::new();
     for r in records.iter().step_by((records.len() / 4096).max(1)) {
@@ -168,16 +168,7 @@ fn put(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     if std::fs::read(path).is_ok_and(|have| have == bytes) {
         return Ok(());
     }
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tmp = path.with_extension(format!(
-        "{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    reqlog::private::replace(path, bytes)
 }
 
 /// A path as one quoted word of `NODE_OPTIONS`. Node reads a backslash
@@ -326,7 +317,11 @@ mod tests {
 
     fn rec(headers: &[(&str, &str)]) -> Record {
         Record {
-            request_headers: headers.iter().map(|(k, v)| Header::new(*k, *v)).collect(),
+            lists: reqlog::Lists {
+                request_headers: headers.iter().map(|(k, v)| Header::new(*k, *v)).collect(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
     }

@@ -1,14 +1,15 @@
 // Where: prefixes named, where requests went (flows), when each prefix was
 // busy, the map of prefixes, and what the requests cost.
 
-import { computed, signal, Text, View } from "nsh";
-import { Bar, Cell, Plot, PlotAxis, Sankey, Treemap } from "nsh/base/plot";
+import { computed, signal, Text, token, View } from "nsh";
+import { Bar, Cell, Plot, PlotAxis, Sankey } from "nsh/base/plot";
 import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { areasWithRoom, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, TREEMAP, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP } from "./system";
+import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP, slotMs } from "./system";
 import { Options, terminal, textual, SimpleTable, TONE } from "../kit";
+import { prefixSaid } from "./answers";
 
 // --- prefixes, named ---------------------------------------------------------------
 
@@ -69,7 +70,7 @@ const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fil
 const OUTCOME_TO: Record<string, string> = { ok: "to-bar/40", "not found": "to-status-miss/40", "client error": "to-status-client/40", "server error": "to-status-server/40" };
 
 /**
- * Where a session's requests went: from each kind of request to the
+ * Where a run's requests went: from each kind of request to the
  * prefixes it touched, and from each prefix to how it was answered. The
  * widths are requests; the pointer over a node keeps its flows and fades the rest.
  */
@@ -101,7 +102,7 @@ export function Flows(props: { profile: Profile }) {
     if (!n) return null;
     const all = props.profile.flows.filter((f) => OUTCOME_FILL[f.target]).reduce((s, f) => s + f.value, 0);
     const whole = n.stage === 1 && n.name !== "other prefixes" ? prefixTitle(props.profile.prefixes.find((x) => x.prefix === n.name) ?? { prefix: n.name }) : name(n);
-    return { title: whole, lines: [`${t("sessions.requestsN", { n: through(n) })} · ${pct(through(n) / Math.max(all, 1))}`] };
+    return { title: whole, lines: [`${t("runs.requestsN", { n: through(n) })} · ${pct(through(n) / Math.max(all, 1))}`] };
   };
   const label = () => {
     const ok = props.profile.flows.filter((f) => f.target === "ok").reduce((s, f) => s + f.value, 0);
@@ -151,7 +152,7 @@ export function Flows(props: { profile: Profile }) {
 
 // --- when, and where ---------------------------------------------------------------
 
-/** Requests by prefix and slice of the session: when each part of the key space was busy. */
+/** Requests by prefix and slice of the run: when each part of the key space was busy. */
 export function Heat(props: { profile: Profile; range?: [number, number] | null }) {
   const p = () => props.profile;
   // a stretch chosen on the timeline: its slices only, as every chart over time
@@ -167,11 +168,11 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   };
   const rows = () => p().heat.filter((c) => c.bin >= from() && c.bin <= to()).map((c) => ({ x: `${c.bin}`, y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
   const hovered = signal<number | null>(null);
-  // of the whole session, so a stretch keeps the colors it had
+  // of the whole run, so a stretch keeps the colors it had
   const max = () => p().heat.reduce((m, r) => Math.max(m, r.n), 1);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: whole(r.prefix), lines: [`+${duration(r.bin * p().binMs)} – +${duration((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: whole(r.prefix), lines: [`+${duration(slotMs(p(), r.bin))} – +${duration(slotMs(p(), r.bin + 1))}`, t("runs.requestsN", { n: r.n })] } : null;
   };
   const label = () => {
     const top = p().prefixes[0];
@@ -205,7 +206,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
       >
         <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={TIP.cell} inactiveOpacity={INACTIVE} stagger={0.2} hoverCellClass={HOVER} />
         <PlotAxis placement="left" labelClass={AXIS_LABEL} />
-        <TimeAxis domain={[from() * p().binMs, (to() + 1) * p().binMs]} slices={bins().length} />
+        <TimeAxis domain={[slotMs(p(), from()), slotMs(p(), to() + 1)]} slices={bins().length} />
       </Plot>
       </If>
       <PrefixNote prefixes={p().prefixes} common={named().common} gutter />
@@ -214,66 +215,28 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   );
 }
 
-/** The band over a group's areas, its name in it (a map of several buckets' prefixes). */
-const GROUP_BAND = 18;
-
 /** S3's documented rates per prefix: reads and writes a second. */
 const READS_PER_S = 5500;
 const WRITES_PER_S = 3500;
 
-
-/** Where a session's requests went by prefix, one map for three questions:
- * how many, what they cost, and how near the busiest second came to S3's
- * per-prefix limit (5,500 reads, 3,500 writes a second). A rectangle per
- * prefix under its bucket, its area the measure chosen; a prefix past half
- * its limit in the warning color. */
-export type PrefixMeasureKind = "requests" | "cost" | "peak";
-
-/** What the prefix map's areas stand for: requests, cost, or the busiest second. */
-export function PrefixMeasure(props: { profile: Profile; value: PrefixMeasureKind; onChange: (m: PrefixMeasureKind) => void }) {
-  const hasCost = () => props.profile.prefixes.some((x) => (x.cost ?? 0) > 0);
-  return (
-    <If when={!textual()}>
-      <Options
-        testID="prefix-measure"
-        value={props.value}
-        items={[{ value: "requests", title: t("prefixUse.byRequests") }, ...(hasCost() ? [{ value: "cost", title: t("prefixUse.byCost") }] : []), { value: "peak", title: t("prefixUse.byPeak") }]}
-        onChange={(v) => props.onChange(v as PrefixMeasureKind)}
-      />
-    </If>
-  );
-}
-
-export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind; /** each prefix's busiest second against S3's limit, as the signals count it */ rates?: Signals["prefixes"] }) {
-  const measure = () => props.measure ?? "requests";
-  const items = () => props.profile.prefixes.filter((x) => x.prefix !== "other");
-  // of S3's limit for a prefix (5,500 reads, 3,500 writes a second): the signals' count, or (an older share) the profile's peaks
+/** Where a run's requests went by prefix, and how near each came to S3's per-prefix limit (5,500 reads,
+ * 3,500 writes a second): a bar each, most requests first, its length the requests, and beside it the busiest
+ * second and its share of the limit; a prefix past half its limit in the warning tone. (What they cost is "What
+ * did the requests cost?".) */
+export function PrefixUse(props: { profile: Profile; /** each prefix's busiest second against S3's limit, as the signals count it */ rates?: Signals["prefixes"]; max?: number }) {
+  const items = () => props.profile.prefixes.filter((x) => x.prefix !== "other" && x.requests > 0).sort((a, b) => b.requests - a.requests);
+  const rows = () => items().slice(0, props.max ?? 8);
+  // of S3's limit for a prefix: the signals' count, or the profile's peaks
   const limit = (x: Profile["prefixes"][number]) => nearestLimit(props.rates?.find((r) => r.prefix === x.prefix) ?? { readShare: x.peakReads / READS_PER_S, writeShare: x.peakWrites / WRITES_PER_S });
   const share = (x: Profile["prefixes"][number]) => limit(x).share;
+  const hot = (x: Profile["prefixes"][number]) => share(x) >= 0.5;
   const nearest = () => [...items()].sort((a, b) => share(b) - share(a))[0];
-  const value = (x: Profile["prefixes"][number]) => (measure() === "cost" ? (x.cost ?? 0) : measure() === "peak" ? x.peakPerSecond : x.requests);
-  const shown = (v: number) => (measure() === "cost" ? cost(v, props.profile.cost.currency) : measure() === "peak" ? t("prefixUse.perSecond", { n: Math.round(v) }) : t("prefixUse.requests", { n: v }));
-  const bucketOf = (p: string) => p.split("/")[0] || p;
-  const buckets = () => [...new Set(items().map((x) => bucketOf(x.prefix)))];
-  const nested = () => buckets().length > 1;
-  // under several buckets each is named within its bucket's box; under one, by what tells them apart
-  const named = () => (nested() ? { common: "", name: (p: string) => tail(`${p.slice(bucketOf(p).length + 1) || p}${items().find((x) => x.prefix === p)?.folders ? "…" : ""}`, 28) } : prefixNames(items(), 28));
-  const rows = () => {
-    const leaves = items()
-      .filter((x) => value(x) > 0)
-      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: named().name(x.prefix), value: value(x), hot: share(x) >= 0.5, x }));
-    const groups = nested() ? buckets().map((b) => ({ id: `b:${b}`, parent: "", label: `${b}/`, value: 0, hot: false, x: null })) : [];
-    return [...groups, ...leaves];
-  };
-  const total = () => rows().reduce((n, r) => n + r.value, 0);
-  // the areas with room for their name whole: the others say nothing (their tooltip does), and Native Shell writes a figure only under a name
-  const size = signal<[number, number]>([0, 0]);
-  const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length));
+  // prefixes by what tells them apart; what they share is said once under the chart
+  const named = () => prefixNames(items(), GUTTER_CHARS);
   const hovered = signal<number | null>(null);
   const tip = () => {
-    const r = hovered() === null ? null : rows()[hovered()!];
-    if (!r?.x) return null;
-    const x = r.x;
+    const x = hovered() === null ? null : rows()[hovered()!];
+    if (!x) return null;
     return {
       title: prefixTitle(x),
       lines: [
@@ -283,64 +246,53 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
       ],
     };
   };
-  const top = () => [...items()].sort((a, b) => value(b) - value(a))[0];
-  const label = () => (top() ? t("prefixUse.text", { prefix: top()!.prefix, value: shown(value(top()!)) }) : "");
+  // at a bar's end: its requests, then its busiest second and how much of S3's limit that is
+  const figure = (x: Profile["prefixes"][number]) => [count(x.requests), t("prefixUse.peak", { n: count(x.peakPerSecond), pct: percent(share(x)) })].join(" · ");
+  const label = () => prefixSaid(props.profile);
   return (
-    <If when={items().length > 0}>
+    <If when={rows().length > 0}>
       <If
         when={!textual()}
         else={<SimpleTable columns={[t("common.prefix"), t("figure.requests"), t("limits.reads"), t("limits.writes"), t("profile.cost")]} rows={items().map((x) => [x.prefix, count(x.requests), t("prefixUse.perSecond", { n: count(x.peakReads) }), t("prefixUse.perSecond", { n: count(x.peakWrites) }), cost(x.cost ?? 0, props.profile.cost.currency)])} />}
       >
-        <View class="gap-2">
+        <View class="gap-1">
           <Plot
             testID="prefix-use"
             data={rows()}
+            yScale={{ type: "band", ...BARS.rows }}
+            xScale={{ type: "linear", domain: [0, Math.max(...rows().map((r) => r.requests), 1) * 1.9] }}
+            // calm in the bar's colour; past half of S3's limit, the warning's
+            colorScale={{ type: "ordinal", domain: ["calm", "hot"], range: [token("bar" as never) as unknown as string, token("warn" as never) as unknown as string] }}
             accessibilityLabel={label()}
             accessibilityValue={tipValue(tip())}
-            appearGeneration={total()}
+            appearGeneration={1}
             motion={MOTION}
+            crossLineClass={CROSS_BAND}
             tooltipPlacement="pointer"
             tooltipOffset={10}
             tooltipContent={<ChartTip tip={tip()} />}
             onHoverChange={({ index }) => hovered.set(index)}
-            onLayout={({ bounds }) => size.set([bounds.size.width, bounds.size.height])}
-            class={TREEMAP}
+            class={GUTTER}
+            style={{ height: rowsHeight(rows().length) }}
           >
-            <Treemap
-              id="id"
-              parent="parent"
-              value="value"
-              paddingInner={TIP.areaGap}
-              paddingTop={nested() ? GROUP_BAND : 0}
-              cornerRadii={TIP.area}
-              leafClass={(_, i) => (rows()[i]?.hot ? "fill-warn/60" : "fill-bar/55")}
-              groupClass="fill-muted"
-              groupLabel="label"
-              // emphasis: a bucket's name over the prefixes in it
-              groupLabelClass={LABEL.group}
-              inactiveOpacity={INACTIVE}
-              label={(_, i) => (room()[i] ? rows()[i].label : "")}
-              valueLabel={(_, v) => shown(v)}
-              labelClass={LABEL.area}
-              valueLabelClass={LABEL.areaValue}
-              hoverClass={HOVER}
-            />
+            <Bar value="requests" color={(_, i) => (rows()[i] && hot(rows()[i]) ? "hot" : "calm")} cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => (rows()[i] ? figure(rows()[i]) : "")} labelClass={LABEL.bar} />
+            <PlotAxis placement="left" format={(i) => axisName(rows()[i] ? named().name(rows()[i].prefix) : "")} labelClass={AXIS_LABEL} />
           </Plot>
-          <If when={items().some((x) => share(x) >= 0.5)}>
-            <Legend items={[{ label: t("prefixUse.hot"), swatch: `${TONE.warn.fill}/60` }]} />
+          <If when={rows().some(hot)}>
+            <Legend gutter items={[{ label: t("prefixUse.hot"), swatch: TONE.warn.fill }]} />
           </If>
           {/* how near the busiest second came to what S3 serves one prefix */}
           <If when={nearest() && share(nearest()!) > 0}>
-            <ChartNote testID="prefix-limit">{t(`prefixUse.limit.${limit(nearest()!).kind}`, { prefix: named().name(nearest()!.prefix), pct: percent(share(nearest()!)) })}</ChartNote>
+            <ChartNote gutter testID="prefix-limit">{t(`prefixUse.limit.${limit(nearest()!).kind}`, { prefix: named().name(nearest()!.prefix), pct: percent(share(nearest()!)) })}</ChartNote>
           </If>
-          <PrefixNote prefixes={items()} common={named().common} />
+          <PrefixNote prefixes={items()} common={named().common} gutter />
         </View>
       </If>
     </If>
   );
 }
 
-/** What the session's requests cost, by kind: a bar each, dearest
+/** What the run's requests cost, by kind: a bar each, dearest
  * first, with its share of the whole. */
 export function CostBy(props: { signals: Signals; max?: number }) {
   const c = () => props.signals.cost;

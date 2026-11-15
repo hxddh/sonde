@@ -40,7 +40,11 @@ a chart bypasses the system:
 - latency's two tones (`latency-body`, `latency-tail` in theme.json) pass a
   contrast check of 3:1 against each other and against the card, light and dark;
   a heat map's ramp (`heat-low` to `heat-high`) has its busiest end 3:1 from the
-  card and its quietest end seen on it (1.4:1), light and dark.
+  card and its quietest end seen on it (1.4:1), light and dark;
+- colour-blind safe: the pairs a chart sets side by side (`chart-1`/`chart-4`:
+  sent and received, first byte and the rest, fewer and more; `warn`/`status-server`:
+  a throttle and another 5xx) stay 10 apart (OKLab ×100) for every eye, and under
+  deuteranopia and protanopia (Machado 2009), light and dark.
 Run by lint-kit.py, so CI's lint step covers it.
 """
 import json
@@ -151,7 +155,7 @@ for p in files:
                 say(p, n, "a treemap of its own height: class={TREEMAP}")
         for name in CHARTS:
             if re.search(rf"<{name}\b", line) and p not in SYSTEM and name not in FRAMED:
-                strip = name == "SessionShape" and " strip" in line
+                strip = name == "RunShape" and " strip" in line
                 if n not in framed and "body:" not in line and not strip and not re.search(r"body: \(\) =>", "\n".join(lines[max(0, n - 4) : n])):
                     say(p, n, f"<{name}> outside the frame: put it in a <Chart> (or a chart descriptor's body)")
         # time's ticks are TimeAxis's: another bottom axis has its own name
@@ -239,5 +243,30 @@ for mode in ("light", "dark"):
     for k, (v, least) in heat.items():
         if v < least:
             say(root / "app" / "theme.json", 1, f"the heat ramp, {mode}: {k} is {v:.2f}:1, under {least}:1")
+# colour-blind safety: the pairs drawn side by side, as each eye sees them (Machado 2009, severity 1, in linear
+# RGB; the distance in OKLab, ×100)
+def oklch_rgb(oklch):
+    L, C, h = (float(x) for x in re.match(r"oklch\(([\d.]+) ([\d.]+) ([\d.]+)", oklch).groups())
+    a, b = C * math.cos(math.radians(h)), C * math.sin(math.radians(h))
+    l, m, s_ = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    rgb = (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s_, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s_, -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s_)
+    return [min(1, max(0, x)) for x in rgb]
+def oklab(rgb):
+    r, g, b = rgb
+    l, m, s_ = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3), (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3), (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s_, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s_, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s_)
+EYES = {"every eye": None, "deuteranopia": [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.011820, 0.042940, 0.968881]], "protanopia": [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]]}
+def seen(rgb, m):
+    return rgb if m is None else [min(1, max(0, sum(m[i][j] * rgb[j] for j in range(3)))) for i in range(3)]
+APART = 10
+apart = []
+for mode in ("light", "dark"):
+    t = theme[mode]
+    for x, y in (("chart-1", "chart-4"), ("warn", "status-server")):
+        least = min((100 * math.dist(oklab(seen(oklch_rgb(t[x]), m)), oklab(seen(oklch_rgb(t[y]), m))), eye) for eye, m in EYES.items())
+        apart.append(f"{mode} {x}/{y} {least[0]:.0f}")
+        if least[0] < APART:
+            say(root / "app" / "theme.json", 1, f"{x} and {y}, {mode}: {least[0]:.1f} apart under {least[1]}, under {APART}")
+tones.append("colour-blind " + " ".join(apart))
 print(f"charts: {counts['plots']} plots in {len(CHARTS)} charts and {len(MARKS)} marks; {counts['frames']} frames used; row pitch {'/'.join(pitch)}; left edge {'/'.join(sorted(edges))}; {counts['legends']} uses of the one legend; {counts['tooltips']} of the one tooltip; {counts['time']} uses of the one time axis over {len(OVER_TIME)} charts; {counts['value']} of the one value scale over {len(COUNTS)}; latency's tones {'; '.join(tones)}: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed else 0)

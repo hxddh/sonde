@@ -27,14 +27,7 @@ pub struct PresignExpiry;
 #[async_trait]
 impl Probe for PresignExpiry {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "presign.expiry",
-            Category::Presign,
-            "Presigned URL expiry",
-            "Presigns a GET valid for a few seconds (allowing for the difference between this clock and the store's), uses it at once and again once it has expired; presigns with X-Amz-Expires over 7 days.",
-            "Fresh URL: 200. Expired: 403 AccessDenied (\"Request has expired\"). X-Amz-Expires above 604800: 400 AuthorizationQueryParametersError.",
-            &[Needs::Slow],
-        )
+        meta("presign.expiry", Category::Presign, &[Needs::Slow])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("presign");
@@ -152,14 +145,7 @@ pub struct ClockSkew;
 #[async_trait]
 impl Probe for ClockSkew {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "presign.clock-skew",
-            Category::Presign,
-            "Clock skew tolerance",
-            "Signs requests with the clock 5 minutes ahead, then 20 minutes ahead.",
-            "5 minutes: accepted. Beyond 15 minutes: 403 RequestTimeTooSkewed, whose body gives the server's time.",
-            &[],
-        )
+        meta("presign.clock-skew", Category::Presign, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("skew");
@@ -236,14 +222,7 @@ pub struct MetadataLimit;
 #[async_trait]
 impl Probe for MetadataLimit {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "meta.size-limit",
-            Category::Metadata,
-            "User metadata size limit",
-            "PUTs with 1.9 KiB and 2.1 KiB of x-amz-meta-* (names and values).",
-            "Up to 2 KiB of user metadata: 200, returned verbatim by HEAD. Over 2 KiB: 400 MetadataTooLarge.",
-            &[],
-        )
+        meta("meta.size-limit", Category::Metadata, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let small = "v".repeat(1900);
@@ -324,9 +303,6 @@ impl Probe for VersionIdFormat {
         meta(
             "version.id-format",
             Category::Versioning,
-            "Version ID format",
-            "Enables versioning on a temporary bucket, writes a key twice and inspects the version ids.",
-            "Opaque, unique, URL-safe ids (32 characters today); `null` only for writes made while versioning was off or suspended.",
             &[Needs::TempBucket],
         )
     }
@@ -405,14 +381,7 @@ pub struct ObjectLock;
 #[async_trait]
 impl Probe for ObjectLock {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "lock.retention",
-            Category::ObjectLock,
-            "Object Lock retention",
-            "Creates a bucket with Object Lock, writes an object in GOVERNANCE mode for one day, then tries to delete that version.",
-            "Deleting a locked version: 403 AccessDenied; GetObjectRetention returns the mode and date; a plain DELETE adds a delete marker.",
-            &[Needs::TempBucket],
-        )
+        meta("lock.retention", Category::ObjectLock, &[Needs::TempBucket])
     }
     async fn run(&self, cx: &ProbeCx) {
         let Some(b) = cx.temp_bucket("create-bucket", true).await else {
@@ -507,14 +476,7 @@ pub struct SseC;
 #[async_trait]
 impl Probe for SseC {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "sse-c",
-            Category::Encryption,
-            "SSE-C",
-            "Writes an object with a customer key, reads it without the key, with a wrong key and with the right key.",
-            "PUT with the key: 200. GET without it: 400 InvalidRequest; with a wrong key: 403 AccessDenied; with the right key: 200. Over plain HTTP S3 refuses SSE-C altogether (400).",
-            &[Needs::Https],
-        )
+        meta("sse-c", Category::Encryption, &[Needs::Https])
     }
     async fn run(&self, cx: &ProbeCx) {
         let key = [7u8; 32];
@@ -605,14 +567,7 @@ pub struct ExpressAppend;
 #[async_trait]
 impl Probe for ExpressAppend {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "express.append",
-            Category::Express,
-            "S3 Express append (x-amz-write-offset-bytes)",
-            "Appends to an object with PUT x-amz-write-offset-bytes at its size, then at a wrong offset.",
-            "Directory buckets (S3 Express One Zone): the append succeeds and a wrong offset gives 400 InvalidWriteOffset. General purpose buckets: 501 NotImplemented.",
-            &[],
-        )
+        meta("express.append", Category::Express, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("append");

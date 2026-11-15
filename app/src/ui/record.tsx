@@ -8,7 +8,7 @@ import { count, date, duration, transfer } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE, TEXT } from "./kit";
-import { StatusMark } from "./sessionview";
+import { StatusMark } from "./runview";
 import { scenarioLabel } from "../trials";
 
 /** An XML document as code, read-only: the S3 error's code marked where it stands. */

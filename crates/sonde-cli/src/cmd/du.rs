@@ -26,7 +26,7 @@ pub struct DuArgs {
     /// Print the last cached scan instead of scanning.
     #[arg(long)]
     cached: bool,
-    /// The format written: table, json or csv.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -38,14 +38,6 @@ pub struct DuArgs {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(
-        a.format,
-        "bucket size",
-        &[Format::Table, Format::Json, Format::Csv],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let ep = super::endpoint(s, a.endpoint.as_deref())?;
     let r = if a.cached {
         du::load_cache(s, &ep, &a.bucket, &a.prefix)
@@ -63,7 +55,6 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
     let h = sonde_core::guard::human_bytes;
     match a.format {
         Format::Json => println!("{}", output::json(&r)),
-        Format::Csv => print!("{}", du::to_csv(&r)),
         _ => {
             println!(
                 "{}/{}: {} total ({}/month), via {}\n",
@@ -71,7 +62,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
                 r.prefix,
                 h(r.total_bytes),
                 // a cost too small for cents is said in its digits, not 0.00
-                sonde_proxy::program::money_text(r.cost_per_month, &r.currency),
+                sonde_analysis::program::money_text(r.cost_per_month, &r.currency),
                 r.source
             );
             println!(

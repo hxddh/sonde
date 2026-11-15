@@ -108,7 +108,7 @@ export function dismissToast(id: string) {
 const KINDS: Record<ToastKind, { icon: IconName; mark: string; tone: Tone }> = {
   success: { icon: "circle-check", mark: "✓", tone: "ok" },
   error: { icon: "circle-x", mark: "✗", tone: "fail" },
-  warning: { icon: "triangle-alert", mark: "!", tone: "warn" },
+  warning: { icon: "triangle-exclamation-point", mark: "!", tone: "warn" },
   info: { icon: "info", mark: "i", tone: "info" },
 };
 

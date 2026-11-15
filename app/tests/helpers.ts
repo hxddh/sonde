@@ -4,14 +4,14 @@ import { type App, open } from "nsh/test";
 
 export const desktop = { platform: "macos" as const, width: 1280, height: 860 };
 
-const STORE = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
+const STORE = ["browse", "capacity", "multipart", "layouts"];
 const SETTINGS = ["settings", "endpoints"];
 const ACTIVITY = ["jobs", "audit"];
 
 /** Goes to a place, or to a tab of one. A window opens Settings in a window
- * of their own (⌘,), Activity from its toolbar, and Buckets' sections (a
- * bucket's tools, compatibility) from the place's one row of sections; a
- * terminal lists every place on its home list. */
+ * of their own (⌘,), Activity from its toolbar, and Buckets' sections from
+ * the place's one row of sections; a terminal lists every place on its home
+ * list. */
 export async function place(app: App, where: string) {
   const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : ACTIVITY.includes(where) ? "activity" : where;
   const window = app.shows("id:toolbar");
@@ -40,7 +40,7 @@ export async function place(app: App, where: string) {
   if (!app.shows(`id:nav-${area}`)) await app.back();
   await app.press(`id:nav-${area}`);
   // a terminal pushes the place over its home list: there once the list has gone (a place
-  // with much to read, a long list of sessions, takes a moment)
+  // with much to read, a long list of runs, takes a moment)
   if (!window) await app.waitFor(`id:nav-${area}`, { state: "gone" });
   if (area === "store" || area === "settings") await app.press(`id:tab-${where}`);
   if (area === "activity") await app.press(`id:activity-tab-${where}`);
@@ -58,47 +58,55 @@ export async function withDemo(bucket?: string, options: Parameters<typeof open>
   return app;
 }
 
-/** Runs the command in Run's field: by Run before any run, by the ended band's one Run after one (the field's
- * command when it was changed, "Run again" when it was not). */
+/** Runs the command in Run's field by the command bar's one Run. */
 export async function runCommand(app: App) {
-  const id = app.shows("id:run-again-band") ? "id:run-again-band" : "id:run-start";
   // (the button follows the field a frame later)
-  await app.waitUntil(() => app.enabled(id), { timeout: 10000 });
-  await app.press(id);
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+  await app.press("id:run-start");
 }
 
-/** Presses one of the commands at the end of Run's band: as a button where
- * the band has room for it, behind `⋯` where it has not (they never wrap). */
-export async function runAction(app: App, id: "run-open-session" | "run-try" | "run-now-yours") {
-  await app.waitFor("id:run-actions", { timeout: 15000 });
-  if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
-  // by its words, in the language the window is in
-  const labels = { "run-open-session": ["See the whole run", "查看完整运行"], "run-try": ["Try under faults…", "在故障下试运行…"], "run-now-yours": ["Now your own store…", "换成你自己的存储…"] }[id];
-  await app.press("id:run-actions-more");
-  const item = app.menu()?.map((m) => m.label).find((l) => labels.includes(l));
-  if (!item) throw new Error(`${id}: not in the band, not behind its menu`);
-  await app.chooseMenuItem(item);
+/** Waits for a run that ended to show its own view on Run (its header read off the interface's thread). */
+export async function runView(app: App) {
+  await app.waitFor("id:run-pane", { timeout: 25000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
 }
 
-/** A session's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
+/** A run's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
  * by its words. */
-export async function sessionAction(app: App, label: string) {
-  await app.press("id:session-more");
+export async function runAction(app: App, label: string) {
+  await app.press("id:run-more");
   await app.chooseMenuItem(label);
 }
 
-/** The words of the session header's `⋯` menu, the menu closed again. */
-export async function sessionMenu(app: App): Promise<string[]> {
-  await app.press("id:session-more");
+/** The words of the run header's `⋯` menu, the menu closed again. */
+export async function runMenu(app: App): Promise<string[]> {
+  await app.press("id:run-more");
   const labels = app.menu()?.map((m) => m.label) ?? [];
   await app.closeMenu();
   return labels;
 }
 
-/** The demo store in Endpoints: added with Open the demo where it is not in the list yet (an earlier test in the
- * same run may have made it the one in use, and then the button is not offered). */
+/** The example run, from its doors: the welcome's, where it shows (no endpoint yet), else the palette's (`zh`: the
+ * window is in Chinese). */
+export async function openExample(app: App, zh = false) {
+  if (app.shows("id:open-example")) return app.press("id:open-example");
+  if (app.shows("id:toolbar")) await app.press("id:palette");
+  else await app.keyboard.press("shift+;");
+  await app.waitFor("id:palette-command");
+  await app.type("id:palette-command", zh ? "示例" : "example");
+  await app.press(zh ? "id:palette-dialog >> text:打开示例" : "id:palette-dialog >> text:Open the example");
+}
+
+/** The demo store, started from the palette (its one door after the welcome) where it is not the endpoint in use
+ * yet (an earlier test in the same run may have made it so, and then the palette does not offer it). */
 export async function openDemo(app: App) {
-  // the page's head first: the button is in it or not, not on its way
-  await app.waitFor("id:add-endpoint");
-  if (app.shows("id:open-demo")) await app.press("id:open-demo");
+  // (the callers are on Endpoints: there the demo says when it is the one in use already)
+  if (await app.waitFor("id:endpoint-demo >> text:In use", { timeout: 500 }).then(() => true, () => false)) return;
+  if (app.shows("id:toolbar")) await app.press("id:palette");
+  else await app.keyboard.press("shift+;");
+  await app.waitFor("id:palette-command");
+  await app.type("id:palette-command", "demo");
+  if (await app.waitFor("id:palette-dialog >> text:Start the demo", { timeout: 2000 }).then(() => true, () => false)) await app.press("id:palette-dialog >> text:Start the demo");
+  await app.wait(300);
+  if (app.shows("id:palette-command")) await app.keyboard.press("escape");
 }

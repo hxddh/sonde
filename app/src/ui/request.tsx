@@ -1,6 +1,6 @@
-// A request of a session in the inspector: the request in full, the
+// A request of a run in the inspector: the request in full, the
 // commands that redo it (aws s3api, curl without a signature), and its key's
-// history in the session — every request to that key, whatever its
+// history in the run — every request to that key, whatever its
 // operation, each a press away.
 
 import { resource, Text, View } from "nsh";
@@ -12,7 +12,7 @@ import type { KeyRequest, RequestRecord } from "../types";
 import { Icon } from "./icon";
 import { Button, Card, Disclosure, ICON, ListRow, Muted, WIDTH, TEXT } from "./kit";
 import { RecordView } from "./record";
-import { StatusMark } from "./sessionview";
+import { StatusMark } from "./runview";
 
 /** How many of a key's requests the inspector lists around the one shown. */
 const AROUND = 12;
@@ -20,7 +20,7 @@ const AROUND = 12;
 export function RecordDetail(props: { path: string; record: RequestRecord; onBack?: () => void; /** another request of the key pressed */ onRecord: (id: number) => void }) {
   const r = () => props.record;
   const copyAs = (kind: "cli" | "curl") => {
-    const text = api.sessions.copy(props.path, r().id, kind);
+    const text = api.runs.copy(props.path, r().id, kind);
     if (text) copy(text);
   };
   return (
@@ -42,7 +42,7 @@ export function RecordDetail(props: { path: string; record: RequestRecord; onBac
   );
 }
 
-/** Every request of the record's key in the session, in time order, the one shown marked: what
+/** Every request of the record's key in the run, in time order, the one shown marked: what
  * happened to the key before and after it (written, read back, deleted, read again). Said only
  * when the key had more than this one. */
 function KeyHistory(props: { path: string; bucket: string; keyName: string; at: number; onRecord: (id: number) => void }) {
@@ -50,7 +50,7 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
     () => [props.path, props.bucket, props.keyName] as const,
     async ([p, b, k]): Promise<KeyRequest[]> => {
       try {
-        return await api.sessions.keyHistory(p, b, k);
+        return await api.runs.keyHistory(p, b, k);
       } catch {
         return [];
       }

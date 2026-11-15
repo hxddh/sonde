@@ -1,4 +1,4 @@
-// An operation's requests in time, and a session in a sentence.
+// An operation's requests in time, and a run in a sentence.
 
 import { signal } from "nsh";
 import { Button as BaseButton } from "nsh/base";
@@ -86,14 +86,14 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
   );
 }
 
-// --- what a session comes to, in a sentence ------------------------------------------
+// --- what a run comes to, in a sentence ------------------------------------------
 
-/** Whether a session's requests have times (a CloudTrail file's have none). */
+/** Whether a run's requests have times (a CloudTrail file's have none). */
 export const timed = (p: Profile | null | undefined) => p?.timed !== false;
 
-/** A session in a sentence: what it did, where its time went. What acting on
+/** A run in a sentence: what it did, where its time went. What acting on
  * its findings would save is said once, with the findings (`whatIfText`), never here too. */
-export function sessionStory(p: Profile): string {
+export function runStory(p: Profile): string {
   const top = p.groups[0];
   const busiest = [...p.groups].sort((a, b) => b.requests - a.requests)[0];
   const total = p.groups.reduce((n, g) => n + g.requests, 0) || 1;

@@ -1,4 +1,4 @@
-// sonde: one app, three forms. Four places — Run, Sessions, Store and
+// sonde: one app, three forms. Four places — Run, Runs, Store and
 // Settings — and a command palette over everything. Desktop windows get a
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
@@ -11,9 +11,9 @@ import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
 import { endForQuit, followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
-import { Sessions } from "./src/screens/Sessions";
+import { Runs } from "./src/screens/Runs";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openRun, openRunFile, report, section, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
 import { Back, BREAK, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH } from "./src/ui/kit";
@@ -22,8 +22,7 @@ import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
-import { applyContrast } from "./src/theme";
-import { scrubCommand } from "./src/ui/sessionview";
+import { scrubCommand } from "./src/ui/runview";
 
 /** The app's name, as it was built (nsh.json's `name`). */
 const APP = appInfo().name ?? "";
@@ -39,8 +38,8 @@ function screen(a: Area) {
   switch (a) {
     case "run":
       return <Run />;
-    case "sessions":
-      return <Sessions />;
+    case "runs":
+      return <Runs />;
     case "store":
       return <StoreArea />;
     case "settings":
@@ -241,13 +240,15 @@ function installMenus() {
   });
   keymap.bind({
     "mod+1": () => open("run"),
-    "mod+2": () => open("sessions"),
+    "mod+2": () => open("runs"),
     "mod+3": () => open("store"),
     "mod+,": () => open("settings"),
     "mod+shift+a": () => open("activity"),
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => !terminal() && toggleSidebar(),
-    "mod+o": () => !terminal() && void openSessionFile(),
+    "mod+o": () => !terminal() && void openRunFile(),
+    // Buckets' sections, in their row's order
+    ...Object.fromEntries(STORE_TABS.map((s, i) => [`mod+alt+${i + 1}`, () => go(s)])),
   });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
@@ -274,7 +275,7 @@ function App() {
       // a .sonde file opened from the system (a double click, Open With, a drop on the app's
       // icon; nsh.json's `fileTypes`): as one dropped on the window, the launch's own included
       Application.on("openFiles", ({ paths }) => openSystemFiles(paths));
-      // the user quits (the Quit item, its key, the Dock): the program being recorded is ended and its session
+      // the user quits (the Quit item, its key, the Dock): the program being recorded is ended and its run
       // written whole first, however long that takes, then the app quits (Native Shell's quit request)
       Application.on("quitRequest", () => void endForQuit().finally(() => Application.quit()));
       // the system ends the app (logging out, shutting down) without asking: the same, in the 200 ms it waits
@@ -283,17 +284,13 @@ function App() {
       // a host that is not the app's own (a test runner)
     }
     followNotifications((path) => {
-      openSession.set(path);
-      go("sessions");
+      openRun.set(path);
+      go("runs");
     });
   }
   effect(() => {
     const theme = settings()?.theme ?? "system";
     setColorScheme(theme === "light" || theme === "dark" ? theme : "system");
-  });
-  // a terminal draws in its own colors
-  effect(() => {
-    if (platform.idiom !== "terminal") applyContrast(settings()?.["high-contrast"] ?? false);
   });
   installMenus();
   return platform.idiom === "terminal" ? <TerminalShell /> : <DesktopShell />;

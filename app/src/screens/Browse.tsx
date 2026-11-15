@@ -1,14 +1,15 @@
 // Browse: prefixes and objects of a bucket (ListObjectsV2, loaded page by
 // page and kept in Rust), and an object's details.
 
-import { batch, cleanup, computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, computed, effect, resource, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, Listing, watch } from "../native";
-import { bucket, copy, endpoint, go, notify, prefix, report, versionKey } from "../store";
+import { bucket, copy, endpoint, notify, offerCommands, type PlaceCommand, prefix, report } from "../store";
+import { KeyVersions } from "./Versions";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
 import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
@@ -61,7 +62,10 @@ function Breadcrumbs() {
   );
 }
 
-function Detail(props: { entry: Entry; onBack?: () => void }) {
+/** An object in the inspector: its address, what can be done with it (Download, Versions, and behind ⋯ what
+ * copies it), then one list of what it is — its ETag, checksums and encryption where it has them — and its
+ * response headers as the one section that opens. Versions opens in its place, with the way back. */
+function Detail(props: { entry: Entry; onBack?: () => void; /** open on its versions */ versions?: boolean }) {
   const ep = endpoint()!;
   const b = bucket()!;
   // a failure shows in the panel, with Try again: not a wait that never ends
@@ -69,8 +73,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     () => props.entry.key,
     (key) => api.objectDetail(ep, b, key),
   );
-  const presignSecs = signal("3600");
-  const url = signal<string | null>(null);
+  const versions = signal(props.versions ?? false);
   const progress = signal<string | null>(null);
   let downloadJob: string | null = null;
   let gone = false;
@@ -102,16 +105,17 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     downloadJob = null;
     progress.set(null);
   };
+  // a link anyone can open for an hour, copied
   const presign = async () => {
     try {
-      url.set(await api.presign(ep, b, props.entry.key, Number(presignSecs())));
+      copy(await api.presign(ep, b, props.entry.key, 3600), t("browse.presignCopied"));
     } catch (e) {
       report(e);
     }
   };
   const etagText = (d: ObjectDetail) => {
     const k = d.etag?.kind;
-    if (!k) return "—";
+    if (!k) return null;
     if (k.kind === "multipart") return t("browse.multipartParts", { n: k.parts });
     if (k.kind === "md5") return t("browse.singlePart");
     return t("browse.opaqueEtag");
@@ -119,121 +123,83 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
   // said once: "512 B", "1.5 KiB (1,536 B)", "—" for a size not reported
   const sizeText = (n: number | null) => (n === null || n === undefined ? "—" : n < 1024 ? bytes(n) : `${bytes(n)} (${count(n)} B)`);
   const uri = () => `s3://${b}/${props.entry.key}`;
+  // what it is, in one list: each row there only where the object has it
+  const rows = (d: ObjectDetail): [string, string][] => {
+    const has = (k: string, v: string | null | undefined): [string, string][] => (v ? [[k, v]] : []);
+    const sse = d.sse.customerAlgorithm ? `SSE-C (${d.sse.customerAlgorithm})` : d.sse.algorithm;
+    return [
+      [t("browse.size"), sizeText(d.size)],
+      ...has("Content-Type", d.contentType),
+      [t("browse.modified"), date(d.lastModified)],
+      [t("browse.storageClass"), d.storageClass],
+      ...has(t("browse.version"), d.versionId),
+      ...has(t("browse.etag"), d.etag?.value),
+      ...has(t("browse.uploadKind"), etagText(d)),
+      ...has(t("browse.partSizes"), d.partSizeGuesses.length > 0 ? d.partSizeGuesses.map((s) => bytes(s)).join(", ") : null),
+      ...d.checksums.map((c): [string, string] => [c.algorithm, `${c.value} · ${c.kind === "composite" ? t("browse.composite", { n: c.parts ?? "?" }) : t("browse.fullObject")}${c.kindFromHeader ? "" : ` · ${t("browse.inferred")}`}`]),
+      ...has("SSE", sse),
+      ...has(t("browse.kmsKey"), d.sse.kmsKeyId),
+      ...has(t("browse.bucketKey"), d.sse.bucketKeyEnabled === null || d.sse.bucketKeyEnabled === undefined ? null : d.sse.bucketKeyEnabled ? t("common.on") : t("common.off")),
+      ...has(t("browse.objectLock"), d.objectLock),
+      ...has(t("browse.restore"), d.restore),
+      ...d.metadata,
+    ];
+  };
+  // what can be done with it: on its row, in the palette, and on their shortcuts
+  const commands = (): PlaceCommand[] => [
+    { id: "object-download", label: t("browse.download"), icon: "download", shortcut: "mod+s", disabled: progress() !== null, run: download },
+    { id: "object-versions", label: t("browse.versionsOpen"), icon: "file-clock", shortcut: "mod+y", disabled: versions(), run: () => versions.set(true) },
+    { id: "object-uri", label: t("store.copyUri"), icon: "copy", shortcut: "mod+shift+c", run: () => copy(uri()) },
+    { id: "object-presign", label: t("browse.presignCopy"), icon: "link", run: () => void presign() },
+  ];
+  offerCommands(() => props.entry.name || props.entry.key, commands);
   return (
-    <View selectable class="gap-4" testID="object-detail">
-      <View class="gap-1">
-        {/* in the panel, its header names the object; on its own (a terminal), this does */}
-        <If when={props.onBack}>
-          <View class="flex-row items-center gap-2">
-            <Back onPress={() => props.onBack?.()} testID="detail-back" />
-            <Title lines={2} class="min-w-0 flex-1">{props.entry.name}</Title>
-          </View>
-        </If>
-        <Text class={`${TEXT.codeQuiet} line-clamp-2`}>{uri()}</Text>
-      </View>
-      <Await loading={detail.loading() || !detail()} error={detail.error()} retry={() => detail.refetch()} waiting={t("browse.readingObject")} testID="object">
-        <If when={detail()}>
-          {(d) => (
-            <View class="gap-4">
-              {/* one order: what takes the object, what copies it, what opens elsewhere */}
-              <View class="flex-row flex-wrap items-center gap-2">
-                <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={progress() !== null} testID="download" />
-                <Button small variant="outline" icon="copy" label={t("store.copyUri")} onPress={() => copy(uri())} testID="copy-uri" />
-                <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
-              </View>
-              <If when={progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
-              <KeyValue
-                dense
-                rows={[
-                  [t("browse.size"), sizeText(d().size)],
-                  ["Content-Type", d().contentType ?? "—"],
-                  [t("browse.modified"), date(d().lastModified)],
-                  [t("browse.version"), d().versionId ?? "—"],
-                  [t("browse.storageClass"), d().storageClass],
-                ]}
-              />
-              {/* every part of the inspector the same way: names and values in the one bare list */}
-              <Disclosure title={t("browse.etag")} open>
-                <KeyValue
-                  dense
-                  rows={[
-                    [t("browse.etag"), d().etag?.value ?? "—"],
-                    [t("browse.uploadKind"), etagText(d())],
-                    ...(d().partSizeGuesses.length > 0 ? ([[t("browse.partSizes"), d().partSizeGuesses.map((s) => bytes(s)).join(", ")]] as [string, string][]) : []),
-                  ]}
-                />
-              </Disclosure>
-              <Disclosure title={t("browse.checksums")} count={d().checksums.length} open>
-                <If when={d().checksums.length > 0} else={<Empty compact text={t("browse.noChecksum")} />}>
-                  <KeyValue
-                    dense mono
-                    rows={d().checksums.map((c): [string, string] => [c.algorithm, `${c.value} · ${c.kind === "composite" ? t("browse.composite", { n: c.parts ?? "?" }) : t("browse.fullObject")}${c.kindFromHeader ? "" : ` · ${t("browse.inferred")}`}`])}
-                  />
-                </If>
-              </Disclosure>
-              <Disclosure title={t("browse.encryption")} open>
-                <KeyValue
-                  dense
-                  rows={[
-                    ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
-                    ...(d().sse.kmsKeyId ? ([[t("browse.kmsKey"), d().sse.kmsKeyId]] as [string, string][]) : []),
-                    ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([[t("browse.bucketKey"), d().sse.bucketKeyEnabled ? t("common.on") : t("common.off")]] as [string, string][]) : []),
-                    ...(d().objectLock ? ([[t("browse.objectLock"), d().objectLock!]] as [string, string][]) : []),
-                    ...(d().restore ? ([[t("browse.restore"), d().restore!]] as [string, string][]) : []),
-                  ]}
-                />
-              </Disclosure>
-              <Disclosure title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
-                <If when={d().metadata.length > 0} else={<Empty compact text={t("common.none")} />}>
-                  <KeyValue dense mono rows={d().metadata} />
-                </If>
-              </Disclosure>
-              {/* the section is the thing (a presigned URL); its button the act (create one) */}
-              <Disclosure title={t("browse.presign")}>
-                <View class="gap-2">
-                  <View class="flex-row flex-wrap items-center gap-2">
-                    <Text class={TEXT.note}>{t("browse.expires")}</Text>
-                    <Choice
-                      class={WIDTH.choice}
-                      placeholder={t("browse.expires")}
-                      value={presignSecs()}
-                      items={[
-                        { value: "300", title: t("browse.expires5m") },
-                        { value: "3600", title: t("browse.expires1h") },
-                        { value: "86400", title: t("browse.expires1d") },
-                        { value: "604800", title: t("browse.expires7d") },
-                      ]}
-                      onChange={(v) => presignSecs.set(v)}
-                    />
-                    <Button variant="outline" icon="link" label={t("browse.presignCreate")} onPress={presign} testID="presign" />
-                  </View>
-                  <If when={url()}>
-                    {(u) => (
-                      <Card pad="tile">
-                        <Text class={TEXT.code}>{u()}</Text>
-                        <View class="flex-row">
-                          <Button small variant="outline" icon="copy" label={t("browse.copyUrl")} onPress={() => copy(u())} testID="presign-copy" />
-                        </View>
-                      </Card>
-                    )}
-                  </If>
-                </View>
-              </Disclosure>
-              <Disclosure title={t("browse.headers")} count={d().headers.length} open>
-                <KeyValue dense mono rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
-              </Disclosure>
+    <If when={!versions()} else={<KeyVersions objectKey={props.entry.key} onBack={() => versions.set(false)} />}>
+      <View selectable class="gap-4" testID="object-detail">
+        <View class="gap-1">
+          {/* in the panel, its header names the object; on its own (a terminal), this does */}
+          <If when={props.onBack}>
+            <View class="flex-row items-center gap-2">
+              <Back onPress={() => props.onBack?.()} testID="detail-back" />
+              <Title lines={2} class="min-w-0 flex-1">{props.entry.name}</Title>
             </View>
-          )}
-        </If>
-      </Await>
-    </View>
+          </If>
+          <Text class={`${TEXT.codeQuiet} line-clamp-2`}>{uri()}</Text>
+        </View>
+        {/* what takes the object, what opens its history; behind ⋯ what copies it */}
+        <View class="flex-row items-center gap-2">
+          <Button small variant="outline" icon="download" label={t("browse.download")} shortcut="mod+s" onPress={download} disabled={progress() !== null} testID="download" />
+          <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} shortcut="mod+y" onPress={() => versions.set(true)} testID="object-versions" />
+          <More
+            testID="object-more"
+            actions={() => [
+              { label: t("store.copyUri"), icon: "copy", run: () => copy(uri()) },
+              { label: t("browse.presignCopy"), icon: "link", run: () => void presign() },
+            ]}
+          />
+        </View>
+        <If when={progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
+        <Await loading={detail.loading() || !detail()} error={detail.error()} retry={() => detail.refetch()} waiting={t("browse.readingObject")} testID="object">
+          <If when={detail()}>
+            {(d) => (
+              <View class="gap-4">
+                <KeyValue dense rows={rows(d())} />
+                <Disclosure title={t("browse.headers")} count={d().headers.length}>
+                  <KeyValue dense mono rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+                </Disclosure>
+              </View>
+            )}
+          </If>
+        </Await>
+      </View>
+    </If>
   );
 }
 
 /** How many search hits the list holds; past them, a line says how many more. */
 const HITS = 50;
 
-function Objects(props: { onSelect: (e: Entry) => void; selected: string | null }) {
+function Objects(props: { /** an object chosen: its inspector, on its versions with `versions` */ onSelect: (e: Entry, versions?: boolean) => void; selected: string | null }) {
   const listing = signal<Listing | null>(null);
   const version = signal(0);
   const start = signal(0);
@@ -241,7 +207,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   // why the last page could not be read: nothing more is asked for until Refresh
   const failure = signal<string | null>(null);
   const filter = signal("");
-  const searchText = signal("");
+  let filterField: ViewRef | undefined;
   const searchHits = signal<Entry[] | null>(null);
   const searchState = signal<string | null>(null);
   const flat = signal(false);
@@ -271,8 +237,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       listing.set(l);
       start.set(0);
       filter.set("");
-      // a search belongs to its place: its text and state go with it
-      searchText.set("");
+      // a search belongs to its place: its state goes with it
       searchState.set(null);
       searchHits.set(null);
       loading.set(false);
@@ -366,13 +331,13 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   const search = async () => {
     const ep = endpoint();
     const b = bucket();
-    if (!ep || !b || !searchText()) return;
+    if (!ep || !b || !filter()) return;
     stopSearch();
     searchHits.set([]);
     const where = `${ep}|${b}|${prefix()}`;
     const here = () => `${endpoint()}|${bucket()}|${prefix()}` === where;
     try {
-      const job = await api.search(ep, b, prefix(), searchText());
+      const job = await api.search(ep, b, prefix(), filter());
       searchJob = job;
       const r = await watch<{ matches: Entry[]; scanned: number }>(job, (ev) => {
         if (!here() || searchJob !== job) return;
@@ -393,7 +358,6 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
 
   const applyFilter = (v: string) => {
     filter.set(v);
-    searchText.set(v);
     listing()?.setFilter(v);
     batch(() => {
       start.set(0);
@@ -401,7 +365,6 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     });
   };
   const entryAt = (row: number) => listing()?.row(row) as Entry | null;
-  const versionsOf = (key: string) => batch(() => (versionKey.set(key), go("versions")));
   type Action = { label: string; icon: IconName; run: () => void };
   /** What a row offers: in the system's menu, or Native Shell's own where there is none. */
   const actions = (row: number | null): Action[] => {
@@ -414,7 +377,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     ];
     return e.isPrefix
       ? [{ label: t("browse.open"), icon: "folder-open", run: () => prefix.set(e.key) }, ...copies]
-      : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versionsOpen"), icon: "file-clock", run: () => versionsOf(e.key) }];
+      : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versionsOpen"), icon: "file-clock", run: () => props.onSelect(e, true) }];
   };
   const menuRow = signal<number | null>(null);
   // the system's menus, a framed box in a terminal; the in-window one on the web
@@ -425,6 +388,24 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     void popupMenu(actions(row));
   };
 
+  // the section's commands: in the palette and on their shortcuts, as on its row
+  const up = () => {
+    const p = prefix().replace(/[^/]*\/$/, "");
+    prefix.set(p);
+  };
+  offerCommands(
+    () => t("nav.objects"),
+    () => [
+      { id: "objects-filter", label: t("browse.filter"), icon: "search", shortcut: "mod+f", run: () => filterField?.focus() },
+      { id: "objects-search", label: t("browse.searchAll"), icon: "search", shortcut: "mod+enter", disabled: !filter(), run: () => void search() },
+      { id: "objects-up", label: t("browse.up"), icon: "chevron-left", shortcut: "mod+up", disabled: !prefix(), run: up },
+      { id: "objects-flat", label: flat() ? t("browse.byFolder") : t("browse.flatListing"), icon: "list-filter", shortcut: "mod+shift+f", run: () => flat.set(!flat()) },
+      { id: "objects-load-all", label: t("browse.loadAll"), icon: "download", shortcut: "mod+shift+l", disabled: done() || loadingAll(), run: () => void loadAll() },
+      { id: "objects-refresh", label: t("common.refresh"), icon: "refresh-cw", shortcut: "mod+shift+r", run: refresh },
+      { id: "bucket-copy-name", label: t("store.copyName"), icon: "copy", run: () => copy(bucket() ?? "") },
+      { id: "bucket-copy-uri", label: t("store.copyUri"), icon: "link", run: () => copy(`s3://${bucket() ?? ""}/${prefix()}`) },
+    ],
+  );
   // the listing's columns: the name takes what the others leave
   const objectColumns = () => [
     { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
@@ -452,17 +433,14 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             {t("browse.objects", { n: count(total()) })}
             {done() ? "" : ` · ${t("browse.more")}`}
           </Text>
-          <SearchField small class={`${WIDTH.long} min-w-0 shrink`} testID="listing-filter" value={filter()} placeholder={t("browse.filterHint")} label={t("browse.filterOrSearch")} onChange={applyFilter} onSubmit={search}>
-            <If when={filter()}>
-              <IconButton inField icon="corner-down-left" label={t("browse.searchAll")} onPress={search} testID="search" />
-            </If>
-          </SearchField>
+          {/* one mode: it narrows what is listed (every key under the prefix is searched from the empty list's row) */}
+          <SearchField ref={(r) => (filterField = r)} small class={`${WIDTH.long} min-w-0 shrink`} testID="listing-filter" value={filter()} placeholder={t("browse.filter")} label={t("browse.filterLabel")} onChange={applyFilter} />
           <SwitchRow label={t("browse.flatListing")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
           {/* nothing to load once every row is here */}
           <If when={!done()}>
             <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" />
           </If>
-          <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={refresh} testID="listing-refresh" />
+          <IconButton icon="refresh-cw" label={t("common.refresh")} shortcut="mod+shift+r" onPress={refresh} testID="listing-refresh" />
           {/* the bucket's own commands, as its row in the sidebar has them on a right press: reached by the keyboard here */}
           <More
             testID="bucket-more"
@@ -473,21 +451,21 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           />
         </View>
       </View>
+      <View class="min-h-0 flex-1" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {/* every key under the prefix searched: its matches in the listing's place, until closed */}
       <If when={searchHits()}>
         {(hits) => (
-          <Card pad="none" testID="search-hits">
+          <Card pad="none" testID="search-hits" class="min-h-0 flex-1">
             <Row first>
               <Text class={TEXT.body}>{t("browse.matches", { n: count(hits().length) })}</Text>
               <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{searchState() ?? ""}</Text>
-              <IconButton icon="x" label={t("common.close")} onPress={() => (stopSearch(), searchHits.set(null))} />
+              <IconButton icon="x" label={t("common.close")} onPress={() => (stopSearch(), searchHits.set(null))} testID="search-close" />
             </Row>
-            {/* six rows show; the rest scroll under them, so the table keeps its room */}
             <If when={hits().length > 0}>
-              <Row bare>
-              <Scroll class="max-h-44 flex-1" contentClass="p-1">
+              <Scroll class="min-h-0 flex-1" contentClass="p-1">
                 <Each of={hits().slice(0, HITS)} key={(h) => h.key}>
                   {(h) => (
-                    <ListRow label={h().key} selected={props.selected === h().key} onPress={() => props.onSelect(h())}>
+                    <ListRow label={h().key} selected={props.selected === h().key} onPress={() => (h().isPrefix ? prefix.set(h().key) : props.onSelect(h()))}>
                       <View class="shrink-0">
                         <Icon name={h().isPrefix ? "folder" : "file"} tint="muted-foreground" />
                       </View>
@@ -499,12 +477,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   <Empty compact text={t("browse.moreMatches", { n: count(hits().length - HITS) })} />
                 </If>
               </Scroll>
-              </Row>
             </If>
           </Card>
         )}
       </If>
-      <View class="min-h-0 flex-1" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      <If when={!searchHits()}>
       <Card pad="none" class="min-h-0 flex-1">
         <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
           <DataTable
@@ -565,12 +542,20 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             empty={
               // each of its three states in its own words: on its way, failed, or truly nothing
               <Await loading={loading()} error={failure()} retry={refresh} waiting={t("browse.listing")} testID="listing">
-                <Empty icon={filter() ? "search" : "folder"} text={filter() ? t("browse.noMatch", { text: filter() }) : t("browse.emptyPrefix")} />
+                <If when={filter()} else={<Empty icon="folder" text={t("browse.emptyPrefix")} />}>
+                  {/* nothing listed matches: the one way on, every key under the prefix searched */}
+                  <Empty icon="search" text={t("browse.noMatch", { text: filter() })}>
+                    <Button small variant="outline" icon="search" label={t("browse.searchAll")} shortcut="mod+enter" onPress={() => void search()} testID="search" />
+                    {/* a key deleted (its latest version a delete marker) lists nowhere: its versions, by its name */}
+                    <Button small variant="ghost" icon="file-clock" label={t("browse.versionsOf", { key: filter() })} onPress={() => props.onSelect({ key: `${prefix()}${filter()}`, name: filter(), isPrefix: false, size: 0, lastModified: null, etag: null, storageClass: null, parts: null }, true)} testID="versions-of" />
+                  </Empty>
+                </If>
               </Await>
             }
           />
         </InWindowMenu>
       </Card>
+      </If>
       </View>
     </View>
   );
@@ -581,11 +566,14 @@ const detailWidth = rememberedSize("browse.detail", 400);
 export function Browse() {
   // what the sections say of this bucket and prefix, found out as it opens (the section row is the way to them)
   if (!terminal()) useBucketFacts();
+  // the object in the inspector, and whether it opened on its versions
   const selected = signal<Entry | null>(null);
+  const onVersions = signal(false);
+  const choose = (e: Entry | null, versions = false) => batch(() => (selected.set(e), onVersions.set(versions)));
   effect(() => {
     bucket();
     prefix();
-    selected.set(null);
+    choose(null);
   });
   return (
     <View class="flex-1" testID="screen-browse">
@@ -601,18 +589,18 @@ export function Browse() {
           else={
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
               <ResizablePanel minSize={PANE.objectsLeast} class="min-w-0 gap-3 px-4 py-4">
-                <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
+                <Objects onSelect={choose} selected={selected()?.key ?? null} />
               </ResizablePanel>
               <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={PANE.detailLeast} maxSize={PANE.detailMost} onResize={detailWidth.onResize} class="bg-inspector">
               <If when={selected()}>
                 {(e) => (
                   <View class="flex-1">
                     {/* the panel is named for what it shows: the object */}
-                    <PanelHeader title={e().name || e().key} icon="file" onClose={() => selected.set(null)} closeTestID="detail-close" />
+                    <PanelHeader title={e().name || e().key} icon="file" onClose={() => choose(null)} closeTestID="detail-close" />
                     <Scroll class="flex-1" contentClass="p-4">
                       {/* one object's: what was asked for another never shows here */}
-                      <Each of={[e()]} key={(x) => x.key}>
-                        {(x) => <Detail entry={x()} />}
+                      <Each of={[{ e: e(), versions: onVersions() }]} key={(x) => `${x.e.key}\n${x.versions}`}>
+                        {(x) => <Detail entry={x().e} versions={x().versions} />}
                       </Each>
                     </Scroll>
                   </View>
@@ -622,10 +610,10 @@ export function Browse() {
             </ResizablePanelGroup>
           }
         >
-          <If when={selected()} else={<Objects onSelect={(e) => selected.set(e)} selected={null} />}>
+          <If when={selected()} else={<Objects onSelect={choose} selected={null} />}>
             {(e) => (
               <Scroll class="flex-1" contentClass="p-1">
-                <Detail entry={e()} onBack={() => selected.set(null)} />
+                <Detail entry={e()} versions={onVersions()} onBack={() => choose(null)} />
               </Scroll>
             )}
           </If>

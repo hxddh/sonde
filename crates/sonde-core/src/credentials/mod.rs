@@ -64,7 +64,7 @@ impl CredentialsProvider for Cached {
 }
 
 fn http() -> reqwest::Client {
-    reqwest::Client::builder()
+    s3raw::http_client()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(2))
         .user_agent(concat!("sonde/", env!("CARGO_PKG_VERSION")))
@@ -208,7 +208,7 @@ impl Source for ImdsSource {
             return Ok(None);
         }
         let base = self.endpoint.trim_end_matches('/');
-        let c = reqwest::Client::builder()
+        let c = s3raw::http_client()
             .timeout(Duration::from_secs(2))
             .connect_timeout(Duration::from_secs(1))
             .no_proxy()

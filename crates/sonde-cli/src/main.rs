@@ -10,9 +10,9 @@
 //! | 3 | probes could not run (errors only) |
 //! | 4 | findings worth attention (stale uploads, a missing lifecycle rule, layout warnings) |
 //! | 64 | usage error |
-//! | 65 | a session (or another file given to read) is not what it should be |
+//! | 65 | a run (or another file given to read) is not what it should be |
 //! | 70 | the operation failed (connection, credentials, permissions) |
-//! | 77 | refused: a confirmation missing or mismatched |
+//! | 77 | refused by sonde before anything was sent (an endpoint it protects, a plan changed since its dry run) |
 
 // std's, but a closed pipe ends the output, not the command: `sonde check |
 // head` keeps check's exit code ([`output::Stdout`]); and a key's control
@@ -66,7 +66,7 @@ pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
     #[arg(long, global = true, help_heading = "Global options")]
     config_dir: Option<std::path::PathBuf>,
-    /// Data directory: sessions, scans, probe runs, audit log (default: $SONDE_DATA_DIR or the platform's).
+    /// Data directory: runs, scans, probe runs, audit log (default: $SONDE_DATA_DIR or the platform's).
     #[arg(long, global = true, help_heading = "Global options")]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
@@ -100,19 +100,19 @@ pub struct Cli {
 enum Command {
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
-    /// A local S3 endpoint that records what talks to it until Ctrl-C; left running with --rotate.
+    /// A local S3 endpoint that records what talks to it until Ctrl-C.
     Proxy(cmd::record::ProxyArgs),
-    /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR, a file or s3://.
-    Import(cmd::sessions::ImportArgs),
-    /// The recorded sessions, newest first; prune old ones.
-    Sessions(cmd::sessions::SessionsArgs),
+    /// Production traffic as a run: an S3 server access log, CloudTrail events or a HAR, a file or s3://.
+    Import(cmd::runs::ImportArgs),
+    /// The recorded runs, newest first; prune old ones.
+    Runs(cmd::runs::RunsArgs),
     /// Print a recorded run: its operations, findings and figures.
     Show(cmd::record::ShowArgs),
-    /// Two runs before and after a change, a session and its replay, or a session replayed elsewhere (--replay).
+    /// Two runs before and after a change, a run and its replay, or a run replayed elsewhere (--replay).
     Compare(cmd::record::CompareArgs),
     /// A run against a budget or a baseline run: exit 1 when it is over (for CI).
     Check(cmd::record::CheckArgs),
-    /// A run as a web page anyone opens in a browser, or as OpenTelemetry traces (--otlp).
+    /// A run as one HTML file anyone opens in a browser.
     Share(cmd::share::ShareArgs),
     /// Compatibility probes.
     Probe(cmd::probe::ProbeArgs),
@@ -131,10 +131,7 @@ enum Command {
 /// one list of fourteen.
 const GROUPS: &[(&str, &[&str])] = &[
     ("Record", &["run", "proxy", "import"]),
-    (
-        "Read a run",
-        &["sessions", "show", "compare", "check", "share"],
-    ),
+    ("Read a run", &["runs", "show", "compare", "check", "share"]),
     ("Buckets", &["bucket", "layout", "probe", "endpoints"]),
     ("More", &["tui"]),
 ];
@@ -175,10 +172,10 @@ fn grouped(cmd: clap::Command) -> clap::Command {
     scoped(cmd.help_template(help))
 }
 
-/// The commands that only read what is on this machine: a session's file,
+/// The commands that only read what is on this machine: a run's file,
 /// the configuration. The options that say which store to talk to, and how
 /// fast, are not theirs.
-const READS_FILES: &[&str] = &["sessions", "show", "check", "share"];
+const READS_FILES: &[&str] = &["runs", "show", "check", "share"];
 
 /// The options of the endpoint and of the pace, which a command that reads
 /// files has no use for: left out of its help (they are still taken, as
@@ -201,6 +198,13 @@ fn scoped(mut cmd: clap::Command) -> clap::Command {
     cmd
 }
 
+/// What `sonde` alone prints: the tour, a real run, and where to read more.
+const START: &str = "\
+sonde run --demo               a finding, its line of code and its fix, then the fix measured
+sonde run -- <your command>    your program's S3 requests (AWS credentials, or an endpoint: sonde endpoints add)
+sonde help                     every command; docs: https://github.com/hxddh/sonde/tree/main/docs
+";
+
 fn main() -> ExitCode {
     // `sonde … | head`: a closed pipe ends the output quietly. What sonde
     // writes goes through output::Stdout and runs on to its exit code; a
@@ -219,6 +223,11 @@ fn main() -> ExitCode {
         }
         previous(info);
     }));
+    // `sonde` alone: where to start
+    if std::env::args_os().len() == 1 {
+        print!("{START}");
+        return ExitCode::SUCCESS;
+    }
     // a mistake in the command is a usage error (64), as docs/cli.md says; help and --version are not
     let parsed = grouped(Cli::command())
         .try_get_matches()
@@ -249,8 +258,8 @@ fn main() -> ExitCode {
         let code = match &cli.command {
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
-            Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,
-            Command::Import(a) => cmd::sessions::import(&sonde, a).await,
+            Command::Runs(a) => cmd::runs::run(&sonde, a).await,
+            Command::Import(a) => cmd::runs::import(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Share(a) => cmd::share::run(&sonde, a).await,
             Command::Compare(a) => cmd::record::compare(&sonde, a).await,
@@ -282,7 +291,7 @@ fn main() -> ExitCode {
                         eprintln!(
                             "  {} {} → {}",
                             r.method,
-                            r.url,
+                            r.rare().url,
                             r.status
                                 .map(|s| s.to_string())
                                 .unwrap_or_else(|| "no response".into())

@@ -1,20 +1,17 @@
-// The page `sonde share` publishes: reads the session beside it.
+// The page `sonde share` writes: one HTML file holding this viewer and the run, which it is given as its
+// parameters (`host.params`): nothing is fetched, so it opens from a disk as from a server.
 
-import { mount, resource } from "nsh";
-import { Await } from "../app/src/ui/kit";
-import { type SharedSession, SessionViewer } from "./SessionViewer";
+import { host, mount } from "nsh";
+import { Empty } from "../app/src/ui/kit";
+import { t } from "../app/src/i18n";
+import { type SharedRun, RunViewer } from "./RunViewer";
 
 function App() {
-  const data = resource(async () => {
-    const res = await fetch("session.json");
-    if (!res.ok) throw new Error(`session.json: HTTP ${res.status}`);
-    return (await res.json()) as SharedSession;
-  });
+  const data = host.params as unknown as SharedRun | undefined;
   return (
-    // loading, failed (why, and Try again) or there: `error` and `loading` are the resource's readers, called
-    <Await loading={data.loading()} error={data.error()} retry={() => data.refetch()}>
-      <If when={data()}>{(d) => <SessionViewer data={d()} />}</If>
-    </Await>
+    <If when={data?.format === "sonde-share" ? data : null} else={<Empty icon="circle-exclamation-point" text={t("viewer.noRun")} />}>
+      {(d) => <RunViewer data={d()} />}
+    </If>
   );
 }
 

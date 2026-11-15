@@ -13,7 +13,7 @@ import sys
 ICONS = sorted(set("""
 play square square-terminal list-clock database settings search folder folder-open file
 chevron-right chevron-down chevron-left chevron-up chevrons-up-down x check copy download upload
-external-link ellipsis lock lock-open triangle-alert circle-alert info circle-check circle-x
+external-link ellipsis lock lock-open triangle-exclamation-point circle-exclamation-point info circle-check circle-x
 refresh-cw git-compare-arrows repeat-2 app-window panel-left panel-right list-filter clock
 timer arrow-up arrow-down layers boxes hard-drive cloud server key-round shield-check trash
 plus pencil sparkles activity gauge chart-gantt sun moon languages bell zoom-in zoom-out link

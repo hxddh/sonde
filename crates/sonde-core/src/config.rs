@@ -249,12 +249,6 @@ impl Default for Settings {
     }
 }
 
-/// `[settings]` keys of config.toml before 20.0, and where each is now.
-pub const MOVED: [(&str, &str); 2] = [
-    ("record-policy", "[record] policy in sonde.toml"),
-    ("name-callers", "[record] name-callers in sonde.toml"),
-];
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct Config {
@@ -270,29 +264,6 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
-    }
-
-    /// The settings 20.0 moved to sonde.toml's `[record]` that the file at
-    /// `path` still holds, with their values: they are not read, so they
-    /// are said (see [`MOVED`]).
-    pub fn moved(path: &Path) -> Vec<(&'static str, String)> {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return vec![];
-        };
-        let Ok(table) = text.parse::<toml::Table>() else {
-            return vec![];
-        };
-        let Some(settings) = table.get("settings").and_then(|v| v.as_table()) else {
-            return vec![];
-        };
-        MOVED
-            .iter()
-            .filter_map(|(old, _)| {
-                settings
-                    .get(*old)
-                    .map(|v| (*old, v.to_string().trim_matches('"').to_string()))
-            })
-            .collect()
     }
 
     pub fn parse(text: &str) -> Result<Config, String> {
@@ -315,41 +286,19 @@ impl Config {
         Ok(())
     }
 
-    /// Writes atomically, through a temporary file of its own made with
-    /// mode 0600 on Unix (the file may hold static keys).
+    /// Writes durably ([`reqlog::private::replace`]): mode 0600 on Unix, as
+    /// the file may hold static keys.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        use std::io::Write;
         self.validate()?;
         let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        // a name no other process writes to: two saves cannot interleave
-        let tmp = path.with_extension(format!(
-            "toml.{}-{}.tmp",
-            std::process::id(),
-            &uuid::Uuid::new_v4().simple().to_string()[..8]
-        ));
-        let mut o = std::fs::OpenOptions::new();
-        o.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            o.mode(0o600);
-        }
-        let written = o
-            .open(&tmp)
-            .and_then(|mut f| {
-                f.write_all(
-                    format!("# sonde configuration — docs/configuration.md\n{text}").as_bytes(),
-                )?;
-                f.sync_all()
-            })
-            .and_then(|()| std::fs::rename(&tmp, path));
-        written.map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("{}: {e}", path.display())
-        })
+        reqlog::private::replace(
+            path,
+            format!("# sonde configuration — docs/configuration.md\n{text}"),
+        )
+        .map_err(|e| format!("{}: {e}", path.display()))
     }
 
     pub fn endpoint(&self, id: &str) -> Option<&EndpointConfig> {
@@ -468,26 +417,5 @@ credentials = { kind = "profile", name = "prod" }
                 .endpoints
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn settings_moved_to_sonde_toml_are_found_with_their_values() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("config.toml");
-        std::fs::write(
-            &file,
-            "[settings]\nrecord-policy = \"read-only\"\nname-callers = false\n",
-        )
-        .unwrap();
-        assert_eq!(
-            Config::moved(&file),
-            vec![
-                ("record-policy", "read-only".to_string()),
-                ("name-callers", "false".to_string())
-            ]
-        );
-        // the file still loads: the keys are not read
-        assert!(Config::load(&file).is_ok());
-        assert!(Config::moved(&dir.path().join("none.toml")).is_empty());
     }
 }

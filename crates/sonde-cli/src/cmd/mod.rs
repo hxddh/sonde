@@ -6,18 +6,18 @@ pub mod du;
 pub mod endpoints;
 pub mod fixloop;
 pub mod layout;
+pub mod logs;
 pub mod mpu;
 pub mod probe;
 pub mod proxy;
 pub mod record;
 pub mod replay;
 pub mod run;
-pub mod sessions;
+pub mod runs;
 pub mod share;
 pub mod show;
 #[cfg(feature = "tui")]
 pub mod tui;
-pub mod watch;
 
 use std::sync::Arc;
 
@@ -42,7 +42,7 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(Usage(msg.into()))
 }
 
-/// A file given to read that is not what it should be (a session with a
+/// A file given to read that is not what it should be (a run with a
 /// line no record could be, no header, a newer format): exit 65, the data's
 /// fault, not the 70 of an operation that failed.
 #[derive(Debug)]
@@ -128,6 +128,41 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
         ))),
     }
 }
+
+/// The endpoint a recording goes to: [`endpoint`]'s, and with none
+/// configured, what an AWS SDK would use (the default credential chain and
+/// region, as `endpoints import` reads them), said on stderr. When that
+/// chain finds no credentials either, the usage error says both ways.
+pub async fn endpoint_to_record(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
+    if given.is_some() || s.endpoint_config(ADHOC).is_some() || !s.endpoints().is_empty() {
+        return endpoint(s, given);
+    }
+    let files = sonde_core::credentials::ini::AwsFiles::load();
+    let (e, from) = sonde_core::sonde::aws_default(AWS_DEFAULT, &files, &|k| std::env::var(k).ok());
+    let (url, region) = (e.url.clone(), e.region.clone());
+    s.add_transient_endpoint(e)
+        .map_err(|m| anyhow::anyhow!(m))?;
+    let found = match s.client(AWS_DEFAULT) {
+        Ok(c) => c.credentials().await.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    match found {
+        Ok(_) => {
+            eprintln!(
+                "sonde: no endpoint configured: the AWS default credentials and region {region} ({from}) → {url}"
+            );
+            Ok(AWS_DEFAULT.into())
+        }
+        Err(why) => Err(usage(format!(
+            "no endpoint configured, and the AWS default chain: {why}. Add an endpoint with `sonde endpoints add ID URL` (kept in {}), or name one for this run with `--url URL --path-style`",
+            s.paths().config_file().display()
+        ))),
+    }
+}
+
+/// The endpoint id a recording with nothing configured goes to
+/// ([`endpoint_to_record`]).
+pub const AWS_DEFAULT: &str = "aws";
 
 /// Prints a job's progress on stderr while waiting for it.
 pub async fn wait(s: &Sonde, job: &str, quiet: bool) -> Result<serde_json::Value, s3raw::S3Error> {

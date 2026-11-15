@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, type InputRef, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
@@ -284,13 +284,13 @@ export const READING = "w-full max-w-[560px]";
  * name in full, the search field rather than its button); from `inspector`
  * a pane holds an inspector beside what it details (under it, the inspector
  * comes in from the edge, and rows drop what ranks last). Two heights of a
- * session's pane: under `short` the shape strip goes and the findings keep
+ * run's pane: under `short` the shape strip goes and the findings keep
  * to a line or two; from `tall` each finding has its lines in full. */
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
- * (a session's signal, a comparison's fact with its two lines, a bucket's
+ * (a run's signal, a comparison's fact with its two lines, a bucket's
  * size), how high a dialog's scrolling part grows before it scrolls, a
- * terminal's matrix, and the findings' room over a session's operations (in
+ * terminal's matrix, and the findings' room over a run's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
  * not; the room is then rounded down to whole findings). lint-kit and
@@ -301,7 +301,6 @@ export const SIZES = {
   compareTile: 176,
   capacityTile: 128,
   dialogScroll: 480,
-  terminalMatrix: 640,
   findingsShort: 68,
   findingsShortOpen: 96,
   findingsLeast: 104,
@@ -367,11 +366,11 @@ export const PANE = {
   /** the program's output once it has ended: it yields to the result beside it */
   terminalDone: 200,
   operationsLeast: 340,
-  /** a session's output beside its operations */
+  /** a run's output beside its operations */
   outputLeast: 240,
   besideLeast: 320,
-  /** a session beside its inspector */
-  sessionLeast: 460,
+  /** a run beside its inspector */
+  runLeast: 460,
   inspector: 420,
   inspectorLeast: 320,
   inspectorMost: 680,
@@ -387,14 +386,10 @@ export const PANE = {
 export const WIDTH = {
   /** a number: a count of days */
   number: "w-28",
-  /** a short choice: how long a link lasts */
-  choice: "w-36",
   /** a prefix, a bucket, a key's start */
   field: "w-56",
   /** a folder, a filter, a snapshot among snapshots */
   long: "w-64",
-  /** a run among runs */
-  wide: "w-80",
   /** a status and its code */
   status: "w-12",
   /** a size, at its column's end */
@@ -637,7 +632,7 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a session's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
+export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a run's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
   if (props.command !== undefined)
     return (
       <Text testID={props.testID} role="header" accessibilityLabel={props.command} class={`font-mono ${TEXT.body} line-clamp-1 ${props.class ?? ""}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
@@ -657,7 +652,7 @@ export function Title(props: { children?: JSX.Element; page?: boolean; /** at th
 
 /** A section's title: the second and last heading level (as `Section`'s),
  * with how many it holds ("Title · n"). `quiet` is the same level said
- * small over a list (a day of sessions, the sidebar's lists). */
+ * small over a list (a day of runs, the sidebar's lists). */
 export function Heading(props: { children: JSX.Element; count?: number; quiet?: boolean; mono?: boolean; class?: string; testID?: string }) {
   return (
     <Text testID={props.testID} role="header" class={`${props.quiet ? TEXT.meta : TEXT.body} font-bold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
@@ -708,7 +703,7 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
 }
 
 /** The one row a press opens: hover, pressed, selected and focus, one look
- * in every list (sessions, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
+ * in every list (runs, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
  * stacks two lines of text; `divided` is a row of a card that draws its
  * rows edge to edge under hairlines (`first` has none); `top` keeps what
  * stands beside wrapped text at its first line. What ends the row
@@ -763,7 +758,7 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a run (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
   // the figure in the text's colour (a quiet one muted): its tone is a mark beside its name, never its figure
   const tint = () => (props.tone === "quiet" ? TONE.quiet.text : "text-foreground");
   const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
@@ -847,7 +842,7 @@ export function Path(props: { path: string; max?: number; class?: string; testID
 export function Notice(props: { text: string; title?: string; tone?: "info" | "warn" | "error"; icon?: IconName; children?: JSX.Element; testID?: string; class?: string }) {
   const tone = () => props.tone ?? "info";
   const look = () => ({ info: "border-border bg-muted/60", warn: "border-warn/30 bg-warn/10", error: "border-status-server/30 bg-status-server/10" })[tone()];
-  const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-alert");
+  const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-exclamation-point");
   const tint = (): Tint => TONE[({ info: "quiet", warn: "warn", error: "fail" } as const)[tone()]].icon;
   return (
     <View testID={props.testID} role={tone() === "error" ? "alert" : undefined} class={`flex-row items-start gap-2 rounded-(--radius) border px-3 py-2 ${look()} ${props.class ?? ""}`}>
@@ -891,7 +886,7 @@ export function Await(props: { loading: boolean; error?: unknown; retry?: () => 
       }
     >
       {(m) => (
-        <Empty icon="triangle-alert" title={t("error.loadTitle")} text={m()} testID={props.testID ? `${props.testID}-error` : "load-error"}>
+        <Empty icon="triangle-exclamation-point" title={t("error.loadTitle")} text={m()} testID={props.testID ? `${props.testID}-error` : "load-error"}>
           <If when={props.retry}>
             <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={() => props.retry?.()} />
           </If>
@@ -1189,8 +1184,15 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dens
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean; /** without the focus, its text rests at its start (a long command shows what it runs, not its last arguments) */ rest?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
+  // resting: back at the start whenever the field lets go of the focus, or its value is set from elsewhere
+  let field: InputRef | undefined;
+  let focused = false;
+  effect(() => {
+    props.value;
+    if (props.rest && !focused) untracked(() => field?.setSelection(0));
+  });
   const refused = () => !!props.error || !!props.invalid;
   const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${DISABLED}`;
   // the reason under the field is the field's description to a screen reader, read again each time the field is
@@ -1208,6 +1210,12 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       disabled={props.disabled}
       accessibilityState={refused() ? { invalid: true } : undefined}
       accessibilityDescribedBy={props.error ? reason() : null}
+      ref={(r: InputRef) => (field = r)}
+      onFocus={() => (focused = true)}
+      onBlur={() => {
+        focused = false;
+        if (props.rest) field?.setSelection(0);
+      }}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -1260,7 +1268,7 @@ export function Labeled(props: { label: string; children: JSX.Element; class?: s
 
 /** The one search field: a magnifier, the text, a clear button while it
  * holds any, and what the place puts after it (a "search everywhere"). */
-export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element }) {
+export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element; /** the field itself: a shortcut focuses it */ ref?: (r: ViewRef) => void }) {
   return (
     <View class={terminal() ? `flex-row items-center gap-1 ${props.class ?? ""}` : `${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${props.class ?? ""}`}>
       <If when={!terminal()}>
@@ -1270,6 +1278,7 @@ export function SearchField(props: { value: string; onChange: (v: string) => voi
       </If>
       <Input
         testID={props.testID}
+        ref={props.ref}
         value={props.value}
         placeholder={props.placeholder}
         autoCapitalize="none"
@@ -1387,7 +1396,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         popupEndingClass={POPUP_MOTION.ending}
         itemClass={`${ROWS.popup} text-body text-popover-foreground selected:font-bold`}
         trigger={
-          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${TRANSITION} ${props.inline ? WIDTH.choice : ""} ${FOCUS}`}>
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${TRANSITION} ${props.inline ? "w-36" : ""} ${FOCUS}`}>
             <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>
               {title()}
             </Text>
@@ -1574,11 +1583,11 @@ export function Loading(props: { text?: string; class?: string; testID?: string 
   );
 }
 
-/** Where a session will be while it is read: its header, findings and rows, in outline. */
-export function SessionSkeleton(props: { rows?: number }) {
+/** Where a run will be while it is read: its header, findings and rows, in outline. */
+export function RunSkeleton(props: { rows?: number }) {
   const bar = (w: string, h = "h-3") => <View class={`${h} ${w} rounded-(--radius-sm) bg-muted`} />;
   return (
-    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3 px-4 pt-4">
+    <View testID="run-reading" accessibilityLabel={t("runs.reading")} class="flex-1 gap-3 px-4 pt-4">
       <View class="gap-2">
         {bar("w-56", "h-4")}
         {bar("w-80")}
@@ -1741,7 +1750,7 @@ export function Recoverable(props: { children: JSX.Element }) {
   return (
     <ErrorBoundary
       fallback={(error, reset) => (
-        <Empty icon="triangle-alert" title={t("error.placeTitle")} text={error instanceof Error ? error.message : String(error)} testID="place-error">
+        <Empty icon="triangle-exclamation-point" title={t("error.placeTitle")} text={error instanceof Error ? error.message : String(error)} testID="place-error">
           <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={reset} />
         </Empty>
       )}

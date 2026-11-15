@@ -1,9 +1,9 @@
 // Typed access to sonde/native, and error parsing.
 
-import { Listing, Sessions, Sonde } from "sonde/native";
+import { Listing, Runs, Sonde } from "sonde/native";
 import type * as T from "./types";
 
-export { Listing, Sessions, Sonde };
+export { Listing, Runs, Sonde };
 
 /** The structured error sonde/native rejects or throws with. */
 export function asError(e: unknown): T.SondeError {
@@ -60,7 +60,7 @@ export const api = {
   duExport: (ep: string, b: string, p: string, format: "json" | "csv") => Sonde.duExport(ep, b, p, format),
   probeCatalog: () => Sonde.probeCatalog() as T.ProbeMeta[],
   runProbes: (eps: string[], o: { bucket: string; allowTempBuckets: boolean; includeSlow: boolean; only: string[] }) => Sonde.runProbes(eps, o),
-  probeRuns: () => Sonde.probeRuns() as T.RunSummary[],
+  probeRuns: () => Sonde.probeRuns() as T.ProbeRunSummary[],
   probeRun: (id: string, ep: string) => Sonde.probeRun(id, ep) as T.ProbeRun | null,
   probeMatrix: (runs?: string[]) => Sonde.probeMatrix(runs ?? null) as T.Matrix,
   probeDiff: (a: string, b: string) => Sonde.probeDiff(a, b) as T.Change[],
@@ -70,74 +70,76 @@ export const api = {
   detectLayouts: (ep: string, b: string, p: string) => Sonde.detectLayouts(ep, b, p),
   analyzeLayout: (ep: string, b: string, format: string, root: string) => Sonde.analyzeLayout(ep, b, format, root),
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,
-  sessions: {
-    list: () => Sessions.list() as T.SessionInfo[],
+  runs: {
+    list: () => Runs.list() as T.RunInfo[],
     /** The programs run here, newest first, with their runs' trend. */
-    programs: async () => (await Sessions.programs()) as unknown,
-    /** A session as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
-    view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
-    /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a session of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
-    stretch: async (path: string, fromMs: number, toMs: number) => (await Sessions.stretch(path, fromMs, toMs)) as T.Stretch,
+    programs: async () => (await Runs.programs()) as unknown,
+    /** A run as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
+    view: async (path: string) => (await Runs.view(path)) as T.RunView,
+    /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a run of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
+    stretch: async (path: string, fromMs: number, toMs: number) => (await Runs.stretch(path, fromMs, toMs)) as T.Stretch,
+    /** A run as it goes: the requests that started in its last half minute, reckoned alone (the live panel). Off the interface's thread. */
+    live: async (path: string) => (await (Runs as unknown as { live(p: string): Promise<unknown> }).live(path)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
-    episodes: async (path: string, query: T.EpisodeQuery) => (await Sessions.episodes(path, query)) as T.EpisodePage,
+    episodes: async (path: string, query: T.EpisodeQuery) => (await Runs.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */
-    episode: (path: string, index: number) => Sessions.episode(path, index) as T.EpisodeRow | null,
+    episode: (path: string, index: number) => Runs.episode(path, index) as T.EpisodeRow | null,
     /** The operation a request belongs to. */
-    episodeOf: (path: string, recordId: number) => Sessions.episodeOf(path, recordId),
+    episodeOf: (path: string, recordId: number) => Runs.episodeOf(path, recordId),
     /** The row the table shows an operation at under a query; -1 where the query leaves it out. */
-    episodeRow: (path: string, query: T.EpisodeQuery, index: number) => Sessions.episodeRow(path, query, index),
+    episodeRow: (path: string, query: T.EpisodeQuery, index: number) => Runs.episodeRow(path, query, index),
     /** The operations running at a moment (at most 200), else the nearest one. */
-    episodesAt: (path: string, time: string) => Sessions.episodesAt(path, time) as number[],
+    episodesAt: (path: string, time: string) => Runs.episodesAt(path, time) as number[],
     /** A range of the operations a finding is about (a view lists its first 200). */
-    observationEpisodes: (path: string, observation: number, offset: number, limit: number) => Sessions.observationEpisodes(path, observation, offset, limit) as number[],
-    records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
+    observationEpisodes: (path: string, observation: number, offset: number, limit: number) => Runs.observationEpisodes(path, observation, offset, limit) as number[],
+    records: (path: string, ids: number[]) => Runs.records(path, ids) as T.RecordSummary[],
     /** The operations table split by a dimension (Group by), with its sentence. Read off the interface's thread. */
-    split: async (path: string, by: T.SplitBy) => (await Sessions.split(path, by)) as T.Split,
+    split: async (path: string, by: T.SplitBy) => (await Runs.split(path, by)) as T.Split,
     /** Every request of one key, whatever its operation, in time order (the inspector's history). */
-    keyHistory: async (path: string, bucket: string, key: string) => (await Sessions.keyHistory(path, bucket, key)) as T.KeyRequest[],
-    record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
-    copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,
-    start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Sessions.start(endpoint, policy)) as T.RecordingView,
-    current: () => Sessions.current() as T.RecordingView | null,
-    stop: () => Sessions.stop() as string | null,
-    example: () => Sessions.example() as string,
-    /** The budget the session's program has in its project's sonde.toml, for the charts' lines; null without one. */
-    budget: (path: string) => Sessions.budget(path) as T.ProjectBudget | null,
-    import: (name: string, text: string) => Sessions.import(name, text) as string,
-    importPath: (path: string) => Sessions.importPath(path) as string,
-    pick: (sessionsKind: string, trafficKind: string) => Sessions.pick(sessionsKind, trafficKind) as Promise<string | null>,
-    openCode: (session: string, place: string) => Sessions.openCode(session, place) as Promise<void>,
-    rename: (path: string, title: string) => Sessions.rename(path, title) as boolean,
+    keyHistory: async (path: string, bucket: string, key: string) => (await Runs.keyHistory(path, bucket, key)) as T.KeyRequest[],
+    record: (path: string, id: number) => Runs.record(path, id) as T.RequestRecord | null,
+    copy: (path: string, id: number, kind: "cli" | "curl") => Runs.copy(path, id, kind) as string | null,
+    start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Runs.start(endpoint, policy)) as T.RecordingView,
+    current: () => Runs.current() as T.RecordingView | null,
+    stop: () => Runs.stop() as string | null,
+    example: () => Runs.example() as string,
+    /** The budget the run's program has in its project's sonde.toml, for the charts' lines; null without one. */
+    budget: (path: string) => Runs.budget(path) as T.ProjectBudget | null,
+    import: (name: string, text: string) => Runs.import(name, text) as string,
+    importPath: (path: string) => Runs.importPath(path) as string,
+    pick: (runsKind: string, trafficKind: string) => Runs.pick(runsKind, trafficKind) as Promise<string | null>,
+    openCode: (run: string, place: string) => Runs.openCode(run, place) as Promise<void>,
+    rename: (path: string, title: string) => Runs.rename(path, title) as boolean,
     /** To the system's trash (deleted where there is none). */
-    remove: (path: string) => Sessions.remove(path) as Promise<boolean>,
+    remove: (path: string) => Runs.remove(path) as Promise<boolean>,
     /** Shows a file or folder in the file manager. */
-    reveal: (path: string) => Sessions.reveal(path) as Promise<void>,
-    share: async (path: string) => (await Sessions.share(path)) as { dir: string; url: string },
+    reveal: (path: string) => Runs.reveal(path) as Promise<void>,
+    share: async (path: string) => (await Runs.share(path)) as { file: string; url: string },
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
-      Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
-    input: (data: string) => Sessions.input(data),
-    resize: (cols: number, rows: number) => Sessions.resize(cols, rows),
-    kill: () => Sessions.kill(),
-    /** The app is quitting: the program being recorded and a running trial are ended, and the recording is written as a finished session, within the 200 ms a quitting app has. */
-    quit: async () => (await Sessions.quit()) as { program: boolean; trial: boolean; session: string | null },
-    /** What trying a session's program under faults would run, said before it runs; throws with why there is no trial. */
-    trialPlan: (path: string) => Sessions.trialPlan(path) as T.TrialPlan,
-    /** The session's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
+      Runs.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
+    input: (data: string) => Runs.input(data),
+    resize: (cols: number, rows: number) => Runs.resize(cols, rows),
+    kill: () => Runs.kill(),
+    /** The app is quitting: the program being recorded and a running trial are ended, and the recording is written as a finished run, within the 200 ms a quitting app has. */
+    quit: async () => (await Runs.quit()) as { program: boolean; trial: boolean; run: string | null },
+    /** What trying a run's program under faults would run, said before it runs; throws with why there is no trial. */
+    trialPlan: (path: string) => Runs.trialPlan(path) as T.TrialPlan,
+    /** The run's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
     trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
-      Sessions.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
-    /** Try again what did not survive: the session's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
+      Runs.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
+    /** Try again what did not survive: the run's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
     trialAgain: (path: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent | T.RunEvent) => void) =>
-      Sessions.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
-    logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
-    replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
-    replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),
-    compare: async (a: string, b: string) => await Sessions.compare(a, b),
-    history: async (path: string) => (await Sessions.history(path)) as T.ProgramHistory | null,
-    setBaseline: (path: string, on: boolean) => Sessions.setBaseline(path, on) as boolean,
-    compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
+      Runs.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
+    logLines: (path: string) => Runs.logLines(path) as T.LogLine[],
+    replayPlan: (path: string, endpoint: string) => Runs.replayPlan(path, endpoint),
+    replay: (path: string, endpoint: string, prefix: string) => Runs.replay(path, endpoint, prefix),
+    compare: async (a: string, b: string) => await Runs.compare(a, b),
+    history: async (path: string) => (await Runs.history(path)) as T.ProgramHistory | null,
+    setBaseline: (path: string, on: boolean) => Runs.setBaseline(path, on) as boolean,
+    compareRuns: async (before: string, after: string) => (await Runs.compareRuns(before, after)) as T.RunChange,
     /** A run against its program's run before it: its findings with their state and measured savings; null for no run of a program. */
-    sinceLast: async (path: string) => (await Sessions.sinceLast(path)) as T.SinceLast | null,
-    codeChange: async (before: string, after: string) => (await Sessions.codeChange(before, after)) as T.CodeChange,
+    sinceLast: async (path: string) => (await Runs.sinceLast(path)) as T.SinceLast | null,
+    codeChange: async (before: string, after: string) => (await Runs.codeChange(before, after)) as T.CodeChange,
   },
 };
 

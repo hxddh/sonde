@@ -63,10 +63,10 @@ where
     }
 }
 
-/// The prices for a session on `endpoint` (see `Sonde::request_prices_for`).
-pub fn request_prices_for(endpoint: &str) -> sonde_proxy::profile::RequestPrices {
+/// The prices for a run on `endpoint` (see `Sonde::request_prices_for`).
+pub fn request_prices_for(endpoint: &str) -> sonde_analysis::profile::RequestPrices {
     let (w, r, l, currency) = sonde().request_prices_for(endpoint);
-    sonde_proxy::profile::RequestPrices {
+    sonde_analysis::profile::RequestPrices {
         per_1000_writes: w,
         per_1000_reads: r,
         per_1000_lists: l,

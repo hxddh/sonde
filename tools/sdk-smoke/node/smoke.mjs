@@ -8,7 +8,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const Bucket = process.env.SMOKE_BUCKET ?? "sonde-smoke";
-const s3 = new S3Client({ forcePathStyle: true });
+const s3 = new S3Client();
 const assert = (c, m) => { if (!c) throw new Error(m); };
 try { await s3.send(new CreateBucketCommand({ Bucket })); } catch (e) {
   if (!["BucketAlreadyOwnedByYou", "BucketAlreadyExists"].includes(e.name)) throw e;

@@ -16,6 +16,10 @@
 //!
 //! Figures are rounded as JavaScript's `toFixed` rounds: half away from zero
 //! on the exact value, so `1.25` is `1.3` here as in the app.
+//!
+//! [`words`]: what Rust says in English, from the app's locale file.
+
+pub mod words;
 
 const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
 

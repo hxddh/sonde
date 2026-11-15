@@ -1,8 +1,8 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "21.0.0",
-  "build": 22,
+  "version": "22.0.0",
+  "build": 23,
   "icon": {
     "macos": "assets/icon-macos.png",
     "windows": "assets/icon-fill.png",
@@ -12,9 +12,9 @@
   "schemes": ["sonde"],
   "fileTypes": [
     {
-      "name": "sonde session",
+      "name": "sonde run",
       "extensions": ["sonde"],
-      "mimeTypes": ["application/x-sonde-session"],
+      "mimeTypes": ["application/x-sonde-run"],
       "role": "viewer"
     }
   ],
@@ -46,7 +46,7 @@
     "windows": true,
     "statusBar": true,
     "picker": true,
-    "openUrl": { "schemes": ["http", "https"] }
+    "openUrl": { "schemes": ["http", "https", "file"] }
   },
   "macos": {
     "infoPlist": {

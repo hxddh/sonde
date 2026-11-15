@@ -3,6 +3,7 @@ name = "sonde-cli"
 description = "sonde: diagnose S3 and S3-compatible object storage. Headless subcommands for scripts and CI, and the terminal UI."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
@@ -26,14 +27,11 @@ s3raw.workspace = true
 http.workspace = true
 reqlog.workspace = true
 sonde-proxy.workspace = true
+sonde-analysis.workspace = true
 bytes.workspace = true
 tempfile.workspace = true
 futures.workspace = true
 reqwest.workspace = true
-flate2.workspace = true
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
 sonde-nsh = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
@@ -42,7 +40,7 @@ chrono.workspace = true
 tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
 nsh-platform-tui = { workspace = true, optional = true, features = ["js", "run-app"] }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84", optional = true }
+nsh-tui-host = { workspace = true, optional = true }
 nsh-engine = { workspace = true, optional = true, features = ["js-core"] }
 nsh-base = { workspace = true, optional = true }
 nsh-core = { workspace = true, optional = true }
@@ -56,6 +54,10 @@ base64 = { workspace = true, optional = true }
 rustix = { version = "1", features = ["process", "termios"] }
 
 [dev-dependencies]
-tempfile.workspace = true
-# the small S3 of the proxy's tests, which the trial tests run sonde against
+flate2.workspace = true
+# the small S3 of the proxy's tests (tests/common, by #[path]), which the trial
+# tests run sonde against
 parking_lot.workspace = true
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"

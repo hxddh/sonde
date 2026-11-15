@@ -5,13 +5,11 @@ import type { Tone } from "./ui/kit";
 
 const LABEL: Record<Section, Key> = {
   run: "nav.run",
-  sessions: "nav.sessions",
+  runs: "nav.runs",
   browse: "nav.browse",
   multipart: "nav.multipart",
-  versions: "nav.versions",
   capacity: "nav.capacity",
   layouts: "nav.layouts",
-  probes: "nav.probes",
   settings: "nav.general",
   endpoints: "nav.endpoints",
   jobs: "nav.jobs",
@@ -20,7 +18,7 @@ const LABEL: Record<Section, Key> = {
 
 const AREA: Record<Area, Key> = {
   run: "nav.run",
-  sessions: "nav.sessions",
+  runs: "nav.runs",
   store: "nav.store",
   settings: "nav.settings",
   activity: "nav.activity",

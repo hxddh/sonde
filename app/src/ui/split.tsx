@@ -2,7 +2,7 @@
 // prefix, size, the program's line, SDK or status — each group in the one
 // table of groups the Time pane has by kind (`GroupTable`), and one sentence
 // on where the slow and the costly requests are. Read off the interface's
-// thread (`Sessions.split`). A kind of request chosen narrows the operations
+// thread (`Runs.split`). A kind of request chosen narrows the operations
 // to it.
 
 import { resource, Text, View } from "nsh";
@@ -15,7 +15,7 @@ import { Await, Choice } from "./kit";
 import { GroupTable, groupRows } from "./profile";
 
 export type GroupBy = SplitBy | "none";
-export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status"];
+export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status", "key"];
 
 /** The one Group by control: each operation (none), or the operations split by a dimension. */
 export function GroupByChoice(props: { value: GroupBy; onChange: (v: GroupBy) => void }) {
@@ -27,7 +27,7 @@ export function GroupByChoice(props: { value: GroupBy; onChange: (v: GroupBy) =>
 export function SplitTable(props: { path: string; by: SplitBy; onKind?: (kind: string) => void }) {
   const split = resource(
     () => [props.path, props.by] as const,
-    ([p, by]): Promise<Split> => api.sessions.split(p, by),
+    ([p, by]): Promise<Split> => api.runs.split(p, by),
   );
   // a kind's row (not the rest folded together) narrows the operations to it
   const kindOf = (s: Split, name: string | null) => (name === null ? null : (s.rows.find((r) => !r.other && (r.key || "—") === name)?.key ?? null));

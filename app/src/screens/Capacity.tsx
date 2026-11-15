@@ -2,11 +2,11 @@
 // markers, incomplete uploads, by storage class, prefix and size.
 
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { bytes, count, day, money } from "../format";
+import { bytes, count, day, money, percent } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
-import { bucket, endpoint, notify, prefix, report } from "../store";
+import { bucket, endpoint, notify, offerCommands, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { sectionLabel } from "../labels";
@@ -14,6 +14,51 @@ import { Row, Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Sta
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
+
+/** How many months the growth chart names, the latest; the rest are one row before them. */
+const MONTHS = 12;
+
+/** The months with bytes in the last `MONTHS` calendar months (to the latest month written), and those before. */
+function recentMonths(r: DuReport): { recent: DuReport["byMonth"]; earlier: DuReport["byMonth"] } {
+  const index = (m: string) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
+  const last = r.byMonth.length ? index(r.byMonth[r.byMonth.length - 1].month) : 0;
+  const within = (m: string) => last - index(m) < MONTHS;
+  return { recent: r.byMonth.filter((m) => within(m.month)), earlier: r.byMonth.filter((m) => !within(m.month)) };
+}
+
+/** The growth chart's rows: the months with bytes in the last `MONTHS`, the latest first, and every earlier one as one row. */
+function monthRows(r: DuReport): { label: string; value: number }[] {
+  const { recent, earlier } = recentMonths(r);
+  const before = earlier.reduce((n, m) => n + m.bytes, 0);
+  return [...recent.map((m) => ({ label: m.month, value: m.bytes })).reverse(), ...(before > 0 && recent.length ? [{ label: t("du.before", { month: recent[0].month }), value: before }] : [])];
+}
+
+/** What each of the bucket's charts answers, in a sentence of its figures. */
+const share = (part: number, whole: number) => percent(whole > 0 ? part / whole : 0);
+const partsSaid = (r: DuReport) => t("du.partsText", { pct: share(r.current.bytes, r.totalBytes), size: bytes(r.current.bytes) });
+const biggest = <T,>(xs: T[], v: (x: T) => number) => [...xs].sort((a, b) => v(b) - v(a))[0];
+function classSaid(r: DuReport) {
+  const top = biggest(r.byClass, (c) => c.current.bytes + c.noncurrent.bytes);
+  return top ? t("du.byClassText", { name: top.name, pct: share(top.current.bytes + top.noncurrent.bytes, r.current.bytes + r.noncurrent.bytes) }) : "";
+}
+function sizeSaid(r: DuReport) {
+  const top = biggest(r.bySize, (b) => b.objects);
+  return top && top.objects > 0 ? t("du.bySizeText", { label: top.label, pct: share(top.objects, r.current.objects) }) : "";
+}
+function prefixSaid(r: DuReport) {
+  const top = r.byPrefix[0];
+  return top ? t("du.byPrefixText", { name: top.name, pct: share(top.current.bytes + top.noncurrent.bytes, r.current.bytes + r.noncurrent.bytes) }) : "";
+}
+function monthSaid(r: DuReport) {
+  const all = r.byMonth.reduce((n, m) => n + m.bytes, 0);
+  const top = biggest(r.byMonth, (m) => m.bytes);
+  if (!top || all === 0) return "";
+  // one month: said once; all within the window: since when, not "100%"
+  if (r.byMonth.length === 1) return t("du.byMonthOne", { month: top.month });
+  const { recent, earlier } = recentMonths(r);
+  if (earlier.length === 0) return t("du.byMonthSince", { first: r.byMonth[0].month, month: top.month, size: bytes(top.bytes) });
+  return t("du.byMonthText", { pct: share(recent.reduce((n, m) => n + m.bytes, 0), all), n: MONTHS, month: top.month, size: bytes(top.bytes) });
+}
 
 export function Capacity() {
   const pfx = terminal() ? signal("") : prefix;
@@ -83,6 +128,16 @@ export function Capacity() {
       if (!terminal() && !result()) void scan();
     });
   });
+  // the section's commands: in the palette and on their shortcuts, as on its row
+  offerCommands(
+    () => sectionLabel("capacity"),
+    () => [
+      { id: "du-scan", label: result() ? t("overview.rescan") : t("common.scan"), icon: "refresh-cw", shortcut: "mod+shift+r", disabled: !bucket() || progress() !== null, run: () => void scan() },
+      { id: "du-mpu", label: t("du.includeMultipart"), icon: "layers", shortcut: "mod+shift+u", run: () => mpu.set(!mpu()) },
+      { id: "du-csv", label: t("du.exportCsv"), icon: "download", shortcut: "mod+shift+e", disabled: !result(), run: () => exportAs("csv") },
+      { id: "du-json", label: t("du.exportJson"), icon: "download", disabled: !result(), run: () => exportAs("json") },
+    ],
+  );
   const exportAs = (f: "json" | "csv") => {
     try {
       notify(t("common.exportedTo", { path: api.duExport(endpoint()!, bucket()!, pfx(), f) }));
@@ -114,7 +169,7 @@ export function Capacity() {
         </If>
         {/* what the next scan counts: before the command, so Cancel coming and going moves nothing */}
         <SwitchRow label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
-        <Button small variant={result() ? "outline" : "primary"} label={result() ? t("overview.rescan") : t("common.scan")} onPress={scan} disabled={!bucket() || progress() !== null} testID="du-scan" />
+        <Button small variant={result() ? "outline" : "primary"} label={result() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={scan} disabled={!bucket() || progress() !== null} testID="du-scan" />
         <If when={progress()}>
           <Button small variant="ghost" label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} testID="du-cancel" />
         </If>
@@ -136,7 +191,7 @@ export function Capacity() {
                   <Stat label={t("du.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("du.cost")} · ${t("du.requests", { n: count(r().requests) })}`} />,
                 ]}
               />
-              <Chart title={t("du.parts")}>
+              <Chart title={t("du.parts")} text={partsSaid(r())}>
                 <StackBar
                   testID="du-stack"
                   // versions that could not be listed are not a part of nothing: left out, and said
@@ -162,14 +217,18 @@ export function Capacity() {
                 </Each>
               </Card>
               <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
-                <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>
+                <Chart class={HALF} title={t("du.byClass")} text={classSaid(r())} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
                 </Chart>
-                <Chart class={HALF} title={t("du.bySize")} empty={r().bySize.length === 0 && t("common.empty")}>
+                <Chart class={HALF} title={t("du.bySize")} text={sizeSaid(r())} empty={r().bySize.length === 0 && t("common.empty")}>
                   <BarChart unit="count" items={r().bySize.map((b) => ({ label: b.label, value: b.objects }))} />
                 </Chart>
               </View>
-              <Chart title={t("du.byPrefix")} empty={r().byPrefix.length === 0 && t("common.empty")}>
+              {/* how the bucket grew: the bytes by the month they were written, from the listing alone */}
+              <Chart testID="du-months" title={t("du.byMonth")} text={monthSaid(r())} how={t("du.byMonthHint")} empty={r().byMonth.length === 0 && t("common.empty")}>
+                <BarChart testID="du-months-bars" items={monthRows(r())} />
+              </Chart>
+              <Chart title={t("du.byPrefix")} text={prefixSaid(r())} empty={r().byPrefix.length === 0 && t("common.empty")}>
                 <PrefixMap testID="du-prefixes" items={r().byPrefix.slice(0, 24).map((p) => ({ label: p.name, value: p.current.bytes + p.noncurrent.bytes }))} />
               </Chart>
             </View>

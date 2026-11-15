@@ -3,6 +3,7 @@ name = "reqlog"
 description = "Request records for sonde: a ring buffer, redaction, JSON / HAR export, aws-cli and curl renderings."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]

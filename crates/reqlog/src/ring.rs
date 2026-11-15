@@ -30,8 +30,7 @@ pub enum StatusFilter {
 pub struct Filter {
     pub status: Option<StatusFilter>,
     /// The request's kind (`GetObject`), matched case-insensitively.
-    #[serde(rename = "kind")]
-    pub operation: Option<String>,
+    pub kind: Option<String>,
     pub endpoint: Option<String>,
     pub job: Option<String>,
     /// Matched against the bucket, the key and the request id.
@@ -53,18 +52,18 @@ impl Filter {
                 return false;
             }
         }
-        if let Some(op) = &self.operation
-            && !r.operation.eq_ignore_ascii_case(op)
+        if let Some(op) = &self.kind
+            && !r.kind.eq_ignore_ascii_case(op)
         {
             return false;
         }
         if let Some(e) = &self.endpoint
-            && &r.endpoint != e
+            && &r.rare().endpoint != e
         {
             return false;
         }
         if let Some(j) = &self.job
-            && r.job.as_ref() != Some(j)
+            && r.rare().job.as_ref() != Some(j)
         {
             return false;
         }
@@ -76,7 +75,7 @@ impl Filter {
             let hit = [
                 r.bucket.as_deref(),
                 r.key.as_deref(),
-                r.request_id.as_deref(),
+                r.rare().request_id.as_deref(),
             ]
             .iter()
             .any(|f| f.is_some_and(|v| v.to_lowercase().contains(&t)));
@@ -201,7 +200,7 @@ impl RequestLog {
             .records
             .iter()
             .rev()
-            .find(|r| r.request_id.as_deref() == Some(request_id))
+            .find(|r| r.rare().request_id.as_deref() == Some(request_id))
             .cloned()
     }
 
@@ -234,7 +233,7 @@ impl RequestLog {
             .read()
             .records
             .iter()
-            .map(|r| r.operation.to_string())
+            .map(|r| r.kind.to_string())
             .collect();
         ops.sort();
         ops.dedup();
@@ -249,16 +248,24 @@ mod tests {
 
     fn rec(op: &str, status: Option<u16>) -> Record {
         Record {
-            operation: op.into(),
+            kind: op.into(),
             method: "GET".into(),
-            endpoint: "e1".into(),
             bucket: Some("b".into()),
             key: Some("k".into()),
             status,
-            request_headers: vec![Header::new(
+            rare: crate::Rare {
+                endpoint: "e1".into(),
+                ..Default::default()
+            }
+            .into(),
+            lists: crate::Lists {
+                request_headers: vec![Header::new(
                 "Authorization",
                 "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc",
             )],
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
     }
@@ -273,7 +280,7 @@ mod tests {
         let all = log.snapshot();
         assert_eq!(all.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3, 4, 5]);
         assert!(log.get(1).is_none());
-        assert_eq!(log.get(4).unwrap().operation, "Op3");
+        assert_eq!(log.get(4).unwrap().kind, "Op3");
         log.set_capacity(1);
         assert_eq!(log.len(), 1);
     }
@@ -283,8 +290,12 @@ mod tests {
         let log = RequestLog::new(10);
         let id = log.push(rec("GetObject", Some(200)));
         let r = log.get(id).unwrap();
-        assert!(!r.request_headers[0].value.contains("Signature=abc"));
-        assert!(!r.request_headers[0].value.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!r.request_headers()[0].value.contains("Signature=abc"));
+        assert!(
+            !r.request_headers()[0]
+                .value
+                .contains("AKIAIOSFODNN7EXAMPLE")
+        );
     }
 
     #[test]
@@ -303,7 +314,7 @@ mod tests {
         assert_eq!(log.list(&f(StatusFilter::Exact(404)), 10).len(), 1);
         assert_eq!(log.list(&f(StatusFilter::Transport), 10).len(), 1);
         let op = Filter {
-            operation: Some("putobject".into()),
+            kind: Some("putobject".into()),
             ..Default::default()
         };
         assert_eq!(log.list(&op, 10).len(), 2);
@@ -321,7 +332,7 @@ mod tests {
     fn find_by_request_id() {
         let log = RequestLog::new(10);
         let mut r = rec("HeadObject", Some(403));
-        r.request_id = Some("REQ123".into());
+        r.rare_mut().request_id = Some("REQ123".into());
         let id = log.push(r);
         assert_eq!(log.find_request_id("REQ123").unwrap().id, id);
         assert!(log.find_request_id("nope").is_none());

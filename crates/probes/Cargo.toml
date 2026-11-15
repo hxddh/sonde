@@ -3,6 +3,7 @@ name = "probes"
 description = "sonde's compatibility probe suite: each probe states AWS's behavior, exercises it in a scratch prefix and judges what the target did."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]
@@ -16,7 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 tokio.workspace = true
-futures.workspace = true
 bytes.workspace = true
 http.workspace = true
 async-trait.workspace = true
@@ -29,4 +29,3 @@ tracing.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true
-uuid.workspace = true

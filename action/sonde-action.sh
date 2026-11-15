@@ -28,7 +28,7 @@ install() {
   fi
   local ref="${GITHUB_ACTION_REF:-}"
   if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
-    # a release's tag (v21.0.1) is that release; a major's (v21) the newest of it
+    # a release's tag (v22.0.1) is that release; a major's (v22) the newest of it
     [ -n "$version" ] || version="${ref#v}"
   else
     # a branch, a commit or a local checkout (`uses: ./`): its scripts are
@@ -36,7 +36,7 @@ install() {
     # major, never with whatever release is the newest
     local own major
     own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
-    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (21, 21.0.0)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (22, 22.0.0)"
     major="${own%%.*}"
     case "$version" in
       latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;
@@ -52,19 +52,19 @@ install() {
   echo "$dir" >>"${GITHUB_PATH:-/dev/null}"
 }
 
-# The program under `sonde run`, its session kept apart; its exit status is
+# The program under `sonde run`, its run kept apart; its exit status is
 # the verdict's, after the report and the comment.
 record() {
   [ -n "${SONDE_RUN:-}" ] || fail "the run input is empty"
-  local session="$work/run.sonde" args=() status=0
+  local file="$work/run.sonde" args=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
   eval "set -- $SONDE_RUN"
-  rm -f "$session"
-  sonde run -o "$session" ${args[@]+"${args[@]}"} -- "$@" || status=$?
+  rm -f "$file"
+  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "$@" || status=$?
   out exit "$status"
-  [ -f "$session" ] || fail "sonde run wrote no session (exit $status)"
-  out session "$session"
+  [ -f "$file" ] || fail "sonde run wrote no run (exit $status)"
+  out file "$file"
 }
 
 # The workflow file this run is of: `.github/workflows/ci.yml` of
@@ -75,7 +75,7 @@ workflow_file() {
   echo "${ref##*/}"
 }
 
-# The session the latest earlier run of this workflow kept on the base
+# The run the latest earlier run of this workflow kept on the base
 # branch (a pull request's) or on this branch (a push); `auto` (said as "no
 # baseline yet" by every format of `check`) when there is none. Another input
 # is passed on as it is.
@@ -107,6 +107,11 @@ baseline() {
     if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$dir" >/dev/null 2>&1; then
       local file
       file="$(find "$dir" -name '*.sonde' | head -n 1)"
+      # (a run an earlier major wrote is not read: the next one back, else none)
+      if [ -n "$file" ] && ! sonde show "$file" -f json >/dev/null 2>&1; then
+        note "baseline: the run kept by run $id is not one this sonde reads (an earlier version's); looking further back"
+        continue
+      fi
       if [ -n "$file" ]; then
         note "baseline: the run of $base kept by ${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$id"
         out baseline "$file"
@@ -120,7 +125,7 @@ baseline() {
 
 # `sonde check`'s flags, as the step's inputs give them, in ARGS.
 check_args() {
-  ARGS=("$SONDE_SESSION")
+  ARGS=("$SONDE_FILE")
   [ -z "${SONDE_BASELINE:-}" ] || ARGS+=(--baseline "$SONDE_BASELINE")
   [ -z "${SONDE_CONFIG:-}" ] || ARGS+=(--config "$SONDE_CONFIG")
   local more=()
@@ -142,17 +147,17 @@ check() {
 
 # The HTML report: the run against its baseline when there is one.
 report() {
-  local args=("$SONDE_SESSION") file="$work/report/sonde-report.html"
+  local args=("$SONDE_FILE") file="$work/report/sonde-report.html"
   mkdir -p "$(dirname "$file")"
   case "${SONDE_BASELINE:-}" in
     "" | auto) ;;
     *) args+=(--baseline "$SONDE_BASELINE") ;;
   esac
   [ "${SONDE_REDACT:-false}" != true ] || args+=(--redact)
-  if sonde share --html "${args[@]}" -o "$file"; then
+  if sonde share "${args[@]}" -o "$file" --force; then
     out file "$file"
   else
-    warn "no report: sonde share --html failed"
+    warn "no report: sonde share failed"
   fi
 }
 

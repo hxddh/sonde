@@ -358,6 +358,19 @@ const REQUEST_ID_HEADERS: &[&str] = &[
     "x-bz-request-id",
 ];
 
+/// Every HTTP client sonde makes starts here: TLS through rustls and ring,
+/// the certificate checked by the operating system's verifier (its roots,
+/// its policy, the trust an organisation manages). The first call makes ring
+/// the process's provider, which reqwest needs before it builds a client.
+pub fn http_client() -> reqwest::ClientBuilder {
+    static PROVIDER: std::sync::Once = std::sync::Once::new();
+    PROVIDER.call_once(|| {
+        // (a provider already installed, by the app or a test, is kept)
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    reqwest::Client::builder()
+}
+
 impl S3Client {
     pub fn new(
         cfg: ClientConfig,
@@ -378,15 +391,12 @@ impl S3Client {
             None => Vec::new(),
         };
         let builder = || {
-            let mut b = reqwest::Client::builder()
+            http_client()
                 .connect_timeout(Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
                 .user_agent(cfg.user_agent.clone())
-                .pool_max_idle_per_host(32);
-            for c in &certs {
-                b = b.add_root_certificate(c.clone());
-            }
-            b
+                .pool_max_idle_per_host(32)
+                .tls_certs_merge(certs.iter().cloned())
         };
         let http = builder()
             .timeout(cfg.timeout)
@@ -491,7 +501,7 @@ impl S3Client {
         let sent = self.http.request(method, parsed).send().await;
         let latency = start.elapsed();
         let mut record = self.record(&req, url, &[], 0, latency);
-        record.query = url::Url::parse(url)
+        record.lists_mut().query = url::Url::parse(url)
             .map(|u| {
                 u.query_pairs()
                     .map(|(k, v)| (Text::new(&k), Text::new(&v)))
@@ -504,14 +514,18 @@ impl S3Client {
                 let headers = header_pairs(resp.headers());
                 let body = resp.bytes().await.unwrap_or_default();
                 record.status = Some(status);
-                record.response_bytes = Some(body.len() as u64);
+                record.response_bytes = Some(body.len() as u64).into();
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
-                    record.error_body = Some(String::from_utf8_lossy(&body).to_string());
+                    record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).to_string());
                 }
-                let (request_id, host_id) = (record.request_id.clone(), record.host_id.clone());
+                let (request_id, host_id) = (
+                    record.rare().request_id.clone(),
+                    record.rare().host_id.clone(),
+                );
                 let record_id = self.log.push(record);
                 Ok(S3Response {
                     status,
@@ -525,7 +539,7 @@ impl S3Client {
                 })
             }
             Err(e) => {
-                record.transport_error = Some(e.to_string());
+                record.rare_mut().transport_error = Some(e.to_string());
                 let id = self.log.push(record);
                 let mut err = S3Error::new(ErrorKind::Transport, e.to_string());
                 err.record_id = Some(id);
@@ -670,7 +684,7 @@ impl S3Client {
                 let msg = format!("no answer in {} s", idle.as_secs_f32());
                 let mut record =
                     self.record(&req, &prepared.url, &prepared.headers, 0, start.elapsed());
-                record.transport_error = Some(msg.clone());
+                record.rare_mut().transport_error = Some(msg.clone());
                 let mut err = S3Error::new(ErrorKind::Transport, msg);
                 err.record_id = Some(self.log.push(record));
                 return Err(err);
@@ -683,14 +697,15 @@ impl S3Client {
                 let headers = header_pairs(resp.headers());
                 let mut record = self.record(&req, &prepared.url, &prepared.headers, 0, latency);
                 record.status = Some(status);
-                record.response_bytes = resp.content_length();
+                record.response_bytes = resp.content_length().into();
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 if !(200..300).contains(&status) {
-                    let rid = record.request_id.clone();
-                    let hid = record.host_id.clone();
+                    let rid = record.rare().request_id.clone();
+                    let hid = record.rare().host_id.clone();
                     let body = resp.bytes().await.unwrap_or_default();
-                    record.error_body = Some(String::from_utf8_lossy(&body).to_string());
+                    record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).to_string());
                     let id = self.log.push(record);
                     return Err(S3Error::from_response(status, &body, rid, hid, id));
                 }
@@ -737,15 +752,16 @@ impl S3Client {
                 let mut record =
                     self.record(req, &prepared.url, &prepared.headers, attempt, latency);
                 record.status = Some(status);
-                record.response_bytes = Some(body.len() as u64);
+                record.response_bytes = Some(body.len() as u64).into();
                 fill_ids(&mut record, &headers);
-                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                record.lists_mut().response_headers =
+                    headers.iter().map(|(k, v)| Header::new(k, v)).collect();
                 listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
-                    record.error_body = Some(String::from_utf8_lossy(&body).to_string());
+                    record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).to_string());
                 }
-                let request_id = record.request_id.clone();
-                let host_id = record.host_id.clone();
+                let request_id = record.rare().request_id.clone();
+                let host_id = record.rare().host_id.clone();
                 let record_id = self.log.push(record);
                 Ok(S3Response {
                     status,
@@ -778,7 +794,7 @@ impl S3Client {
             src = s.source();
         }
         let mut record = self.record(req, &prepared.url, &prepared.headers, attempt, latency);
-        record.transport_error = Some(msg.clone());
+        record.rare_mut().transport_error = Some(msg.clone());
         let id = self.log.push(record);
         let mut err = S3Error::new(ErrorKind::Transport, msg);
         err.record_id = Some(id);
@@ -796,40 +812,40 @@ impl S3Client {
         Record {
             id: 0,
             time: Utc::now(),
-            endpoint: self.cfg.endpoint_id.as_str().into(),
-            operation: req.operation.as_str().into(),
+            kind: req.operation.as_str().into(),
             method: req.method.as_str().into(),
-            url: url.to_string(),
             bucket: req.bucket.as_deref().map(Into::into),
             key: req.key.as_deref().map(Into::into),
-            query: req
-                .query
-                .iter()
-                .map(|(k, v)| (k.into(), v.into()))
-                .collect(),
             status: None,
             latency_ms: latency.as_secs_f64() * 1000.0,
-            retries: attempt,
-            request_id: None,
-            host_id: None,
-            request_headers: headers.iter().map(|(k, v)| Header::new(k, v)).collect(),
-            response_headers: Vec::new(),
-            request_bytes: Some(req.body.len()),
-            response_bytes: None,
-            error_body: None,
-            request_body: match &req.body {
-                Body::Bytes(b) if reqlog::is_control_operation(&req.operation) => {
-                    Some(String::from_utf8_lossy(b).into_owned())
-                }
-                _ => None,
-            },
-            request_body_truncated: false,
-            transport_error: None,
-            region: Some(self.cfg.region.as_str().into()),
-            job: self.job.clone(),
-            first_byte_ms: None,
-            requester: None,
-            injected: None,
+            retries: u16::try_from(attempt).unwrap_or(u16::MAX),
+            request_bytes: Some(req.body.len()).into(),
+            response_bytes: None.into(),
+            first_byte_ms: None.into(),
+            rare: reqlog::Rare {
+                endpoint: self.cfg.endpoint_id.as_str().into(),
+                url: url.to_string(),
+                request_body: match &req.body {
+                    Body::Bytes(b) if reqlog::is_control_operation(&req.operation) => {
+                        Some(String::from_utf8_lossy(b).into_owned())
+                    }
+                    _ => None,
+                },
+                region: Some(self.cfg.region.as_str().into()),
+                job: self.job.clone(),
+                ..Default::default()
+            }
+            .into(),
+            lists: reqlog::Lists {
+                query: req
+                    .query
+                    .iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect(),
+                request_headers: headers.iter().map(|(k, v)| Header::new(k, v)).collect(),
+                ..Default::default()
+            }
+            .into(),
         }
     }
 
@@ -988,10 +1004,11 @@ pub fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
 /// A listing answered well says on its record how many keys it listed
 /// ([`reqlog::KEYS_HEADER`]).
 fn listed(record: &mut Record, body: &[u8]) {
-    if reqlog::is_listing(&record.operation) && record.status.is_some_and(|s| s < 300) {
+    if reqlog::is_listing(&record.kind) && record.status.is_some_and(|s| s < 300) {
         let mut k = reqlog::KeyCounter::default();
         k.feed(body);
         record
+            .lists_mut()
             .response_headers
             .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
     }
@@ -1001,11 +1018,11 @@ fn listed(record: &mut Record, body: &[u8]) {
 pub fn fill_ids(record: &mut Record, headers: &[(String, String)]) {
     for name in REQUEST_ID_HEADERS {
         if let Some((_, v)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
-            record.request_id = Some(v.clone());
+            record.rare_mut().request_id = Some(v.clone());
             break;
         }
     }
-    record.host_id = headers
+    record.rare_mut().host_id = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("x-amz-id-2"))
         .map(|(_, v)| v.clone());

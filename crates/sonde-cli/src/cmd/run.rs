@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
-use sonde_proxy::session::Session;
 
 use crate::Cli;
 
@@ -20,8 +20,8 @@ pub struct RunArgs {
     /// Send the requests to the built-in demo store (buckets `demo`,
     /// `demo-large`, `demo-layouts`): no account or secrets needed. It lives
     /// in this process and starts afresh each run; its times are not
-    /// meaningful. Without a command: a tour, a small program of sonde's own
-    /// recorded and explained.
+    /// meaningful. Without a command: the tour, a small job's finding with
+    /// its line of code and fix, then the job fixed and the saving measured.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
     /// Print each request on stderr as it happens.
@@ -57,9 +57,9 @@ pub struct RunArgs {
     /// the policy in this program's last trials (`sonde run --again -- …`).
     #[arg(long, conflicts_with = "faults")]
     again: bool,
-    /// The program's name: its runs and its baseline go by it, whatever the
-    /// command's arguments are this time (default: `name` under `[program]`
-    /// in sonde.toml, else the command itself).
+    /// The program's name: its runs, baseline and trial verdicts go by it
+    /// (default: sonde.toml's `[program] name` for the program it `runs`,
+    /// else what the command runs: `etl` for `python3 etl.py 5`).
     #[arg(long)]
     name: Option<String>,
     /// With -o: write over the file if it is there (else a run refuses it).
@@ -144,9 +144,9 @@ struct RunCtx {
     /// The runs name the code that sent each request: unless
     /// `--no-callers` or `[record] name-callers = false`.
     callers: bool,
-    /// What the runs wrote: a trial's runs may write again what the clean
-    /// run wrote, under no-delete as under allow.
-    written: Arc<sonde_proxy::Written>,
+    /// What the runs made: a trial's runs may remove what the clean run
+    /// made, under no-delete as under allow.
+    made: Arc<sonde_proxy::Made>,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -272,7 +272,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if let Some(out) = &a.rec.out {
         refuse_existing(out, a.force)?;
     }
-    // `--demo` alone: the tour, a program of sonde's own
+    // `--demo` alone: the tour
     if a.demo && a.command.is_empty() {
         if cli.url.is_some() {
             return Err(super::usage("--demo and --url name two stores: give one"));
@@ -301,7 +301,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
     }
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
-    // one scenario at two strengths is two runs, each with a session of its own
+    // one scenario at two strengths is two runs, each with a run of its own
     let same = |a: &sonde_proxy::fault::Scenario, b: &sonde_proxy::fault::Scenario| {
         a.name == b.name && sonde_proxy::fault::pressed(a) == sonde_proxy::fault::pressed(b)
     };
@@ -313,27 +313,26 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         }
     }
     // what to try again is known before anything runs
+    // the program's name, when it has one of its own
+    let command = sonde_analysis::program::shell_join(&a.command);
+    let name = a
+        .name
+        .as_deref()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| project.file.program.name_for(&command));
     if a.again {
-        // (trimmed as the name is when kept)
-        let program = a
-            .name
+        let program = name
             .clone()
-            .or(project.file.program.name.clone())
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .or_else(|| {
-                sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
-                    &a.command,
-                )))
-            })
+            .or_else(|| sonde_analysis::program::program_key(Some(&command)))
             .unwrap_or_default();
         let dir = match &a.rec.out {
             Some(out) => runs_dir(out),
-            None => s.paths().sessions(),
+            None => s.paths().runs(),
         };
-        let names = sonde_proxy::trial::to_try_again(&dir, &program);
+        let names = sonde_analysis::trial::to_try_again(&dir, &program);
         if names.is_empty() {
-            let tried = sonde_proxy::trial::read_verdicts(&dir).contains_key(&program);
+            let tried = sonde_analysis::trial::read_verdicts(&dir).contains_key(&program);
             if tried {
                 eprintln!(
                     "Nothing to try again: every scenario of `{program}` survived its last trial, or met nothing."
@@ -360,7 +359,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let trying = a.trial || a.again || !asked.is_empty();
     let ctx = RunCtx {
         trying,
-        name: a.name.clone().or(project.file.program.name.clone()),
+        name,
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
         rec: Recording {
@@ -368,7 +367,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             ..rec
         },
         callers: !a.no_callers && project.file.record.name_callers != Some(false),
-        written: Arc::default(),
+        made: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
         eprintln!(
@@ -391,8 +390,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         return Ok(code);
     }
-    let clean_session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
-    if clean_session.records.is_empty() {
+    let clean_run = RunFile::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    if clean_run.records.is_empty() {
         eprintln!("\nNo trial: the program sent no requests to fail.");
         return Ok(code);
     }
@@ -401,18 +400,10 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     } else if !project.scenarios.is_empty() {
         project.scenarios
     } else {
-        sonde_proxy::trial::choose(&clean_session.records)
+        sonde_analysis::trial::choose(&clean_run.records)
     };
-    let of = file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    // trials are kept in a folder of their own: they are not runs of the
-    // program (no trend, baseline or "newest" counts them)
-    let folder = sonde_proxy::trial::folder_for(&file);
-    std::fs::create_dir_all(&folder)?;
-    // where the program's runs are, and its verdicts kept
-    let dir = runs_dir(&file);
+    let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
+    let program = sonde_analysis::program::key_of(&clean_run.header);
     let color = std::io::stderr().is_terminal();
     eprintln!(
         "\nTrial: the command runs {}.",
@@ -421,70 +412,36 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             n => format!("{n} more times, each under one scenario"),
         }
     );
-    let mut trials = Vec::new();
     let mut interrupted = None;
-    // the program's verdicts before this trial, and this one's time: each
-    // row says what changed ("broke on 12 Nov, survived since")
-    let program = sonde_proxy::program::key_of(&clean_session.header);
-    let kept = program
-        .as_deref()
-        .and_then(|p| sonde_proxy::trial::read_verdicts(&dir).remove(p))
-        .unwrap_or_default();
-    let now = chrono::Utc::now();
     for scenario in scenarios {
         let under = Under {
-            // (the run's last trials were removed when it was recorded: the
-            // name is free, and is the one the verdict keeps)
-            path: folder.join(format!(
-                "{}.sonde",
-                sonde_proxy::trial::session_stem(&file, &scenario)
-            )),
-            of: of.clone(),
+            path: trying.path(&scenario),
+            of: trying.of().to_string(),
             scenario,
         };
         let ran = run_once(s, a, Some(&under), &ctx).await?;
         if let Some(signal) = ran.signal {
-            // half a run says nothing of the program: no verdict, no session
+            // half a run says nothing of the program: no verdict, no file
             let _ = std::fs::remove_file(&ran.file);
             interrupted = Some((signal, under.scenario.name.clone()));
             break;
         }
-        let run = Session::open(&ran.file).map_err(|e| anyhow::anyhow!(e))?;
-        let mut t = sonde_proxy::trial::judge(
+        let run = RunFile::open(&ran.file).map_err(|e| anyhow::anyhow!(e))?;
+        let t = trying.judge(
             &under.scenario,
-            &clean_session.records,
+            &clean_run.records,
             code,
+            &ran.file,
             &run.records,
             ran.code,
         );
         // the command's own time: what a delay costs is not all in requests
         (t.wall_ms, t.clean_wall_ms) = (ran.wall_ms, clean.wall_ms);
-        t.session = ran
-            .file
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned());
-        if program.is_some() {
-            t.history = kept.get(&t.asked()).cloned().unwrap_or_default();
-            t.history.push(sonde_proxy::trial::Seen {
-                at: now,
-                standing: t.standing,
-                run: of.clone(),
-            });
-        }
-        eprintln!("{}", trial_line(&t, color));
-        // (the history is the program's, not the run's: kept apart)
-        t.history.clear();
-        trials.push(t);
+        eprintln!("{}", trial_line(t, color));
     }
-    if trials.is_empty() {
-        let _ = std::fs::remove_dir(&folder);
-    } else {
-        sonde_proxy::trial::save(&file, &trials)?;
-        if let Some(p) = &program
-            && let Err(e) = sonde_proxy::trial::record(&dir, p, &of, now, &trials)
-        {
-            eprintln!("warning: the program's verdicts could not be kept: {e}");
-        }
+    let (trials, unkept) = trying.finish()?;
+    if let Some(e) = unkept {
+        eprintln!("warning: the program's verdicts could not be kept: {e}");
     }
     if let Some((signal, scenario)) = interrupted {
         eprintln!(
@@ -492,16 +449,16 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         return Ok(128 + signal);
     }
-    use sonde_proxy::trial::Standing;
+    use sonde_analysis::trial::Standing;
     let broke = trials
         .iter()
         .filter(|t| t.standing == Standing::Broke)
         .count();
     let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
     eprintln!("\n{}", trials_summary(&standings));
-    eprintln!("Each trial is a session:");
+    eprintln!("Each trial is a run:");
     for t in &trials {
-        if let Some(path) = sonde_proxy::trial::session_path(&file, t) {
+        if let Some(path) = sonde_analysis::trial::run_path(&file, t) {
             eprintln!("  sonde show {}", path.display());
         }
     }
@@ -521,8 +478,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
 
 /// What a trial's runs came to, in a sentence: "did not break" only when
 /// every scenario was judged; the ones that were not are said.
-fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
-    use sonde_proxy::trial::Standing;
+fn trials_summary(standings: &[sonde_analysis::trial::Standing]) -> String {
+    use sonde_analysis::trial::Standing;
     let count = |s: Standing| standings.iter().filter(|t| **t == s).count();
     let (broke, refused, untested) = (
         count(Standing::Broke),
@@ -556,9 +513,9 @@ fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
 /// the flags of the trial it repeats: the same store, policy and recording.
 /// A trial of scenarios named (`--fault`) names again the ones that did not
 /// survive.
-fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -> String {
-    use sonde_proxy::trial::Standing;
-    let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
+fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_analysis::trial::Trial]) -> String {
+    use sonde_analysis::trial::Standing;
+    let q = |w: &str| sonde_analysis::program::shell_join(&[w.to_string()]);
     let mut words = vec!["sonde run".to_string()];
     if a.faults.is_empty() {
         words.push("--again".into());
@@ -609,13 +566,13 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -
         words.push("--no-callers".into());
     }
     words.push("--".into());
-    words.push(sonde_proxy::program::shell_join(&a.command));
+    words.push(sonde_analysis::program::shell_join(&a.command));
     words.join(" ")
 }
 
 /// A trial's line: its standing, the scenario, what happened.
-pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
-    use sonde_proxy::trial::Standing;
+pub fn trial_line(t: &sonde_analysis::trial::Trial, color: bool) -> String {
+    use sonde_analysis::trial::Standing;
     let code = match t.standing {
         Standing::Survived => "32",
         Standing::Degraded => "33",
@@ -653,7 +610,7 @@ fn named_scenario(
     })
 }
 
-/// One run of the command, recorded: the session's file and the program's
+/// One run of the command, recorded: the run's file and the program's
 /// exit code. Under a scenario, the proxy answers with its faults.
 async fn run_once(
     s: &Arc<Sonde>,
@@ -662,15 +619,15 @@ async fn run_once(
     ctx: &RunCtx,
 ) -> anyhow::Result<Ran> {
     use tokio::io::AsyncWriteExt;
-    let command = sonde_proxy::program::shell_join(&a.command);
+    let command = sonde_analysis::program::shell_join(&a.command);
     // `-o FILE` is recorded beside it under a name of its own and put in
     // its place at the end: two runs given one file never write into, or
     // print, each other's
     let target = ctx.rec.out.clone().filter(|_| under.is_none());
     let rec = match &target {
         Some(t) => {
-            // (its earlier verdicts go now, as a session recorded again)
-            sonde_proxy::trial::remove(t);
+            // (its earlier verdicts go now, as a run recorded again)
+            sonde_analysis::trial::remove(t);
             Recording {
                 out: Some(recording_path(t)),
                 ..ctx.rec.clone()
@@ -687,11 +644,21 @@ async fn run_once(
         &Of {
             name: ctx.name.clone(),
             under,
-            written: Some(ctx.written.clone()),
+            made: Some(ctx.made.clone()),
+            trying: ctx.trying,
         },
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
+    // what a container is given: the recording's own variables, by name,
+    // and the files they name (a --tls certificate)
+    let for_container: (Vec<String>, Vec<String>) = (
+        set.iter().map(|(k, _)| k.clone()).collect(),
+        set.iter()
+            .filter(|(_, v)| std::path::Path::new(v).is_file())
+            .map(|(_, v)| v.clone())
+            .collect(),
+    );
     if ctx.callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
@@ -699,10 +666,10 @@ async fn run_once(
     // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
     // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
-    // keys under the run's own place are its own to write over
+    // keys under the run's own place are its own to remove
     if ctx.trying {
-        for place in sonde_proxy::trial::places(&a.command, trial) {
-            ctx.written.own_place(&place);
+        for place in sonde_analysis::trial::places(&a.command, trial) {
+            ctx.made.own_place(&place);
         }
     }
     let placed = |word: &String| {
@@ -739,6 +706,17 @@ async fn run_once(
         }
         None => words,
     };
+    // a container reaches sonde on the host's network
+    let words =
+        match sonde_proxy::container::with_settings(&words, &for_container.0, &for_container.1) {
+            Some(argv) => {
+                if under.is_none() {
+                    eprintln!("{}", container_note(&words));
+                }
+                argv
+            }
+            None => words,
+        };
     let program = words[0].clone();
     let mut child = tokio::process::Command::new(&program);
     child.args(&words[1..]);
@@ -781,7 +759,7 @@ async fn run_once(
     let mut child = match child.spawn() {
         Ok(c) => c,
         Err(e) => {
-            // nothing ran: no session of it
+            // nothing ran: no run of it
             if let Some(p) = printer {
                 p.abort();
             }
@@ -878,28 +856,26 @@ async fn run_once(
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
+    if let Some(lost) = started.writer.not_written() {
+        eprintln!("sonde: {lost}");
+    }
     if under.is_none() {
         // read before it is put in its place: this run's, whatever another does
-        let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        let run = RunFile::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         if let Some(t) = &target {
             started.path = place(&started.path, t, a.force)?;
         }
         // kept as the app keeps it: a run that failed is compared with none
-        sonde_proxy::index::set(&started.path, sonde_proxy::index::Change::Exit(code));
+        sonde_analysis::index::set(&started.path, sonde_analysis::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
-        let prices = request_prices_for(s, &session.header.endpoint);
-        let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
+        let prices = request_prices_for(s, &run.header.endpoint);
+        let analysis = sonde_analysis::view::Analysis::of(&run, &prices);
         // against the program's run before: what the change did
-        let since = super::fixloop::since_last(
-            s,
-            &started.path,
-            &session.header,
-            &session.records,
-            &analysis,
-        );
+        let since =
+            super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);
         print_summary_of(
             &analysis,
-            &session.header,
+            &run.header,
             &started.path,
             color,
             false,
@@ -910,18 +886,14 @@ async fn run_once(
         // (nor as one that sent nothing)
         match stopped_text(signal) {
             Some(why) => eprintln!("{}", paint(&why, "33", color)),
-            None if session.records.is_empty() => eprintln!("{}", NO_REQUESTS),
+            None if run.records.is_empty() => eprintln!("{}", no_requests(&a.command)),
             None => {}
         }
-    }
-    // what it wrote is the program's to write over next time
-    if let Err(e) = ctx.written.keep() {
-        eprintln!("warning: what the program wrote could not be kept for its next run: {e}");
     }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
-    let _ = sonde_proxy::session::compress(&file);
+    let _ = sonde_analysis::run::compress(&file);
     Ok(Ran {
         file,
         code,
@@ -931,7 +903,7 @@ async fn run_once(
 }
 
 /// Where `-o FILE` is recorded until the run ends: beside it, a name of
-/// this run's own that no listing takes for a session.
+/// this run's own that no listing takes for a run.
 fn recording_path(target: &std::path::Path) -> PathBuf {
     let name = target
         .file_name()
@@ -967,10 +939,10 @@ fn place(
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "run".into());
-            let fresh = sonde_proxy::session::fresh_path(&runs_dir(target), &stem);
+            let fresh = sonde_analysis::run::fresh_path(&runs_dir(target), &stem);
             std::fs::rename(recorded, &fresh)?;
             eprintln!(
-                "sonde: {} was written by another run meanwhile: this run's session is {}",
+                "sonde: {} was written by another run meanwhile: this run is {}",
                 target.display(),
                 fresh.display()
             );
@@ -998,6 +970,20 @@ fn engine_note(engine: sonde_proxy::jvm::Engine, command: &[String]) -> String {
             command[0]
         ),
         None => format!("sonde: {} is given its endpoint with {how}", command[0]),
+    }
+}
+
+/// What sonde added to a container's command line, and whether the
+/// command's own network keeps the container from reaching sonde.
+fn container_note(command: &[String]) -> String {
+    match sonde_proxy::container::own_network(command) {
+        Some(net) if net != "host" => format!(
+            "warning: the container is on network {net}: sonde listens on the host's 127.0.0.1, which it may not reach (`--network host` does)"
+        ),
+        _ => format!(
+            "sonde: {} is given the host's network and the recording's variables by name (--network host -e …)",
+            command[0]
+        ),
     }
 }
 
@@ -1038,22 +1024,107 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(1)
 }
 
-/// What to try when a program sent sonde nothing: most SDKs read
-/// AWS_ENDPOINT_URL, some need the endpoint said their own way.
-const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
-  boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
-  AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
-  Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
-  Java SDK v2         2.21 or newer
-  Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)
-  Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)
-  DuckDB              SET s3_endpoint='127.0.0.1:PORT'; SET s3_url_style='path'; SET s3_use_ssl=false
-  Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })
-Credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them.";
+/// How each client is pointed at sonde when it does not read
+/// AWS_ENDPOINT_URL: the words of a command that name it, and the line.
+const POINTED: &[(&[&str], &str)] = &[
+    (
+        &["docker", "podman"],
+        "a container         sonde gives `docker run` / `podman run` --network host and the variables; with a network of its own it cannot reach 127.0.0.1 (Docker Desktop: turn on host networking)",
+    ),
+    (
+        &["s5cmd"],
+        "s5cmd               reads S3_ENDPOINT_URL (sonde sets it), or --endpoint-url \"$AWS_ENDPOINT_URL\"",
+    ),
+    (
+        &["duckdb"],
+        "DuckDB              con.execute(f\"SET s3_endpoint='{urlparse(os.environ['AWS_ENDPOINT_URL']).netloc}'; SET s3_url_style='path'; SET s3_use_ssl=false\")",
+    ),
+    (
+        &["rclone"],
+        "rclone              a remote of the environment's: rclone ls :s3,env_auth=true:bucket (a named remote keeps its own endpoint)",
+    ),
+    (
+        &["pyarrow"],
+        "pyarrow             S3FileSystem(endpoint_override=os.environ[\"AWS_ENDPOINT_URL\"]), or FileSystem.from_uri, which reads it",
+    ),
+    (
+        &["aws"],
+        "AWS CLI             v1.29 / v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"",
+    ),
+    (
+        &["python", "python3", "boto3"],
+        "boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])",
+    ),
+    (
+        &["go"],
+        "Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)",
+    ),
+    (
+        &["java", "mvn", "gradle"],
+        "Java SDK v2         2.21 or newer",
+    ),
+    (
+        &["spark-submit", "pyspark", "hadoop", "flink"],
+        "Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)",
+    ),
+    (
+        &["trino"],
+        "Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)",
+    ),
+    (
+        &["node", "npx", "npm", "bun", "deno"],
+        "Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })",
+    ),
+];
+
+/// What to try when a program sent sonde nothing: most clients read
+/// AWS_ENDPOINT_URL, some need the endpoint said their own way; the line of
+/// the client the command names comes first.
+fn no_requests(command: &[String]) -> String {
+    let words: Vec<String> = command
+        .iter()
+        .flat_map(|w| w.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+        .map(|w| {
+            let w = w.rsplit(['/', '\\']).next().unwrap_or(&w).to_string();
+            w.split('.').next().unwrap_or(&w).to_ascii_lowercase()
+        })
+        .collect();
+    let names = |(ws, _): &&(&[&str], &str)| ws.iter().any(|n| words.iter().any(|w| w == n));
+    let mut lines: Vec<&str> = POINTED.iter().filter(names).map(|(_, l)| *l).collect();
+    lines.extend(POINTED.iter().filter(|p| !names(p)).map(|(_, l)| *l));
+    format!(
+        "\nNothing reached sonde: the program sent it no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:\n  {}\nCredentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them. An error that names a SONDE… key came from a store sonde was not in front of.",
+        lines.join("\n  ")
+    )
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_reached_names_the_programs_own_way_first() {
+        let first = |c: &str| {
+            let words: Vec<String> = c.split_whitespace().map(String::from).collect();
+            no_requests(&words)
+                .lines()
+                .nth(2)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        assert!(first("s5cmd ls s3://b").starts_with("s5cmd"));
+        assert!(first("docker run amazon/aws-cli s3 ls").starts_with("a container"));
+        assert!(first("python3 job_with_duckdb.py").starts_with("boto3"));
+        assert!(first("/usr/bin/rclone ls remote:b").starts_with("rclone"));
+        // every way is said, whatever the program
+        let all = no_requests(&["./job".into()]);
+        assert_eq!(
+            all.lines().filter(|l| l.starts_with("  ")).count(),
+            POINTED.len()
+        );
+        assert!(all.contains("SONDE"));
+    }
 
     #[test]
     fn an_input_past_its_limit_is_kept_in_a_file_and_read_again_whole() {
@@ -1086,7 +1157,7 @@ mod tests {
 
     #[test]
     fn did_not_break_is_said_only_when_every_scenario_was_judged() {
-        use sonde_proxy::trial::Standing::*;
+        use sonde_analysis::trial::Standing::*;
         assert_eq!(
             trials_summary(&[Survived, Degraded]),
             "The program did not break."

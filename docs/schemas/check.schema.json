@@ -25,7 +25,11 @@
       "properties": {
         "passed": {
           "type": "boolean",
-          "description": "Every row passed (true when there are none)."
+          "description": "The run reached sonde and every row passed."
+        },
+        "empty": {
+          "type": "boolean",
+          "description": "The run recorded no request: nothing reached sonde. Such a run fails."
         },
         "verdicts": {
           "type": "array",
@@ -50,6 +54,7 @@
       },
       "required": [
         "passed",
+        "empty",
         "verdicts",
         "newWarnings"
       ]
@@ -269,7 +274,7 @@
               },
               "run": {
                 "type": "string",
-                "description": "The run's session file name."
+                "description": "The run's file name."
               }
             },
             "required": [

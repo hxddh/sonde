@@ -11,11 +11,24 @@ on:
       set:
         type: string
         default: all
+    # signing (docs/dev/packaging.md): each step that needs one is skipped, and
+    # says so, while it is not set
+    secrets:
+      MACOS_CERTIFICATE_P12: { required: false }
+      MACOS_CERTIFICATE_PASSWORD: { required: false }
+      MACOS_SIGNING_IDENTITY: { required: false }
+      APPLE_API_KEY: { required: false }
+      APPLE_API_KEY_ID: { required: false }
+      APPLE_API_ISSUER: { required: false }
+      AZURE_TENANT_ID: { required: false }
+      AZURE_CLIENT_ID: { required: false }
+      AZURE_CLIENT_SECRET: { required: false }
+      AZURE_SIGNING_ENDPOINT: { required: false }
+      AZURE_SIGNING_ACCOUNT: { required: false }
+      AZURE_SIGNING_PROFILE: { required: false }
 
 env:
   CARGO_TERM_COLOR: always
-  # Native Shell, pinned (docs/decisions.md D-207): its main at 2ca3b80
-  NSH_REV: 2ca3b8005cf00907c8c501ad9ba5f21f576fee84
 
 jobs:
   plan:
@@ -38,8 +51,8 @@ jobs:
               # static: runs on any Linux, Alpine and distroless included
               (0, "ubuntu-22.04", "x86_64-unknown-linux-musl", "linux-x86_64-musl"),
               (1, "ubuntu-22.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"),
-              (1, "macos-15", "aarch64-apple-darwin", "macos-aarch64"),
-              (1, "macos-15-intel", "x86_64-apple-darwin", "macos-x86_64"),
+              (1, "macos-26", "aarch64-apple-darwin", "macos-aarch64"),
+              (1, "macos-26-intel", "x86_64-apple-darwin", "macos-x86_64"),
               # sonde.exe in a .zip: CI on Windows, and the terminal there
               (1, "windows-latest", "x86_64-pc-windows-msvc", "windows-x86_64"),
           ]
@@ -56,7 +69,7 @@ jobs:
           print("terminal:", [x["name"] for x in t], "desktop:", [x["name"] for x in d], "macos-app:", m)
 
   viewer:
-    # the page `sonde share` writes: Native Shell's web target, built once
+    # the page `sonde share` writes: Native Shell's web target, made once
     needs: plan
     if: needs.plan.outputs.any == 'true'
     runs-on: ubuntu-24.04
@@ -65,42 +78,40 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         id: rust
         with: { targets: wasm32-unknown-unknown }
-      # the same page while its sources, Native Shell and Rust are the same:
-      # kept, and built again only when one of them changed
+      - uses: ./.github/actions/nsh
+        id: nsh
+      - run: sudo apt-get update -q && sudo apt-get install -y -q llvm
+      # what takes long is Native Shell's web runtime, which an installed nsh
+      # does not carry: built in a checkout of the pinned commit, and kept
+      # while that commit and Rust are the same (NSH_RUNTIME points nsh at it)
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: built
+        id: runtime
         with:
-          path: viewer/.nsh/out/sonde-viewer
-          key: viewer-${{ env.NSH_REV }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('viewer/**', 'app/src/**', 'app/locales/**', 'app/theme.json') }}
-      # `nsh package --target web` needs Native Shell's web runtime, which an
-      # installed nsh does not carry: in a checkout's target, nsh builds it
-      - name: Native Shell checkout at the pinned commit
-        if: steps.built.outputs.cache-hit != 'true'
+          path: ${{ runner.temp }}/nsh-runtime
+          key: nsh-web-${{ steps.nsh.outputs.rev }}-${{ steps.rust.outputs.cachekey }}
+      - name: Native Shell's web runtime
+        if: steps.runtime.outputs.cache-hit != 'true'
+        env:
+          NSH_REV: ${{ steps.nsh.outputs.rev }}
         run: |
           git init -q "$RUNNER_TEMP/nsh" && cd "$RUNNER_TEMP/nsh"
           git fetch -q --depth 1 https://github.com/longbridge/nsh "$NSH_REV" && git checkout -q FETCH_HEAD
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: steps.built.outputs.cache-hit != 'true'
-        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: viewer, workspaces: "${{ runner.temp }}/nsh -> target" }
-      - uses: ./.github/actions/nsh
-        if: steps.built.outputs.cache-hit != 'true'
-        with: { rev: "${{ env.NSH_REV }}" }
-      - if: steps.built.outputs.cache-hit != 'true'
-        run: sudo apt-get update -q && sudo apt-get install -y -q llvm
-      - name: Build the viewer
-        if: steps.built.outputs.cache-hit != 'true'
-        run: |
           # the installed nsh is this commit's nsh-cli: in the checkout's
-          # target/release it builds the web runtime from the checkout, with
-          # no build of its own (else, said, the checkout's is built)
+          # target/release it builds the web runtime from the checkout
           nsh="$RUNNER_TEMP/nsh/target/release/nsh"
           mkdir -p "$(dirname "$nsh")" && cp "$(command -v nsh)" "$nsh"
-          if ! (cd viewer && "$nsh" package App.tsx --target web); then
-            echo "::warning title=Viewer::the installed nsh did not build the web runtime: building the checkout's nsh-cli"
-            cargo build --release --locked --manifest-path "$RUNNER_TEMP/nsh/Cargo.toml" -p nsh-cli
-            (cd viewer && "$nsh" package App.tsx --target web)
-          fi
-          ls -la viewer/.nsh/out/sonde-viewer
+          (cd "$GITHUB_WORKSPACE/viewer" && "$nsh" package App.tsx --target web)
+          web="$RUNNER_TEMP/nsh/target/wasm32-unknown-unknown/web"
+          mkdir -p "$RUNNER_TEMP/nsh-runtime/web"
+          cp "$web/nsh-browser.wasm" "$web/nsh-syntaxes.bin" crates/nsh-platform-web/web/nsh.js "$RUNNER_TEMP/nsh-runtime/web/"
+          # the runtime's browser modules (nsh.js imports them): without them the page starts nothing
+          cp -r crates/nsh-platform-web/web/browser "$RUNNER_TEMP/nsh-runtime/web/"
+      - name: Build the viewer
+        env:
+          NSH_RUNTIME: ${{ runner.temp }}/nsh-runtime
+        run: |
+          cd viewer && nsh package App.tsx --target web
+          ls -la .nsh/out/sonde-viewer
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonde-viewer
@@ -116,10 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      # the app's crate, as ci.yml's ui job keeps it (which saves it)
+      - run: mkdir -p app/.nsh/rust
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: bundle, workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
+        with: { shared-key: app, save-if: false, workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
       - uses: ./.github/actions/nsh
-        with: { rev: "${{ env.NSH_REV }}" }
       - name: Bundle the app
         run: cd app && nsh build App.tsx --release && ls -la .nsh/out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -158,7 +170,7 @@ jobs:
           # a static binary has no dynamic libraries to list
           (ldd target/${{ matrix.target }}/release/sonde || true) | tee ldd.txt
           if grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt; then echo "::error::the terminal binary links GUI libraries"; exit 1; fi
-          image=${{ contains(matrix.target, 'musl') && 'alpine:3.20' || 'debian:bookworm-slim' }}
+          image=${{ contains(matrix.target, 'musl') && 'alpine:3.24' || 'debian:bookworm-slim' }}
           docker run --rm -v "$PWD/target/${{ matrix.target }}/release/sonde:/sonde:ro" $image /sonde --version
       - name: Check the binary on macOS
         if: runner.os == 'macOS'
@@ -167,7 +179,20 @@ jobs:
         if: runner.os == 'Windows'
         run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
-        run: test -n "$(target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check 2>&1 >/dev/null; ls share-check/index.html)"
+        run: target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
+      # before it is zipped: the archive holds the signed sonde.exe
+      - name: Sign sonde.exe (skipped without the signing secrets)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/sign-windows
+        with:
+          files: ${{ github.workspace }}\target\${{ matrix.target }}\release\sonde.exe
+          release: ${{ inputs.release }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          account: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          profile: ${{ secrets.AZURE_SIGNING_PROFILE }}
       - name: Package
         run: |
           mkdir -p dist
@@ -209,12 +234,31 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
       - uses: ./.github/actions/nsh
-        with: { rev: "${{ env.NSH_REV }}" }
-      # the app's Share writes the session as the viewer's web page
+      # the app's Share writes the run as the viewer's web page
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the app
         run: cd app && nsh package App.tsx --target ${{ matrix.target }}
+      - name: Sign the app (skipped without the signing secrets)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/sign-windows
+        with:
+          files: ${{ github.workspace }}\app\.nsh\out\sonde\sonde.exe
+          release: ${{ inputs.release }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          account: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          profile: ${{ secrets.AZURE_SIGNING_PROFILE }}
+      # nsh zipped the folder before it was signed: zipped again, its
+      # entries under sonde/ as nsh writes them
+      - name: The updater's archive, of the signed app
+        if: runner.os == 'Windows'
+        run: |
+          shopt -s nullglob
+          cd app/.nsh/out
+          for z in sonde-[0-9]*-windows-*.zip; do rm "$z" && 7z a -tzip -bso0 "$z" sonde; done
       - name: Collect the archive (sonde-<version>-<platform>, as the updater names it)
         run: |
           shopt -s nullglob
@@ -230,19 +274,18 @@ jobs:
   macos-app:
     needs: [plan, viewer]
     if: needs.plan.outputs.macos-app == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
+        with: { shared-key: macos-app, save-if: "${{ github.ref == 'refs/heads/main' }}" }
       - uses: ./.github/actions/nsh
-        with: { rev: "${{ env.NSH_REV }}" }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the .app
         run: nsh package app/App.tsx --target macos --out dist
-      - name: Sign with Developer ID (skipped without the certificate)
+      - name: Sign with Developer ID, inside out (skipped without the certificate)
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -250,13 +293,31 @@ jobs:
           # a release without it says so as a warning on the run, not a notice
           SONDE_RELEASE: ${{ inputs.release }}
         run: scripts/macos-sign.sh dist/sonde.app
-      - name: Make the .dmg
-        run: scripts/macos-dmg.sh dist/sonde.app dist/sonde-macos.dmg
-      - name: Notarize (skipped without credentials)
+      - name: Notarize and staple the .app (skipped without the API key)
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          SONDE_RELEASE: ${{ inputs.release }}
+        run: scripts/macos-notarize.sh dist/sonde.app
+      # nsh archived the app before it was signed: archived again, as nsh
+      # does (tar keeps the links and modes the signature covers;
+      # COPYFILE_DISABLE keeps out the ._ files it does not)
+      - name: The updater's archive, of the stapled app
+        run: |
+          shopt -s nullglob
+          cd dist
+          for t in sonde-[0-9]*-macos-*.tar.gz; do COPYFILE_DISABLE=1 tar -czf "$t" sonde.app; done
+      - name: Make the .dmg (signed with the certificate)
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: scripts/macos-dmg.sh dist/sonde.app dist/sonde-macos.dmg
+      - name: Notarize and staple the .dmg (skipped without the API key)
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           SONDE_RELEASE: ${{ inputs.release }}
         run: scripts/macos-notarize.sh dist/sonde-macos.dmg
       - name: Checksums (the .dmg, and the archive the updater installs)

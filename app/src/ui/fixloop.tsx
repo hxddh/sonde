@@ -13,17 +13,16 @@ import { api } from "../native";
 import type { FindingChange, SinceLast } from "../types";
 import { Icon } from "./icon";
 import { Button, Card, EMPHASIS, ICON, Row, TEXT } from "./kit";
-import { type FindingState, StateBadge } from "./sessionview";
+import { StateBadge } from "./runview";
+import { changedFindings, savedText } from "./runchange";
 
-/** What acting on a finding saved, measured, against the predicted ("saved 40 requests (predicted 42)"); null when nothing was measured. */
-export const savedText = (f: FindingChange): string | null => (f.saved ? say([f.saved], f.savedText ?? "") : (f.savedText ?? null));
 
-/** A run against its program's run before it, read off the interface's thread: null for a session that is no run of a program, or while it is read. */
+/** A run against its program's run before it, read off the interface's thread: null for a run that is no run of a program, or while it is read. */
 export function sinceLastOf(path: () => string | null) {
   return resource(path, async (p): Promise<SinceLast | null> => {
     if (!p) return null;
     try {
-      return await api.sessions.sinceLast(p);
+      return await api.runs.sinceLast(p);
     } catch {
       return null;
     }
@@ -48,12 +47,6 @@ function changeLine(s: SinceLast): string | null {
   if (c.errors[0] !== c.errors[1]) parts.push(part(t("signal.errors"), count(c.errors[0]), count(c.errors[1])));
   return parts.join(" · ");
 }
-
-/** The findings that tell what changed: fixed first, then less, back, new, more (open ones say nothing new). */
-export const changedFindings = (findings: FindingChange[]): FindingChange[] => {
-  const rank: Record<FindingState, number> = { fixed: 0, less: 1, back: 2, new: 3, more: 4, open: 5 };
-  return findings.filter((f) => f.state !== "open").sort((a, b) => rank[a.state] - rank[b.state]);
-};
 
 /** "Since the run before": the change in figures, then the findings that were fixed or came back
  * (`max` of them), each fixed one with what it saved; `onCompare` opens the two runs side by side.

@@ -11,7 +11,8 @@ pub mod demo;
 pub mod guard;
 pub mod jobs;
 pub mod paths;
-pub mod phrase;
+/// What sonde says, as phrases: decoders' type, said from the locale files.
+pub use decoders::phrase;
 pub mod services;
 pub mod sonde;
 pub mod vendor;
