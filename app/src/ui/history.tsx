@@ -127,6 +127,11 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
     return (v.standing === "survived" ? trialText(v) : (trialReasons(v)[0] ?? trialText(v))) || "";
   };
   const gone = () => !!x() && !x()!.run;
+  // where it turned: "at PutObject b/state (etl.py:12)", the program's line when the run named its callers
+  const where = () => {
+    const w = x()?.standing === "survived" ? null : x()?.where;
+    return w ? t("trial.at", { what: `${w.kind} ${w.key}${w.caller ? ` (${w.caller})` : ""}` }) : "";
+  };
   return (
     <ListRow
       divided
@@ -149,11 +154,11 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
       <View class={`min-w-0 flex-1 flex-row items-baseline gap-2 ${gone() ? "opacity-60" : ""}`}>
         <Text class={`shrink-0 ${TEXT.body}`}>{scenarioLabel(props.row.scenario)}</Text>
         <Text testID="trial-id" class={`shrink-0 ${TEXT.codeQuiet}`}>{x() ? trialAsked(x()!) : props.row.scenario}</Text>
-        {/* why, then over the program's runs (or that its run is gone): one quiet line, cut at its end */}
+        {/* why, where it turned (the request and the program's line), then how it stood over the program's runs:
+            one quiet line. What is cut first is the history (the same on every row), then the reason's end */}
         <View class="min-w-0 flex-1 flex-row items-baseline gap-2">
-          {/* how it stood over the program's runs (a few words, kept whole), then why, cut at the line's end */}
-          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`shrink-0 ${TEXT.note}`}>{h()}</Text>}</If>
-          <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{[why(), gone() ? t("trial.runGone") : ""].filter(Boolean).join(" · ")}</Text>
+          <Text testID="trial-why" class={`min-w-0 shrink ${TEXT.note} line-clamp-1`}>{[why(), where(), gone() ? t("trial.runGone") : ""].filter(Boolean).join(" · ")}</Text>
+          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{h()}</Text>}</If>
         </View>
       </View>
     </ListRow>
@@ -318,7 +323,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -375,7 +380,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     <Await loading={h.loading() && !h()} error={h.error()} retry={() => h.refetch()}>
       <If when={h()} else={<Empty icon="list-clock" text={t("history.none")} />}>
         {(x) => (
-          <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
+          <Scroll testID="history-pane" class="min-h-0 flex-1" onScroll={(e) => props.onScrolled?.(e.offset.y > 8)} contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
             {/* the command is the run's header, over this pane: not said again; the dashed line said where one is drawn */}
             <PageHeader title={t("history.title", { n: x().runs.length })} subtitle={!textual() && x().baseline && x().runs.length > 1 && shown(x()).runs.length > 0 ? t("history.hint") : undefined}>
               <If when={!terminal()}>

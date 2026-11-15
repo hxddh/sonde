@@ -137,7 +137,9 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
       ...has(t("browse.uploadKind"), etagText(d)),
       ...has(t("browse.partSizes"), d.partSizeGuesses.length > 0 ? d.partSizeGuesses.map((s) => bytes(s)).join(", ") : null),
       ...d.checksums.map((c): [string, string] => [c.algorithm, `${c.value} · ${c.kind === "composite" ? t("browse.composite", { n: c.parts ?? "?" }) : t("browse.fullObject")}${c.kindFromHeader ? "" : ` · ${t("browse.inferred")}`}`]),
-      ...has("SSE", sse),
+      // what it lacks is said too: no checksum stored, no encryption reported (what a compatibility check asks)
+      ...(d.checksums.length === 0 ? [[t("browse.checksum"), t("browse.noChecksum")] as [string, string]] : []),
+      ["SSE", sse || t("browse.noSse")],
       ...has(t("browse.kmsKey"), d.sse.kmsKeyId),
       ...has(t("browse.bucketKey"), d.sse.bucketKeyEnabled === null || d.sse.bucketKeyEnabled === undefined ? null : d.sse.bucketKeyEnabled ? t("common.on") : t("common.off")),
       ...has(t("browse.objectLock"), d.objectLock),

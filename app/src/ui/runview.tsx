@@ -161,10 +161,9 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
   };
   // folded: one line, what it ran and its first four figures said with what they count (each still opens its
   // chart), then the commands
-  // (four: bytes is reached from a short pane too, whose header is always folded)
   const FOLDED = 4;
   const said = (i: number, x: SignalTile) =>
-    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : x.value;
+    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : i === 2 && x.value !== t("signal.notTimed") ? t("run.foldedLatency", { v: x.value }) : x.value;
   const folded = () => (
     <View class="gap-3">
     <View testID="run-folded" class="flex-row items-center gap-3">

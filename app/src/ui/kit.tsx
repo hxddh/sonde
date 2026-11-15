@@ -1473,14 +1473,14 @@ export function Choice(props: { label?: string; value: string | null; items: { v
  * A view that has nothing to show here keeps its tab, `disabled` (dimmed,
  * no press; `why` is what a screen reader hears after its name): tabs do
  * not come and go with what they would show. */
-export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName; disabled?: boolean; why?: string }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
+export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName; disabled?: boolean; why?: string; /** a status dot after the title (stale uploads), with what it means */ mark?: { tone: Tone; label: string } }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
     <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-segment ${SHADOW.control} ${GLIDE}`}>
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
-            accessibilityLabel={item().disabled && item().why ? `${item().title}, ${item().why}` : item().title}
+            accessibilityLabel={[item().title, item().mark?.label, item().disabled ? item().why : undefined].filter(Boolean).join(", ")}
             selected={props.value === item().value}
             disabled={item().disabled}
             onPress={() => props.onChange(item().value)}
@@ -1490,6 +1490,7 @@ export function Segmented(props: { value: string; items: { value: string; title:
               <Icon name={item().icon!} size={ICON.small} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
             <Text class={`${TEXT.note} group-selected:text-foreground`}>{item().title}</Text>
+            <If when={item().mark}>{(m) => <Dot tone={m().tone} label={m().label} />}</If>
           </Tab>
         )}
       </Each>

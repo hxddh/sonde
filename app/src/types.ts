@@ -37,7 +37,6 @@ export interface Settings {
   "rate-limit": number | null;
   prices: Prices;
   theme: string;
-  "high-contrast"?: boolean;
   language: string;
   "exports-dir": string | null;
   "downloads-dir": string | null;
@@ -812,6 +811,16 @@ export interface Saving {
 }
 
 /** A finding between two runs of a program: fixed (gone at any threshold), less or more (by its count), back (fixed or under its threshold before, here again), new or open. */
+/** A program run here, as `Runs.programs()` gives it (the fields the app reads). */
+export interface ProgramInfo {
+  program: string;
+  runs: number;
+  /** Its newest run, by path. */
+  latest?: string;
+  /** Its newest run is past its baseline (more than 10% more requests or waiting). */
+  regressed: boolean;
+}
+
 export interface FindingChange {
   identity: string;
   state: "fixed" | "less" | "more" | "back" | "new" | "open";

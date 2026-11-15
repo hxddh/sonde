@@ -9,7 +9,7 @@ import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
 import type { RunInfo } from "../types";
-import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT } from "./kit";
+import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT, TONE } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
@@ -50,6 +50,8 @@ export function tellApart(args: string[]): string[] {
 export function RunList(props: {
   runs: RunInfo[];
   selected: string | null;
+  /** The runs past their program's baseline (each program's newest, when it is): marked on their rows. */
+  past?: Set<string> | null;
   onSelect: (p: string) => void;
   onContextMenu?: (s: RunInfo, at?: { x: number; y: number }) => void;
   /** The context menu's commands, offered to screen readers on each row. */
@@ -157,6 +159,11 @@ export function RunList(props: {
       <View class="flex-row items-center gap-2">
         {/* where it went and how much it did, always */}
         <Text testID="run-requests" class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        {/* its program's newest run, past the baseline its runs are held to */}
+        <If when={props.past?.has(x().s.path)}>
+          <Dot tone="warn" label={t("runs.pastBaseline")} />
+          <Text testID="run-past" class={`shrink-0 ${TEXT.captionSize} ${TONE.warn.text}`}>{t("runs.pastBaseline")}</Text>
+        </If>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
