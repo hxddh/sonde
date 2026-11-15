@@ -365,6 +365,8 @@ for (const v of variants) {
     await app.hover(strip);
     await app.press(strip);
     await shot("03f-slice");
+    // (a press on the Time pane's shape starts a stretch: let go before the board's picture)
+    if (app.shows("id:zoom-reset")) await app.press("id:zoom-reset");
     await app.press("id:run-pane-mode-time");
     await app.waitFor("id:time-pane");
     // the board's charts draw themselves in: the picture is of them drawn
