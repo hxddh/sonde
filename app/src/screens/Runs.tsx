@@ -311,8 +311,6 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const same = others.filter((s) => mine && s.program === mine);
     const rest = others.filter((s) => !same.includes(s));
     const item = (s: RunInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${count(s.requests)}`, onSelect: () => compareWith.set(s.path) });
-    // and last, the same requests on another store: will it work there?
-    const another: MenuItem[] = [{ type: "separator" }, { label: t("compare.another"), icon: iconSvg("repeat-2"), onSelect: () => replaying.set(true) }];
     void popupMenu(
       [
         ...(others.length
@@ -321,7 +319,6 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
               ...(rest.length ? ([{ type: "separator" }, { label: t("compare.otherPrograms"), submenu: rest.slice(0, 20).map(item) }] as MenuItem[]) : []),
             ]
           : [{ label: t("compare.none"), disabled: true }]),
-        ...another,
       ],
       // under its button, or under ⋯ where it was chosen from there
       anchor,
@@ -336,6 +333,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       // the same command under faults is asked first what will run (a trial is no run of its own)
       ...(tryable ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running(), run: () => tryingFaults.set(true) }] : []),
       ...(isAvailable ? [{ id: "compare-open", label: t("compare.open"), icon: "git-compare-arrows" as const, run: (anchor?: ViewRef) => compareMenu(anchor) }] : []),
+      // the same requests on another store: will it work there? (one level, in ⋯ and the palette)
+      { id: "run-another", label: t("compare.another"), icon: "repeat-2" as const, disabled: !!running(), run: () => replaying.set(true) },
     ];
   };
   // (a run's own window has no palette)
@@ -508,12 +507,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           testID="run-again"
         />
       </If>
-      {/* one primary, and the rest behind ⋯ by their words (and in the palette): Try under faults, Compare… (its
-          last item: On another store…) — the command keeps its room. Where there are no menus (a terminal, the web),
-          On another store… is a button */}
-      <If when={terminal() || !isAvailable}>
-        <Button small variant="outline" icon="repeat-2" label={t("compare.another")} onPress={() => replaying.set(true)} testID="compare-another" />
-      </If>
+      {/* one primary, and the rest behind ⋯ by their words (and in the palette): Try under faults, Compare…, On
+          another store… — the command keeps its room */}
       <If when={isAvailable}>
         <IconButton ref={(r) => (moreButton = r)} icon="ellipsis" label={t("common.more")} onPress={moreMenu} testID="run-more" />
       </If>

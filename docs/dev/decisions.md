@@ -225,7 +225,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-240 | Findings' order | severity; saving | **What they save**: money, then time, then requests. |
 | D-241 | A month | none; per source | **An import's own span; a run's `[program] runs-per-month`**. |
 | D-242 | Replay of a program that reads input | differences; stand-ins | **Stand-ins of the recorded size** for what it read first, written outside the replay's run and removed after. |
-| D-243 | Compatibility | every probe in Settings; what the program relies on | **Only the probes matching what the run used**, asked from a run (Compare › On another store…); `probe` stays the catalogue. |
+| D-243 | Compatibility | every probe in Settings; what the program relies on | **Only the probes matching what the run used**, asked from a run (⋯ › On another store…); `probe` stays the catalogue. |
 | D-244 | Typed confirmation | always; above 100 | **Above 100 items, or a lifecycle**; below, a plain confirm. |
 | D-245 | Surfaces | cards in cards; one level | **One surface level**: tables fill their pane; a folded one-line run header on short panes and on Time and History. |
 | D-246 | A chart pressed with no mark under the pointer | nothing; its weightiest row | **The row that weighs most** (`pressedRow`); a chart's how-to-read is a popover. |

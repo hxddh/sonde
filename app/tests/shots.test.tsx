@@ -441,11 +441,9 @@ for (const v of variants) {
     await charts("03h-runs");
     await app.press("id:compare-back");
 
-    // will it work on another store: Compare's last item, On another store…, says what its replay would send first
-    // (a terminal's header has it as a button)
+    // will it work on another store: On another store… (in ⋯) says what its replay would send first
     await app.waitFor("id:run-more", { timeout: 10000 });
-    if (app.shows("id:compare-another")) await app.press("id:compare-another");
-    else await chooseFrom(() => act("compare-open", "Compare…", "对比…"), v.lang ? "在另一个存储上…" : "On another store…");
+    await act("run-another", "On another store…", "在另一个存储上…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");

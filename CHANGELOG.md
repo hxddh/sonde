@@ -17,7 +17,7 @@ interface. JSON outputs change shape ([contract](docs/contract.md)).
 - **Will it work on another store?** Replay first writes stand-ins for what the run read but did not write, so a job
   that reads its input replays with no false differences. It ends with what the program relies on (checksums,
   conditional writes, ranges, multipart, …) and how the store answers each, and each store's request cost. The app
-  asks it from a run: Compare › On another store….
+  asks it from a run: ⋯ › On another store….
 - **Money a month.** An import projects a month from its own span; a run uses `[program] runs-per-month`. Findings are
   ordered by what they save, each with its saving a month; the list ends with their total.
 - An imported request's caller is its requester (the IAM principal). `compare` names both endpoints when they differ.

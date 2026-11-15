@@ -110,13 +110,17 @@ async fn browse_mpu_versions_du() {
         assert!(r.delete_markers >= 1);
 
         // abort through the guard, then lifecycle
+        // (one upload: a plain confirm, nothing typed)
         let plan = mpu::plan_abort(s, &t.name, &b, &r_uploads(s, &t.name, &b).await);
-        assert!(exec::execute(s, &plan.id, "wrong").await.is_err());
-        let o = exec::execute(s, &plan.id, &b).await.unwrap();
+        assert!(!plan.typed);
+        let o = exec::execute(s, &plan.id, "").await.unwrap();
         assert_eq!(o.succeeded, 1);
+        // a lifecycle replaces the bucket's rules: typed, and refused when wrong
         let plan = mpu::plan_lifecycle_rule(s, &t.name, &b, "", 7)
             .await
             .unwrap();
+        assert!(plan.typed);
+        assert!(exec::execute(s, &plan.id, "wrong").await.is_err());
         let o = exec::execute(s, &plan.id, &b).await.unwrap();
         assert_eq!(o.succeeded, 1, "{}: {:?}", t.name, o.errors);
         // each run is on record twice: before its first request, then its outcome

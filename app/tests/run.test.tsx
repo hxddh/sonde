@@ -129,10 +129,8 @@ test("a run as a timeline, replayed from the app, and the answers compared", asy
   await runView(app);
   // where each operation fell in time is the operations' own When column
   expect(app.shows("id:run-pane-mode-timeline")).toBe(false);
-  // on another store: Compare's last item
-  await runAction(app, "Compare…");
-  await app.waitUntil(() => !!app.menu()?.some((m) => m.label === "On another store…"), { timeout: 5000 });
-  await app.chooseMenuItem("On another store…");
+  // on another store: one item of the run's ⋯
+  await runAction(app, "On another store…");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
   expect(app.shows("text:/2 requests \\(1 write, 0 deletes\\) under replay-/")).toBe(true);
   // and, said before it runs, the probe of what it relies on (a write on a condition)
