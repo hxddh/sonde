@@ -165,7 +165,11 @@ export function RunList(props: {
       </View>
       <View class="flex-row items-center gap-2">
         {/* where it went and how much it did, always */}
-        <Text testID="run-requests" class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[clientsOf(x().s), x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        {/* the count never cut: what sent it and where give way first */}
+        <View class="min-w-0 flex-1 flex-row items-center gap-1">
+          <Text class={`min-w-0 shrink ${TEXT.meta} line-clamp-1`}>{[clientsOf(x().s), x().s.endpoint].filter(Boolean).join(" · ")}</Text>
+          <Text testID="run-requests" class={`shrink-0 ${TEXT.meta}`}>{`${[clientsOf(x().s), x().s.endpoint].some(Boolean) ? "· " : ""}${t("runs.requestsN", { n: x().s.requests })}`}</Text>
+        </View>
         {/* its program's newest run, past the baseline its runs are held to */}
         <If when={props.past?.has(x().s.path)}>
           <Dot tone="warn" label={t("runs.pastBaseline")} />

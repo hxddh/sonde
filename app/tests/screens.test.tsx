@@ -400,8 +400,10 @@ test("a run's row says what sent its requests, before where they went and how ma
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.list": [run("load", ["boto3"]), run("lake", ["Lance", "boto3"]), run("plain")] } } });
   await place(app, "runs");
   await app.waitFor("id:run-list", { timeout: 10000 });
-  expect(app.shows("id:run-0 >> text:boto3 · demo · 100 requests")).toBe(true);
-  expect(app.shows("id:run-1 >> text:Lance, boto3 · demo · 100 requests")).toBe(true);
+  expect(app.shows("id:run-0 >> text:boto3 · demo")).toBe(true);
+  expect(app.shows("id:run-0 >> text:· 100 requests")).toBe(true);
+  expect(app.shows("id:run-1 >> text:Lance, boto3 · demo")).toBe(true);
   // none known: as 23.0.1, where they went and how many
-  expect(app.shows("id:run-2 >> text:demo · 100 requests")).toBe(true);
+  expect(app.shows("id:run-2 >> text:demo")).toBe(true);
+  expect(app.shows("id:run-2 >> text:· 100 requests")).toBe(true);
 });
