@@ -179,8 +179,7 @@ fn deletes_one_at_a_time_are_found_and_fixed_by_delete_objects() {
     batch.rare_mut().request_body = Some(
         (0..300)
             .map(|i| format!("<Object><Key>job/events/e-{i:05}.json</Key></Object>"))
-            .collect::<String>()
-            .into(),
+            .collect::<String>(),
     );
     assert_eq!(state(&job.0, &fixed.0, "obs.deletes"), State::Fixed);
     // a few, among much else: under 1% of the run, no finding
