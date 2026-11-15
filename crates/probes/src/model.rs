@@ -160,15 +160,16 @@ impl Step {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Steps(pub Vec<Step>);
 
-/// An answer's status as a verdict says it: `400`, or `no answer`.
+/// An answer's status as a verdict says it: `400`, or `—` for no answer (a
+/// mark, not a word: the verdict's sentence is in the reader's language).
 pub fn status_text(status: Option<u16>) -> String {
-    status.map_or_else(|| "no answer".into(), |s| s.to_string())
+    or_none(status)
 }
 
 /// What an answer may not carry (a code, a header), as a verdict says it:
-/// itself, or `none`.
+/// itself, or `—`.
 pub fn or_none(v: Option<impl std::fmt::Display>) -> String {
-    v.map_or_else(|| "none".into(), |v| v.to_string())
+    v.map_or_else(|| "—".into(), |v| v.to_string())
 }
 
 impl Steps {
