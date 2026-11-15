@@ -482,6 +482,9 @@ pub(super) fn print_summary_of(
     {
         let rate = match m.from {
             "log" => "at this rate".to_string(),
+            _ if m.times.fract() == 0.0 => {
+                format!("at {} runs a month", output::grouped(m.times as u64))
+            }
             _ => format!("at {} runs a month", m.times),
         };
         head.push_str(&format!(

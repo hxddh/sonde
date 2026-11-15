@@ -17,8 +17,8 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// A run's file or name (default: the newest run of the program here,
-    /// else the newest run).
+    /// A run's file or name (default: the newest run of this folder's
+    /// program, or recorded in this folder, else the newest of any).
     pub(super) file: Option<PathBuf>,
     /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
