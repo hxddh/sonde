@@ -680,7 +680,14 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             println!("nothing checked: no budget, and no baseline yet");
             return Ok(0);
         }
-        if no_baseline.is_none() {
+        // a demo run held to its waiting alone: asked for, and not meaningful
+        // (said above); it passes, as a first run with nothing to hold it to
+        let waived = untimed && budget.max_waiting_ms.is_some();
+        if waived && a.format == Format::Text {
+            println!("nothing checked: a demo run's waiting is not held to a limit");
+            return Ok(0);
+        }
+        if no_baseline.is_none() && !waived {
             eprintln!(
                 "nothing to check: give a budget (--max-requests, --max-waiting, --max-errors, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
             );

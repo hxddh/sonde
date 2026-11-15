@@ -452,6 +452,15 @@ fn a_demo_run_is_never_held_to_its_waiting() {
         "{}",
         stderr(&c)
     );
+    // held to its waiting alone: nothing checked, and no mistake (a demo in CI
+    // with a sonde.toml that sets max-waiting passes)
+    let c = sonde(t.path(), &["check", newest, "--max-waiting", "0"]);
+    assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
+    assert!(
+        stdout(&c).contains("nothing checked: a demo run's waiting is not held to a limit"),
+        "{}",
+        stdout(&c)
+    );
 }
 
 #[test]
@@ -1112,8 +1121,14 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
         e.contains("sonde endpoints add ID URL") && e.contains("--url URL --path-style"),
         "{e}"
     );
-    // a time on the command line reads as sonde.toml's does
-    demo_run(t.path());
+    // a time on the command line reads as sonde.toml's does (of a run on a
+    // store: a demo run's waiting is held to nothing)
+    run_of(
+        t.path(),
+        "timed.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
     let o = sonde(t.path(), &["check", "--max-waiting", "2s", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["check"]["verdicts"][0]["limit"], 2000.0, "{v}");
