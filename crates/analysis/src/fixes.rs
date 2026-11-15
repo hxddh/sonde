@@ -126,15 +126,15 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "java",
-                "// up to 1,000 keys a request\nList<ObjectIdentifier> ids = keys.stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\ns3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));",
+                "// up to 1,000 keys a request\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n}",
             ),
             f(
                 "go",
-                "// up to 1,000 keys a request\nids := make([]types.ObjectIdentifier, len(keys))\nfor i, k := range keys { ids[i] = types.ObjectIdentifier{Key: aws.String(k)} }\n_, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})",
+                "// up to 1,000 keys a request\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    _, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n}",
             ),
             f(
                 "js",
-                "// up to 1,000 keys a request\nawait s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true } }));",
+                "// up to 1,000 keys a request\nfor (let i = 0; i < keys.length; i += 1000)\n  await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));",
             ),
         ],
         "obs.rmw" | "obs.rmw.log" => vec![

@@ -1936,10 +1936,12 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         // a directory marker is its own finding
         .filter(|(_, k, _)| !k.ends_with('/'))
         .collect();
-    smalls.sort_unstable();
     fn folder<'a>(s: &(&'a str, &'a str, u32)) -> (&'a str, &'a str) {
         (s.0, folder_of(s.1))
     }
+    // by bucket and folder first: `out/000` and `out/000/meta` sort side by
+    // side by key, which would split `out/`'s objects into ones
+    smalls.sort_unstable_by(|a, b| folder(a).cmp(&folder(b)).then(a.cmp(b)));
     let (mut put_ids, mut put_saved, mut put_bytes) = (Vec::new(), Vec::new(), 0u64);
     let mut written_to: Option<String> = None;
     for g in smalls.chunk_by(|a, b| folder(a) == folder(b)) {

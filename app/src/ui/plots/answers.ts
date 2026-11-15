@@ -370,16 +370,18 @@ export function kindRates(p: Profile, domainMs?: [number, number] | null, max = 
   // past what is kept, the slowest are each themselves and the rest each stand for several
   const SLOWEST = 400;
   const sampled = total > all.length && all.length > SLOWEST;
-  const floor = sampled ? [...all].sort((a, b) => b.ms - a.ms)[SLOWEST - 1].ms : Infinity;
+  // exactly the slowest 400 are themselves, by identity: samples of the spread can tie the 400th's latency, and a
+  // floor by latency would count them as themselves too (a tail of ties made the whole run look fast)
+  const slowest = sampled ? new Set([...all.keys()].sort((a, b) => all[b].ms - all[a].ms).slice(0, SLOWEST)) : null;
   const spread = sampled ? (total - SLOWEST) / (all.length - SLOWEST) : 1;
   const by = new Map<number, Map<number, { ms: number; w: number }[]>>();
-  for (const x of all) {
+  for (const [i, x] of all.entries()) {
     if (x.group >= max) continue;
     if (domainMs && (x.tMs < domainMs[0] || x.tMs >= domainMs[1])) continue;
     const bin = sliceAt(p, x.tMs);
     const slices = by.get(x.group) ?? new Map<number, { ms: number; w: number }[]>();
     by.set(x.group, slices);
-    slices.set(bin, [...(slices.get(bin) ?? []), { ms: Math.max(0, x.ms), w: x.ms >= floor ? 1 : spread }]);
+    slices.set(bin, [...(slices.get(bin) ?? []), { ms: Math.max(0, x.ms), w: !slowest || slowest.has(i) ? 1 : spread }]);
   }
   // a weighed percentile: the first latency by which `q` of the weight is done
   const at = (xs: { ms: number; w: number }[], q: number) => {

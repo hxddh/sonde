@@ -102,6 +102,22 @@ fn has_every_fix(o: &Observation) {
 }
 
 #[test]
+fn a_folder_s_small_objects_are_found_beside_folders_of_the_same_names() {
+    // out/000, out/000/meta, out/001, out/001/meta, …: by key they alternate between out/ and its children
+    let mut job = Job::new();
+    for i in 0..100 {
+        job.add("PutObject", &format!("out/{i:03}"), 200);
+        job.add("PutObject", &format!("out/{i:03}/meta"), 200);
+    }
+    job.other(20);
+    let small = found(&job.0, "obs.small");
+    assert!(
+        small.iter().any(|o| o.text.contains("data/out/,")),
+        "{small:?}"
+    );
+}
+
+#[test]
 fn small_objects_written_one_each_are_found_priced_and_fixed_by_a_batch() {
     // hot5: 100 tasks, each 19 objects of 900 bytes in a folder of its own
     let mut job = Job::new();

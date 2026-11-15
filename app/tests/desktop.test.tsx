@@ -293,6 +293,19 @@ test("a shape in a terminal is block characters, a burst kept, never wider than 
   expect([...said].filter((c) => c === "█").length).toBe(1);
 });
 
+test("a kind's latency over time weighs exactly the slowest 400 as themselves, whatever ties the spread has", async () => {
+  const { kindRates } = await import("../src/ui/plots/answers");
+  // 100,000 requests, half 1 ms and half 100 ms: kept, the slowest 400 (100 ms) and 3,600 spread evenly (half of each)
+  const samples = [
+    ...Array.from({ length: 400 }, (_, i) => ({ tMs: i % 2 ? 11 : 1, ms: 100, group: 0 })),
+    ...Array.from({ length: 3600 }, (_, i) => ({ tMs: i % 4 < 2 ? 1 : 11, ms: i % 2 ? 100 : 1, group: 0 })),
+  ];
+  const p = { samples, startMs: 0, binMs: 10, rate: [{ ok: 50000, miss: 0, client: 0, server: 0 }, { ok: 50000, miss: 0, client: 0, server: 0 }], groups: [{ kind: "GetObject", missed: false }] } as never;
+  const rows = kindRates(p)[0].rows;
+  expect(rows.map((r) => r.p95)).toEqual([100, 100]);
+  expect(rows.reduce((n, r) => n + r.n, 0)).toBe(100000);
+});
+
 test("a scale of sizes is ticked at powers of 1024, or of 32 where it is narrow", async () => {
   const { sizeTicks } = await import("../src/ui/plots");
   const said = (d: [number, number]) => sizeTicks(d).map((v) => Math.round(10 ** v));
