@@ -204,11 +204,7 @@ function useBuckets() {
       />
     </View>
   );
-  // the list is held open only for what is said only there: a listing that failed, an endpoint
-  // with no bucket. Not while the buckets are on their way (an endpoint switch leaves no bucket
-  // chosen for a moment: the sidebar would flash open and shut)
-  const needed = () => !!endpoint() && (!!buckets.error() || (buckets.state() !== "pending" && !bucket() && (buckets() ?? []).length === 0));
-  return { list, needed };
+  return { list };
 }
 
 /** What is known of the bucket and prefix shown, said in its section's title: "Size · 1.2 GiB",
@@ -256,8 +252,8 @@ export function StoreArea() {
     );
   }
   // the buckets are the sidebar's list while this place shows
-  const { list, needed } = useBuckets();
-  cleanup(showInSidebar("store", list, needed));
+  const { list } = useBuckets();
+  cleanup(showInSidebar("store", list));
   return (
     <View class="flex-1" testID="screen-store">
       {/* the sections (each says the bucket and prefix it is about itself) */}

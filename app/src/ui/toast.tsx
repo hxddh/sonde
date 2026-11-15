@@ -162,8 +162,8 @@ function Item(props: { entry: ToastEntry }) {
         )}
       </If>
       <View class="min-w-0 flex-1 gap-1">
-        {/* its title regular, on one line: the icon says what kind it is */}
-        <Text class="text-body text-popover-foreground line-clamp-1">{content().title}</Text>
+        {/* its title regular, on two lines at most (an instruction is never cut): the icon says what kind it is */}
+        <Text class="text-body text-popover-foreground line-clamp-2">{content().title}</Text>
         <If when={content().description}>
           <Text class={`${TEXT.note} line-clamp-3`}>{content().description}</Text>
         </If>

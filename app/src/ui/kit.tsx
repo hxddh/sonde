@@ -33,6 +33,11 @@ export function keyLabel(shortcut: string): string {
 const cjk = () => lang() === "zh";
 const captionSize = () => (cjk() ? "text-caption-cjk" : "text-caption");
 
+/** A window's face, on its root: in Chinese on Linux, the interface's face with a Simplified Chinese face after it,
+ * so Chinese is set in SC, never in the Japanese or Korean face fontconfig lists first (whose "（内置）" and "，"
+ * stood apart from their neighbours). Elsewhere the system's own (macOS and Windows choose SC for zh). */
+export const windowFace = (): string => (platform.os === "linux" && cjk() ? "font-sc" : "");
+
 /** The type scale, in points: the `text-caption` … `text-title` classes
  * (nsh.json's `tailwind.fontSize`, each with its line: 11/16, 12/18, 13/20,
  * 15/22, 20/28), for the props that take a number (DataTable's `fontSize`).
@@ -87,11 +92,12 @@ export const TEXT = {
   get codeQuiet() {
     return `font-mono ${captionSize()} text-muted-foreground`;
   },
-  /** a clock time in a list or a table (14:02:11.204): the interface's face with even figures, as the figures
-   * beside it are; on Linux the platform's monospace, whose figures are even without the font feature that GTK
-   * measures narrower than it draws (FINDINGS 15: the last digit was cut) */
+  /** a clock time in a list or a table (14:02:11.204, 2:02:11.204 PM): the interface's face, as the figures beside
+   * it are. Even figures by the font feature, except on Linux, whose interface faces (DejaVu Sans, Noto Sans,
+   * Cantarell) have even figures of their own, and whose GTK measures the feature narrower than it draws
+   * (FINDINGS 15: the last digit was cut) */
   get time() {
-    return platform.os === "linux" ? `font-mono ${captionSize()} text-muted-foreground` : "text-small tabular-nums text-muted-foreground";
+    return platform.os === "linux" ? "text-small text-muted-foreground" : "text-small tabular-nums text-muted-foreground";
   },
 };
 
@@ -362,7 +368,7 @@ export const COLUMN = {
   whenLeast: 80,
   notesLeast: 120,
   /** the program's output: its clock, and a line as long as lines go */
-  outputTime: 110,
+  outputTime: 120,
   outputLine: 2000,
 } as const;
 
@@ -421,7 +427,7 @@ export const WIDTH = {
   digit: "w-4",
   /** the title bar: the endpoint switcher at most (as wide as its name), wide and tight; the search field's stand-in; the running program's pill at most */
   switcher: "max-w-60",
-  switcherTight: "max-w-40",
+  switcherTight: "max-w-48",
   search: "w-44",
   pill: "max-w-[200px]",
 } as const;
@@ -598,7 +604,8 @@ export function Button(props: {
       testID={props.testID}
       onPress={props.onPress}
       disabled={props.disabled || props.loading}
-      accessibilityLabel={props.label}
+      // disabled, it says why (its tip) to a screen reader as to the pointer
+      accessibilityLabel={props.disabled && props.tip ? `${props.label}, ${props.tip}` : props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
       class={`group flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${props.loading || v() === "destructive" ? "" : DISABLED} ${PRESS.control} ${FOCUS} ${props.class ?? ""}`}
     >
@@ -1826,10 +1833,32 @@ export function Recoverable(props: { children: JSX.Element }) {
  * Cancel while it runs) and what else it offers (`end`: a `More`). One
  * middle, small controls; a narrow pane wraps the actions under the scope,
  * never into it. */
+/** Where a section looks, said as Objects' breadcrumbs say it (one way to say a bucket's scope): the bucket, then
+ * each folder of the prefix after a chevron, the last at the body's colour. Not pressed: Objects is where to go. */
+function Scope(props: { path: string }) {
+  const parts = () => props.path.split("/").filter(Boolean);
+  return (
+    <View testID="scope" accessibilityLabel={props.path} class="min-w-0 shrink flex-row flex-wrap items-center gap-1">
+      <Each of={parts()}>
+        {(p, i) => (
+          <View class="flex-row items-center gap-1">
+            <If when={i() > 0}>
+              <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
+                <Icon name="chevron-right" size={ICON.small} />
+              </If>
+            </If>
+            <Text class={i() === parts().length - 1 ? TEXT.body : TEXT.bodyQuiet}>{p()}</Text>
+          </View>
+        )}
+      </Each>
+    </View>
+  );
+}
+
 export function ToolBar(props: { scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
   return (
     <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-x-3 gap-y-2">
-      <If when={props.scope}>{(s) => <Path path={s()} max={40} class="min-w-0 shrink text-muted-foreground" />}</If>
+      <If when={props.scope}>{(s) => <Scope path={s()} />}</If>
       <View class="flex-1" />
       <If when={props.children}>
         <View class="flex-row flex-wrap items-center gap-2">{props.children}</View>

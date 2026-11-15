@@ -102,6 +102,9 @@ export function RunList(props: {
     }
     return out;
   });
+  // the days whose rows say seconds: every row of a day where one needs them (a command run twice in a minute),
+  // so a day's times read in one column, alike
+  const toSecond = computed(() => new Set(props.runs.filter((s) => told().get(s.path)?.twin).map((s) => dayLabel(s.created))));
   // a run chosen from elsewhere (the palette, a file opened, a run just ended) and not wholly in view is brought
   // to the list's top, just under the day that stays there (its height kept clear), so the day never cuts it; one
   // pressed in the list, or already in view, stays where it is
@@ -153,8 +156,8 @@ export function RunList(props: {
         {/* what tells it from its neighbours (the same command again tells nothing apart by its words: its time does,
             to the second) */}
         <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.twin ? "" : (told().get(x().s.path)?.args ?? args(x().s))}</Text>
-        {/* the same command run again: its time to the second */}
-        <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{told().get(x().s.path)?.twin ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
+        {/* the same command run again: its time to the second, and so every time of its day */}
+        <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{toSecond().has(dayLabel(x().s.created)) ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
       <View class="flex-row items-center gap-2">
         {/* where it went and how much it did, always */}

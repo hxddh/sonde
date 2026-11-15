@@ -12,9 +12,10 @@ import { bucket, copy, endpoint, notify, offerCommands, type PlaceCommand, prefi
 import { KeyVersions } from "./Versions";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
+import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, BARE_TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, useBucketFacts } from "../ui/overview";
+import { ShowSidebar } from "../ui/shell";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -482,7 +483,8 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
         )}
       </If>
       <If when={!searchHits()}>
-      <Card pad="none" class="min-h-0 flex-1">
+      {/* bare, as Runs' tables: the table fills its pane, its titles' hairline the one line over its rows */}
+      <View class="min-h-0 flex-1">
         <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
           <DataTable
             ref={(r) => (table = r)}
@@ -538,7 +540,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
               if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
             }}
             onRowPress={({ row }) => open(row)}
-            classes={terminal() ? undefined : TABLE}
+            classes={terminal() ? undefined : BARE_TABLE}
             empty={
               // each of its three states in its own words: on its way, failed, or truly nothing
               <Await loading={loading()} error={failure()} retry={refresh} waiting={t("browse.listing")} testID="listing">
@@ -554,7 +556,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
             }
           />
         </InWindowMenu>
-      </Card>
+      </View>
       </If>
       </View>
     </View>
@@ -583,7 +585,7 @@ export function Browse() {
           <BucketPicker />
         </View>
       </If>
-      <If when={endpoint() && bucket()} else={<Empty icon="database" title={endpoint() ? t("store.pickTitle") : undefined} text={endpoint() ? t("store.pickText") : t("common.chooseEndpoint")} />}>
+      <If when={endpoint() && bucket()} else={<Empty icon="database" title={endpoint() ? t("store.pickTitle") : undefined} text={endpoint() ? t("store.pickText") : t("common.chooseEndpoint")}><If when={endpoint()}><ShowSidebar /></If></Empty>}>
         <If
           when={terminal()}
           else={

@@ -158,7 +158,7 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
             one quiet line. What is cut first is the history (the same on every row), then the reason's end */}
         <View class="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text testID="trial-why" class={`min-w-0 shrink ${TEXT.note} line-clamp-1`}>{[why(), where(), gone() ? t("trial.runGone") : ""].filter(Boolean).join(" · ")}</Text>
-          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{h()}</Text>}</If>
+          <If when={x() && trialSince(x()!)}>{(h) => <Text testID={props.historyID} class={`min-w-28 flex-1 ${TEXT.note} line-clamp-1`}>{h()}</Text>}</If>
         </View>
       </View>
     </ListRow>

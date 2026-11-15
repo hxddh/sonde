@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, crumbBack, endpoint, endpoi
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./runview";
-import { BREAK, Button, CONTROL, Crumb, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
+import { BREAK, Button, CONTROL, Crumb, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, terminal, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -24,22 +24,24 @@ const mac = platform.os === "macos";
 const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
 void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)).catch(() => {});
-/** Whether the sidebar shows: the user's choice (⌘B). It holds the places
- * and the current place's list, so it never folds away by itself — and it
- * comes back while the place has nothing to show without its list (a bucket
- * or a run to choose, a listing that failed). */
-export const sidebarOpen = () => wanted() || sidebarHeld();
-/** The place holds the sidebar open: it has nothing to show without its list.
- * The toggle says so then, in a toast. */
-export const sidebarHeld = () => !!sideList()?.needed?.();
+/** Whether the sidebar shows: the user's choice (⌘B), and only theirs. It holds
+ * the places and the current place's list, so it never folds away by itself;
+ * a pane with nothing to show without the list (a run or a bucket to choose)
+ * offers to show it (`ShowSidebar`). */
+export const sidebarOpen = () => wanted();
+/** The toggle: it always toggles. */
 export function toggleSidebar() {
-  // never a dead button: where the place needs its list, the press says why it stays
-  if (sidebarHeld()) {
-    notify(t("sidebar.held"), { kind: "info" });
-    return;
-  }
   wanted.set(!wanted());
   void Storage.setItem(SIDEBAR_KEY, `${wanted()}`).catch(() => {});
+}
+
+/** Under an empty pane's words, while the sidebar is hidden: the list it waits on, a press away. */
+export function ShowSidebar() {
+  return (
+    <If when={!sidebarOpen() && !terminal()}>
+      <Button small variant="outline" icon="panel-left" label={t("sidebar.show")} shortcut="mod+b" onPress={toggleSidebar} testID="show-sidebar" />
+    </If>
+  );
 }
 
 export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" };
@@ -139,7 +141,7 @@ export function EndpointSwitcher(props: { class?: string }) {
       itemClass={`group ${ROWS.popup}`}
       empty={<Text class={`px-2 py-2 ${TEXT.note}`}>{t("endpoints.noneYet")}</Text>}
       trigger={
-        <View class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}>
+        <View class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar || !current() ? WIDTH.switcher : WIDTH.switcherTight)}`}>
           <Icon name="server" />
           <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{current()?.name ?? t("common.chooseEndpoint")}</Text>
           <Icon name="chevrons-up-down" size={ICON.small} />

@@ -19,8 +19,9 @@ import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, co
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace } from "../ui/kit";
 import { Toaster } from "../ui/toast";
+import { ShowSidebar } from "../ui/shell";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, RunHeader, RunList } from "../ui/runparts";
@@ -718,9 +719,11 @@ function openRunWindow(path: string) {
   Window.open(
     () => (
       // a pane that fails to draw says so in its window, and can try again
-      <Recoverable>
-        <RunWindow path={path} />
-      </Recoverable>
+      <View class={`flex-1 ${windowFace()}`}>
+        <Recoverable>
+          <RunWindow path={path} />
+        </Recoverable>
+      </View>
     ),
     { id: windowId(path), title: me ? runName(me) : fileName(path), defaultSize: { width: 1100, height: 720 }, restoreBounds: true },
   );
@@ -950,8 +953,7 @@ export function Runs() {
   }
 
   // the runs are the sidebar's list while this place shows
-  // (with none chosen the list is all there is to act on: a hidden sidebar comes back)
-  if (!terminal()) cleanup(showInSidebar("runs", list, () => runs().length > 0 && !selected()));
+  if (!terminal()) cleanup(showInSidebar("runs", list));
 
   return (
     <View class="flex-1" testID="screen-runs">
@@ -960,7 +962,8 @@ export function Runs() {
         when={terminal()}
         else={
           <If when={runs().length > 0} else={nothing()}>
-            <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")} />}>
+            {/* none chosen: the list is all there is to act on, a press away while the sidebar is hidden */}
+            <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")}><ShowSidebar /></Empty>}>
               {keyed()}
             </If>
           </If>

@@ -25,6 +25,10 @@ test("a run's request in the inspector: details, copy as curl without a signatur
 
 test("multipart: scan, lifecycle verdict, the guard confirms a few plainly", async () => {
   const app = await withDemo("demo");
+  // what is known of the bucket, found out as its objects open, is said in its sections' titles: a warn dot while
+  // any upload is stale
+  await app.waitFor("id:store-section-multipart >> text:/^Incomplete uploads · \\d+$/", { timeout: 15000 });
+  expect(app.shows("label:/^Incomplete uploads · \\d+, 2 older than 7 days/")).toBe(true);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   // the figure is the count, said once; its line says how much they hold and how many are old
@@ -67,6 +71,8 @@ test("capacity: why the bucket is this big", async () => {
 test("layouts: detects and decodes the real SlateDB sample, with replay", async () => {
   const app = await withDemo("demo-layouts");
   await app.waitFor("text:slatedb/", { timeout: 15000 });
+  // the layouts it holds, named in their section's title
+  await app.waitFor("id:store-section-layouts >> text:/^Layouts · \\S/", { timeout: 15000 });
   await place(app, "layouts");
   await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
   expect(app.shows("id:analyze-iceberg")).toBe(true);
@@ -106,6 +112,9 @@ test("browse: an object's detail is one list of its own, never the one chosen be
   // one list, the response headers its one section that opens; a presigned URL is copied from ⋯
   await app.waitFor("text:ETag", { timeout: 10000 });
   expect(app.shows("text:Response headers")).toBe(true);
+  // what it lacks is said: no checksum stored, no encryption reported
+  expect(app.shows("text:none stored")).toBe(true);
+  expect(app.shows("text:none reported")).toBe(true);
   expect(app.shows("text:Presigned URL")).toBe(false);
   await app.press("id:object-more");
   await app.chooseMenuItem("Copy presigned URL");

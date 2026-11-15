@@ -78,7 +78,9 @@ for (const v of variants) {
   test(`shots ${v.name} · part ${v.part}`, async () => {
     const width = maxW ? Math.min(v.width, maxW) : v.width;
     const height = maxH ? Math.min(v.height, maxH) : v.height;
-    const app: App = await open("../App.tsx", { width, height });
+    // the variant's appearance and language from its launch, as a person whose system is dark or Chinese first sees
+    // sonde: its first screen (Welcome) is shot in them (the settings keep "system" and "auto")
+    const app: App = await open("../App.tsx", { width, height, colorScheme: v.theme ?? "light", locale: v.lang ? "zh-CN" : "en-US" });
     const shot = async (name: string) => {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
@@ -167,22 +169,6 @@ for (const v of variants) {
     await shot("01-welcome");
     await app.press("id:welcome-demo");
     await app.waitFor("id:screen-run", { timeout: 15000 });
-    if (v.theme || v.lang) {
-      // (the shortcut asked again where the window took it before it was ready for it)
-      for (let n = 0; ; n++) {
-        await app.keyboard.press("mod+,");
-        const opened = await app.waitFor("id:screen-settings-area", { timeout: 5000 }).then(() => true, () => false);
-        if (opened) break;
-        if (n === 2) throw new Error("Settings did not open on mod+, three times");
-      }
-      await app.press(`id:theme-${v.theme ?? "light"}`);
-      if (v.lang) {
-        await app.press("label:Language");
-        await app.press("text:中文");
-      }
-      await app.wait(300);
-      await app.window("settings").pressClose();
-    }
     await shot("02-run");
     // recording a program started elsewhere: what it asks before it starts
     await app.press("id:record");

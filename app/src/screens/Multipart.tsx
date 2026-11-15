@@ -119,7 +119,7 @@ export function Multipart() {
         </If>
         {/* once, by hand: beside the rule that does it for good (its dialog says what goes) */}
         <If when={report_()}>
-          {(r) => <Button small variant="outline" label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />}
+          {(r) => <Button small variant="outline" label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} tip={r().staleUploads === 0 ? t("mpu.noneOlder", { age: age(r()) }) : undefined} testID="plan-abort" />}
         </If>
         <Button small variant={report_() ? "outline" : "primary"} label={report_() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={scan} disabled={!bucket() || progress() !== null} testID="mpu-scan" />
         <If when={progress()}>
