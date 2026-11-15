@@ -394,3 +394,14 @@ test("a run of a hundred thousand operations opens on its totals and first page,
   await app.waitFor("text:/^300 of 100,000 operations$/", { timeout: 10000 });
   // (scrolling a table row by row takes the headless window a while)
 }, 120000);
+
+test("a run's row says what sent its requests, before where they went and how many", async () => {
+  const run = (name: string, clients?: string[]) => ({ path: `/nowhere/${name}.sonde`, name, created: "2026-11-15T09:00:00Z", endpoint: "demo", command: `python ${name}.py`, requests: 100, live: false, clients });
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.list": [run("load", ["boto3"]), run("lake", ["Lance", "boto3"]), run("plain")] } } });
+  await place(app, "runs");
+  await app.waitFor("id:run-list", { timeout: 10000 });
+  expect(app.shows("id:run-0 >> text:boto3 · demo · 100 requests")).toBe(true);
+  expect(app.shows("id:run-1 >> text:Lance, boto3 · demo · 100 requests")).toBe(true);
+  // none known: as 23.0.1, where they went and how many
+  expect(app.shows("id:run-2 >> text:demo · 100 requests")).toBe(true);
+});

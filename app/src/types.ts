@@ -422,6 +422,9 @@ export interface RunInfo {
   shape?: number[];
   /** The run's trials, when it was tried under faults: how the program stood in each. */
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
+  /** What sent its requests: the services or clients (display names without a version, the dominant first, at most
+   * two: "boto3", "Lance", "object_store"); absent when none is known. */
+  clients?: string[];
 }
 
 /** A phrase of what sonde says of a run: a key and its arguments (crates/analysis/src/phrase.rs); its words are

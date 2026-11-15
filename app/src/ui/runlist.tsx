@@ -46,6 +46,10 @@ export function tellApart(args: string[]): string[] {
   return args.map((a) => `… ${a.slice(common.length)}`);
 }
 
+/** What sent a run's requests, before where they went: its clients, the dominant first ("Lance, boto3"); "" for
+ * none known. */
+const clientsOf = (s: RunInfo) => (s.clients ?? []).slice(0, 2).join(", ");
+
 /** The runs, newest first, by day: the program (or the endpoint), its time and requests. */
 export function RunList(props: {
   runs: RunInfo[];
@@ -161,7 +165,7 @@ export function RunList(props: {
       </View>
       <View class="flex-row items-center gap-2">
         {/* where it went and how much it did, always */}
-        <Text testID="run-requests" class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        <Text testID="run-requests" class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[clientsOf(x().s), x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
         {/* its program's newest run, past the baseline its runs are held to */}
         <If when={props.past?.has(x().s.path)}>
           <Dot tone="warn" label={t("runs.pastBaseline")} />
