@@ -15,7 +15,7 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, crumbBack, endpoint, endpoints, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
@@ -571,9 +571,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           <RunHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
             {props.note}
-            {/* what changed since the program's run before: what was fixed, with what it saved */}
-            <If when={!v().trial}>
-              <SinceRun since={since()} max={box().h < BREAK.short ? 0 : 2} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
+            {/* what changed since the program's run before, in a sentence; Compare opens the two side by side */}
+            <If when={!v().trial && !folded()}>
+              <SinceRun since={since()} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
             </If>
           </RunHeader>
         </View>
@@ -600,7 +600,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // (another pane, or the same back at its top, opens it again)
   // (kept by pane: another pane opens unfolded in the same moment it is shown)
   const foldedOn = signal<Pane | null>(null);
-  const folded = () => foldedOn() === pane();
+  // and always on a short pane, and on Time and History, whose charts and runs need the height more than the tiles
+  // (each figure still opens its chart from the folded line)
+  const folded = () => foldedOn() === pane() || box().h < BREAK.short || pane() === "time" || pane() === "runs";
   const scrolled = (away: boolean) => {
     const want = away ? untracked(pane) : null;
     if (untracked(foldedOn) !== want) foldedOn.set(want);
@@ -646,7 +648,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
                   else={
                     <View class="flex-1">
                       {main(v)}
-                      <SidePanel open={inspecting()} onClose={closeInspector} size="narrow" returnFocus={() => opsAnchor}>
+                      <SidePanel open={inspecting()} onClose={closeInspector} size="narrow" label={record() ? t("inspector.request") : t("inspector.operation")} returnFocus={() => opsAnchor}>
                         {inspector()}
                       </SidePanel>
                     </View>
@@ -869,6 +871,7 @@ export function Runs() {
           <RunList
             runs={shown()}
             selected={selected()}
+            endpoint={endpoint()}
             onSelect={choose}
             onContextMenu={isAvailable ? rowMenu : undefined}
             actions={(s) => [
@@ -927,6 +930,12 @@ export function Runs() {
     const p = selected();
     if (p && !runs().some((s) => s.path === p || s.trials?.some((x) => x.run === p))) untracked(() => selected.set(runs()[0]?.path ?? null));
   });
+
+  // the title bar's "Runs" goes back to the list while a run is open
+  if (!terminal()) {
+    effect(() => crumbBack.set(selected() ? () => selected.set(null) : null));
+    cleanup(() => crumbBack.set(null));
+  }
 
   // the runs are the sidebar's list while this place shows
   // (with none chosen the list is all there is to act on: a hidden sidebar comes back)

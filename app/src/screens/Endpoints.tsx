@@ -7,7 +7,7 @@ import { vendorName } from "../labels";
 import { api, asError } from "../native";
 import { bucket, endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { REVEAL, Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
+import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 import { CompatDialog } from "./Probes";
 
@@ -264,8 +264,8 @@ export function Endpoints() {
           <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
           {/* every probe against it, in a bucket of its own (the one chosen in Buckets, filled in) */}
           <Button small variant="outline" icon="flask-conical" label={t("compat.open")} onPress={() => checking.set(e)} testID={`compat-${e.id}`} />
-          {/* its edit and removal under the pointer (or the keyboard) only */}
-          <View class={`flex-row items-center gap-1 ${REVEAL}`}>
+          {/* its edit and removal, always there: a list of a few endpoints has the room */}
+          <View class="flex-row items-center gap-1">
             <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
             <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
           </View>

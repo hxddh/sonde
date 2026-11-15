@@ -17,7 +17,7 @@ import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, tri
 import type { Trial, TrialEvent, TrialPlan } from "../types";
 import { AGAIN, STANDING, trialAsked, TrialVerdicts, type VerdictRow } from "./history";
 import { Icon } from "./icon";
-import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Row, Title, TEXT } from "./kit";
+import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Prose, Row, Title, TEXT } from "./kit";
 import { scrubCommand } from "./runview";
 
 /** Whether a trial is running (one at a time, as a program is). */
@@ -236,7 +236,7 @@ export function TrialDialog(props: {
                 </Card>
                 </If>
                 <If when={p().project && !again()}>
-                  <Muted>{t("trial.project")}</Muted>
+                  <Prose class={TEXT.bodyQuiet} text={t("trial.project")} />
                 </If>
                 {/* side by side where there is room: the least window is no taller than the dialog with each on a row of its own */}
                 <View class="flex-row flex-wrap gap-x-6 gap-y-3">

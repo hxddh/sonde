@@ -435,11 +435,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                 else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.waitingMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
-                  {/* each named as a tile is (a capital, the thing counted), the cost's unit in its name so its figure is short */}
+                  {/* each named as a tile is (a capital, the thing counted); the cost's unit in its sentence, so its figure is short */}
                   <RunTrend history={shown(x())} measure="requests" title={t("trend.requests")} format={n} onOpen={props.onOpen} />
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
                   <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
-                  <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="cost" title={t("trend.cost")} unit={costs(x()).unit} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="errors" title={t("trend.errors")} format={n} onOpen={props.onOpen} budget={budget()?.maxErrors} />
                   <RunTrend history={shown(x())} measure="p95Ms" title={t("trend.p95")} format={duration} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("trend.warnings")} format={n} onOpen={props.onOpen} />

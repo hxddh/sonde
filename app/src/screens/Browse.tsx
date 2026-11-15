@@ -142,7 +142,8 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
       ...has(t("browse.bucketKey"), d.sse.bucketKeyEnabled === null || d.sse.bucketKeyEnabled === undefined ? null : d.sse.bucketKeyEnabled ? t("common.on") : t("common.off")),
       ...has(t("browse.objectLock"), d.objectLock),
       ...has(t("browse.restore"), d.restore),
-      ...d.metadata,
+      // the object's own metadata by its header's name, as it was set: never mistaken for one of the facts above
+      ...d.metadata.map(([k, v]): [string, string] => [`x-amz-meta-${k}`, v]),
     ];
   };
   // what can be done with it: on its row, in the palette, and on their shortcuts
@@ -183,9 +184,9 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
           <If when={detail()}>
             {(d) => (
               <View class="gap-4">
-                <KeyValue dense rows={rows(d())} />
+                <KeyValue dense rows={rows(d())} onCopy={(v) => copy(v)} />
                 <Disclosure title={t("browse.headers")} count={d().headers.length}>
-                  <KeyValue dense mono rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+                  <KeyValue dense mono rows={d().headers.map(([k, v]) => [k, v] as [string, string])} onCopy={(v) => copy(v)} />
                 </Disclosure>
               </View>
             )}
@@ -420,15 +421,12 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
           A pane too narrow for both breaks between them, never inside either. */}
       <View class="flex-row flex-wrap items-center gap-2">
         <View class="min-w-48 flex-1 flex-row items-center gap-2">
-          {/* the head every section has: its title, what it looks at, then its actions at the end */}
-          <If when={!terminal()}>
-            <Title lines={1} class="shrink-0">
-              {t("nav.objects")}
-            </Title>
-          </If>
+          {/* the head every section has: what it looks at (its tab above names it), then its actions at the end */}
           <Breadcrumbs />
         </View>
-        <View class="ms-auto min-w-0 flex-row items-center gap-2">
+        {/* (too narrow for them all, beside the inspector: they wrap to a line of their own, then among themselves,
+            never under the inspector nor into each other's words) */}
+        <View class="ms-auto min-w-0 flex-row flex-wrap items-center justify-end gap-2">
           <Text class="shrink-0 text-small tabular-nums text-muted-foreground" testID="listing-count">
             {t("browse.objects", { n: count(total()) })}
             {done() ? "" : ` · ${t("browse.more")}`}

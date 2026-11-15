@@ -573,9 +573,13 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       </If>
       {/* the board: the four groups in their reading order, every chart in the one frame, by one loop */}
       <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
-        {(g) => (
-          <View testID={`board-${g()}`} class="gap-3 terminal:gap-2">
-            <Heading>{t(`board.${g()}`)}</Heading>
+        {(g, i) => (
+          // one surface: each chart's card says its question, so no heading stands over them; the groups are parted
+          // by a hairline, and named to a screen reader (a terminal, with no cards, keeps the heading)
+          <View testID={`board-${g()}`} accessibilityLabel={t(`board.${g()}`)} class="gap-3 terminal:gap-2">
+            <If when={terminal()} else={<If when={i() > 0}><View class="h-px bg-border" /></If>}>
+              <Heading>{t(`board.${g()}`)}</Heading>
+            </If>
             {/* two abreast where there is room (a last one alone takes the row); a card is as high as its content */}
             <View class="flex-row flex-wrap items-start gap-4 terminal:flex-col terminal:flex-nowrap terminal:items-stretch terminal:gap-2">
               <Each of={of(g())} key={(c) => c.id}>

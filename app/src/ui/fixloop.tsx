@@ -12,9 +12,8 @@ import { say } from "../phrases";
 import { api } from "../native";
 import type { FindingChange, SinceLast } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, EMPHASIS, ICON, Row, TEXT } from "./kit";
-import { StateBadge } from "./runview";
-import { changedFindings, savedText } from "./runchange";
+import { Crumb, ICON, TEXT } from "./kit";
+import { savedText } from "./runchange";
 
 
 /** A run against its program's run before it, read off the interface's thread: null for a run that is no run of a program, or while it is read. */
@@ -48,62 +47,40 @@ function changeLine(s: SinceLast): string | null {
   return parts.join(" · ");
 }
 
-/** "Since the run before": the change in figures, then the findings that were fixed or came back
- * (`max` of them), each fixed one with what it saved; `onCompare` opens the two runs side by side.
- * Nothing for a program's first run. */
-export function SinceRun(props: { since: SinceLast | null | undefined; max?: number; onCompare?: () => void }) {
+/** "Since the run before", in one sentence: what the findings did (fixed, back, less, more, new) and how the
+ * figures changed, then a link that opens the two runs side by side (`onCompare`), where each fixed finding
+ * says what it saved. Nothing for a program's first run, nor when nothing changed. */
+export function SinceRun(props: { since: SinceLast | null | undefined; onCompare?: () => void }) {
   const s = () => props.since;
-  // what the tally counts, listed: fixed, less, back, new (open ones say nothing new)
-  const told = () => changedFindings(s()?.findings ?? []);
-  const shown = () => told().slice(0, props.max ?? told().length);
+  // what the findings did, counted: fixed, back, less, more, new (open ones say nothing new)
   const tally = () =>
     (["fixed", "back", "less", "more", "new"] as const)
       .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st).length] as const)
       .filter(([, n]) => n > 0)
-      .map(([st, n]) => `${count(n)} ${say([{ key: "fix." + st, args: {} }], st)}`)
+      .map(([st, n]) => {
+        const said = `${count(n)} ${say([{ key: "fix." + st, args: {} }], st)}`;
+        // one finding fixed: what it saved, measured, beside it (several: each in Compare)
+        const fixed = (s()?.findings ?? []).filter((f) => f.state === "fixed");
+        const saved = st === "fixed" && fixed.length === 1 ? savedText(fixed[0]) : null;
+        return saved ? `${said}, ${saved}` : said;
+      })
       .join(" · ");
+  const changed = (x: SinceLast) => !!tally() || (!!x.change && (x.change.requests[0] !== x.change.requests[1] || x.change.errors[0] !== x.change.errors[1]));
+  const sentence = (x: SinceLast) => [tally(), changeLine(x)].filter(Boolean).join(" · ");
   return (
-    // nothing to say when nothing changed: the same requests, the same errors, no finding gone, back, less or new
-    <If when={s()?.previous && (tally() || (s()!.change && (s()!.change!.requests[0] !== s()!.change!.requests[1] || s()!.change!.errors[0] !== s()!.change!.errors[1]))) ? s() : null}>
+    <If when={s()?.previous && changed(s()!) ? s() : null}>
       {(x) => (
-        <Card pad="none" testID="since-run">
-          {/* the name and Compare on a line; the change under them, across the card (a narrow pane does not
-              squeeze it into the column beside the button) */}
-          <Row first stack>
-            <View class="flex-row items-center gap-3">
-              <Icon name="git-compare-arrows" />
-              <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-2`}>
-                {/* emphasis: the section's name before what it says */}
-                <Text class={EMPHASIS}>{t("fix.since")}</Text>
-                <If when={tally()}>{(n) => <Text class="text-muted-foreground">{` · ${n()}`}</Text>}</If>
-              </Text>
-              <If when={props.onCompare}>
-                <Button small variant="outline" icon="git-compare-arrows" label={t("fix.compare")} onPress={() => props.onCompare?.()} testID="since-compare" />
-              </If>
-            </View>
-            <If when={changeLine(x())}>{(l) => <Text testID="since-change" class={`tabular-nums ${TEXT.note} line-clamp-2`}>{l()}</Text>}</If>
-          </Row>
-          <Each of={shown()} key={(f) => f.identity}>
-            {(f, i) => (
-              <Row top testID={`since-finding-${i()}`}>
-                <View class="min-h-5 shrink-0 justify-center">
-                  <StateBadge state={f().state} />
-                </View>
-                <View class="min-w-0 flex-1 gap-1">
-                  <Text class="text-body leading-5 text-foreground line-clamp-2">{say(f().phrases, f().text)}</Text>
-                  <If when={savedText(f())}>
-                    {(v) => (
-                      <View class="flex-row items-center gap-1">
-                        <Icon name="trending-down" size={ICON.small} tint="status-ok" />
-                        <Text testID={`since-saved-${i()}`} class={`tabular-nums ${TEXT.note}`}>{v()}</Text>
-                      </View>
-                    )}
-                  </If>
-                </View>
-              </Row>
-            )}
-          </Each>
-        </Card>
+        <View testID="since-run" class="flex-row items-center gap-2">
+          <Icon name="git-compare-arrows" size={ICON.small} tint="muted-foreground" />
+          <Text testID="since-change" class={`min-w-0 shrink tabular-nums ${TEXT.note} line-clamp-1`}>
+            {t("fix.since", { what: sentence(x()) })}
+          </Text>
+          <If when={props.onCompare}>
+            <Crumb testID="since-compare" href="sonde://compare" onOpen={() => props.onCompare?.()} label={t("fix.compare")}>
+              <Text class="text-small text-primary">{t("fix.compare")}</Text>
+            </Crumb>
+          </If>
+        </View>
       )}
     </If>
   );

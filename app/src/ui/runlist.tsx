@@ -1,8 +1,9 @@
 // The runs in the sidebar, newest first, by day: a row a run — its
-// program (or the endpoint), what tells it from its neighbours, its time and
-// requests, and a mark of its requests over its time.
+// program (or the endpoint) and its time; then what tells it from its
+// neighbours (else its requests) and how it went (its trials, else a mark of
+// its requests over its time).
 
-import { computed, type ContextMenuEvent, type JSX, List, Text, View } from "nsh";
+import { computed, type ContextMenuEvent, effect, type JSX, List, type ListRef, Text, untracked, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
 import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
@@ -50,6 +51,8 @@ export function RunList(props: {
   onContextMenu?: (s: RunInfo, at?: { x: number; y: number }) => void;
   /** The context menu's commands, offered to screen readers on each row. */
   actions?: (s: RunInfo) => { name: string; label: string; run: () => void }[];
+  /** the endpoint in use: a run's own is said only where it is another */
+  endpoint?: string | null;
 }) {
   // one list, the days as headers that stay in view while their runs scroll
   type Row = { day: string } | { s: RunInfo; i: number };
@@ -96,6 +99,24 @@ export function RunList(props: {
     }
     return out;
   });
+  // a run chosen from elsewhere (the palette, a file opened, a run just ended) is brought to the list's middle,
+  // clear of the day stuck at its top, so no row is cut by it; one pressed in the list stays where it is
+  let list: ListRef | undefined;
+  let pressed = false;
+  effect(() => {
+    const sel = props.selected;
+    if (pressed) {
+      pressed = false;
+      return;
+    }
+    if (!sel) return;
+    const at = untracked(rows).findIndex((r) => !("day" in r) && r.s.path === sel);
+    if (at >= 0) setTimeout(() => list?.scrollToIndex({ index: at, viewPosition: 0.5, animated: false }), 0);
+  });
+  const select = (path: string) => {
+    pressed = true;
+    props.onSelect(path);
+  };
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: RunInfo; i: number }, body: JSX.Element) => (
@@ -114,23 +135,23 @@ export function RunList(props: {
       testID={`run-${x().i}`}
       label={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
       selected={props.selected === x().s.path}
-      onPress={() => props.onSelect(x().s.path)}
+      onPress={() => select(x().s.path)}
       class="mb-1"
     >
+      {/* two facts a line: what ran and when; then what tells it from its neighbours (else how much it did) and
+          how it went — its trials' verdict, else its requests over its time, never both */}
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
-        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
-        {/* the same command run again: its time at the row's end, to the second */}
-        <If when={told().get(x().s.path)?.twin}>
-          <Text testID="run-time" class={`shrink-0 tabular-nums ${TEXT.caption}`}>{clock(x().s.created, "s")}</Text>
-        </If>
+        <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        {/* the same command run again: its time to the second */}
+        <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{told().get(x().s.path)?.twin ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
       <View class="flex-row items-center gap-2">
-        {/* (a twin's time is at its row's end, to the second: not said twice) */}
-        <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        <If when={told().get(x().s.path)?.args ?? args(x().s)} else={<Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("runs.requestsN", { n: x().s.requests }), x().s.endpoint !== props.endpoint ? x().s.endpoint : ""].filter(Boolean).join(" · ")}</Text>}>
+          {(a) => <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{a()}</Text>}
+        </If>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
@@ -140,7 +161,6 @@ export function RunList(props: {
             </Text>
           )}
         </If>
-        {/* (a row that says its trials broke keeps its line for its words: no mark beside them) */}
         <If when={x().s.shape?.length && !broke(x().s)}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
@@ -150,6 +170,7 @@ export function RunList(props: {
   );
   return (
     <List
+      ref={(r: ListRef) => (list = r)}
       testID="run-list"
       class="flex-1"
       each={rows()}
@@ -171,7 +192,8 @@ export function RunList(props: {
         return (
         <If when={dayOf(r())} else={row(run)}>
           {(day) => (
-            <View class="bg-sidebar px-2 pb-1 pt-2 terminal:bg-transparent">
+            // the sidebar's own fill and a hairline under it: what scrolls under the day goes under it whole
+            <View class="border-b border-border bg-sidebar px-2 pb-1 pt-2 terminal:border-0 terminal:bg-transparent">
               <Heading quiet>{day()}</Heading>
             </View>
           )}

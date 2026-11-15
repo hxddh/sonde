@@ -167,7 +167,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   first baseline (`items-baseline`: a one-line tile's name and figure), figures at the end of their
   cell in a `flex-1 items-end justify-center` box, an icon in a `shrink-0` box beside its text.
 - **Four thresholds** (`BREAK`, `[threshold]`): two widths — `toolbar` (1040), from which the window's toolbar shows
-  the endpoint's name in full and the search field rather than its button, and `inspector` (900), from which a pane
+  the endpoint's name in full and the search field rather than its button, and `inspector` (780), from which a pane
   holds an inspector beside what it details (under it the inspector comes in from the edge); two heights of a
   run's pane — under `short` (600) the shape strip goes, the signal tiles keep to what they count
   and the figure, and the findings keep to a line or two, from `tall` (880)
@@ -196,9 +196,10 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
     no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
     goes to the next line;
-  - a run's header **folds to one line** while the pane under it is scrolled from its top: what ran, its first
-    three figures said with what they count ("172 requests · 0% errors · 1.4 ms", quiet words, each still opens its
-    chart), its commands; at the top again it opens;
+  - a run's header **folds to one line** on a short pane, on Time and History, and while the Operations under it
+    are scrolled from their top: what ran, its first three figures said with what they count ("172 requests · 0%
+    errors · 1.4 ms", quiet words, each still opens its chart), its commands; what marks the run (a trial) stays
+    under it. "Since the run before" is a sentence under the open header, its Compare a link;
   - Run's terminal yields room to why when a program sent nothing (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯` by their words — never a row of unlabelled icons; they never wrap to a second line;
@@ -241,8 +242,10 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 ## Surfaces
 
 - **Base**: `bg-background`, regions separated by hairlines (`border-border`), no
-  shadows. Cards (`bg-card`, `rounded-(--radius-card)`) group a few related values;
-  no card inside a card.
+  shadows. **One surface level**: the operations and the output fill their pane bare (a hairline under their
+  titles); cards (`bg-card`, `rounded-(--radius-card)`) group a few related values; no card inside a card, and no
+  section heading over a titled card (the Time pane's groups are parted by a hairline; a chart's reasons are a plain
+  list under it).
 - **Three shadows** (`SHADOW`, `nsh.json` `tailwind.shadow`): `control` (a segment, a switch's thumb), `popup`,
   `modal` (dialogs, side panels).
 - **Popups** (menus, selects, the endpoint switcher, a figure's preview, tooltips, toasts): `POPUP` — the popover
@@ -253,16 +256,19 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   card in place over the list, which stays under it (a sheet in the Settings window
   would cover its tabs); while it is open its Save is the page's one primary.
 - **Dialogs**: short decisions only (a typed confirmation, the replay target), over
-  the scrim, in two widths: 480, and 640 for one that lists. A dialog with states (the trial's plan, progress and
-  verdicts) is `steady`: one frame throughout, its body scrolling inside with its edges fading, and its foot always
-  has a primary (done: Close). A dialog's intro is set at the body's leading; a command in it is one line.
+  the scrim, in two widths: 480, and 640 for one that lists, centred in the room under the title bar and never over
+  it. A dialog with states (the trial's plan, progress and verdicts) is `steady`: at least 480 pt
+  high, growing with what it holds up to the room, its body scrolling inside with its edges fading, and its foot
+  always has a primary (done: Close). A dialog's intro is set at the body's leading; a command in it is one line.
 - **Inside a card or the inspector, nothing is boxed again**: a `KeyValue` or a `SimpleTable bare` has hairlines
   between its rows only, no outer border and no rules between columns; names are sans and muted, mono is for
   identifiers. Twin cards stand apart by their gap, with no rule between them, and a split between two cards
   (`SPLIT_GAP`) draws no hairline until the pointer finds it. Code inside a card is a well: a muted fill, no border.
-- **Chrome on hover or selection** (`REVEAL`): a row's pencil, trash or Decode and a tile's chevron show under the
-  pointer, on the selected row, or while the keyboard is inside the row; a table's sort mark shows on its sorted
-  column and under the pointer, right after its title (`titleCells`: every DataTable's titles, drawn one way).
+- **Quiet chrome** (`REVEAL`): a row's trash or Decode stands quiet at rest and full under the pointer, on the
+  selected row, or while the keyboard is inside the row — never hidden, so a pointer finds it; Settings' endpoints (a
+  few) show their pencil and trash in full. A pressable tile's chevron is always there, quiet; a tile that only shows
+  a figure has none. A table's sort mark shows on its sorted column and under the pointer, right after its title
+  (`titleCells`: every DataTable's titles, drawn one way).
 
 ## Actions
 
@@ -278,8 +284,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **One header pattern.** A run's header is its command (one line, regular mono, cut in its middle), a meta
   line, then one primary (Run again; on Run the command bar's Run is the place's one, and the header has none) and
   `⋯` — Try under faults…, Replay on… and Compare… are there and in the palette's "This run" ("Since the run
-  before" keeps its own Compare beside what changed). Every Buckets section opens on the same head (`ToolBar`): its
-  title, its scope (the bucket and prefix), its actions at the end, each also in the palette and on its shortcut
+  before" keeps its own Compare link at its sentence's end). Every Buckets section opens on the same head (`ToolBar`): its
+  scope (the bucket and prefix; its tab above it names the section), its actions at the end, each also in the palette and on its shortcut
   (`⇧⌘R` scans again everywhere); the title bar says the place only, and nothing repeats it.
 - **The object inspector** is one list (`KeyValue`: size, type, modified, class, then ETag, checksums and encryption
   where the object has them, and its metadata), its response headers the one section that opens; Download and
@@ -303,8 +309,10 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer, computed from what it draws over the
   stretch shown (`plots/answers.ts`: "2 requests failed, both 503 SlowDown, between +10 ms and +20 ms", "Most
   requests were GetObject (82%)"), never how to read it. How to read it is the frame's `how`: an info mark at
-  the title's end, the words in its tooltip. A terminal gets the sentence and a table.
-- **One reading order** on the Time pane: four titled groups, **Traffic, Latency, Errors, Where**, every chart
+  the title's end (`InfoMark`), the words in a popover a press, Return or a tap opens. A title is one line, so cards
+  abreast stand level: a unit is said in the sentence or on the axis. A terminal gets the sentence and a table.
+- **One reading order** on the Time pane: four groups, **Traffic, Latency, Errors, Where** (parted by a hairline,
+  named to a screen reader; each chart's card says its question), every chart
   shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last
   one alone takes the row.
 - **No hidden views**: a chart has no switch between views. A view of its own is a card of its own (the latencies as
@@ -384,7 +392,9 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **Quiet frames**: hairline grids (`stroke-border`), no axis lines, small tabular labels in `text-caption`
   `muted-foreground`; bars' tips rounded, their bases square; labels at the bars' ends rather than a value axis.
 - **A press acts on what the pointer is over** (a slice narrows the operations; a dot or a bar opens its request);
-  the plot sits in a pressable view, as the plot takes no presses itself.
+  the plot sits in a pressable view, as the plot takes no presses itself. With no pointer over a mark (Return, or a
+  press between bars) it acts on the row that weighs most — the busiest slice, the slowest request, the latest run —
+  else the first (`pressedRow`): a press never does nothing.
 - **One moment across a pane's charts**: the moment the pointer rests on in one time chart is marked in the others
   of the same pane (`focusOf()`, the pane's own: two windows do not mark each other's).
 - **Findings on the shape**: a number over a slice is the finding of that number, where it begins (several that

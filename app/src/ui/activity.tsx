@@ -10,7 +10,7 @@ import { core } from "../phrases";
 import { api } from "../native";
 import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
 import type { AuditEntry, JobInfo } from "../types";
-import { Badge, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, type Tone, TEXT } from "./kit";
+import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, TONE, type Tone, TEXT } from "./kit";
 
 export const activityOpen = signal(false);
 
@@ -47,6 +47,8 @@ function throttled(f: () => void, ms: number): () => void {
 const TAB_LABEL: Record<ActivityTab, () => string> = { jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
 
 const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "live", finished: "ok", failed: "fail", cancelled: "quiet" };
+/** A job's dot: done is quiet (it is merely done), the others in their tone. */
+const JOB_DOT: Record<JobInfo["state"], string> = { running: TONE.live.dot, finished: TONE.quiet.dot, failed: TONE.fail.dot, cancelled: TONE.quiet.dot };
 
 /** A row of Activity's lists: hairlines between them, in one card. */
 
@@ -68,12 +70,15 @@ function Jobs() {
             {(j, i) => (
               <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
+                  {/* how it stands, at its start: at work (live), done (quiet), failed; its word to a screen reader */}
+                  <View class={`${DOT} ${JOB_DOT[j().state] ?? TONE.quiet.dot} ${j().state === "running" ? "motion-safe:animate-pulse" : ""}`} accessibilityLabel={t(`jobs.state.${j().state}` as never)} />
                   <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{core(j().titleText, j().title)}</Text>
-                  {/* a job done says nothing more: only one at work, failed or cancelled says how it stands */}
+                  {/* a job done says nothing more in words: only one at work, failed or cancelled says how it stands */}
                   <If when={j().state !== "finished"}>
                     <Badge tone={JOB_TONE[j().state] ?? "quiet"} label={t(`jobs.state.${j().state}` as never)} />
                   </If>
-                  <Text class={`shrink-0 ${TEXT.meta}`}>{age(j().started)}</Text>
+                  {/* at work: for how long so far; ended: how long it took */}
+                  <Text class={`shrink-0 tabular-nums ${TEXT.meta}`}>{j().ended ? duration(Math.max(0, Date.parse(j().ended!) - Date.parse(j().started))) : age(j().started)}</Text>
                   <If when={j().state === "running"}>
                     <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
                   </If>

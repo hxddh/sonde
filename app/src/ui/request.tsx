@@ -92,7 +92,7 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                   <StatusMark status={x().status} injected={x().injected} />
                 </View>
                 <Text class={`min-w-0 flex-1 ${TEXT.small} line-clamp-1`}>{x().kind}</Text>
-                <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{clock(x().time, "ms")}</Text>
+                <Text class={`shrink-0 ${TEXT.time}`}>{clock(x().time, "ms")}</Text>
               </ListRow>
             )}
           </Each>

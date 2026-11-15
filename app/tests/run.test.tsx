@@ -205,7 +205,7 @@ test("a run's time: where it went, and two runs before and after", async () => {
   await app.waitFor("id:time-pane");
   await app.waitFor("id:latency-over-time");
   // the board in its groups, each chart in the one frame
-  expect(app.shows("text:Latency")).toBe(true);
+  expect(app.shows("id:board-latency")).toBe(true);
   expect(app.shows("id:board-traffic")).toBe(true);
   expect(app.shows("id:time-shape")).toBe(true);
   await app.waitFor("text:Where did the time go?");
@@ -447,9 +447,8 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   }
   // the second: what changed since the run before, the finding fixed with what it saved
   await app.waitFor("id:since-run", { timeout: 10000 });
-  expect(app.shows("text:/^Requests\\s10\\s→\\s1/")).toBe(true);
-  expect(app.shows("label:Fixed")).toBe(true);
-  expect(app.shows("text:/^saved 9 requests \\(predicted 9\\)/")).toBe(true);
+  // in a sentence: the finding fixed with what it saved, then the figures
+  expect(app.shows("text:/^Since the run before: 1 fixed, saved 9 requests \\(predicted 9\\) · Requests\\s10\\s→\\s1/")).toBe(true);
   // compared: the two runs, the finding fixed with its measured saving
   await app.press("id:since-compare");
   await app.waitFor("id:run-change", { timeout: 10000 });

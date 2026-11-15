@@ -296,7 +296,8 @@ function NoRequests() {
 function Intro() {
   const recording = signal(api.runs.current());
   return (
-    <View class="flex-1 items-center justify-center p-6" testID="run-intro">
+    // under the command bar it introduces, not adrift in the middle of the page
+    <View class="flex-1 items-center p-6" testID="run-intro">
       <View class={`${READING} gap-6`}>
         <View class="gap-2">
           <Title page>{t("run.title")}</Title>

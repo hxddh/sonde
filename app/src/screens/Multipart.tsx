@@ -111,7 +111,7 @@ export function Multipart() {
 
   return (
     <Sheet>
-      <ToolBar title={terminal() ? undefined : sectionLabel("multipart")} scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
+      <ToolBar scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />

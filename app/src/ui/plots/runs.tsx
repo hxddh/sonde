@@ -313,7 +313,7 @@ export function trendSaid(runs: { created: string; v: number }[], base: number |
 const when = (s: string | undefined, other: string | undefined) => (other && day(s) === day(other) ? hm(s) : day(s));
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
-export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
+export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; /** the figures' unit where the format does not say it (a cost's): in the sentence, not the title */ unit?: string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
   const runs = () => props.history.runs;
   const values = () => runs().map((r) => r[props.measure] as number);
   const base = () => {
@@ -336,7 +336,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
     return r ? { title: day(r.created), lines: [props.format(r[props.measure] as number), ...(base() !== null ? [t("trend.baseline", { v: props.format(base()!) })] : [])] } : null;
   };
   const label = () => `${props.title}: ${values().map(props.format).join(", ")}`;
-  const said = () => trendSaid(runs().map((r) => ({ created: r.created, v: r[props.measure] as number })), base(), props.format);
+  const said = () => [trendSaid(runs().map((r) => ({ created: r.created, v: r[props.measure] as number })), base(), props.format), props.unit ? t("trend.unit", { unit: props.unit }) : ""].filter(Boolean).join(" · ");
   return (
     // the latest run's figure (or the one under the pointer) where a chart's control is
     <Chart testID={`trend-${props.measure}`} class={`${SURFACE.trend} flex-1`} title={props.title} text={said()} action={<Figure value={props.format(shown()[props.measure] as number)} label={day(shown().created)} />}>
@@ -344,7 +344,8 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
         accessibilityLabel={label()}
         disabled={!props.onOpen}
         onPress={() => {
-          const r = hovered() === null ? null : runs()[hovered()!];
+          // the run under the pointer; with Return (no pointer), the latest
+          const r = runs()[hovered() ?? runs().length - 1];
           if (r) props.onOpen?.(r.path);
         }}
       >

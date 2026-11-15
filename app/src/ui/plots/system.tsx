@@ -7,7 +7,7 @@ import { Grid, PlotAxis } from "nsh/base/plot";
 import { count, duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, IconButton, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TRANSITION, TYPE } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TRANSITION, TYPE } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
@@ -369,6 +369,18 @@ export function ChartTip(props: { tip: ChartTipText | null | undefined }) {
     </If>
   );
 }
+/** The row a press acts on: the one under the pointer, else (a press with the keyboard's Return, or on no mark)
+ * the one that weighs most (`weight`: the busiest slice, the slowest request), else the first. Null with none. */
+export function pressedRow<T>(hovered: number | null, rows: readonly T[], weight?: (r: T) => number): number | null {
+  if (hovered !== null) return hovered;
+  if (!rows.length) return null;
+  if (!weight) return 0;
+  let at = 0;
+  rows.forEach((r, i) => {
+    if (weight(r) > weight(rows[at])) at = i;
+  });
+  return at;
+}
 /** What a screen reader hears of the row under the pointer: the tooltip's words. */
 export const tipValue = (tip: ChartTipText | null | undefined) => ({ text: tip ? `${tip.title}: ${tip.lines.join(", ")}` : "" });
 
@@ -435,14 +447,15 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
     <Card testID={props.testID} class={`group ${props.class ?? ""}`}>
       <View class="gap-1">
         <View class="min-h-7 flex-row items-center gap-2">
+          {/* one line: cards abreast keep one height (a unit is said in the sentence or on the axis, not here) */}
           <View class="min-w-0 flex-1">
-            <Heading>{props.title}</Heading>
+            <Heading class="line-clamp-1">{props.title}</Heading>
           </View>
           <If when={props.how || (props.onExport && !props.empty)}>
             <View class={CHROME}>
-              {/* how to read it, in its tooltip: the sentence under the title says what it shows */}
+              {/* how to read it, behind its mark (a press opens it): the sentence under the title says what it shows */}
               <If when={props.how}>
-                <IconButton icon="info" label={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
+                <InfoMark text={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
               </If>
               <If when={props.onExport && !props.empty}>
                 <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
