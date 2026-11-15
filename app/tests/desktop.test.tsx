@@ -672,3 +672,18 @@ test("a row's actions are there for the pointer: an endpoint's always, a quiet o
   expect(app.viewStyle("id:edit-demo")?.effectiveOpacity ?? 0).toBe(1);
   expect(app.viewStyle("id:remove-demo")?.effectiveOpacity ?? 0).toBe(1);
 });
+
+test("a narrow pane's inspector is a dialog of its own, named by its title", async () => {
+  // a pane under 780 pt beside the sidebar: the inspector comes in from the edge (Native Shell's Sheet, a modal dialog)
+  const app = await open("../App.tsx", { ...desktop, width: 960 });
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  await app.press("text:manifest 3 written");
+  await app.waitFor("id:operation-detail");
+  // a dialog to a screen reader, its title its name, its controls inside it
+  expect(app.shows("role:dialog[Operation]")).toBe(true);
+  expect(app.shows("role:dialog >> id:inspector-close")).toBe(true);
+  await app.press("id:inspector-close");
+  await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
+  expect(app.shows("role:dialog")).toBe(false);
+});
