@@ -341,8 +341,7 @@
         "p99Ms",
         "maxMs",
         "bytesUp",
-        "bytesDown",
-        "few"
+        "bytesDown"
       ]
     },
     "phrase": {

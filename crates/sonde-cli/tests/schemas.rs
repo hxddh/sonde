@@ -335,6 +335,22 @@ async fn every_json_output_is_as_its_schema_says() {
             &b.json(&["show", q, "--summary", "-f", "json"], 0).await,
         );
     }
+    // one kind of request of many: not few, so `few` is left out
+    {
+        let line = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
+        let (_, run) = sonde_analysis::import::import(&line.repeat(30), "many").unwrap();
+        let m = b.path("many.sonde");
+        sonde_analysis::import::save(&run, &m).unwrap();
+        let m = m.to_str().unwrap();
+        let summary = b.json(&["show", m, "--summary", "-f", "json"], 0).await;
+        assert!(
+            summary["summary"]["kinds"][0].get("few").is_none(),
+            "{}",
+            summary["summary"]["kinds"][0]
+        );
+        holds("show-summary", &summary);
+        holds("show", &b.json(&["show", m, "-f", "json"], 0).await);
+    }
     holds(
         "show",
         &b.json(&["show", s, "--errors", "-f", "json"], 0).await,

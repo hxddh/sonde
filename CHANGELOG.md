@@ -21,7 +21,7 @@ versions and keeps no old names ([contract](docs/contract.md)).
 - More clients reach sonde with nothing set: s5cmd (`S3_ENDPOINT_URL`), `docker run` / `podman run` (host network,
   variables by name). When nothing arrives, the program's own client is named first.
 - `share` writes one HTML file holding the app's own views and Time pane; two runs open on Compare.
-- Every command writes `text` and `json`; `check` adds `markdown` and `github`. Destructive commands are a dry run,
+- Every command that reports writes `text` and `json` (`run` leaves stdout to its program); `check` adds `markdown` and `github`. Destructive commands are a dry run,
   then `--yes`. Costs under a cent are said as a share; probe failures give their reason.
 - All state beside the runs is in the folder's one index, under one lock, replaced durably.
 - Charts, every one kept and shown:
@@ -60,6 +60,7 @@ versions and keeps no old names ([contract](docs/contract.md)).
 - `--tls` certificates are accepted by Python 3.13's strict default.
 - While a program runs, Run shows its requests live.
 - The toolbar's endpoint opens with a press anywhere on it, not only on its arrow.
+- `show -f json` of a run with 20 or more requests of a kind holds to its schema (`few` is left out when false).
 - `show` of a million is linear again (60 s → 8.5 s).
 - The Action passes over a baseline an earlier sonde wrote (the first CI run after upgrading has none, not a
   failure).
