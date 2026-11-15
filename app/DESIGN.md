@@ -284,7 +284,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   another path (the palette, a shortcut, the inspector).
 - **One header pattern.** A run's header is its command (one line, regular mono, cut in its middle), a meta
   line, then one primary (Run again; on Run the command bar's Run is the place's one, and the header has none) and
-  `⋯` — Try under faults… and Compare… (its last item, On another store…) are there and in the palette's "This run"
+  `⋯` — Try under faults…, Compare… and On another store… are there and in the palette's "This run"
   ("Since the run before" keeps its own Compare link at its sentence's end). Every Buckets section opens on the same
   head (`ToolBar`): its scope (the bucket and prefix; its tab above it names the section), its actions at the end,
   each also in the palette and on its shortcut

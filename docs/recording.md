@@ -271,7 +271,7 @@ What etl relies on, and how r2 answers
 Tested: the SlateDB, pyiceberg, delta-rs and boto3 runs replay with no difference on RustFS and Ceph RGW 16.2.5, and
 so does a boto3 ETL that reads 40 objects it did not write (RustFS).
 
-In the app it is asked from a run: Compare › On another store… shows the plan, runs it and opens the comparison:
+In the app it is asked from a run: the run's ⋯ › On another store… shows the plan, runs it and opens the comparison:
 grouped differences, what the program relies on, the cost on each store, and both runs as transcripts
 (`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
 
