@@ -8,7 +8,7 @@
 # SDKs: python node go java aws polars, tls (boto3 again, through `run
 # --tls`: https and the unsigned streaming trailer) and docker (the AWS CLI in
 # a container: `run -- docker run …` gives it the host's network and the
-# variables). Default: every one whose toolchain is installed. Runs go to $SMOKE_SESSIONS (default: a temporary
+# variables). Default: every one whose toolchain is installed. Runs go to $SMOKE_RUNS (default: a temporary
 # directory).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,7 +18,7 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do opts+=("$1"); shift; done
 [ "${1:-}" = "--" ] && shift
 sdks=("$@")
 [ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars tls docker)
-out="${SMOKE_SESSIONS:-$(mktemp -d)}"
+out="${SMOKE_RUNS:-$(mktemp -d)}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"   # the builds below change directory
 smoke="$root/tools/sdk-smoke"

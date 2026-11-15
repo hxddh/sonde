@@ -1,6 +1,5 @@
 // The shapes sonde/native returns (serde JSON of sonde-core, probes and decoders).
 
-import type { CorePhrase } from "./corephrases";
 
 export interface EndpointView {
   id: string;
@@ -472,7 +471,7 @@ export interface RunInfo {
   created: string;
   endpoint: string;
   command: string | null;
-  /** The program it is a run of: its name, else its command with what changes between runs left out (crates/proxy/src/program.rs `key_of`). */
+  /** The program it is a run of: its name, else its command with what changes between runs left out (crates/analysis/src/program.rs `key_of`). */
   program?: string | null;
   requests: number;
   live: boolean;
@@ -484,13 +483,17 @@ export interface RunInfo {
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
 }
 
-/** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */
+/** A phrase of what sonde says of a run: a key and its arguments (crates/analysis/src/phrase.rs); its words are
+ * `phrase.<key>` of the locale files. */
 export interface Phrase {
   key: string;
   args: Record<string, string>;
 }
 
-/** What Group by splits the operations table by (crates/proxy/src/split.rs). */
+/** What a service says (decoders' `Phrase`): its words are `core.<key>` of the locale files. */
+export type CorePhrase = { key: string; args?: Record<string, string> };
+
+/** What Group by splits the operations table by (crates/analysis/src/split.rs). */
 export type SplitBy = "kind" | "prefix" | "size" | "caller" | "sdk" | "status" | "key";
 
 /** One group of a split: the operations table's figures for it. */
@@ -550,7 +553,7 @@ export interface Episode {
   notesText?: Phrase[];
 }
 
-/** An operation as a table and the inspector read it (crates/proxy/src/view.rs): an `Episode` by its
+/** An operation as a table and the inspector read it (crates/analysis/src/view.rs): an `Episode` by its
  * index, with how many requests it has and the first of their ids. A view carries a page of these;
  * the rest are asked for in ranges. */
 export interface EpisodeRow extends Omit<Episode, "title"> {
@@ -638,7 +641,7 @@ export interface RunSummary {
   bytesDown: number;
 }
 
-/** One kind of request: an S3 call, its lookups that found nothing apart (crates/proxy/src/profile.rs). */
+/** One kind of request: an S3 call, its lookups that found nothing apart (crates/analysis/src/profile.rs). */
 export interface ProfileGroup {
   kind: string;
   missed: boolean;
@@ -892,7 +895,7 @@ export interface SizeBucket {
 }
 
 /** A run by its four signals and how many requests were in flight, each a figure
- * with its line over the run's slices (crates/proxy/src/signals.rs). A figure
+ * with its line over the run's slices (crates/analysis/src/signals.rs). A figure
  * that cannot be said (no time, no request) is null, never 0. */
 export interface Signals {
   /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. */

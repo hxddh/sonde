@@ -3,7 +3,7 @@
 //! Every HTTP exchange `s3raw` performs becomes a [`Record`]: already
 //! redacted ([`redact`]) before it is stored, so no secret ever reaches the
 //! buffer, an export or the UI. The [`RequestLog`] is a bounded ring buffer
-//! (5000 records) with a sink (a session file), filters ([`Filter`]),
+//! (5000 records) with a sink (a run file), filters ([`Filter`]),
 //! exports ([`export`]) and "copy as" renderings ([`copy`]).
 
 pub mod copy;

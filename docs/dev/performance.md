@@ -13,8 +13,8 @@ cargo build --release -p sonde-cli --features tui
 python3 scripts/perf.py target/release/sonde                    # terminal binary in a pty (pip install pyte)
 (cd app && nsh test tests/perf.test.tsx --target tui --trace)   # headless UI: 100k rows, 500 scroll frames
 cargo run --release -p sonde-proxy --example overhead           # proxy overhead (OVERHEAD_URL, OVERHEAD_BUCKET, AWS keys)
-cargo run --release -p sonde-proxy --example scale -- 1000000   # a synthetic session of a million requests
-cargo test --release -p sonde-proxy --test budgets -- --ignored # the size budgets (CI runs them)
+cargo run --release -p sonde-analysis --example scale -- 1000000   # a synthetic run of a million requests
+cargo test --release -p sonde-analysis --test budgets -- --ignored # the size budgets (CI runs them)
 ```
 
 The UI measures use the built-in demo endpoint (`sonde tui --demo`, bucket `demo-large`, 100 000 keys), so they
@@ -32,16 +32,16 @@ The same 1 KiB GET against a local RustFS, 2 000 times direct and 2 000 through 
 
 Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in the `record` job.
 
-<a id="a-session-of-a-million-requests-800"></a>
+<a id="a-run-of-a-million-requests-800"></a>
 
-## Large sessions
+## Large runs
 
 **A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `compare` of two, about 500 MiB
 (it reads one run at a time). Memory grows with the requests: about 350 bytes each (a record's 96 bytes and what
 it shares, its operation's 88, and the analysis's room), so 8 GB holds about twenty million.
 
 Measured 2026-11-14 (22.0), release build, `/usr/bin/time` (peak resident memory), the commands once, the budgets
-twice (their ranges below). The sessions are the budgets' lake job with real headers (`crates/proxy/tests/support`):
+twice (their ranges below). The runs are the budgets' lake job with real headers (`crates/analysis/tests/support`):
 a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 
 | A million requests | Time | Peak memory |
@@ -53,7 +53,7 @@ a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 | `sonde compare` (two millions) | 20 s | 510 MiB |
 | `sonde share` | not yet measured | |
 
-Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
+Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
 peak memory (what is measured and about an eighth more; a million's is the 400 MiB 22.0 set out for), which moves
 by a few percent from run to run. Time moves with a shared runner: it is said in the job's summary and fails only
 past several times what it takes.
@@ -81,7 +81,7 @@ How:
   each kept what they let go: a fifth more memory, for 2.5 s less); work is done on sorted indexes and tables by id,
   not per-request maps and copies; a run's traces keep their counts and words, not the requests they name.
 - **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
-  gets a page of operations at a time; `compare` reads one session at a time. The app also caches each finished
+  gets a page of operations at a time; `compare` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
 
 ## Terminal binary
@@ -116,7 +116,7 @@ The DataTable is virtual: JS holds one 400-row window, fetched from Rust's `List
 
 ## Opening the Time pane
 
-Headless `nsh test --trace`, the example session (172 requests), Native Shell `v0.5.0`, three runs:
+Headless `nsh test --trace`, the example run (172 requests), Native Shell `v0.5.0`, three runs:
 
 | The press's commit | Largest commit after it | All commits | Mount items |
 |---|---|---|---|

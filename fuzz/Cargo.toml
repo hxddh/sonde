@@ -1,5 +1,5 @@
 # Fuzz targets for what sonde reads from others: the layout decoders, the log
-# importers, S3's XML and a session's lines. Not a member of the workspace
+# importers, S3's XML and a run's lines. Not a member of the workspace
 # (it needs nightly and cargo-fuzz):
 #
 #   fuzz/seeds.sh                      # each target's corpus from the samples
@@ -22,7 +22,7 @@ bytes = "1"
 futures = "0.3"
 decoders = { path = "../crates/decoders" }
 s3raw = { path = "../crates/s3raw" }
-sonde-proxy = { path = "../crates/proxy" }
+sonde-analysis = { path = "../crates/analysis" }
 
 # a workspace of its own: the repository's does not build it
 [workspace]
@@ -95,8 +95,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "session_lines"
-path = "fuzz_targets/session_lines.rs"
+name = "run_lines"
+path = "fuzz_targets/run_lines.rs"
 test = false
 doc = false
 bench = false

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use probes::phrase::{Phrase, en, say, template, templates, untranslated};
+use probes::phrase::{Phrase, en, say};
 use probes::store::Fixture;
 use probes::{ProbeMeta, Steps};
 
@@ -45,13 +45,11 @@ fn every_judgement_is_phrases_that_say_its_english() {
         assert!(!j.summary.is_empty(), "{}", f.probe);
         assert_eq!(en(&j.summary_text), j.summary, "{}", f.probe);
         for p in &j.summary_text {
-            // a key the table lacks would say nothing
-            assert!(template(&p.key).is_some() || p.key == "raw", "{}", p.key);
             // and every argument its template names was given
             let said = say(p);
             let args: String = p.args.values().cloned().collect();
             assert!(
-                args.contains('{') || !said.contains('{'),
+                args.contains("%{") || !said.contains("%{"),
                 "{}: {said}",
                 p.key
             );
@@ -104,20 +102,4 @@ fn a_run_and_a_catalog_saved_before_phrases_still_load() {
             .get("summaryText")
             .is_none()
     );
-}
-
-#[test]
-fn no_key_is_listed_twice_or_is_another_crates() {
-    let all = templates();
-    for (i, (k, _)) in all.iter().enumerate() {
-        assert!(all[..i].iter().all(|(o, _)| o != k), "{k} is listed twice");
-        assert!(sonde_core::phrase::template(k).is_none(), "{k}");
-    }
-}
-
-#[test]
-fn every_key_has_a_chinese_template() {
-    let ts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/corephrases.ts");
-    let ts = std::fs::read_to_string(ts).unwrap();
-    assert_eq!(untranslated(&ts, &templates()), Vec::<String>::new());
 }

@@ -126,8 +126,8 @@ pub fn commit_family(bucket: Option<&str>, key: Option<&str>) -> String {
 
 /// Which table log a key is a commit of, if any.
 fn log_kind(key: &str) -> Option<&'static str> {
-    use crate::episode::Part;
-    Some(match crate::episode::part_of(key)? {
+    use crate::part::Part;
+    Some(match crate::part::part_of(key)? {
         Part::SlateManifest(_) => "manifest",
         Part::SlateWal(_) => "wal",
         Part::SlateCompactions(_) => "compactions",
@@ -737,7 +737,7 @@ fn matches_op(on: &[String], op: &str) -> bool {
 
 /// A key's prefix for the rate: the bucket and the key's folder, three
 /// levels at most, as the rate finding has it
-/// ([`crate::profile::prefix_of`]). S3 partitions by load and tells no one
+/// (`sonde_analysis::profile::prefix_of`). S3 partitions by load and tells no one
 /// where; the folder is the reading both keep to.
 pub fn rate_prefix(bucket: Option<&str>, key: Option<&str>) -> String {
     let b = bucket.unwrap_or("");
@@ -1185,15 +1185,11 @@ mod tests {
         assert!(at(1050, "p/c").is_some(), "a fixed window would let it by");
         assert!(at(1899, "p/d").is_some());
         assert_eq!(at(1901, "p/e"), None, "the first has left the second");
-        // the prefix is the finding's: three levels of folder at most
-        let r = reqlog::Record {
-            bucket: Some("b".into()),
-            key: Some("a/b/c/d/e.parquet".into()),
-            ..Default::default()
-        };
+        // the prefix is the finding's (the analysis's prefix_of): three
+        // levels of folder at most
         assert_eq!(
-            rate_prefix(r.bucket.as_deref(), r.key.as_deref()),
-            crate::profile::prefix_of(&r)
+            rate_prefix(Some("b"), Some("a/b/c/d/e.parquet")),
+            "b/a/b/c/"
         );
         assert_eq!(rate_prefix(Some("b"), Some("a/b/c/d/e")), "b/a/b/c/");
         assert_eq!(rate_prefix(Some("b"), Some("top")), "b/");

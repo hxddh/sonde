@@ -33,14 +33,7 @@ pub struct PutIfNoneMatch;
 #[async_trait]
 impl Probe for PutIfNoneMatch {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "cond.put-if-none-match",
-            Category::ConditionalWrites,
-            "PUT If-None-Match: *",
-            "Create-only writes: a PUT with If-None-Match: * succeeds on a new key and is refused when the key exists.",
-            "First PUT 200; second PUT 412 PreconditionFailed (409 ConditionalRequestConflict while a concurrent write is in flight). The object keeps its first body.",
-            &[],
-        )
+        meta("cond.put-if-none-match", Category::ConditionalWrites, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("inm");
@@ -95,14 +88,7 @@ pub struct PutIfMatch;
 #[async_trait]
 impl Probe for PutIfMatch {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "cond.put-if-match",
-            Category::ConditionalWrites,
-            "PUT If-Match",
-            "Compare-and-swap writes: a PUT with If-Match succeeds only while the object still has that ETag.",
-            "PUT with a stale ETag: 412 PreconditionFailed; with the current ETag: 200. A missing key with If-Match: 404 NoSuchKey.",
-            &[],
-        )
+        meta("cond.put-if-match", Category::ConditionalWrites, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("im");
@@ -170,14 +156,7 @@ pub struct CopyIfMatch;
 #[async_trait]
 impl Probe for CopyIfMatch {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "cond.copy-if-match",
-            Category::ConditionalWrites,
-            "Conditional CopyObject",
-            "CopyObject with x-amz-copy-source-if-match (on the source) and If-None-Match: * (on the destination).",
-            "Wrong source ETag: 412; destination exists with If-None-Match: *: 412; otherwise 200.",
-            &[],
-        )
+        meta("cond.copy-if-match", Category::ConditionalWrites, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let src = cx.key("copy-src");
@@ -257,9 +236,6 @@ impl Probe for CompleteIfNoneMatch {
         meta(
             "cond.complete-if-none-match",
             Category::ConditionalWrites,
-            "Conditional CompleteMultipartUpload",
-            "CompleteMultipartUpload with If-None-Match: * when the key was created in the meantime.",
-            "412 PreconditionFailed; the existing object is kept. The upload can still be aborted.",
             &[],
         )
     }

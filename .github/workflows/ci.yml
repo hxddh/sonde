@@ -44,7 +44,7 @@ jobs:
         with: { tool: cargo-shear@1.14.1 }
       - name: No unused dependencies
         run: cargo shear
-      - name: Session fixtures in the format sonde writes (scripts/fixtures.py)
+      - name: Run fixtures in the format sonde writes (scripts/fixtures.py)
         run: python3 scripts/fixtures.py --check
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
@@ -75,12 +75,12 @@ jobs:
       - run: cargo test --workspace --locked
 
   budgets:
-    # sessions of any size, held (optimised, as released): each test's
+    # runs of any size, held (optimised, as released): each test's
     # peak memory, the same from run to run, against its budget; its time,
     # which a shared runner moves, said and held only past several times
-    # what it takes (crates/proxy/tests/budgets.rs, docs/dev/performance.md).
+    # what it takes (crates/analysis/tests/budgets.rs, docs/dev/performance.md).
     # Each test is a process of its own, so its peak is its own. A job of
-    # its own beside the unit tests: its release build and its sessions of
+    # its own beside the unit tests: its release build and its runs of
     # a million take longer than they do.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -89,16 +89,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: release, save-if: "${{ github.ref == 'refs/heads/main' }}" }
-      - name: Budgets of a large session
-        # each session made once, by the first test that reads it
-        env: { SONDE_BUDGET_SESSIONS: "${{ runner.temp }}/sessions" }
+      - name: Budgets of a large run
+        # each run made once, by the first test that reads it
+        env: { SONDE_BUDGET_RUNS: "${{ runner.temp }}/runs" }
         run: |
           set -o pipefail
           # (listed first: a build that fails, or lists none, fails the step)
-          tests=$(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p')
+          tests=$(cargo test --release --locked -p sonde-analysis --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p')
           [ -n "$tests" ] || { echo "::error title=Budgets::no budget test was listed"; exit 1; }
           for t in $tests; do
-            cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
+            cargo test --release --locked -p sonde-analysis --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
           done
           { echo '```'; grep -h "^budget " budgets.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
@@ -112,14 +112,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: release, save-if: false }
-      # crates/proxy/tests/signals.rs: two seconds, optimised
+      # crates/analysis/tests/signals.rs: two seconds, optimised
       - name: The signals of a million requests
-        run: cargo test --release --locked -p sonde-proxy --test signals -- --ignored --nocapture
+        run: cargo test --release --locked -p sonde-analysis --test signals -- --ignored --nocapture
       # crates/sonde-nsh/src/runs.rs: what a window asks for when it opens a
       # large run, a later page, and the size of what crosses to it
       - name: A million requests through the app's bridge
         run: |
-          cargo run --release --locked -p sonde-proxy --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
+          cargo run --release --locked -p sonde-analysis --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
           SONDE_BIG_RUN="$RUNNER_TEMP/big.sonde" cargo test --release --locked -p sonde-nsh --lib -- --ignored a_large_run --nocapture
 
   ui-perf:
@@ -195,9 +195,9 @@ jobs:
       - name: The action's outputs
         env:
           PASSED: ${{ steps.sonde.outputs.passed }}
-          SESSION: ${{ steps.sonde.outputs.file }}
+          RUN: ${{ steps.sonde.outputs.file }}
           REPORT: ${{ steps.sonde.outputs.report-url }}
-        run: test "$PASSED" = true && test -f "$SESSION" && test -n "$REPORT"
+        run: test "$PASSED" = true && test -f "$RUN" && test -n "$REPORT"
 
   integration:
     runs-on: ubuntu-24.04
@@ -241,14 +241,14 @@ jobs:
           until curl -s -o /dev/null -m 2 http://127.0.0.1:9100; do sleep 2; done
       - run: cargo build -p sonde-cli
       - name: The smoke programs through sonde run
-        env: { SMOKE_SESSIONS: sessions }
+        env: { SMOKE_RUNS: runs }
         run: scripts/sdk-smoke.sh --url http://127.0.0.1:9100
       - name: Proxy overhead
         env: { OVERHEAD_URL: "http://127.0.0.1:9100", OVERHEAD_BUCKET: sonde-smoke }
         run: cargo run --release -p sonde-proxy --example overhead
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: sdk-sessions, path: "sessions/*.sonde", if-no-files-found: ignore }
+        with: { name: sdk-runs, path: "runs/*.sonde", if-no-files-found: ignore }
 
   ui:
     runs-on: ubuntu-24.04

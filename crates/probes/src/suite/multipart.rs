@@ -24,14 +24,7 @@ pub struct MinPartSize;
 #[async_trait]
 impl Probe for MinPartSize {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "mpu.min-part-size",
-            Category::Multipart,
-            "Minimum part size",
-            "Completes an upload whose first part is 1 MiB (every part but the last must be at least 5 MiB).",
-            "400 EntityTooSmall at CompleteMultipartUpload; a 5 MiB first part completes.",
-            &[],
-        )
+        meta("mpu.min-part-size", Category::Multipart, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("minpart");
@@ -86,14 +79,7 @@ pub struct OutOfOrder;
 #[async_trait]
 impl Probe for OutOfOrder {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "mpu.out-of-order",
-            Category::Multipart,
-            "Parts out of order",
-            "Uploads part 2 before part 1, completes with the parts listed in descending order, then in ascending order.",
-            "Parts may be uploaded in any order. A Complete listing parts out of ascending order: 400 InvalidPartOrder. Ascending: 200, the body in part-number order.",
-            &[],
-        )
+        meta("mpu.out-of-order", Category::Multipart, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("ooo");
@@ -177,14 +163,7 @@ pub struct DuplicateComplete;
 #[async_trait]
 impl Probe for DuplicateComplete {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "mpu.duplicate-complete",
-            Category::Multipart,
-            "Complete twice",
-            "Sends the same CompleteMultipartUpload twice, as a client retrying after a lost response would.",
-            "The retry answers 200 with the same ETag (S3 treats a repeated Complete of a just-completed upload as success); afterwards the upload id is gone (NoSuchUpload).",
-            &[],
-        )
+        meta("mpu.duplicate-complete", Category::Multipart, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("dup");
@@ -252,14 +231,7 @@ pub struct ConcurrentUploads;
 #[async_trait]
 impl Probe for ConcurrentUploads {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "mpu.concurrent-same-key",
-            Category::Multipart,
-            "Concurrent uploads of one key",
-            "Starts two uploads of the same key, completes A, then B.",
-            "Two distinct upload ids; both complete; the last Complete wins (the key holds B's body).",
-            &[],
-        )
+        meta("mpu.concurrent-same-key", Category::Multipart, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("concurrent");
@@ -331,14 +303,7 @@ pub struct UploadPartCopy;
 #[async_trait]
 impl Probe for UploadPartCopy {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "mpu.upload-part-copy",
-            Category::Multipart,
-            "UploadPartCopy",
-            "Builds an object from a byte range of another with UploadPartCopy, plus an uploaded part.",
-            "200 with <CopyPartResult>; the completed object holds the copied range followed by the uploaded part.",
-            &[],
-        )
+        meta("mpu.upload-part-copy", Category::Multipart, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let src = cx.key("upc-src");

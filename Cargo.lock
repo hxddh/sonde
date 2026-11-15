@@ -4870,6 +4870,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonde-analysis"
+version = "21.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "flate2",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "percent-encoding",
+ "rand 0.10.3",
+ "reqlog",
+ "reqwest",
+ "s3raw",
+ "serde",
+ "serde_json",
+ "sonde-fmt",
+ "sonde-proxy",
+ "tempfile",
+ "tokio",
+ "toml 1.2.1+spec-1.1.0",
+]
+
+[[package]]
 name = "sonde-cli"
 version = "21.0.0"
 dependencies = [
@@ -4901,6 +4928,7 @@ dependencies = [
  "s3raw",
  "serde",
  "serde_json",
+ "sonde-analysis",
  "sonde-core",
  "sonde-fmt",
  "sonde-nsh",
@@ -4963,6 +4991,7 @@ dependencies = [
  "s3raw",
  "serde",
  "serde_json",
+ "sonde-analysis",
  "sonde-core",
  "sonde-proxy",
  "tempfile",
@@ -4976,7 +5005,6 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "chrono",
- "flate2",
  "futures",
  "hmac",
  "http",
@@ -4993,13 +5021,10 @@ dependencies = [
  "rustls-native-certs",
  "s3raw",
  "serde",
- "serde_json",
  "sha1 0.11.0",
- "sonde-fmt",
  "tempfile",
  "tokio",
  "tokio-rustls",
- "toml 1.2.1+spec-1.1.0",
 ]
 
 [[package]]

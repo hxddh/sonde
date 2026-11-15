@@ -6,35 +6,19 @@
 //! Rust, and the application never sees them), forwarded, and recorded in a
 //! [`RequestLog`] with the headers the application sent. Responses stream
 //! back unchanged.
+//!
+//! What it records is read by `sonde-analysis`: runs, operations, findings,
+//! programs and trials.
 
 mod asis;
 pub mod callers;
 pub mod chunked;
 pub mod container;
-pub mod episode;
 pub mod fault;
-pub mod fixes;
-pub mod fixloop;
-pub mod import;
-pub mod index;
 pub mod jvm;
-pub mod logs;
 pub mod op;
-pub mod phrase;
-pub mod profile;
-pub mod program;
-pub mod project;
-pub mod replay;
-pub mod report;
-pub mod session;
-pub mod share;
-pub mod signals;
-pub mod split;
-pub mod summary;
+pub mod part;
 pub mod tls;
-pub mod trial;
-pub mod trial_plan;
-pub mod view;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -56,9 +40,10 @@ use tokio::net::TcpListener;
 
 type Out = BoxBody<Bytes, std::io::Error>;
 
-/// What the proxy lets through. A recording takes [`Policy::NoDelete`]
-/// unless told otherwise (`--policy allow`, `[record] policy`, the app's
-/// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+/// What the proxy lets through. A plain run records under [`Policy::Allow`]
+/// and a trial's runs under [`Policy::NoDelete`], unless told otherwise
+/// (`--policy`, `[record] policy`, the app's Run); a proxy built by hand
+/// ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything: a program does with its data what it would without sonde.
@@ -331,7 +316,7 @@ pub struct ProxyConfig {
     /// for the ones before it, so concurrent large uploads queue rather than
     /// hold a gigabyte each.
     pub max_buffered_total: usize,
-    /// Tags every record (the `job` field), e.g. a session id.
+    /// Tags every record (the `job` field), e.g. a run id.
     pub tag: Option<String>,
     /// The keys the application signs with: made for each proxy, so only the
     /// program sonde gave them to can use the endpoint's credentials.
@@ -1040,7 +1025,7 @@ const DROP_RESPONSE: &[&str] = &[
 ];
 
 /// Query parameters of a presigned URL's own signature (SigV4 and SigV2).
-pub(crate) const PRESIGN_PARAMS: &[&str] = &[
+pub const PRESIGN_PARAMS: &[&str] = &[
     "X-Amz-Algorithm",
     "X-Amz-Credential",
     "X-Amz-Date",

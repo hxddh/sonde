@@ -279,9 +279,8 @@ mod tests {
             let query = q(&[sub, "id=x"]);
             let put = classify("PUT", Some("b"), None, &query, none);
             assert_eq!(put, format!("Put{name}"));
-            assert!(crate::replay::changes_bucket(&put), "{put}");
             let delete = classify("DELETE", Some("b"), None, &query, none);
-            assert!(crate::replay::changes_bucket(&delete), "{delete}");
+            assert_eq!(delete, format!("Delete{name}"));
         }
         // one sonde has never heard of
         let odd = q(&["unheard-of"]);

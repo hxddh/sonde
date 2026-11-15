@@ -27,6 +27,7 @@ s3raw.workspace = true
 http.workspace = true
 reqlog.workspace = true
 sonde-proxy.workspace = true
+sonde-analysis.workspace = true
 bytes.workspace = true
 tempfile.workspace = true
 futures.workspace = true

@@ -11,7 +11,7 @@ pub struct Running {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
-    /// The program's process id: in its terminal it leads a session, and
+    /// The program's process id: in its terminal it leads a run, and
     /// so a process group, of its own.
     pid: Option<u32>,
 }

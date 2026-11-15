@@ -89,7 +89,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 - sonde's own destructive actions (aborting uploads, deleting versions) are each a dry run, then `--yes`, and are
   written to an audit log.
 - Not supported yet: S3 Express One Zone (refused with a reason), SigV4a, HTTP/2 to the endpoint.
-- Memory grows with a run's requests ([what a million cost](docs/dev/performance.md#large-sessions)).
+- Memory grows with a run's requests ([what a million cost](docs/dev/performance.md#large-runs)).
 - No telemetry. Credentials stay in sonde; logs and shared pages can be redacted.
 - What is stable between versions — run files, JSON outputs, `sonde.toml` and `config.toml` ([configuration](docs/configuration.md)), flags, exit codes — is in
   [docs/contract.md](docs/contract.md).

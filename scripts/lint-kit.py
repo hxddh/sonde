@@ -99,8 +99,6 @@ EXEMPT = {
     ("ui/plots/system.tsx", "gutter"),
     # the format's own file is where milliseconds and decimals are written
     ("format.ts", "duration"), ("format.ts", "number"),
-    # sentences of the engine, in Chinese: their `{ms} ms` are the engine's templates
-    ("phrases.ts", "duration"), ("corephrases.ts", "duration"),
     # the chart system names its own sizes (a chart's heights and gutters are its constants)
     ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
     # a terminal's toast is Native Shell's: its one action is a word in its line, pressed or reached by its key

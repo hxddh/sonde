@@ -202,7 +202,7 @@ async fn slatedb_database() {
     };
     assert!(
         fact("Fencing events").parse::<u32>().unwrap() >= 1,
-        "two sessions fence once: {}",
+        "two runs fence once: {}",
         fact("Fencing events")
     );
     assert!(fact("Writer epoch").parse::<u32>().unwrap() >= 2);

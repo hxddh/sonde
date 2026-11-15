@@ -6,11 +6,12 @@ viewer/                   the web viewer for `sonde share` (TSX, web target)  �
 crates/sonde-nsh          `sonde/native`: #[module] Sonde, Runs,              │ and the bridges
                           #[class] Listing; Run's PTY (portable-pty)          │ to it
 crates/sonde-cli          `sonde`: headless subcommands; `sonde tui` host     ─┘
-crates/proxy (sonde-proxy) the recording endpoint, faults and trials,       ─┐
-                          sessions and their summary cache, episodes,         │
-                          observations, signals, the paged view, programs     │
-                          and budgets, replay, comparison, import, OTLP,      │
-                          the HTML report                                     │
+crates/proxy (sonde-proxy) the recording endpoint: re-signing, policy,       ─┐
+                          faults, TLS, caller hooks                           │
+crates/analysis           runs (the file, its index and counts), operations,  │
+  (sonde-analysis)        findings, signals, the paged view, programs and     │
+                          budgets, trials, replay, comparison, import, the    │
+                          HTML report                                         │
 crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  │ no UI framework
                           services: browse, mpu, versions, du, layout, exec;  │ (about three
                           demo S3 server                                      │ fifths of the
@@ -18,7 +19,7 @@ crates/probes             40 probes, runner, run store, diff, matrix, reports �
 crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │ TSX counted)
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
 crates/reqlog             records, redaction, ring buffer, HAR                │
-crates/fmt (sonde-fmt)    how a size, a count and a length of time are written ─┘
+crates/fmt (sonde-fmt)    a size, a count, a length of time; its English words ─┘
 hooks/java                the Java caller hook's sources (its jars are built into sonde-proxy)
 fuzz/                     cargo-fuzz targets for what sonde reads from others (not in the workspace)
 ```
@@ -27,10 +28,10 @@ Dependencies point down:
 
 ```
 sonde-fmt ← decoders ← sonde-core ← probes
-sonde-fmt ← sonde-proxy, sonde-core, sonde-cli
+sonde-fmt ← sonde-analysis, sonde-core, sonde-cli
 reqlog ← s3raw ← sonde-core
-reqlog ← s3raw ← sonde-proxy
-sonde-core, probes, decoders, sonde-proxy ← sonde-nsh, sonde-cli
+reqlog ← s3raw ← sonde-proxy ← sonde-analysis
+sonde-core, probes, decoders, sonde-proxy, sonde-analysis ← sonde-nsh, sonde-cli
 ```
 
 - `sonde-proxy` needs no sonde configuration, only an endpoint.
@@ -53,18 +54,18 @@ each attempt is a record with its retry number.
 | Path | How |
 |---|---|
 | A listing | `new Listing(endpoint, bucket, prefix, "/")` holds rows in Rust; TSX asks for the visible window (`rows(start, 400)`, on `onVisibleRowsChange`); `loadMore()` fetches the next ListObjectsV2 page (`onLoadMore`). |
-| Run | `Runs.run` starts an endpoint, then the command through the user's shell in a pty (`portable-pty`: openpty, ConPTY). A reader thread sends output to the engine (`{started}`, then `{data}`, UTF-8-safe) and appends `{"log": {time, text}}` lines; `Terminal` draws it and sends keys and resizes back (`Runs.input`, `Runs.resize`). Resolves with the exit status and run path. `sonde-proxy::logs` makes timed lines, lined up with operations by time. |
+| Run | `Runs.run` starts an endpoint, then the command through the user's shell in a pty (`portable-pty`: openpty, ConPTY). A reader thread sends output to the engine (`{started}`, then `{data}`, UTF-8-safe) and appends `{"log": {time, text}}` lines; `Terminal` draws it and sends keys and resizes back (`Runs.input`, `Runs.resize`). Resolves with the exit status and run path. `sonde-analysis::logs` makes timed lines, lined up with operations by time. |
 | `sonde tui` | The embedded bundle on `nsh-platform-tui`, with its own event loop (crossterm via `nsh-tui-host::convert`) and an OSC 52 clipboard. |
-| The web viewer | `viewer/`, built with `--target web`: the app's pure views (`runview.tsx`, `record.tsx`) over a run's JSON computed in Rust; no Rust in the browser. `crates/sonde-cli/build.rs` embeds it from `$SONDE_VIEWER_DIR` or `viewer/.nsh/out/sonde-viewer`; without it `sonde share` says so. |
+| The web viewer | `viewer/`, built with `--target web`: the app's pure views (`runview.tsx`, `record.tsx`) over a run's JSON computed in Rust; no Rust in the browser. `crates/analysis/build.rs` embeds it from `$SONDE_VIEWER_DIR` or `viewer/.nsh/out/sonde-viewer`; without it `sonde share` says so. |
 
 ## A recording, and what is read from it
 
-The proxy re-signs each request and appends it to the `.sonde` file (a header line, a JSON line per request or
-output chunk; gzipped when finished). Then, in `sonde-proxy`:
+The proxy (`sonde-proxy`) re-signs each request, answers in the store's place under a fault (`fault.rs`: 503,
+500, slow, lost answer, cut body, lost race, per request's attempts), and hands each record to the `.sonde` file
+(a header line, a JSON line per request or output chunk; gzipped when finished). Then, in `sonde-analysis`:
 
 | Module | Does |
 |---|---|
-| `fault.rs` | answers in the store's place (503, 500, slow, lost answer, cut body, lost race), per request's attempts |
 | `trial.rs` | a clean run, then one per scenario, each judged against the clean run (verdicts in the index, `trials/`) |
 | `trial_plan.rs` | what a trial of a recorded run would try, said before it runs (the app's plan) |
 | `episode.rs` | requests → operations and findings |
@@ -72,9 +73,9 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
 | `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in `findings.json` beside its runs |
 | `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
-| `index.rs` | one `.index.jsonl` per sessions folder: counts, verdicts, exit codes; an appended log, compacted |
+| `index.rs` | one `.index.jsonl` per runs folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Runs.view`, `Runs.episodes`): what crosses to the UI does not grow |
-| `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |
+| `phrase.rs` | each sentence as a key and arguments; its words, English included, are `phrase.<key>` of `app/locales` (read by `sonde-fmt`'s `words`), said per language by the app and viewer |
 
 Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
 `crates/fmt/cases.json`.

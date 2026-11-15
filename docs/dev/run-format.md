@@ -1,7 +1,7 @@
-# The session file (`.sonde`)
+# The run file (`.sonde`)
 
-A session is the file a recording, replay, import or trial leaves. Any later sonde of the same format version reads
-it. This page is its contract ([contract.md](../contract.md)); `crates/proxy/src/session.rs` implements it and its test
+A run is the file a recording, replay, import or trial leaves. Any later sonde of the same format version reads
+it. This page is its contract ([contract.md](../contract.md)); `crates/analysis/src/run.rs` implements it and its test
 `the_format_as_its_spec_says` checks it.
 
 ## The file
@@ -11,19 +11,19 @@ it. This page is its contract ([contract.md](../contract.md)); `crates/proxy/src
   the first two bytes (`1f 8b`), not the name: both are `.sonde`. `.sonde.gz` is read the same way.
 - Line 1 is the **header**; every other line is a **record** or a **log line**. Empty lines are ignored.
 - Records are in the order requests finished, not by `id` or `time`.
-- Limits: 32 MiB per line, 64 GiB per file decompressed; beyond either it is not a session.
+- Limits: 32 MiB per line, 64 GiB per file decompressed; beyond either it is not a run.
 - A torn last line (recorder killed mid-write) is skipped. An unreadable line anywhere else makes the file
   unreadable.
 
 ## The header
 
 ```json
-{"format":"sonde-session","version":2,"sonde":"20.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
+{"format":"sonde-run","version":2,"sonde":"20.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
 ```
 
 | Field | | |
 |---|---|---|
-| `format` | required | Always `"sonde-session"`. Anything else is not a session. |
+| `format` | required | Always `"sonde-run"`. Anything else is not a run. |
 | `version` | required | The format's version, an integer: `2`. |
 | `created` | required | When the recording began, RFC 3339 in UTC. |
 | `endpoint` | required | The endpoint's id (`adhoc` for `--url`). Never its credentials. |
@@ -63,7 +63,7 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 | `requestBodyTruncated` | optional | `true`: the body was longer than what is kept. |
 | `transportError` | optional, null | Why no answer came (DNS, TLS, a timeout). |
 | `region` | optional, null | The region the request was signed for. |
-| `job` | optional, null | The job (or session tag) it belongs to. |
+| `job` | optional, null | The job (or run tag) it belongs to. |
 | `firstByteMs` | optional | Until the response's first byte, in ms. |
 | `requester` | optional | Who sent it, as the store's log names them (an import). |
 | `injected` | optional | The fault scenario that answered it, delayed it or changed its answer (a trial). |
@@ -97,5 +97,5 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - A sonde reads its own version only and refuses any other by name, never partially:
   `written by sonde 23.0.0, format 3; this sonde (22.0.0) reads format 2: update sonde to read it`
   (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).
-- A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code) is sonde's cache and state,
+- A runs folder's `.index.jsonl` (each run's counts, trial verdicts, exit code) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.

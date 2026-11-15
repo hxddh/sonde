@@ -89,7 +89,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
             if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
                 return None;
             }
-            let c = sonde_proxy::summary::counted(&p)?;
+            let c = sonde_analysis::summary::counted(&p)?;
             Some(Row {
                 name: p.file_name()?.to_string_lossy().into_owned(),
                 path: p.to_string_lossy().into_owned(),
@@ -102,8 +102,9 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 requests: c.requests,
                 seconds: c.seconds,
                 errors: c.errors,
-                trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
-                exit: sonde_proxy::index::get(&p).exit,
+                trials: sonde_analysis::trial::worst(&sonde_analysis::trial::load(&p))
+                    .map(|s| s.label()),
+                exit: sonde_analysis::index::get(&p).exit,
                 unreadable: c.unreadable,
             })
         })
@@ -156,8 +157,8 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     if f.exists() {
         return f.clone();
     }
-    // by name: a session of the sessions folder, with `.sonde` or without;
-    // then a trial's session, which is kept in `trials/` there
+    // by name: a run of the runs folder, with `.sonde` or without;
+    // then a trial's run, which is kept in `trials/` there
     let dir = s.paths().runs();
     let named = format!("{}.sonde", f.display());
     for cand in [
@@ -176,7 +177,7 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
 /// A run named on the command line, opened: every command that takes a
 /// run takes it by path or by name, and one that is not there is said
 /// with where it was looked for.
-pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
+pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_analysis::run::RunFile)> {
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
@@ -185,8 +186,8 @@ pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::ses
             s.paths().runs().display()
         )));
     }
-    let session = read(&file, sonde_proxy::session::Keep::All)?;
-    Ok((file, session))
+    let run = read(&file, sonde_analysis::run::Keep::All)?;
+    Ok((file, run))
 }
 
 /// A run's file read: one that is not a run is bad data (65), one
@@ -194,15 +195,15 @@ pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::ses
 /// is read up to its cut and said on stderr.
 pub fn read(
     file: &std::path::Path,
-    keep: sonde_proxy::session::Keep,
-) -> anyhow::Result<sonde_proxy::session::Session> {
-    use sonde_proxy::session::{ReadError, Session};
-    match Session::read_said(file, keep) {
+    keep: sonde_analysis::run::Keep,
+) -> anyhow::Result<sonde_analysis::run::RunFile> {
+    use sonde_analysis::run::{ReadError, RunFile};
+    match RunFile::read_said(file, keep) {
         Ok(r) => {
             if let Some(cut) = r.cut {
                 eprintln!("sonde: {}: {cut}", file.display());
             }
-            Ok(r.session)
+            Ok(r.run)
         }
         Err(ReadError::Bad(e)) => Err(super::bad_data(format!("{}: {e}", file.display()))),
         Err(ReadError::Io(e)) => Err(anyhow::anyhow!(e)),
@@ -214,7 +215,7 @@ pub fn read(
 pub fn open_lean(
     s: &Sonde,
     f: &PathBuf,
-) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
+) -> anyhow::Result<(PathBuf, sonde_analysis::run::RunFile)> {
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
@@ -223,8 +224,8 @@ pub fn open_lean(
             s.paths().runs().display()
         )));
     }
-    let session = read(&file, sonde_proxy::session::Keep::Analysis)?;
-    Ok((file, session))
+    let run = read(&file, sonde_analysis::run::Keep::Analysis)?;
+    Ok((file, run))
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
@@ -325,7 +326,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
         Some(Action::Prune { keep, yes }) => {
             let dir = s.paths().runs();
             let baselines: std::collections::HashSet<String> =
-                sonde_proxy::program::baselines(&dir)
+                sonde_analysis::program::baselines(&dir)
                     .into_values()
                     .collect();
             let gone: Vec<&Row> = all
@@ -351,9 +352,9 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
             for r in &gone {
                 if yes {
                     std::fs::remove_file(&r.path)?;
-                    sonde_proxy::trial::remove(std::path::Path::new(&r.path));
+                    sonde_analysis::trial::remove(std::path::Path::new(&r.path));
                     // and what was counted of it, kept beside it
-                    sonde_proxy::summary::forget(std::path::Path::new(&r.path));
+                    sonde_analysis::summary::forget(std::path::Path::new(&r.path));
                 }
                 println!(
                     "{}{}",
@@ -430,7 +431,7 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let name = name.strip_suffix(".json").unwrap_or(&name).to_string();
     let mut folder = None;
     let imported = if is_dir {
-        sonde_proxy::import::import_dir(&a.file, &name).map(|d| {
+        sonde_analysis::import::import_dir(&a.file, &name).map(|d| {
             folder = Some((d.files, d.left_out));
             d.imported
         })
@@ -438,8 +439,8 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         // as S3 delivers CloudTrail, and as logs are often kept: gzip
         let bytes = std::fs::read(&a.file)
             .map_err(|e| super::usage(format!("{}: {e}", a.file.display())))?;
-        sonde_proxy::import::text_of(&bytes)
-            .and_then(|text| sonde_proxy::import::import_counted(&text, &name))
+        sonde_analysis::import::text_of(&bytes)
+            .and_then(|text| sonde_analysis::import::import_counted(&text, &name))
     };
     let imported = match imported {
         Ok(x) => x,
@@ -447,34 +448,34 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         // file, a usage error
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
-            return Ok(if sonde_proxy::import::is_bad_data(&e) {
+            return Ok(if sonde_analysis::import::is_bad_data(&e) {
                 65
             } else {
                 64
             });
         }
     };
-    let (source, session) = (imported.source, &imported.session);
+    let (source, run) = (imported.source, &imported.run);
     let path = match &a.out {
         Some(p) => p.clone(),
         None => {
             let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
-            sonde_proxy::session::fresh_path(&dir, &name)
+            sonde_analysis::run::fresh_path(&dir, &name)
         }
     };
-    sonde_proxy::import::save(session, &path)?;
+    sonde_analysis::import::save(run, &path)?;
     match &folder {
         Some((files, _)) => eprintln!(
             "{} from {files} file{} of {} → {}",
-            output::count(session.records.len(), "request"),
+            output::count(run.records.len(), "request"),
             if *files == 1 { "" } else { "s" },
             source.name(),
             path.display()
         ),
         None => eprintln!(
             "{} from {} → {}",
-            output::count(session.records.len(), "request"),
+            output::count(run.records.len(), "request"),
             source.a(),
             path.display()
         ),

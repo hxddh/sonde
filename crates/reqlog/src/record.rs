@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use crate::{Lists, Millis, Name, Size};
 
 /// A header's name or value: text that the records repeating it share. A
-/// session of a million requests says `user-agent` and its value a million
+/// run of a million requests says `user-agent` and its value a million
 /// times; kept once each, a record's headers are a third of the size. It
 /// reads as a `str` everywhere, and is written to a file as one.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

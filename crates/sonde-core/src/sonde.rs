@@ -324,7 +324,7 @@ impl Sonde {
             .collect()
     }
 
-    /// Request prices for a session on `endpoint`: writes, reads, lists
+    /// Request prices for a run on `endpoint`: writes, reads, lists
     /// (when other than a write) and the currency. The settings', unless they
     /// are still S3 Standard's and the endpoint's vendor charges otherwise
     /// (R2, B2, Wasabi, a store of one's own). Every view prices this way.

@@ -1,0 +1,149 @@
+//! What sonde says about a run, as data: a phrase is a key and its
+//! arguments, said in the reader's language from `phrase.<key>` of the app's
+//! locale files, by the app and the shared page as by the CLI (in English,
+//! [`sonde_fmt::words`]). A text is phrases said one after the other.
+
+use std::collections::BTreeMap;
+
+use reqlog::Text;
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Phrase {
+    pub key: &'static str,
+    pub args: Args,
+}
+
+/// A phrase's arguments by name, in the order of their names: a map as it is
+/// written and read, kept as the two or three pairs it is. Every operation
+/// of a run has a title, and a run may have a million: its values
+/// are shared text (an operation's name, a key its requests name already).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Args(Vec<(&'static str, Text)>);
+
+impl Args {
+    pub fn get(&self, name: &str) -> Option<&Text> {
+        self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Text> {
+        self.0.iter().map(|(_, v)| v)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Text)> {
+        self.0.iter().map(|(k, v)| (*k, v))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::ops::Index<&str> for Args {
+    type Output = Text;
+    fn index(&self, name: &str) -> &Text {
+        self.get(name).expect("an argument of that name")
+    }
+}
+
+impl<V: Into<Text>> FromIterator<(&'static str, V)> for Args {
+    /// A name given twice keeps its last value, as a map would.
+    fn from_iter<I: IntoIterator<Item = (&'static str, V)>>(pairs: I) -> Self {
+        let mut all: Vec<(&'static str, Text)> = Vec::new();
+        for (k, v) in pairs {
+            let v = v.into();
+            match all.iter_mut().find(|(have, _)| *have == k) {
+                Some(slot) => slot.1 = v,
+                None => all.push((k, v)),
+            }
+        }
+        all.sort_by(|a, b| a.0.cmp(b.0));
+        all.shrink_to_fit();
+        Args(all)
+    }
+}
+
+impl Serialize for Args {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+    }
+}
+
+/// A phrase: `key`'s template with `args`.
+pub fn p(key: &'static str, args: &[(&'static str, String)]) -> Phrase {
+    Phrase {
+        key,
+        args: args.iter().cloned().collect(),
+    }
+}
+
+/// [`p`] of text shared already (an operation's name, a target its
+/// requests' key is in): a million operations hold it once.
+pub fn p_shared(key: &'static str, args: &[(&'static str, Text)]) -> Phrase {
+    Phrase {
+        key,
+        args: args.iter().cloned().collect(),
+    }
+}
+
+/// `"s"` after a count other than one, for English plurals (`%{s}`).
+pub fn plural(n: usize) -> String {
+    if n == 1 { String::new() } else { "s".into() }
+}
+
+/// The English template of `key`: every key Rust says has one.
+fn template(key: &str) -> &'static str {
+    let t = sonde_fmt::words::phrase(key);
+    debug_assert!(t.is_some(), "phrase.{key} is not in app/locales/en.json");
+    t.unwrap_or("")
+}
+
+impl Phrase {
+    /// The phrase in English.
+    pub fn en(&self) -> String {
+        sonde_fmt::words::fill(template(self.key), |name| self.args.get(name).map(|t| &**t))
+    }
+}
+
+/// A phrase in English from a key and arguments kept as text (a verdict
+/// read back from its file).
+pub fn en_of(key: &str, args: &BTreeMap<String, String>) -> String {
+    sonde_fmt::words::fill(template(key), |name| args.get(name).map(String::as_str))
+}
+
+/// A text in English: its phrases one after the other.
+pub fn en(text: &[Phrase]) -> String {
+    text.iter().map(Phrase::en).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_phrase_is_said_from_the_locale() {
+        let x = p(
+            "mpu",
+            &[
+                ("key", "b/%{n}%{s}.bin".into()),
+                ("n", "2".into()),
+                ("s", plural(2)),
+                ("size", "200 B".into()),
+            ],
+        );
+        assert_eq!(x.en(), "multipart upload b/%{n}%{s}.bin · 2 parts · 200 B");
+        assert_eq!(
+            en(&[x, p("mpu.open", &[])]),
+            "multipart upload b/%{n}%{s}.bin · 2 parts · 200 B (not completed)"
+        );
+        assert_eq!(p("size", &[("size", "1 B".into())]).en(), " · 1 B");
+    }
+}

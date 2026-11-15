@@ -3,8 +3,8 @@
 #![no_main]
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
-    let Ok(text) = sonde_proxy::import::text_of(data) else {
+    let Ok(text) = sonde_analysis::import::text_of(data) else {
         return;
     };
-    let _ = sonde_proxy::import::import_counted(&format!("79a5 lake [{text}"), "fuzz");
+    let _ = sonde_analysis::import::import_counted(&format!("79a5 lake [{text}"), "fuzz");
 });

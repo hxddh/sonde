@@ -542,7 +542,7 @@
         "format": {
           "type": "string",
           "description": "Always `sonde-run`.",
-          "const": "sonde-session"
+          "const": "sonde-run"
         },
         "version": {
           "type": "integer",

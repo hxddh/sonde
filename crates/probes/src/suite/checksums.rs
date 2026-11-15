@@ -38,16 +38,9 @@ pub struct Single(pub Algorithm);
 #[async_trait]
 impl Probe for Single {
     fn meta(&self) -> ProbeMeta {
-        let n = self.0.name();
         meta(
             &format!("checksum.{}.single", lower(self.0)),
             Category::Checksums,
-            &format!("{n} on PutObject"),
-            &format!(
-                "PUT with x-amz-checksum-{}: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.",
-                lower(self.0)
-            ),
-            "Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.",
             &[],
         )
     }
@@ -135,20 +128,9 @@ impl Probe for Multipart {
         } else {
             "composite"
         };
-        let aws = if self.full_object {
-            "CreateMultipartUpload with x-amz-checksum-type: FULL_OBJECT; HEAD returns the CRC of the whole object (no -N suffix), type FULL_OBJECT."
-        } else {
-            "CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE."
-        };
         meta(
             &format!("checksum.{}.mpu-{mode}", lower(self.alg)),
             Category::Checksums,
-            &format!("{} multipart, {mode}", self.alg.name()),
-            &format!(
-                "A two-part upload with {} part checksums, completed in {mode} mode.",
-                self.alg.name()
-            ),
-            aws,
             &[],
         )
     }
@@ -291,14 +273,7 @@ pub struct Trailing;
 #[async_trait]
 impl Probe for Trailing {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "checksum.trailing",
-            Category::Checksums,
-            "Trailing checksum (aws-chunked)",
-            "PUT with Content-Encoding: aws-chunked, STREAMING-UNSIGNED-PAYLOAD-TRAILER and an x-amz-checksum-crc32 trailer: what current AWS SDKs send by default.",
-            "200; the trailer's CRC32 is verified, stored and returned by HEAD; the stored body is the decoded payload (no chunk framing).",
-            &[],
-        )
+        meta("checksum.trailing", Category::Checksums, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let body = data(3000, 5);

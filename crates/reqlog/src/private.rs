@@ -1,4 +1,4 @@
-//! Files that hold what a program sent and received (sessions, their caches
+//! Files that hold what a program sent and received (runs, their caches
 //! and verdicts, the request log, the audit log) are their user's alone:
 //! made 0600 on Unix, whatever the umask. A file already there keeps its
 //! mode. Elsewhere they are made as any file is.

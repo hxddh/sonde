@@ -40,14 +40,7 @@ pub struct SpecialKeys;
 #[async_trait]
 impl Probe for SpecialKeys {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "keys.special",
-            Category::Keys,
-            "Special characters and Unicode in keys",
-            "PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII; the verdict is of the keys sent (sonde cannot send the two with a dot segment).",
-            "Keys are opaque UTF-8: every key round-trips through PUT, GET and ListObjectsV2 (with encoding-type=url) exactly.",
-            &[],
-        )
+        meta("keys.special", Category::Keys, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let p = cx.key("special/");
@@ -159,14 +152,7 @@ pub struct TokenStability;
 #[async_trait]
 impl Probe for TokenStability {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "list.token-stability",
-            Category::Listing,
-            "Continuation token stability",
-            "Lists 30 keys 10 at a time; between pages, adds keys before and after the position, then reuses the first token.",
-            "A continuation token is a position: later pages continue after the last key returned, include keys written after it, never repeat keys, and the same token can be used again.",
-            &[],
-        )
+        meta("list.token-stability", Category::Listing, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let p = cx.key("tok/");
@@ -307,14 +293,7 @@ pub struct StartAfter;
 #[async_trait]
 impl Probe for StartAfter {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "list.start-after",
-            Category::Listing,
-            "ListObjectsV2 StartAfter",
-            "Lists with StartAfter set to an existing key, to a key between two keys, and to a key outside the prefix.",
-            "Keys strictly after StartAfter, in UTF-8 binary order; StartAfter is echoed in the response.",
-            &[],
-        )
+        meta("list.start-after", Category::Listing, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let p = cx.key("sa/");
@@ -392,14 +371,7 @@ pub struct DeleteBatchLimit;
 #[async_trait]
 impl Probe for DeleteBatchLimit {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "delete.batch-limit",
-            Category::Delete,
-            "DeleteObjects batch limit",
-            "DeleteObjects with 1000 keys, then with 1001 (keys that do not exist: nothing is deleted for real).",
-            "1000 keys: 200, each key reported deleted (deleting a missing key succeeds). 1001 keys: 400 MalformedXML.",
-            &[],
-        )
+        meta("delete.batch-limit", Category::Delete, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let keys = |n: usize| -> Vec<(String, Option<String>)> {

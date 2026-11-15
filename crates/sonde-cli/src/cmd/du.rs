@@ -62,7 +62,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
                 r.prefix,
                 h(r.total_bytes),
                 // a cost too small for cents is said in its digits, not 0.00
-                sonde_proxy::program::money_text(r.cost_per_month, &r.currency),
+                sonde_analysis::program::money_text(r.cost_per_month, &r.currency),
                 r.source
             );
             println!(

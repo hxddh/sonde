@@ -22,14 +22,7 @@ pub struct ListAfterWrite;
 #[async_trait]
 impl Probe for ListAfterWrite {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "consistency.list-after-write",
-            Category::Consistency,
-            "List after write",
-            "Writes 20 keys, then lists them at once.",
-            "Strong consistency (since December 2020): every acknowledged PUT appears in the next listing.",
-            &[],
-        )
+        meta("consistency.list-after-write", Category::Consistency, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let p = cx.key("law/");
@@ -114,9 +107,6 @@ impl Probe for ReadAfterOverwrite {
         meta(
             "consistency.read-after-overwrite",
             Category::Consistency,
-            "Read after overwrite",
-            "Overwrites a key and reads it at once, five times.",
-            "Strong read-after-write: every GET returns the latest body.",
             &[],
         )
     }
@@ -161,14 +151,7 @@ pub struct ReadAfterDelete;
 #[async_trait]
 impl Probe for ReadAfterDelete {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "consistency.read-after-delete",
-            Category::Consistency,
-            "Read after delete",
-            "Deletes a key and reads it at once.",
-            "GET and HEAD answer 404 NoSuchKey right after DeleteObject; the key leaves listings.",
-            &[],
-        )
+        meta("consistency.read-after-delete", Category::Consistency, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("rad");

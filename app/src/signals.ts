@@ -1,7 +1,7 @@
 // A run by its four signals — rate, errors, latency, bytes — and how many
 // requests were in flight: what the run's header says of each (a figure,
 // its line over the run, one line of detail), in words. Rust counts them
-// (crates/proxy/src/signals.rs).
+// (crates/analysis/src/signals.rs).
 
 import { bytes, count, duration, percent, rate, transfer } from "./format";
 import { type Key, t } from "./i18n";

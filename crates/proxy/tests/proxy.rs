@@ -20,6 +20,19 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use tokio::net::TcpListener;
 
 const REAL_KEY: &str = "AKIDREALKEY";
+
+/// A header of the answer sonde recorded.
+fn answer_header<'a>(r: &'a reqlog::Record, name: &str) -> Option<&'a str> {
+    r.response_headers()
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_ref())
+}
+
+/// Answered by a fault of sonde's, and marked so in the answer.
+fn faulted(r: &reqlog::Record) -> bool {
+    r.rare().injected.is_some() && answer_header(r, "x-sonde-fault").is_some()
+}
 const REAL_SECRET: &str = "real-secret-only-sonde-knows";
 
 #[derive(Default)]
@@ -712,7 +725,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
         .unwrap();
     assert_eq!(r.status(), 403);
     assert_eq!(calls(), 0, "nothing reached the store");
-    // each refusal is in the session, saying why
+    // each refusal is in the run, saying why
     let refused = log.list(&reqlog::Filter::default(), 10);
     assert_eq!(refused.len(), 3);
     assert!(refused.iter().all(|r| r.status == Some(403)));
@@ -1209,7 +1222,7 @@ async fn a_request_held_past_the_programs_patience_is_kept_as_given_up() {
     }
     let held = held.expect("the given-up attempt is recorded");
     assert!(held.rare().transport_error.is_some(), "{held:?}");
-    assert!(sonde_proxy::trial::faulted(&held));
+    assert!(faulted(&held));
     assert!(
         held.response_headers()
             .iter()
@@ -1344,20 +1357,9 @@ async fn two_batches_of_deletes_each_meet_the_fault_and_each_has_its_retry() {
         recs.iter().all(|r| r.rare().request_body.is_some()),
         "kept on a failed one too"
     );
-    // read as a trial: both failed, both sent again
-    let clean: Vec<reqlog::Record> = recs
-        .iter()
-        .filter(|r| r.rare().injected.is_none())
-        .cloned()
-        .collect();
-    let t = sonde_proxy::trial::judge(
-        &sonde_proxy::fault::scenario("slowdown").unwrap(),
-        &clean,
-        0,
-        &recs,
-        0,
-    );
-    assert_eq!((t.faults, t.retried), (2, 2), "{}", t.line());
+    // both failed, both sent again
+    assert_eq!(recs.iter().filter(|r| faulted(r)).count(), 2);
+    assert_eq!(recs.iter().filter(|r| r.status == Some(204)).count(), 2);
 }
 
 #[tokio::test]
@@ -1562,7 +1564,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
         rec.rare().transport_error.as_deref(),
         Some("sonde cut the response body after 500 of 1000 bytes on purpose (scenario cut-body)")
     );
-    assert!(sonde_proxy::trial::faulted(&rec));
+    assert!(faulted(&rec));
 
     // the next read of it is whole: the cut is met once
     let get = |key: &str| {
@@ -1629,29 +1631,21 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
     assert_eq!(lost.len(), 2);
     for r in &lost {
         assert_eq!(r.status, Some(412));
-        assert!(sonde_proxy::trial::faulted(r));
+        assert!(faulted(r));
     }
     let forwarded = lost
         .iter()
         .find(|r| r.key.as_deref() == Some(log_key(1).as_str()))
         .unwrap();
-    assert_eq!(sonde_proxy::trial::store_status(forwarded), Some(200));
+    assert_eq!(
+        answer_header(forwarded, "x-sonde-store-status"),
+        Some("200")
+    );
     let unsent = lost
         .iter()
         .find(|r| r.key.as_deref() == Some("pointer"))
         .unwrap();
-    assert_eq!(sonde_proxy::trial::store_status(unsent), None);
-    // what sonde answered itself is not on the store's bill, and is not one
-    // of the store's races
-    assert!(sonde_proxy::profile::reached_store(forwarded));
-    assert!(!sonde_proxy::profile::reached_store(unsent));
-    let eps = sonde_proxy::episode::episodes(&recs);
-    let obs = sonde_proxy::episode::observations(&recs, &eps);
-    assert!(
-        !obs.iter()
-            .any(|o| o.phrases.first().is_some_and(|p| p.key == "obs.races")),
-        "{obs:?}"
-    );
+    assert_eq!(answer_header(unsent, "x-sonde-store-status"), None);
 }
 
 #[tokio::test]

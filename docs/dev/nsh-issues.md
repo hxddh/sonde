@@ -80,7 +80,7 @@ seven casts (measured).
 
 ## Files can be dropped in, not dragged out
 
-- **What**: `onFileDrop` exists; no drag source for a session or object.
+- **What**: `onFileDrop` exists; no drag source for a run or object.
 
 ## No represented file, window tabs or recent documents
 

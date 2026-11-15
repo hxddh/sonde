@@ -141,7 +141,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                 _ => {
                     // a cost too small for cents is said in its digits, not 0.00
                     let money = |v: f64| {
-                        sonde_proxy::program::money_text(v, &r.currency)
+                        sonde_analysis::program::money_text(v, &r.currency)
                             .trim_end_matches(&r.currency)
                             .trim_end()
                             .to_string()
@@ -183,7 +183,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                         r.threshold_days,
                         human(r.total_bytes),
                         human(r.stale_bytes),
-                        sonde_proxy::program::money_text(r.cost_per_month, &r.currency),
+                        sonde_analysis::program::money_text(r.cost_per_month, &r.currency),
                     );
                     println!("Lifecycle: {}", r.lifecycle.message);
                 }

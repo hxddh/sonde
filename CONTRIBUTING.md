@@ -26,7 +26,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo shear                              # no unused dependencies
-python3 scripts/fixtures.py --check      # session fixtures in the current format
+python3 scripts/fixtures.py --check      # run fixtures in the current format
 (cd app && nsh check)
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own
 python3 scripts/check-locales.py && python3 scripts/lint-kit.py && python3 scripts/lint-layout.py && python3 scripts/lint-charts.py
@@ -35,8 +35,9 @@ scripts/integration.sh                   # against Ceph RGW and RustFS in Docker
 ```
 
 Run the app's tests through `scripts/ui-tests.sh`, not `nsh test` alone: it keeps them off your own sonde data.
-Every word the app shows is in `app/locales` in English and Chinese. When the session format changes, set
-`RENAMES` in `scripts/fixtures.py`, run it, and commit the fixtures.
+Every word sonde says is in `app/locales` in English and Chinese: the app's, and the phrases Rust says (`phrase.*`,
+`core.*`; Rust reads the English there). When the run format changes, set `RENAMES` in `scripts/fixtures.py`, run
+it, and commit the fixtures.
 
 ## The tour and its pictures
 

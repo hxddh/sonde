@@ -179,7 +179,7 @@ jobs:
         if: runner.os == 'Windows'
         run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
-        run: target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
+        run: target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
       # before it is zipped: the archive holds the signed sonde.exe
       - name: Sign sonde.exe (skipped without the signing secrets)
         if: runner.os == 'Windows'
@@ -234,7 +234,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
       - uses: ./.github/actions/nsh
-      # the app's Share writes the session as the viewer's web page
+      # the app's Share writes the run as the viewer's web page
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the app

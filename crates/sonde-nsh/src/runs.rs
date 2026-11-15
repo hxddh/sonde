@@ -10,10 +10,10 @@ use nsh_core::prelude::*;
 use parking_lot::Mutex;
 use reqlog::RequestLog;
 use serde_json::json;
-use sonde_proxy::episode::episodes;
-use sonde_proxy::replay::{self, ReplayOptions};
-use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
-use sonde_proxy::view::Analysis;
+use sonde_analysis::episode::episodes;
+use sonde_analysis::replay::{self, ReplayOptions};
+use sonde_analysis::run::{RunFile, RunHeader, RunWriter};
+use sonde_analysis::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 use crate::state::{err_msg, sonde, to_json};
@@ -23,7 +23,7 @@ struct Recording {
     path: PathBuf,
     endpoint: String,
     log: RequestLog,
-    writer: Arc<SessionWriter>,
+    writer: Arc<RunWriter>,
     /// The runtime it began on: where it is finished, from a handler that is in none.
     runtime: tokio::runtime::Handle,
 }
@@ -41,7 +41,7 @@ impl Recording {
     }
 
     /// [`Recording::finish`], waiting `grace` for the requests in flight.
-    /// Also what the recording lost ([`SessionWriter::not_written`]).
+    /// Also what the recording lost ([`RunWriter::not_written`]).
     async fn finish_within(mut self, grace: std::time::Duration) -> (String, Option<String>) {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
@@ -51,7 +51,7 @@ impl Recording {
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
-        let _ = sonde_proxy::session::compress(&file);
+        let _ = sonde_analysis::run::compress(&file);
         (file.to_string_lossy().into_owned(), lost)
     }
 }
@@ -167,9 +167,9 @@ fn policy_of(name: &str) -> Result<Policy, String> {
 }
 
 /// The project a run in `dir` is of: its `sonde.toml`, or none.
-fn project_in(dir: Option<&Path>) -> Result<Option<sonde_proxy::project::Project>, String> {
+fn project_in(dir: Option<&Path>) -> Result<Option<sonde_analysis::project::Project>, String> {
     match dir {
-        Some(d) => sonde_proxy::project::of(d).map_err(err_msg),
+        Some(d) => sonde_analysis::project::of(d).map_err(err_msg),
         None => Ok(None),
     }
 }
@@ -192,7 +192,7 @@ fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, Strin
 /// torn last character is a torn line).
 fn file_text(bytes: &[u8]) -> std::io::Result<String> {
     if bytes.starts_with(&[0x1f, 0x8b]) {
-        let out = sonde_proxy::import::gunzip(bytes, sonde_proxy::import::GUNZIP_LIMIT)?;
+        let out = sonde_analysis::import::gunzip(bytes, sonde_analysis::import::GUNZIP_LIMIT)?;
         return Ok(String::from_utf8_lossy(&out).into_owned());
     }
     Ok(String::from_utf8_lossy(bytes).into_owned())
@@ -259,17 +259,17 @@ async fn begin(
     let dir = s.paths().runs();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     // named as the CLI names it: by the program (`etl` for `python3 etl.py`)
-    let name = sonde_proxy::program::file_stem(program.as_deref(), command.as_deref())
+    let name = sonde_analysis::program::file_stem(program.as_deref(), command.as_deref())
         .unwrap_or_else(|| "recording".into());
     let path = match &under {
         Some(u) => u.path.clone(),
-        None => sonde_proxy::session::fresh_path(
+        None => sonde_analysis::run::fresh_path(
             &dir,
             &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
         ),
     };
     let cfg = client.config();
-    let mut header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
+    let mut header = RunHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
     }
@@ -282,7 +282,7 @@ async fn begin(
         .as_ref()
         .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
     let made = under.as_ref().map(|u| u.made.clone()).unwrap_or_default();
-    let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
+    let writer = Arc::new(RunWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let started = background({
@@ -331,8 +331,8 @@ struct Cached {
     /// For a growing (uncompressed) file: where its unread lines start.
     read_to: Option<u64>,
     used: u64,
-    run: Arc<Session>,
-    /// A large run is kept lean ([`Session::open_lean`]): a request in
+    run: Arc<RunFile>,
+    /// A large run is kept lean ([`RunFile::open_lean`]): a request in
     /// full is then read from the file when it is asked for.
     lean: bool,
     analysis: Option<Arc<Analysis>>,
@@ -361,16 +361,16 @@ fn kept_lean(len: u64, compressed: bool) -> bool {
     }
 }
 
-fn open_run(path: &str) -> Result<Arc<Session>, String> {
+fn open_run(path: &str) -> Result<Arc<RunFile>, String> {
     cached_run(path).map(|(s, _)| s)
 }
 
 /// A run with every record in full: the one kept, or (a large run
 /// is kept lean) read again for the occasion.
-fn full_run(path: &str) -> Result<Arc<Session>, String> {
+fn full_run(path: &str) -> Result<Arc<RunFile>, String> {
     match cached_run(path)? {
         (s, false) => Ok(s),
-        _ => Ok(Arc::new(Session::open(Path::new(path)).map_err(err_msg)?)),
+        _ => Ok(Arc::new(RunFile::open(Path::new(path)).map_err(err_msg)?)),
     }
 }
 
@@ -386,14 +386,14 @@ fn full_record(path: &str, id: u64) -> Result<Option<reqlog::Record>, String> {
 
 /// One record in full from a run's file, for a run read lean (`s`:
 /// it has the ids the reading gave the file's records).
-fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::Record>, String> {
+fn record_from_file(path: &Path, s: &RunFile, id: u64) -> Result<Option<reqlog::Record>, String> {
     if !s.records.iter().any(|r| r.id == id) {
         return Ok(None);
     }
     let mut found = None;
     // read to where it is, and no further
     let read =
-        sonde_proxy::share::each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
+        sonde_analysis::share::each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
             if r.id == id {
                 found = Some(r);
                 return Err(std::io::Error::other("found"));
@@ -407,13 +407,13 @@ fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::
     }
 }
 
-fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
+fn cached_run(path: &str) -> Result<(Arc<RunFile>, bool), String> {
     let p = Path::new(path);
     let now = stamp(p)?;
     let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // a finished recording is compressed in place, and a tiny one can come
     // out larger: never read a compressed file as appended lines
-    let compressed = sonde_proxy::session::is_compressed(p);
+    let compressed = sonde_analysis::run::is_compressed(p);
     let grown = {
         let mut cache = CACHE.lock();
         match cache.get_mut(p) {
@@ -442,21 +442,21 @@ fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
                 let from = if was_lean { had } else { 0 };
                 s.records[from..]
                     .iter_mut()
-                    .for_each(sonde_proxy::session::lean);
+                    .for_each(sonde_analysis::run::lean);
             }
             (Arc::new(s), Some(to), lean)
         }
         None => {
             // where complete lines end, taken before the read: the next read starts there
             let to = (!compressed)
-                .then(|| sonde_proxy::session::complete_len(p).ok())
+                .then(|| sonde_analysis::run::complete_len(p).ok())
                 .flatten();
             let lean = kept_lean(now.0, compressed);
             // read outside the lock: another run opens meanwhile
             let s = if lean {
-                Session::open_lean(p)
+                RunFile::open_lean(p)
             } else {
-                Session::open(p)
+                RunFile::open(p)
             };
             (Arc::new(s.map_err(err_msg)?), to, lean)
         }
@@ -488,7 +488,7 @@ fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
 /// A run and what it amounts to (its operations, findings, signals),
 /// worked out once per version of the file: every view of it, and every
 /// page of its operations, is a look at this.
-fn analysis_of(path: &str) -> Result<(Arc<Session>, Arc<Analysis>), String> {
+fn analysis_of(path: &str) -> Result<(Arc<RunFile>, Arc<Analysis>), String> {
     let s = open_run(path)?;
     let p = Path::new(path);
     if let Some(a) = CACHE
@@ -528,7 +528,7 @@ fn view_of(path: &str) -> Result<JsonValue, String> {
 /// up to `to_ms` after the first one's start.
 fn stretch_of(
     records: &[reqlog::Record],
-    prices: &sonde_proxy::profile::RequestPrices,
+    prices: &sonde_analysis::profile::RequestPrices,
     from_ms: f64,
     to_ms: f64,
 ) -> JsonValue {
@@ -549,9 +549,9 @@ fn stretch_of(
     // the stretch on the run's axis: its times from the run's start, its slices its own
     let origin = Some(t0);
     let (summary, signals, profile) = std::thread::scope(|scope| {
-        let summary = scope.spawn(|| sonde_proxy::summary::summarize(&held));
-        let signals = scope.spawn(|| sonde_proxy::signals::signals_from(&held, prices, origin));
-        let profile = sonde_proxy::profile::profile_from(&held, prices, origin);
+        let summary = scope.spawn(|| sonde_analysis::summary::summarize(&held));
+        let signals = scope.spawn(|| sonde_analysis::signals::signals_from(&held, prices, origin));
+        let profile = sonde_analysis::profile::profile_from(&held, prices, origin);
         (
             summary
                 .join()
@@ -587,7 +587,10 @@ pub const LIVE_WINDOW_MS: f64 = 30_000.0;
 
 /// [`Runs::live`] over `records`: those that started in the last
 /// [`LIVE_WINDOW_MS`] before the latest one did.
-fn live_of(records: &[reqlog::Record], prices: &sonde_proxy::profile::RequestPrices) -> JsonValue {
+fn live_of(
+    records: &[reqlog::Record],
+    prices: &sonde_analysis::profile::RequestPrices,
+) -> JsonValue {
     let starts = records.iter().map(|r| r.time.timestamp_micros());
     let (Some(t0), Some(last)) = (starts.clone().min(), starts.max()) else {
         return stretch_of(records, prices, 0.0, 0.0);
@@ -602,7 +605,7 @@ fn live_of(records: &[reqlog::Record], prices: &sonde_proxy::profile::RequestPri
 }
 
 /// A page's query as the interface sends it.
-fn query_of(query: JsonValue) -> Result<sonde_proxy::view::Query, String> {
+fn query_of(query: JsonValue) -> Result<sonde_analysis::view::Query, String> {
     if query.is_null() {
         return Ok(Default::default());
     }
@@ -619,12 +622,12 @@ fn forget(path: &Path) {
     CACHE.lock().remove(path);
     COUNTS.lock().remove(path);
     POINTS.lock().remove(path);
-    sonde_proxy::summary::forget(path);
+    sonde_analysis::summary::forget(path);
 }
 
 /// The titles given to runs, by file name, as the folder's index keeps them.
 fn titles() -> std::collections::BTreeMap<String, String> {
-    sonde_proxy::index::of(&sonde().paths().runs())
+    sonde_analysis::index::of(&sonde().paths().runs())
         .runs
         .iter()
         .filter_map(|(name, e)| Some((name.clone(), e.title.clone()?)))
@@ -666,17 +669,17 @@ fn own_run_in(dir: &Path, path: &str) -> Result<String, String> {
 /// program has none to keep).
 fn keep_exit(run: &str, code: Option<i32>) {
     if let Some(c) = code {
-        sonde_proxy::index::set(Path::new(run), sonde_proxy::index::Change::Exit(c));
+        sonde_analysis::index::set(Path::new(run), sonde_analysis::index::Change::Exit(c));
     }
 }
 
 /// A run's verdicts for the app: each with the path of its trial's run
 /// (the file keeps a name, which only this run's folder resolves).
-fn trials_of(run: &Path) -> Vec<sonde_proxy::trial::Trial> {
-    let program = header_of(run).and_then(|h| sonde_proxy::program::key_of(&h));
-    let mut trials = sonde_proxy::trial::load_with_history(run, program.as_deref());
+fn trials_of(run: &Path) -> Vec<sonde_analysis::trial::Trial> {
+    let program = header_of(run).and_then(|h| sonde_analysis::program::key_of(&h));
+    let mut trials = sonde_analysis::trial::load_with_history(run, program.as_deref());
     for t in &mut trials {
-        t.run = sonde_proxy::trial::session_path(run, t)
+        t.run = sonde_analysis::trial::run_path(run, t)
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned());
     }
@@ -686,13 +689,13 @@ fn trials_of(run: &Path) -> Vec<sonde_proxy::trial::Trial> {
 /// A run's trials as a list row marks them: the scenario, how the program
 /// stood, and the trial's own run where it is still there.
 fn trial_marks(run: &Path) -> Vec<JsonValue> {
-    sonde_proxy::trial::load(run)
+    sonde_analysis::trial::load(run)
         .iter()
         .map(|t| {
             json!({
                 "scenario": t.scenario,
                 "standing": t.standing,
-                "run": sonde_proxy::trial::session_path(run, t)
+                "run": sonde_analysis::trial::run_path(run, t)
                     .filter(|p| p.is_file())
                     .map(|p| p.to_string_lossy().into_owned()),
             })
@@ -740,11 +743,11 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
 
 /// The budget a project gives its program in the `[check]` of the
 /// `sonde.toml` found from `dir` upwards, read as `sonde check` reads it
-/// ([`sonde_proxy::project`]): what the app draws on a chart as a line —
+/// ([`sonde_analysis::project`]): what the app draws on a chart as a line —
 /// `max-waiting` in ms, `max-errors` a count. None without a file (or one
 /// that does not read), or without either.
 pub(crate) fn project_budget(dir: &Path) -> Option<(Option<u64>, Option<f64>)> {
-    let check = sonde_proxy::project::of(dir).ok()??.file.check;
+    let check = sonde_analysis::project::of(dir).ok()??.file.check;
     let waiting = check.max_waiting_ms().ok()?;
     let errors = check.max_errors.map(|n| n as u64);
     (waiting.is_some() || errors.is_some()).then_some((errors, waiting))
@@ -752,7 +755,7 @@ pub(crate) fn project_budget(dir: &Path) -> Option<(Option<u64>, Option<f64>)> {
 
 /// A trial's progress as the app hears it: `{ scenario, state }`, with the
 /// verdict when the scenario is done.
-fn trial_event(scenario: &str, trial: Option<&sonde_proxy::trial::Trial>) -> JsonValue {
+fn trial_event(scenario: &str, trial: Option<&sonde_analysis::trial::Trial>) -> JsonValue {
     match trial {
         None => json!({ "scenario": scenario, "state": "running" }),
         Some(t) => json!({ "scenario": scenario, "state": "done", "trial": t }),
@@ -844,7 +847,7 @@ async fn end_for_quit() -> JsonValue {
             let _ = std::fs::remove_file(&path);
             let of = TRIAL_OF.lock().take();
             if let Some(clean) = of {
-                sonde_proxy::trial::remove(&clean);
+                sonde_analysis::trial::remove(&clean);
             }
         } else {
             run = Some(path.to_string_lossy().into_owned());
@@ -1023,13 +1026,13 @@ static POINTS: std::sync::LazyLock<
             PathBuf,
             (
                 (u64, Option<std::time::SystemTime>),
-                sonde_proxy::program::RunPoint,
+                sonde_analysis::program::RunPoint,
             ),
         >,
     >,
 > = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
+fn run_point(path: &Path) -> Option<sonde_analysis::program::RunPoint> {
     let now = stamp(path).ok()?;
     if let Some((s, p)) = POINTS.lock().get(path)
         && *s == now
@@ -1040,7 +1043,7 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     // program's history reads 30 runs, and a finished run does not change
     let h = header_of(path)?;
     let (_, figures) =
-        sonde_proxy::summary::figures(path, &crate::state::request_prices_for(&h.endpoint))?;
+        sonde_analysis::summary::figures(path, &crate::state::request_prices_for(&h.endpoint))?;
     POINTS
         .lock()
         .insert(path.to_path_buf(), (now, figures.point.clone()));
@@ -1049,7 +1052,7 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
 
 /// Each program's baseline run, by file name, as the folder's index keeps them.
 fn baselines() -> std::collections::BTreeMap<String, String> {
-    sonde_proxy::program::baselines(&sonde().paths().runs())
+    sonde_analysis::program::baselines(&sonde().paths().runs())
 }
 
 /// The requests in a run file: its record lines (not the header, not the
@@ -1069,8 +1072,8 @@ fn count_records(path: &Path) -> usize {
     }
     // a finished run is compressed: counted whole, once, and the count
     // kept beside it
-    if len > from && sonde_proxy::session::is_compressed(path) {
-        let n = sonde_proxy::summary::counted(path).map_or(0, |c| c.requests as usize);
+    if len > from && sonde_analysis::run::is_compressed(path) {
+        let n = sonde_analysis::summary::counted(path).map_or(0, |c| c.requests as usize);
         COUNTS.lock().insert(path.to_path_buf(), (len, n, header));
         return n;
     }
@@ -1102,19 +1105,19 @@ fn count_records(path: &Path) -> usize {
 /// list's sparkline, from the counts kept beside it. A live run has
 /// none (it is still growing).
 #[cfg(test)]
-const SHAPE_BINS: usize = sonde_proxy::summary::SHAPE_BINS;
+const SHAPE_BINS: usize = sonde_analysis::summary::SHAPE_BINS;
 
 fn shape_of(path: &Path) -> Vec<u32> {
-    if !sonde_proxy::session::is_compressed(path) {
+    if !sonde_analysis::run::is_compressed(path) {
         return Vec::new();
     }
-    sonde_proxy::summary::counted(path)
+    sonde_analysis::summary::counted(path)
         .map(|c| c.shape)
         .unwrap_or_default()
 }
 
 fn header_line(path: &Path) -> Option<String> {
-    sonde_proxy::session::header_line(path)
+    sonde_analysis::run::header_line(path)
 }
 
 /// [`Runs::code_change`]'s work: two runs' commits, the files between
@@ -1168,7 +1171,8 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     ])?;
     // the later run's findings, by the file and line their requests came from
     let s = open_run(after)?;
-    let obs = sonde_proxy::episode::observations_of(&s.header, &s.records, &episodes(&s.records));
+    let obs =
+        sonde_analysis::episode::observations_of(&s.header, &s.records, &episodes(&s.records));
     let rel = |file: &str| -> String {
         let full = dir.join(file);
         let full = full.canonicalize().unwrap_or(full);
@@ -1216,7 +1220,7 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     }))
 }
 
-fn header_of(path: &Path) -> Option<SessionHeader> {
+fn header_of(path: &Path) -> Option<RunHeader> {
     serde_json::from_str(&header_line(path)?).ok()
 }
 
@@ -1233,7 +1237,7 @@ fn shell_exports(set: &[(String, String)], unset: &[String]) -> String {
 
 /// The requests of `bucket`/`key` in a run, in time order, each with
 /// the operation it belongs to.
-fn key_history_of(s: &Session, a: &Analysis, bucket: &str, key: &str) -> Vec<JsonValue> {
+fn key_history_of(s: &RunFile, a: &Analysis, bucket: &str, key: &str) -> Vec<JsonValue> {
     let mut rows: Vec<&reqlog::Record> = s
         .records
         .iter()
@@ -1256,9 +1260,9 @@ fn key_history_of(s: &Session, a: &Analysis, bucket: &str, key: &str) -> Vec<Jso
 async fn try_under(
     file: &Path,
     of: &str,
-    clean: &Session,
+    clean: &RunFile,
     clean_exit: i32,
-    plan: &sonde_proxy::trial_plan::Plan,
+    plan: &sonde_analysis::trial_plan::Plan,
     chosen: Vec<sonde_proxy::fault::Scenario>,
     policy: &str,
     cols: f64,
@@ -1289,30 +1293,22 @@ async fn try_under(
     // each run may remove what the clean run made, and what is under its
     // own `{trial}` place
     let made = Arc::new(sonde_proxy::Made::of(&clean.records));
-    let runs = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let program = sonde_proxy::program::key_of(&clean.header);
     let words: Vec<String> = plan
         .command
         .split_whitespace()
         .map(|w| w.trim_matches(['"', '\'']).to_string())
         .collect();
     for name in std::iter::once("clean").chain(chosen.iter().map(|s| s.name.as_str())) {
-        for place in sonde_proxy::trial::places(&words, name) {
+        for place in sonde_analysis::trial::places(&words, name) {
             made.own_place(&place);
         }
     }
     // a new trial replaces the last one's verdicts and runs
-    sonde_proxy::trial::remove(&file);
-    let dir = sonde_proxy::trial::folder_for(&file);
-    std::fs::create_dir_all(&dir).map_err(err_msg)?;
-    let mut trials = Vec::new();
+    let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean.header).map_err(err_msg)?;
     for scenario in chosen {
         output.post(trial_event(&scenario.name, None));
         let under = Under {
-            path: sonde_proxy::session::fresh_path(
-                &dir,
-                &sonde_proxy::trial::session_stem(&file, &scenario),
-            ),
+            path: trying.path(&scenario),
             of: of.clone(),
             scenario: scenario.clone(),
             made: made.clone(),
@@ -1333,8 +1329,7 @@ async fn try_under(
         let (exit, run_path) = match ran {
             Ok(x) if !stopped => x,
             other => {
-                // cut short: a verdict on half a trial would be read as one
-                sonde_proxy::trial::remove(&file);
+                trying.cancel();
                 return match other {
                     Err(e) if !stopped => Err(e),
                     _ => Ok(json!({ "path": path, "trials": [], "cancelled": true })),
@@ -1342,21 +1337,24 @@ async fn try_under(
             }
         };
         let run = open_run(&run_path)?;
-        let mut t = sonde_proxy::trial::judge(
+        let t = trying.judge(
             &scenario,
             &clean.records,
             clean_exit,
+            Path::new(&run_path),
             &run.records,
             exit.unwrap_or(1),
         );
-        t.run = Some(run_path);
+        // its run by its path, as the app opens it; its history comes with
+        // the trial's end, from what was kept
+        let t = sonde_analysis::trial::Trial {
+            run: Some(run_path.clone()),
+            history: Vec::new(),
+            ..t.clone()
+        };
         output.post(trial_event(&scenario.name, Some(&t)));
-        trials.push(t);
     }
-    sonde_proxy::trial::save(&file, &trials).map_err(err_msg)?;
-    if let Some(p) = &program {
-        let _ = sonde_proxy::trial::record(&runs, p, &of, chrono::Utc::now(), &trials);
-    }
+    trying.finish().map_err(err_msg)?;
     // each with what it was before ("broke on 12 Nov, survived since")
     let trials = trials_of(&file);
     Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
@@ -1382,8 +1380,8 @@ impl Runs {
                 }
                 // a finished run is listed from the counts kept beside
                 // it: never read whole to be listed
-                let counted = sonde_proxy::session::is_compressed(&p)
-                    .then(|| sonde_proxy::summary::counted(&p))
+                let counted = sonde_analysis::run::is_compressed(&p)
+                    .then(|| sonde_analysis::summary::counted(&p))
                     .flatten();
                 let mut row = match counted {
                     Some(c) => json!({
@@ -1404,7 +1402,7 @@ impl Runs {
                             "command": h.command,
                             "requests": count_records(&p),
                             "shape": shape_of(&p),
-                            "program": h.name.clone().or_else(|| sonde_proxy::program::key_of(&h)),
+                            "program": h.name.clone().or_else(|| sonde_analysis::program::key_of(&h)),
                         })
                     }
                 };
@@ -1558,12 +1556,14 @@ impl Runs {
     /// p99, waiting and cost, and the sentence that says where the slow and
     /// the costly requests are (`phrases`, for the reader's language).
     pub async fn split(path: String, by: String) -> Result<JsonValue, String> {
-        let by = sonde_proxy::split::Dimension::parse(&by)
+        let by = sonde_analysis::split::Dimension::parse(&by)
             .ok_or_else(|| err_msg(format!("no dimension {by:?}")))?;
         tokio::task::spawn_blocking(move || {
             let s = open_run(&path)?;
             let prices = crate::state::request_prices_for(&s.header.endpoint);
-            Ok(to_json(sonde_proxy::split::split(&s.records, by, &prices)))
+            Ok(to_json(sonde_analysis::split::split(
+                &s.records, by, &prices,
+            )))
         })
         .await
         .map_err(err_msg)?
@@ -1682,7 +1682,7 @@ impl Runs {
     /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
     pub fn trial_plan(path: String) -> Result<JsonValue, String> {
         let s = open_run(&path)?;
-        let plan = sonde_proxy::trial_plan::of(&s).map_err(err_msg)?;
+        let plan = sonde_analysis::trial_plan::of(&s).map_err(err_msg)?;
         Ok(json!({
             "command": plan.command,
             "cwd": plan.cwd,
@@ -1700,7 +1700,7 @@ impl Runs {
                 .collect::<Vec<_>>(),
             "project": plan.project,
             "sharesPlace": plan.shares_place,
-            "cleanExit": sonde_proxy::index::get(Path::new(&path)).exit,
+            "cleanExit": sonde_analysis::index::get(Path::new(&path)).exit,
         }))
     }
 
@@ -1725,10 +1725,10 @@ impl Runs {
         // a run of the runs directory: its trials are kept beside it
         let (file, of) = own_run(&path)?;
         let clean = open_run(&path)?;
-        let plan = sonde_proxy::trial_plan::of(&clean).map_err(err_msg)?;
+        let plan = sonde_analysis::trial_plan::of(&clean).map_err(err_msg)?;
         let chosen = plan.named(&scenarios).map_err(err_msg)?;
         policy_of(&policy)?;
-        let clean_exit = sonde_proxy::index::get(&file).exit.unwrap_or(0);
+        let clean_exit = sonde_analysis::index::get(&file).exit.unwrap_or(0);
         try_under(
             &file, &of, &clean, clean_exit, &plan, chosen, &policy, cols, rows, &output,
         )
@@ -1751,11 +1751,11 @@ impl Runs {
     ) -> Result<JsonValue, String> {
         let (file, _) = own_run(&path)?;
         let last = open_run(&path)?;
-        let plan = sonde_proxy::trial_plan::of(&last).map_err(err_msg)?;
-        let program = sonde_proxy::program::key_of(&last.header)
+        let plan = sonde_analysis::trial_plan::of(&last).map_err(err_msg)?;
+        let program = sonde_analysis::program::key_of(&last.header)
             .ok_or_else(|| err_msg("only a run of a command can be tried again"))?;
         let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let names = sonde_proxy::trial::to_try_again(&dir, &program);
+        let names = sonde_analysis::trial::to_try_again(&dir, &program);
         if names.is_empty() {
             return Err(err_msg(
                 "nothing to try again: every scenario survived the program's last trial",
@@ -1822,7 +1822,7 @@ impl Runs {
         let s = sonde();
         let original = full_run(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
-        let out = sonde_proxy::session::fresh_path(
+        let out = sonde_analysis::run::fresh_path(
             &s.paths().runs(),
             &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
         );
@@ -1838,7 +1838,7 @@ impl Runs {
         .await
         .map_err(err_msg)?
         .map_err(err_msg)?;
-        let _ = sonde_proxy::session::compress(&file);
+        let _ = sonde_analysis::run::compress(&file);
         Ok(to_json(run))
     }
 
@@ -1847,10 +1847,10 @@ impl Runs {
     pub async fn compare(a: String, b: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             let (sa, sb) = (open_run(&a)?, open_run(&b)?);
-            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
-            let latency = sonde_proxy::profile::latency_changes(
-                &sonde_proxy::profile::profile(&sa.records, &price(&sa)),
-                &sonde_proxy::profile::profile(&sb.records, &price(&sb)),
+            let price = |s: &RunFile| crate::state::request_prices_for(&s.header.endpoint);
+            let latency = sonde_analysis::profile::latency_changes(
+                &sonde_analysis::profile::profile(&sa.records, &price(&sa)),
+                &sonde_analysis::profile::profile(&sb.records, &price(&sb)),
             );
             Ok(json!({
                 "latency": latency,
@@ -1871,23 +1871,24 @@ impl Runs {
             // one reckoned before the other is opened: a run of either
             // size is held with what the other amounts to, not with it (the
             // later counted against what the earlier's findings would save)
-            let run = |path: &str, against: Option<&sonde_proxy::profile::Run>| {
+            let run = |path: &str, against: Option<&sonde_analysis::profile::Run>| {
                 let s = open_run(path)?;
                 let prices = crate::state::request_prices_for(&s.header.endpoint);
-                let mut run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
+                let mut run =
+                    sonde_analysis::profile::Run::analysed(&s.header, &s.records, &prices);
                 if let Some(a) = against {
                     run.measure(&s.records, a);
                 }
-                Ok::<_, String>((sonde_proxy::program::key_of(&s.header), run))
+                Ok::<_, String>((sonde_analysis::program::key_of(&s.header), run))
             };
             let (ka, a) = run(&before, None)?;
             let (kb, b) = run(&after, Some(&a))?;
             Ok(to_json(
-                sonde_proxy::profile::compare_runs(&a, &b)
+                sonde_analysis::profile::compare_runs(&a, &b)
                     .of_programs(ka.as_deref(), kb.as_deref())
                     .of_exits((
-                        sonde_proxy::fixloop::failed(Path::new(&before)),
-                        sonde_proxy::fixloop::failed(Path::new(&after)),
+                        sonde_analysis::fixloop::failed(Path::new(&before)),
+                        sonde_analysis::fixloop::failed(Path::new(&after)),
                     )),
             ))
         })
@@ -1907,9 +1908,9 @@ impl Runs {
         tokio::task::spawn_blocking(move || {
             let s = open_run(&path)?;
             let prices = crate::state::request_prices_for(&s.header.endpoint);
-            let run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
-            Ok(to_json(sonde_proxy::fixloop::since_last(
-                &sonde_proxy::fixloop::folder_of(Path::new(&path)),
+            let run = sonde_analysis::profile::Run::analysed(&s.header, &s.records, &prices);
+            Ok(to_json(sonde_analysis::fixloop::since_last(
+                &sonde_analysis::fixloop::folder_of(Path::new(&path)),
                 Path::new(&path),
                 &s.header,
                 &s.records,
@@ -1939,7 +1940,7 @@ impl Runs {
                 .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
             {
                 if let Some(h) = header_of(&p)
-                    && let Some(k) = sonde_proxy::program::key_of(&h)
+                    && let Some(k) = sonde_analysis::program::key_of(&h)
                 {
                     commands.insert(k.clone(), (h.created.to_rfc3339(), h.command.clone()));
                     by.entry(k).or_default().push((h.created.to_rfc3339(), p));
@@ -1964,16 +1965,16 @@ impl Runs {
                     });
                     let latest = points.last();
                     // the limits `sonde check` holds the run to, the default tolerance
-                    let tolerance = sonde_proxy::program::DEFAULT_TOLERANCE;
+                    let tolerance = sonde_analysis::program::DEFAULT_TOLERANCE;
                     let regressed = match (latest, &base) {
                         (Some(l), Some(b)) if l.path != b.path => {
-                            sonde_proxy::program::past_baseline(l, b, tolerance)
+                            sonde_analysis::program::past_baseline(l, b, tolerance)
                         }
                         _ => false,
                     };
                     let limits = base
                         .as_ref()
-                        .map(|b| sonde_proxy::program::baseline_limits(b, tolerance));
+                        .map(|b| sonde_analysis::program::baseline_limits(b, tolerance));
                     let newest = runs.last().map(|r| r.0.clone()).unwrap_or_default();
                     (
                         newest.clone(),
@@ -1985,7 +1986,7 @@ impl Runs {
                             "created": newest,
                             "points": points,
                             "baseline": base.as_ref().map(|b| b.path.clone()),
-                            "monthly": sonde_proxy::program::monthly_cost(&points)
+                            "monthly": sonde_analysis::program::monthly_cost(&points)
                                 .map(|(cost, per_day)| json!({ "cost": cost, "perDay": per_day })),
                             "baselinePoint": base,
                             "limits": limits,
@@ -2009,7 +2010,7 @@ impl Runs {
         tokio::task::spawn_blocking(move || {
             let header = header_of(Path::new(&path));
             let command = header.as_ref().and_then(|h| h.command.clone());
-            let Some(key) = header.as_ref().and_then(sonde_proxy::program::key_of) else {
+            let Some(key) = header.as_ref().and_then(sonde_analysis::program::key_of) else {
                 return Ok(JsonValue::Null);
             };
             let dir = sonde().paths().runs();
@@ -2021,15 +2022,15 @@ impl Runs {
                 .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
                 .filter_map(|p| {
                     let h = header_of(&p)?;
-                    (sonde_proxy::program::key_of(&h).as_deref() == Some(key.as_str()))
+                    (sonde_analysis::program::key_of(&h).as_deref() == Some(key.as_str()))
                         .then(|| (h.created.to_rfc3339(), p))
                 })
                 .collect();
             runs.sort();
             // each run with the commit its code was at
             let dated: Vec<(
-                sonde_proxy::program::RunPoint,
-                Option<sonde_proxy::session::GitStamp>,
+                sonde_analysis::program::RunPoint,
+                Option<sonde_analysis::run::GitStamp>,
             )> = runs
                 .into_iter()
                 .rev()
@@ -2047,16 +2048,16 @@ impl Runs {
                 Some(b) if b.to_string_lossy() != path => {
                     let read = |p: &str| -> Result<_, String> {
                         let s = open_run(p)?;
-                        let pr = sonde_proxy::profile::profile(
+                        let pr = sonde_analysis::profile::profile(
                             &s.records,
                             &crate::state::request_prices_for(&s.header.endpoint),
                         );
-                        let ob = sonde_proxy::episode::observations_of(
+                        let ob = sonde_analysis::episode::observations_of(
                             &s.header,
                             &s.records,
                             &episodes(&s.records),
                         );
-                        let pt = sonde_proxy::program::run_point(
+                        let pt = sonde_analysis::program::run_point(
                             p,
                             &s.header.created.to_rfc3339(),
                             &s.records,
@@ -2067,17 +2068,17 @@ impl Runs {
                     };
                     let (rp, rs, rpr, rob) = read(&path)?;
                     let (bp, bs, bpr, bob) = read(&b.to_string_lossy())?;
-                    let budget = sonde_proxy::program::Budget {
+                    let budget = sonde_analysis::program::Budget {
                         tolerance: Some(0.1),
                         ..Default::default()
                     };
-                    let c = sonde_proxy::program::check(
+                    let c = sonde_analysis::program::check(
                         (&rp, &rs.records, &rpr, &rob),
                         Some((&bp, &bs.records, &bpr, &bob)),
                         &budget,
                     );
                     // the same check as a pull request's comment
-                    let md = sonde_proxy::program::check_markdown(&c, &rp.currency, None, &rob);
+                    let md = sonde_analysis::program::check_markdown(&c, &rp.currency, None, &rob);
                     Some((c, md))
                 }
                 _ => None,
@@ -2090,11 +2091,18 @@ impl Runs {
             // and what a run may grow to before `sonde check` fails it
             let base_point = base.as_ref().and_then(|b| run_point(b));
             let limits = base_point.as_ref().map(|b| {
-                sonde_proxy::program::baseline_limits(b, sonde_proxy::program::DEFAULT_TOLERANCE)
+                sonde_analysis::program::baseline_limits(
+                    b,
+                    sonde_analysis::program::DEFAULT_TOLERANCE,
+                )
             });
             // where it went past the baseline, and the commits on either side
             let since = base_point.as_ref().and_then(|b| {
-                sonde_proxy::program::since(&dated, b, sonde_proxy::program::DEFAULT_TOLERANCE)
+                sonde_analysis::program::since(
+                    &dated,
+                    b,
+                    sonde_analysis::program::DEFAULT_TOLERANCE,
+                )
             });
             Ok(json!({
                 "program": key,
@@ -2131,15 +2139,15 @@ impl Runs {
     pub fn set_baseline(path: String, on: bool) -> Result<bool, String> {
         let (_, name) = own_run(&path)?;
         let key = header_of(Path::new(&path))
-            .and_then(|h| sonde_proxy::program::key_of(&h))
+            .and_then(|h| sonde_analysis::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
         let dir = sonde().paths().runs();
-        sonde_proxy::index::update(&dir, |ix| {
+        sonde_analysis::index::update(&dir, |ix| {
             let now = ix.folder.baselines.get(&key);
             let change = if on {
-                Some(sonde_proxy::index::Change::Baseline(Some(name.clone())))
+                Some(sonde_analysis::index::Change::Baseline(Some(name.clone())))
             } else if now == Some(&name) {
-                Some(sonde_proxy::index::Change::Baseline(None))
+                Some(sonde_analysis::index::Change::Baseline(None))
             } else {
                 None
             };
@@ -2152,7 +2160,7 @@ impl Runs {
     /// A run's output as timed lines, for lining up with its operations.
     pub fn log_lines(path: String) -> Result<JsonValue, String> {
         let s = open_run(&path)?;
-        Ok(to_json(sonde_proxy::logs::lines(&s.logs)))
+        Ok(to_json(sonde_analysis::logs::lines(&s.logs)))
     }
 
     /// The running recording, or null.
@@ -2174,7 +2182,7 @@ impl Runs {
     /// Writes the example run (a real SlateDB run, recorded with
     /// `sonde run`) to the runs directory; its path.
     pub fn example() -> Result<String, String> {
-        const EXAMPLE: &[u8] = include_bytes!("../../proxy/tests/fixtures/slatedb.sonde");
+        const EXAMPLE: &[u8] = include_bytes!("../../analysis/tests/fixtures/slatedb.sonde");
         let dir = sonde().paths().runs();
         std::fs::create_dir_all(&dir).map_err(err_msg)?;
         let path = dir.join("example-slatedb.sonde");
@@ -2189,7 +2197,7 @@ impl Runs {
         reqlog::private::write(&path, text).map_err(err_msg)?;
         // a finished run, kept as every other is: compressed, so the
         // list reads its shape (an open file being written has none)
-        sonde_proxy::session::compress(&path).map_err(err_msg)?;
+        sonde_analysis::run::compress(&path).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
     }
 
@@ -2219,7 +2227,7 @@ impl Runs {
         // the same file opened again is the run it made, not a copy
         let digest = format!("{:016x}", fnv1a(text.as_bytes()));
         let _ = std::fs::create_dir_all(&dir);
-        if let Some(p) = sonde_proxy::index::of(&dir)
+        if let Some(p) = sonde_analysis::index::of(&dir)
             .folder
             .imports
             .get(&digest)
@@ -2228,23 +2236,23 @@ impl Runs {
         {
             return Ok(p.to_string_lossy().into_owned());
         }
-        let path = sonde_proxy::session::fresh_path(&dir, &stem);
+        let path = sonde_analysis::run::fresh_path(&dir, &stem);
         // production traffic: an access log, CloudTrail events, a HAR
-        if sonde_proxy::import::detect(&text).is_some() {
-            let (_, run) = sonde_proxy::import::import(&text, &stem)?;
-            sonde_proxy::import::save(&run, &path).map_err(err_msg)?;
+        if sonde_analysis::import::detect(&text).is_some() {
+            let (_, run) = sonde_analysis::import::import(&text, &stem)?;
+            sonde_analysis::import::save(&run, &path).map_err(err_msg)?;
         } else {
             reqlog::private::write(&path, text).map_err(err_msg)?;
-            if let Err(e) = Session::open(&path) {
+            if let Err(e) = RunFile::open(&path) {
                 let _ = std::fs::remove_file(&path);
                 return Err(format!("{name}: {e}"));
             }
         }
         if let Some(n) = path.file_name() {
             let n = n.to_string_lossy().into_owned();
-            let _ = sonde_proxy::index::update(&dir, |_| {
+            let _ = sonde_analysis::index::update(&dir, |_| {
                 (
-                    vec![(digest, sonde_proxy::index::Change::Import(Some(n)))],
+                    vec![(digest, sonde_analysis::index::Change::Import(Some(n)))],
                     (),
                 )
             });
@@ -2298,7 +2306,7 @@ impl Runs {
         let (p, _) = own_run(&path)?;
         let title = title.trim();
         let title = (!title.is_empty()).then(|| title.chars().take(200).collect());
-        sonde_proxy::index::set(&p, sonde_proxy::index::Change::Title(title));
+        sonde_analysis::index::set(&p, sonde_analysis::index::Change::Title(title));
         Ok(true)
     }
 
@@ -2319,9 +2327,9 @@ impl Runs {
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
         // its trials go with it, and all its index kept of it
-        sonde_proxy::trial::remove(&p);
+        sonde_analysis::trial::remove(&p);
         forget(&p);
-        sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
+        sonde_analysis::index::set(&p, sonde_analysis::index::Change::Gone);
         Ok(true)
     }
 
@@ -2352,7 +2360,7 @@ impl Runs {
     /// for the browser to open. The page is the same views as the app,
     /// read-only, for anyone it is sent to.
     pub async fn share(path: String) -> Result<JsonValue, String> {
-        if !sonde_proxy::share::has_viewer() {
+        if !sonde_analysis::share::has_viewer() {
             return Err(err_msg(
                 "this build has no web viewer: `sonde share` makes the page",
             ));
@@ -2378,7 +2386,7 @@ impl Runs {
             // written whole beside it, then put in its place: a page half written is never opened
             let part = page.with_extension("html.part");
             let written = std::fs::File::create(&part)
-                .and_then(|f| sonde_proxy::share::write_page(&run, None, &prices, None, f));
+                .and_then(|f| sonde_analysis::share::write_page(&run, None, &prices, None, f));
             written
                 .and_then(|()| std::fs::rename(&part, &page))
                 .inspect_err(|_| {
@@ -2449,14 +2457,14 @@ mod tests {
 
     #[test]
     fn the_example_run_has_a_shape_for_the_list_once_it_is_kept_as_finished() {
-        const EXAMPLE: &[u8] = include_bytes!("../../proxy/tests/fixtures/slatedb.sonde");
+        const EXAMPLE: &[u8] = include_bytes!("../../analysis/tests/fixtures/slatedb.sonde");
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("example-slatedb.sonde");
         std::fs::write(&path, EXAMPLE).unwrap();
         // a file still open (not compressed) is still growing: no shape yet
         assert!(shape_of(&path).is_empty());
         // as `example()` keeps it: every request in one of the slices
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_analysis::run::compress(&path).unwrap();
         let shape = shape_of(&path);
         assert_eq!(shape.len(), SHAPE_BINS);
         assert_eq!(shape.iter().sum::<u32>(), 172);
@@ -2618,15 +2626,14 @@ mod tests {
         let two = git(&["rev-parse", "HEAD"]);
         let run = |name: &str, commit: &str, n: u64| {
             let path = dir.path().join(name);
-            let mut h =
-                SessionHeader::new("ep", "http://s3", "", Some("python etl/load.py".into()));
+            let mut h = RunHeader::new("ep", "http://s3", "", Some("python etl/load.py".into()));
             h.cwd = Some(repo.to_string_lossy().into_owned());
-            h.git = Some(sonde_proxy::session::GitStamp {
+            h.git = Some(sonde_analysis::run::GitStamp {
                 commit: commit.into(),
                 branch: None,
                 dirty: false,
             });
-            let w = SessionWriter::create(&path, &h).unwrap();
+            let w = RunWriter::create(&path, &h).unwrap();
             for i in 0..n {
                 w.write(&reqlog::Record {
                     id: i + 1,
@@ -2663,15 +2670,15 @@ mod tests {
         );
         assert_eq!(c["files"][0]["notes"][0]["line"], 3, "{c:#}");
         // a commit that is not one is never handed to git
-        let mut bad = SessionHeader::new("ep", "http://s3", "", None);
-        bad.git = Some(sonde_proxy::session::GitStamp {
+        let mut bad = RunHeader::new("ep", "http://s3", "", None);
+        bad.git = Some(sonde_analysis::run::GitStamp {
             commit: "--output=/tmp/x".into(),
             branch: None,
             dirty: false,
         });
         bad.cwd = Some(repo.to_string_lossy().into_owned());
         let p = dir.path().join("bad.sonde");
-        drop(SessionWriter::create(&p, &bad).unwrap());
+        drop(RunWriter::create(&p, &bad).unwrap());
         assert!(code_change_of(&a, &p.to_string_lossy()).is_err());
     }
 
@@ -2680,19 +2687,18 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ci.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         w.write(&reqlog::Record {
             id: 1,
             kind: "GetObject".into(),
             ..Default::default()
         });
         drop(w);
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_analysis::run::compress(&path).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.starts_with(&[0x1f, 0x8b]));
         let text = file_text(&bytes).unwrap();
-        assert!(text.starts_with("{\"format\":\"sonde-session\""), "{text}");
+        assert!(text.starts_with("{\"format\":\"sonde-run\""), "{text}");
         assert_eq!(file_text(b"plain").unwrap(), "plain");
     }
 
@@ -2701,7 +2707,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
         let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, "{{\"format\":\"sonde-session\"}}").unwrap();
+        writeln!(f, "{{\"format\":\"sonde-run\"}}").unwrap();
         writeln!(f, "{{\"id\":1}}").unwrap();
         writeln!(f, "{{\"log\":{{\"text\":\"hello\"}}}}").unwrap();
         writeln!(f, "{{\"id\":2}}").unwrap();
@@ -2719,7 +2725,7 @@ mod tests {
         // another run written in its place, as long or longer
         drop(f);
         let mut g = std::fs::File::create(&path).unwrap();
-        writeln!(g, "{{\"format\":\"sonde-session\",\"other\":true}}").unwrap();
+        writeln!(g, "{{\"format\":\"sonde-run\",\"other\":true}}").unwrap();
         for i in 0..6 {
             writeln!(g, "{{\"id\":{i}}}").unwrap();
         }
@@ -2762,8 +2768,8 @@ mod tests {
         .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.sonde");
-        let header = SessionHeader::new("target", &upstream, "eu-west-1", None);
-        let writer = Arc::new(SessionWriter::create(&path, &header).unwrap());
+        let header = RunHeader::new("target", &upstream, "eu-west-1", None);
+        let writer = Arc::new(RunWriter::create(&path, &header).unwrap());
         let log = RequestLog::new(16);
         log.set_sink(Some(writer.clone()));
         let cfg = ProxyConfig {
@@ -2818,8 +2824,8 @@ mod tests {
         let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);
         assert_eq!(lost, None);
-        assert!(sonde_proxy::session::is_compressed(&path));
-        let s = Session::open(&path).unwrap();
+        assert!(sonde_analysis::run::is_compressed(&path));
+        let s = RunFile::open(&path).unwrap();
         assert_eq!(
             s.records.len(),
             1,
@@ -2833,8 +2839,7 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("grows.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
@@ -2849,7 +2854,7 @@ mod tests {
         w.write(&rec(1));
         drop(w);
         // finished: compressed in place, still longer than what was read
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_analysis::run::compress(&path).unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > live);
         assert_eq!(open_run(&p).unwrap().records.len(), 1);
     }
@@ -2858,8 +2863,7 @@ mod tests {
     /// the quicker; every seventh a write, one in fifty failed.
     fn many(path: &Path, n: u64) {
         use reqlog::Sink;
-        let w =
-            SessionWriter::create(path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         for i in 0..n {
             w.write(&reqlog::Record {
                 id: i + 1,
@@ -2938,7 +2942,7 @@ mod tests {
         // a minute: one request every 100 ms
         many(&path, 600);
         let s = open_run(&path.to_string_lossy()).unwrap();
-        let prices = sonde_proxy::profile::RequestPrices::default();
+        let prices = sonde_analysis::profile::RequestPrices::default();
         let v = live_of(&s.records, &prices);
         // the half minute up to the latest request, both ends in, on the run's axis
         assert_eq!(v["summary"]["requests"], 301);
@@ -2952,7 +2956,7 @@ mod tests {
         // one request every 100 ms
         many(&path, 100);
         let s = open_run(&path.to_string_lossy()).unwrap();
-        let prices = sonde_proxy::profile::RequestPrices::default();
+        let prices = sonde_analysis::profile::RequestPrices::default();
         // from 1 s up to (not including) 2 s: ten requests
         let v = stretch_of(&s.records, &prices, 1000.0, 2000.0);
         assert_eq!(v["summary"]["requests"], 10);
@@ -2981,7 +2985,7 @@ mod tests {
         assert_eq!(v["operationsTotal"], 1200);
         assert_eq!(
             v["operations"].as_array().unwrap().len(),
-            sonde_proxy::view::PAGE
+            sonde_analysis::view::PAGE
         );
         assert_eq!(v["operations"][2]["index"], 2);
         assert_eq!(v["operations"][2]["requests"], 1);
@@ -3033,14 +3037,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lean.sonde");
         many(&path, 300);
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_analysis::run::compress(&path).unwrap();
         // (runs past `LEAN_FROM` on disk are kept so)
         assert!(kept_lean(LEAN_FROM + 1, true) && !kept_lean(LEAN_FROM, true));
         assert!(
             !kept_lean(LEAN_FROM * 5, false),
             "a live file is ten times its compressed size"
         );
-        let lean = Session::open_lean(&path).unwrap();
+        let lean = RunFile::open_lean(&path).unwrap();
         assert!(lean.records[41].rare().url.is_empty());
         let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
         assert_eq!(full.rare().url, "http://s3/b/data/k00041");
@@ -3059,15 +3063,15 @@ mod tests {
         many(&path, 120);
         // live: counted as it grows, nothing kept
         assert_eq!(count_records(&path), 120);
-        assert!(sonde_proxy::index::get(&path).counted.is_none());
-        sonde_proxy::session::compress(&path).unwrap();
+        assert!(sonde_analysis::index::get(&path).counted.is_none());
+        sonde_analysis::run::compress(&path).unwrap();
         assert_eq!(count_records(&path), 120);
         assert_eq!(shape_of(&path).iter().sum::<u32>(), 120);
-        let kept = sonde_proxy::summary::kept(&path).expect("kept in the index");
+        let kept = sonde_analysis::summary::kept(&path).expect("kept in the index");
         assert_eq!((kept.requests, kept.errors), (120, 3));
         // gone with the run
         forget(&path);
-        assert!(sonde_proxy::index::get(&path).counted.is_none());
+        assert!(sonde_analysis::index::get(&path).counted.is_none());
     }
 
     #[test]
@@ -3075,8 +3079,7 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
@@ -3108,7 +3111,7 @@ mod tests {
         dir: &Path,
         command: &str,
         cwd: Option<&Path>,
-    ) -> (String, String, sonde_proxy::trial::Trial) {
+    ) -> (String, String, sonde_analysis::trial::Trial) {
         use reqlog::Sink;
         std::fs::create_dir_all(dir.join("trials")).unwrap();
         let rec = |id: u64, method: &str, op: &str, injected: Option<&str>| reqlog::Record {
@@ -3127,11 +3130,11 @@ mod tests {
             ..Default::default()
         };
         let clean = dir.join("20260101-000000-job.sonde");
-        let mut header = SessionHeader::new("ep", "http://s3", "", Some(command.into()));
+        let mut header = RunHeader::new("ep", "http://s3", "", Some(command.into()));
         if let Some(d) = cwd {
             header = header.ran_in(d);
         }
-        let w = SessionWriter::create(&clean, &header).unwrap();
+        let w = RunWriter::create(&clean, &header).unwrap();
         w.write(&rec(1, "PUT", "PutObject", None));
         w.write(&rec(2, "GET", "GetObject", None));
         w.write_log("clean output\n");
@@ -3141,17 +3144,17 @@ mod tests {
             .join("20260101-000000-job.slowdown.sonde");
         header.scenario = Some("slowdown".into());
         header.trial_of = Some("20260101-000000-job.sonde".into());
-        let w = SessionWriter::create(&trial, &header).unwrap();
+        let w = RunWriter::create(&trial, &header).unwrap();
         w.write(&rec(1, "PUT", "PutObject", Some("slowdown")));
         w.write(&rec(2, "PUT", "PutObject", None));
         w.write_log("trial output\n");
         w.flush().unwrap();
         let scenario = sonde_proxy::fault::scenario("slowdown").unwrap();
         let (c, t) = (
-            Session::open(&clean).unwrap(),
-            Session::open(&trial).unwrap(),
+            RunFile::open(&clean).unwrap(),
+            RunFile::open(&trial).unwrap(),
         );
-        let mut verdict = sonde_proxy::trial::judge(&scenario, &c.records, 0, &t.records, 0);
+        let mut verdict = sonde_analysis::trial::judge(&scenario, &c.records, 0, &t.records, 0);
         verdict.run = Some(trial.to_string_lossy().into_owned());
         (
             clean.to_string_lossy().into_owned(),
@@ -3196,7 +3199,7 @@ mod tests {
         // read before the verdicts were written: the analysis is kept, the
         // verdicts are read fresh
         let before = analysis_of(&clean).unwrap().1;
-        sonde_proxy::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
+        sonde_analysis::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
         assert!(Arc::ptr_eq(&before, &analysis_of(&clean).unwrap().1));
         let view = view_of(&clean).unwrap();
         assert_eq!(view["trials"][0]["scenario"], "slowdown");
@@ -3220,15 +3223,15 @@ mod tests {
     fn a_runs_verdicts_carry_their_programs_history() {
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, verdict) = run_and_trial(dir.path(), "python job.py", None);
-        sonde_proxy::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
+        sonde_analysis::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
         let mut before = verdict.clone();
-        before.standing = sonde_proxy::trial::Standing::Broke;
+        before.standing = sonde_analysis::trial::Standing::Broke;
         let day = chrono::Utc::now() - chrono::Duration::days(1);
         for (run, t, at) in [
             ("earlier.sonde", &before, day),
             ("20260101-000000-job.sonde", &verdict, chrono::Utc::now()),
         ] {
-            sonde_proxy::trial::record(dir.path(), "job", run, at, std::slice::from_ref(t))
+            sonde_analysis::trial::record(dir.path(), "job", run, at, std::slice::from_ref(t))
                 .unwrap();
         }
         let view = view_of(&clean).unwrap();
@@ -3295,7 +3298,8 @@ mod tests {
         let command = "cd etl; A='x y' python load.py \"s3://b/{trial}/in put\" | tee log-{trial}.txt && curl -s $AWS_ENDPOINT_URL/demo/missing.txt\ncurl -s x\\ y || true";
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), command, None);
-        let plan = sonde_proxy::trial_plan::of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        let plan =
+            sonde_analysis::trial_plan::of(&RunFile::open(Path::new(&clean)).unwrap()).unwrap();
         assert_eq!(plan.command, command, "kept as written");
         assert_eq!(
             command_under(&plan.command, Some("slowdown")),
@@ -3345,7 +3349,7 @@ mod tests {
     fn a_runs_exit_code_is_kept_in_the_index_for_a_later_trial() {
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), "python job.py", None);
-        let exit = || sonde_proxy::index::get(Path::new(&clean)).exit;
+        let exit = || sonde_analysis::index::get(Path::new(&clean)).exit;
         assert_eq!(exit(), None, "not kept: a run of the CLI's");
         keep_exit(&clean, None);
         assert_eq!(exit(), None, "a killed program has no code to keep");

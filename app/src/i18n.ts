@@ -31,6 +31,13 @@ function lookup(key: string, vars: Record<string, string | number> | undefined):
   return s === `${lang()}.${key}` ? null : s;
 }
 
+/** The words of `key` as written (`%{name}` unfilled), or null where no language has them: a phrase Rust
+ * said ([`phrases.ts`](./phrases.ts)), filled there. */
+export function words(key: string): string | null {
+  lang();
+  return lookup(key, undefined);
+}
+
 /** The words for `key`, filled from `vars`. A count of one (`n: 1`) reads
  * `<key>.one` where the language has it ("1 request", not "1 requests"). */
 export function t(key: Key, vars?: Record<string, string | number>): string {

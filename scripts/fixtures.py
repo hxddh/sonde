@@ -18,21 +18,22 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = [ROOT / "crates/proxy/tests/fixtures", ROOT / "app/tests/fixtures/runs"]
+FIXTURES = [ROOT / "crates/analysis/tests/fixtures", ROOT / "app/tests/fixtures/runs"]
 # a record's fields the current version renamed: {old: new}
-RENAMES = {"operation": "kind"}
+RENAMES: dict[str, str] = {}
 
 
-def version() -> int:
-    src = (ROOT / "crates/proxy/src/session.rs").read_text()
-    return int(re.search(r"pub const VERSION: u32 = (\d+);", src).group(1))
+def format_and_version() -> tuple[str, int]:
+    src = (ROOT / "crates/analysis/src/run.rs").read_text()
+    name = re.search(r'pub const FORMAT: &str = "([^"]+)";', src).group(1)
+    return name, int(re.search(r"pub const VERSION: u32 = (\d+);", src).group(1))
 
 
-def current(lines: list[str], want: int) -> list[str]:
+def current(lines: list[str], want: tuple[str, int]) -> list[str]:
     header = json.loads(lines[0])
-    if header.get("format") != "sonde-session":
+    if not str(header.get("format", "")).startswith("sonde-"):
         raise SystemExit(f"not a run: {lines[0][:80]}")
-    header["version"] = want
+    header["format"], header["version"] = want
     out = [json.dumps(header, separators=(",", ":"), ensure_ascii=False)]
     for line in lines[1:]:
         if line.startswith('{"log":') or not line:
@@ -48,7 +49,7 @@ def current(lines: list[str], want: int) -> list[str]:
 
 def main() -> None:
     check = "--check" in sys.argv[1:]
-    want = version()
+    want = format_and_version()
     stale = []
     for folder in FIXTURES:
         for path in sorted(folder.rglob("*.sonde")):
