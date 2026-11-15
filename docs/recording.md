@@ -190,7 +190,7 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 
 ```
 01:09:10.149  Iceberg  commit: table metadata v2 · 3 files (7.6 KiB)   20 reqs · 112 ms
-00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1…128        8 reqs · 5 ms
+00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1–128        8 reqs · 5 ms
 ```
 
 | Operation | Made of |
@@ -214,13 +214,8 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 - Lookups across numbered files (SlateDB's newest WAL) are their own step.
 - Files with no commit within 2 s are reported as written without one.
 
-**Findings** follow: uploads never completed, files written without a commit, keys read repeatedly and the same each
-time (not one written between its reads, nor one not found: a cache would answer those wrongly), prefixes listed
-repeatedly with nothing written under them between, HEAD before GET, small files sent as multipart, throttling (a
-warning when a request gave up after its retries or a tenth of the requests were throttled, else a note),
-prefixes near S3's rate, requests one after another (not one that reads or lists what the one before wrote), commits
-by rename, directory markers. Notes common to nearly every step of a format are said once among the operations; a
-retry, a lost race (412) and a slow request are in the operation and the charts, not findings.
+**Findings** follow ([the kinds](cli.md#findings)). Notes common to nearly every step of a format are said once among
+the operations; a retry, a lost race (412) and a slow request are in the operation and the charts, not findings.
 
 Fixtures (`crates/analysis/tests/fixtures`): SlateDB 0.18 (172 requests → 34 operations), pyiceberg 0.9.1 (116 → 6),
 delta-rs 1.6 (49 → 5), boto3, the Java SDK.

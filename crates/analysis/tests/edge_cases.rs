@@ -203,7 +203,7 @@ fn a_small_multipart_upload_counts_its_create_too() {
     let obs = observations(&recs, &eps);
     let small = obs
         .iter()
-        .find(|o| o.phrases[0].key == "obs.small")
+        .find(|o| o.phrases[0].key == "obs.small.parts")
         .expect("small uploads");
     assert_eq!(small.impact, 9);
     assert_eq!(

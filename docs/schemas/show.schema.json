@@ -286,9 +286,28 @@
           "type": "string",
           "description": "The same finding across runs: what `[check] expect` names."
         },
+        "expected": {
+          "type": "string",
+          "description": "Why the project keeps it on purpose (`[check] expect` in the run's sonde.toml): leave it."
+        },
         "kind": {
           "type": "string",
-          "description": "What kind of finding it is, as `identity` begins (`obs.headget`, `obs.hot`, `obs.listed`, `obs.serial`, …)."
+          "enum": [
+            "obs.unfinished",
+            "obs.orphans",
+            "obs.small",
+            "obs.hot",
+            "obs.listed",
+            "obs.headget",
+            "obs.deletes",
+            "obs.rmw",
+            "obs.polled",
+            "obs.rename",
+            "obs.markers",
+            "obs.throttled",
+            "obs.serial"
+          ],
+          "description": "What kind of finding it is, as `identity` begins (docs/cli.md#findings)."
         },
         "saving": {
           "$ref": "#/$defs/phrase"

@@ -48,6 +48,14 @@ pub fn core(key: &str) -> Option<&'static str> {
 /// argument stays as it is written. One pass: an argument's own text (a key
 /// named "%{n}.json") is never read as a placeholder.
 pub fn fill<'a>(template: &str, arg: impl Fn(&str) -> Option<&'a str>) -> String {
+    fill_with(template, |name| arg(name).map(std::borrow::Cow::Borrowed))
+}
+
+/// [`fill`] with arguments that may be made as they are asked for.
+pub fn fill_with<'a>(
+    template: &str,
+    arg: impl Fn(&str) -> Option<std::borrow::Cow<'a, str>>,
+) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(open) = rest.find("%{") {
@@ -58,7 +66,7 @@ pub fn fill<'a>(template: &str, arg: impl Fn(&str) -> Option<&'a str>) -> String
             .and_then(|close| Some((close, arg(&after[..close])?)))
         {
             Some((close, value)) => {
-                out.push_str(value);
+                out.push_str(&value);
                 rest = &after[close + 1..];
             }
             None => {

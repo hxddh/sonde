@@ -378,6 +378,37 @@ async fn every_json_output_is_as_its_schema_says() {
         &b.json(&["check", s, "--baseline", s, "-f", "json"], 0)
             .await,
     );
+    // a finding kept on purpose, with why, in `show` and `check`
+    {
+        let kept = b.path("etl.sonde");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../analysis/tests/fixtures/etl-1-base.sonde"),
+            &kept,
+        )
+        .unwrap();
+        std::fs::write(
+            b.path("sonde.toml"),
+            "[program]\nname = \"etl\"\nruns = \"etl\"\n[check]\nmax-requests = 100000\nexpect = { \"obs.serial\" = \"kept\" }\n",
+        )
+        .unwrap();
+        let k = kept.to_str().unwrap();
+        let shown = b.json(&["show", k, "-f", "json"], 0).await;
+        assert!(
+            shown["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["expected"] == "kept"),
+            "{}",
+            shown["findings"]
+        );
+        holds("show", &shown);
+        let checked = b.json(&["check", k, "-f", "json"], 0).await;
+        assert_eq!(checked["check"]["expected"][0]["expected"], "kept");
+        holds("check", &checked);
+        std::fs::remove_file(b.path("sonde.toml")).unwrap();
+    }
     holds(
         "compare",
         &b.json(&["compare", s, s, "-f", "json"], 0).await,

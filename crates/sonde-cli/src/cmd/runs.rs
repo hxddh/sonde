@@ -56,6 +56,10 @@ struct Row {
     #[serde(skip)]
     named: Option<String>,
     endpoint: String,
+    /// The clients that sent its requests (`boto3`, `Lance`): the one that
+    /// sent most, and a second that sent a tenth or more.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clients: Vec<String>,
     bytes: u64,
     /// What it holds: its requests, how long they spanned, how many failed.
     requests: u64,
@@ -73,32 +77,47 @@ struct Row {
     /// file, so it is not listed as a run that reads.
     #[serde(skip_serializing_if = "Option::is_none")]
     unreadable: Option<String>,
+    /// Written outside the runs folder (`-o`): listed, never pruned.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    elsewhere: bool,
 }
 
-/// The runs in the data directory, newest first: each from the counts
-/// kept in the folder's index (made the first time it is listed and when it
-/// is recorded), never from the run read whole.
+/// The runs in the data directory, and those written elsewhere with `-o`
+/// ([`sonde_analysis::index::elsewhere`]), newest first: each from the
+/// counts kept in its folder's index (made the first time it is listed and
+/// when it is recorded), never from the run read whole.
 fn rows(s: &Sonde) -> Vec<Row> {
     let dir = s.paths().runs();
-    let mut out: Vec<Row> = std::fs::read_dir(&dir)
+    let own = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
         .flatten()
-        .filter_map(|e| {
-            let p = e.path();
+        .map(|e| (e.path(), false));
+    let elsewhere = sonde_analysis::index::elsewhere(&dir)
+        .into_iter()
+        .map(|p| (p, true));
+    let mut out: Vec<Row> = own
+        .chain(elsewhere)
+        .filter_map(|(p, elsewhere)| {
             if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
                 return None;
             }
             let c = sonde_analysis::summary::counted(&p)?;
             Some(Row {
-                name: p.file_name()?.to_string_lossy().into_owned(),
+                // one written elsewhere by its path: its name alone is not where it is
+                name: if elsewhere {
+                    p.to_string_lossy().into_owned()
+                } else {
+                    p.file_name()?.to_string_lossy().into_owned()
+                },
                 path: p.to_string_lossy().into_owned(),
                 created: c.created.to_rfc3339(),
                 program: c.program,
                 command: c.command,
                 named: c.name.filter(|n| !n.trim().is_empty()),
                 endpoint: c.endpoint,
-                bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
+                clients: c.clients,
+                bytes: p.metadata().map(|m| m.len()).unwrap_or(0),
                 requests: c.requests,
                 seconds: c.seconds,
                 errors: c.errors,
@@ -106,6 +125,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                     .map(|s| s.label()),
                 exit: sonde_analysis::index::get(&p).exit,
                 unreadable: c.unreadable,
+                elsewhere,
             })
         })
         .collect();
@@ -264,6 +284,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                             .or(r.command.clone())
                             .or(r.program.clone())
                             .unwrap_or_default(),
+                        r.clients.join(" · "),
                         r.endpoint.clone(),
                         if r.unreadable.is_some() {
                             format!("{} !", output::grouped(r.requests))
@@ -279,12 +300,12 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                 })
                 .collect();
             let mut heads = vec![
-                "run", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
-                "trials", "size",
+                "run", "recorded", "program", "client", "endpoint", "requests", "took", "errors",
+                "exit", "trials", "size",
             ];
             // a table has no column with nothing in it (no run's exit is
             // known: imports, replays); a file's columns stay what they are
-            const EXIT: usize = 7;
+            const EXIT: usize = 8;
             if matches!(format, Format::Text) && all.iter().all(|r| r.exit.is_none()) {
                 heads.remove(EXIT);
                 for r in &mut rows {
@@ -329,10 +350,14 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                 sonde_analysis::program::baselines(&dir)
                     .into_values()
                     .collect();
+            // a run written elsewhere is the writer's to keep; one gone is let go
+            sonde_analysis::index::forget_gone_elsewhere(&dir);
+            let all: Vec<&Row> = all.iter().filter(|r| !r.elsewhere).collect();
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)
                 .filter(|r| !baselines.contains(&r.name))
+                .copied()
                 .collect();
             if gone.is_empty() {
                 // said, not silence: nothing was past the newest N
@@ -465,6 +490,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         }
     };
     sonde_analysis::import::save(run, &path)?;
+    if a.out.is_some() {
+        sonde_analysis::index::note_elsewhere(&s.paths().runs(), &path);
+    }
     match &folder {
         Some((files, _)) => eprintln!(
             "{} from {files} file{} of {} → {}",

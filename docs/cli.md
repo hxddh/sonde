@@ -42,7 +42,7 @@
 
 | Command | Does |
 |---|---|
-| `sonde runs [-f json]` | Runs, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, the program's exit code (blank when not known: a proxy, a replay, an import; a table leaves the column out when none is known), worst trial verdict. |
+| `sonde runs [-f json]` | Runs, newest first, with those written elsewhere with `-o` (by their path; never pruned): program (name, else command; cut in the middle to the terminal's width), the client that sent its requests (from their user agents: `boto3`, `Lance`, `Iceberg (pyiceberg)`; two when each sent a tenth), requests, duration, errors, the program's exit code (blank when not known: a proxy, a replay, an import; a table leaves the column out when none is known), worst trial verdict. |
 | `sonde runs prune --keep N [--yes]` | Delete all but the newest N (baselines kept): a dry run (exit 4 when it would delete any), then `--yes`. |
 | `sonde show [FILE] [--requests] [--errors] [--all] [--by DIM] [--app] [-f json]` | The summary, one shape for `run` and `show`: head line (requests, and operations when they are not nearly the requests; SDK, endpoint, duration, waiting, cost from a cent and [a month](#money-a-month), errors, not found); the findings, those that save the most money first, then time, then the rest, each with its saving (a month too), code lines (`at file:line`) and the fix for the detected SDK; their total, `in all (N findings): …`; one table by kind of request (requests, errors, p95, waiting and its share, cost share; `*` under 20 requests when others have more); the change since the program's run before. |
 | ↳ `--all` | Each operation on its line first; the table with p50 and max and every kind; the four signals (rate, errors, latency, bytes), first byte, cost and the prefixes past half of S3's request limit. |
@@ -145,10 +145,11 @@ max-waiting = "2s"        # or ms as a number
 max-errors = 0
 tolerance = 10            # % a run may grow over its baseline (and no new warning)
 baseline = "auto"         # or a run's path, or an https URL
-# findings kept on purpose, never a new warning: a finding's `identity`
-# (as `show -f json` and the app's "Expected" give it) or a kind for all of
-# it. Anything else is an error (exit 64)
-expect = ["obs.hot|data/conf.json", "obs.listed"]
+# findings kept on purpose, each with why: a finding's `identity` (as
+# `show -f json` and the app's "Expected" give it) or a kind for all of it,
+# and the reason. Never a new warning; `show`, `run` and `check` say the
+# reason with the finding (`expected` in JSON). Anything else is an error (exit 64)
+expect = { "obs.hot|data/conf.json" = "rewritten by the scheduler", "obs.listed" = "the catalog is listed each run" }
 ```
 
 
@@ -169,6 +170,26 @@ The Java hook's sources are in `hooks/java` (`build.sh` rebuilds its jars). Othe
 own request hook. The hooks are written whole (a file renamed into place) and only when changed, so runs at once
 never load half of one.
 
+## Findings
+
+Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names), with what it saves (requests, time,
+money a month), the line that sent it and the fix for the SDK that sent it (boto3, Java, Go, JavaScript):
+
+| Kind | Found when | Fix |
+|---|---|---|
+| `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
+| `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
+| `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
+| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (`obs.small.parts`) | batch into fewer, larger objects; one PUT |
+| `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
+| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (an import: not known whether, `obs.rmw.log`) | a conditional write |
+| `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
+| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for one (`obs.prefixrate.reads`, `.writes`) | adaptive retries; keys spread over prefixes |
+| `obs.serial` | requests one after another (none reading or listing what the one before wrote) that 8 at once would finish 100 ms sooner | at once |
+| `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
+| `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
+| `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
+
 ## The fix loop
 
 A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts, and
@@ -179,7 +200,7 @@ of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot
 Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
 HEAD-then-GET is about the folder its objects are in.
 
-These rules have a version (3: a digit inside a word, `s3out`, stays), kept with each program's findings: findings kept under older rules are
+These rules have a version (4: a prefix near its rate is `obs.throttled`), kept with each program's findings: findings kept under older rules are
 made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
 
 Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):

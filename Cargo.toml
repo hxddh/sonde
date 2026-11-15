@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "23.0.1"
+version = "24.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
@@ -89,12 +89,12 @@ async-trait = "0.1"
 tempfile = "3"
 
 # Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its main
-# at e4749c9 (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "e4749c9efb984db1ca97453692927df0aaffa595" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "e4749c9efb984db1ca97453692927df0aaffa595" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "e4749c9efb984db1ca97453692927df0aaffa595" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "e4749c9efb984db1ca97453692927df0aaffa595" }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "e4749c9efb984db1ca97453692927df0aaffa595" }
+# at 32f1635 (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
+nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
 
 [profile.release]
 lto = "thin"

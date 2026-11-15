@@ -16,6 +16,8 @@ import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar
 import type { Entry } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, ICON, IconButton, Loading, Notice, popupMenu, ROWS, Segmented, SideHeader, terminal, WIDTH, TEXT } from "../ui/kit";
+import { bytes, count } from "../format";
+import { here, LAYOUT_LABEL } from "../ui/overview";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
@@ -202,15 +204,31 @@ function useBuckets() {
       />
     </View>
   );
-  // the list is held open only for what is said only there: a listing that failed, an endpoint
-  // with no bucket. Not while the buckets are on their way (an endpoint switch leaves no bucket
-  // chosen for a moment: the sidebar would flash open and shut)
-  const needed = () => !!endpoint() && (!!buckets.error() || (buckets.state() !== "pending" && !bucket() && (buckets() ?? []).length === 0));
-  return { list, needed };
+  return { list };
 }
 
-/** The sections of Buckets, in one row: Objects, Size, Incomplete uploads, Layouts. */
-const sections = () => STORE_TABS.map((s) => ({ value: s, title: s === "browse" ? t("nav.objects") : sectionLabel(s) }));
+/** What is known of the bucket and prefix shown, said in its section's title: "Size · 1.2 GiB",
+ * "Incomplete uploads · 12" (a warn dot while any is stale), "Layouts · SlateDB". What the v20 tiles said,
+ * without the tiles: found out as the objects open (`useBucketFacts`), nothing while it is not known. */
+const knownOf = (s: StoreTab): { said?: string; mark?: { tone: "warn"; label: string } } => {
+  const k = here();
+  if (s === "capacity" && k.size) return { said: bytes(k.size.totalBytes) };
+  if (s === "multipart" && k.mpu && k.mpu.totalUploads > 0)
+    return { said: count(k.mpu.totalUploads), mark: k.mpu.staleUploads > 0 ? { tone: "warn", label: t("mpu.stale", { n: count(k.mpu.staleUploads), age: t("common.days", { n: k.mpu.thresholdDays }) }) } : undefined };
+  if (s === "layouts" && k.layouts?.length) {
+    const names = [...new Set(k.layouts.map((d) => LAYOUT_LABEL[d.format] ?? d.format))];
+    return { said: names.length > 2 ? `${names.slice(0, 2).join(", ")} +${names.length - 2}` : names.join(", ") };
+  }
+  return {};
+};
+
+/** The sections of Buckets, in one row: Objects, Size, Incomplete uploads, Layouts; each with what is known of it. */
+const sections = () =>
+  STORE_TABS.map((s) => {
+    const title = s === "browse" ? t("nav.objects") : sectionLabel(s);
+    const k = knownOf(s);
+    return { value: s, title: k.said ? `${title} · ${k.said}` : title, mark: k.mark };
+  });
 
 /** A section, rebuilt per section and per place (endpoint, bucket, prefix): each owns its jobs,
  * and another bucket's report is never left under this one's name. */
@@ -234,8 +252,8 @@ export function StoreArea() {
     );
   }
   // the buckets are the sidebar's list while this place shows
-  const { list, needed } = useBuckets();
-  cleanup(showInSidebar("store", list, needed));
+  const { list } = useBuckets();
+  cleanup(showInSidebar("store", list));
   return (
     <View class="flex-1" testID="screen-store">
       {/* the sections (each says the bucket and prefix it is about itself) */}

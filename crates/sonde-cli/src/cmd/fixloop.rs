@@ -27,12 +27,20 @@ pub(super) fn finding_lines(
     month: Option<&Month>,
     color: bool,
 ) -> Vec<String> {
-    let mark = if o.level == "warn" {
+    // one the project keeps on purpose is no warning: said with why
+    let mark = if o.level == "warn" && o.expected.is_none() {
         paint("!", "33", color)
     } else {
         paint("·", "2", color)
     };
     let mut out = vec![format!("{mark} {}", o.text)];
+    if let Some(why) = &o.expected {
+        out.push(paint(
+            &format!("    expected: {why} (sonde.toml)"),
+            "2",
+            color,
+        ));
+    }
     if let Some(saving) = &o.saving_text {
         let money = match month {
             Some(m) if m.of(o.saves_cost) >= sonde_analysis::program::CENT => format!(
@@ -161,7 +169,7 @@ pub(super) fn uncounted_line(why: &str) -> String {
 
 /// The figures of a change on one line: requests, waiting, cost.
 fn figures_line(c: &RunChange) -> String {
-    let n = |v: f64| format!("{v:.0}");
+    let n = |v: f64| crate::output::grouped(v.max(0.0).round() as u64);
     format!(
         "requests {} · waiting {} · cost {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),

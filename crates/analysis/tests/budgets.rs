@@ -226,7 +226,7 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory
     let small = analysis
         .observations
         .iter()
-        .find(|o| o.phrases[0].key == "obs.small")
+        .find(|o| o.phrases[0].key == "obs.small.parts")
         .expect("small files uploaded in parts");
     assert_eq!(small.saves_requests, 200_000);
     assert_eq!(read, 300_000);

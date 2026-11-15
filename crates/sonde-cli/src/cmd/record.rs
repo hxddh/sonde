@@ -150,6 +150,14 @@ pub(super) async fn start_under(
     // share its clean run's)
     let made = of.made.clone().unwrap_or_default();
     let writer = Arc::new(RunWriter::create(&path, &header)?);
+    // a run written elsewhere is listed with the data directory's (`run`'s
+    // recording under a name of its own is, once it is put in its place)
+    let staged = path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".recording"));
+    if under.is_none() && r.out.is_some() && !staged {
+        sonde_analysis::index::note_elsewhere(&s.paths().runs(), &path);
+    }
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let tls = if r.tls {
@@ -181,6 +189,26 @@ pub(super) async fn start_under(
         writer,
         path,
     })
+}
+
+/// Who sent a run's requests, as its head line says it: the SDK most did
+/// (" from boto3 1.34"); an import (or a recording with no command) from
+/// several callers (an import's principals) says how many (the profile keeps
+/// the busiest 12).
+pub(super) fn from_whom(sdk: Option<&str>, header: &RunHeader, callers: usize) -> String {
+    let no_program = header
+        .command
+        .as_deref()
+        .is_none_or(|c| c.starts_with("imported from "));
+    if no_program && callers > 1 {
+        let n = if callers >= 12 {
+            "12+".to_string()
+        } else {
+            callers.to_string()
+        };
+        return format!(" from {n} callers");
+    }
+    sdk.map(|s| format!(" from {s}")).unwrap_or_default()
 }
 
 /// The folder a run is in, where its program's runs are kept.
@@ -457,9 +485,11 @@ pub(super) fn print_summary_of(
             output::count(a.episodes.len(), "operation")
         ));
     }
-    if let Some(sdk) = &a.sdk {
-        head.push_str(&format!(" from {sdk}"));
-    }
+    head.push_str(&from_whom(
+        a.sdk.as_deref(),
+        header,
+        a.profile.callers.len(),
+    ));
     head.push_str(&format!(
         " to {} in {}",
         header.endpoint,

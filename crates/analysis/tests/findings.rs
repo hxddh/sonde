@@ -218,7 +218,7 @@ fn concurrent_uploads_to_one_key_each_get_their_own_create() {
     let obs = findings(&recs);
     let small = obs
         .iter()
-        .find(|o| key(o) == "obs.small")
+        .find(|o| key(o) == "obs.small.parts")
         .expect("small uploads");
     // three uploads of three requests each: every create counted once
     assert_eq!(small.impact, 9, "{small:#?}");
@@ -251,7 +251,7 @@ fn a_prefix_near_s3s_rate_per_prefix_is_named() {
     assert_eq!(f.level, "warn");
     assert!(
         f.text
-            .starts_with("b/logs/2026/ took up to 4500 reads a second, 81% of the 5500"),
+            .starts_with("b/logs/2026/ took up to 4,500 reads a second, 81% of the 5500"),
         "{}",
         f.text
     );

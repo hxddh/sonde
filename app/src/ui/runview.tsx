@@ -123,6 +123,14 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
   };
   const command = () => props.view.header.command;
   const acts = () => props.actions?.();
+  // who sent its requests: the SDK most did ("from boto3 1.34"); an import (no command, or "imported from …") from several callers (its
+  // principals) says how many, not the one SDK most of them used (the profile keeps the busiest 12)
+  const from = () => {
+    const callers = props.view.profile?.callers?.length ?? 0;
+    const imported = !command() || command()!.startsWith("imported from ");
+    if (imported && callers > 1) return t("run.callers", { n: callers >= 12 ? "12+" : count(callers) });
+    return props.view.sdk ? t("run.sdk", { sdk: props.view.sdk }) : "";
+  };
   if (terminal()) {
     return (
       <View class="gap-0">
@@ -161,10 +169,9 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
   };
   // folded: one line, what it ran and its first four figures said with what they count (each still opens its
   // chart), then the commands
-  // (four: bytes is reached from a short pane too, whose header is always folded)
   const FOLDED = 4;
   const said = (i: number, x: SignalTile) =>
-    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : x.value;
+    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : i === 2 && x.value !== t("signal.notTimed") ? t("run.foldedLatency", { v: x.value }) : x.value;
   const folded = () => (
     <View class="gap-3">
     <View testID="run-folded" class="flex-row items-center gap-3">
@@ -198,7 +205,7 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
           <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
-          <Text testID="run-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("run.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
+          <Text testID="run-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), from()].filter(Boolean).join(" · ")}</Text>
         </View>
         {acts()}
       </View>
@@ -607,7 +614,7 @@ export function operationsText(view: RunView, rows: EpisodeRow[]): string {
  * by its place, so only columns at the end may go. */
 export type OpColumn = "status" | "title" | "duration" | "requests" | "time" | "bar" | "format" | "notes";
 export const OP_NAME = 240;
-const OP_WIDTH: Record<Exclude<OpColumn, "title" | "bar" | "notes">, number> = { status: 26, duration: 96, requests: 92, time: 110, format: 86 };
+const OP_WIDTH: Record<Exclude<OpColumn, "title" | "bar" | "notes">, number> = { status: 26, duration: 96, requests: 92, time: 120, format: 86 };
 const OP_RANKED = ["requests", "time", "bar", "format", "notes"] as const;
 /** Which columns a table `width` wide shows (0: not measured yet, all that are
  * wanted), and the room the operation's name has. */

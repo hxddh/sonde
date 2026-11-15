@@ -56,16 +56,19 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
       { id: "cost", label: t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (oneUnit() ? costParts(c().cost[1], c().currency).unit : "") },
     ];
   };
+  // a figure kept with its unit: a tile's line wraps between figures, never inside one ("~93 / ms")
+  const keep = (text: string) => text.replace(/(\d) (ms|s|min|h|B|KiB|MiB|GiB|USD)\b/g, "$1\u00a0$2");
   const tile = (f: () => Fact, look: () => TileLook) => {
     const known = () => f().a != null && f().b != null;
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
     const side = (i: 0 | 1, v: number) => (f().few?.[i] ? `~${f().text(v)}` : f().text(v));
     // the same in both runs: one figure, never "a → a" (marked `~` where either run had a handful)
-    const value = () => (!known() ? t("signal.notTimed") : same() ? (f().few?.[0] || f().few?.[1] ? `~${f().text(f().a!)}` : f().text(f().a!)) : `${side(0, f().a!)} → ${side(1, f().b!)}`);
+    // (each figure kept with its unit, in the value as in the detail: "~1.0 ms → ~1.3 ms" wraps at the arrow only)
+    const value = () => keep(!known() ? t("signal.notTimed") : same() ? (f().few?.[0] || f().few?.[1] ? `~${f().text(f().a!)}` : f().text(f().a!)) : `${side(0, f().a!)} → ${side(1, f().b!)}`);
     // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
     // (from nothing there is no share to say: the two figures say it)
     // (a figure kept with its unit: a tile's line wraps between figures, never inside one — "~93 / ms")
-    const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ").replace(/(\d) (ms|s|min|h|B|KiB|MiB|GiB)\b/g, "$1\u00a0$2");
+    const detail = () => keep([!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · "));
     // a figure of too few requests to tell is no better and no worse: plain
     const tone = () => (!known() || same() || !c().sameProgram || f().few?.[0] || f().few?.[1] ? "plain" : f().b! < f().a! ? "ok" : "fail");
     const lines = () => (f().series && s() && !handful(s()![0]) && !handful(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);

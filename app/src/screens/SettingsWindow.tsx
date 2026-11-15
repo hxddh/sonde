@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { sectionLabel } from "../labels";
 import { SETTINGS_TABS, type SettingsTab, settingsTab } from "../store";
 import type { IconName } from "../ui/icon";
-import { FocusRest, Segmented, terminal } from "../ui/kit";
+import { FocusRest, Segmented, terminal, windowFace } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { Endpoints } from "./Endpoints";
 import { SettingsScreen } from "./Settings";
@@ -40,7 +40,7 @@ export function openSettingsWindow() {
   }
   Window.open(
     () => (
-      <View class="flex-1">
+      <View class={`flex-1 ${windowFace()}`}>
         <SettingsBody />
         <Toaster />
       </View>

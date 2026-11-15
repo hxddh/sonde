@@ -66,17 +66,14 @@ fn print_split(
     header: &sonde_analysis::run::RunHeader,
     requests: usize,
     seconds: f64,
+    callers: usize,
     color: bool,
 ) {
     use sonde_analysis::program::money_text;
     if let Some(c) = &header.command {
         println!("{}", paint(&format!("$ {c}"), "1", color));
     }
-    let from = split
-        .sdk
-        .as_deref()
-        .map(|s| format!(" from {s}"))
-        .unwrap_or_default();
+    let from = super::record::from_whom(split.sdk.as_deref(), header, callers);
     println!(
         "{}",
         paint(
@@ -230,7 +227,12 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     let all = &run.records;
     let prices = request_prices_for(s, &run.header.endpoint);
     // what it amounts to, once: every part below reads this
-    let analysis = Analysis::of(&run, &prices);
+    let mut analysis = Analysis::of(&run, &prices);
+    // what the project keeps on purpose, each finding with why
+    sonde_analysis::program::mark_expected(
+        &mut analysis.observations,
+        &super::check::expect_of(&run.header),
+    );
     let eps = &analysis.episodes;
     if let Some(by) = a.by {
         let split = sonde_analysis::split::split(all, by, &prices);
@@ -247,6 +249,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 &run.header,
                 all.len(),
                 analysis.summary.seconds,
+                analysis.profile.callers.len(),
                 std::io::stdout().is_terminal(),
             ),
         }

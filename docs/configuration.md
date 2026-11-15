@@ -12,7 +12,7 @@ Two files, each setting in one of them:
 | Endpoints and their credentials | `config.toml` | `[[endpoint]]` |
 | Prices (storage, requests) | `config.toml` | `[settings.prices]` |
 | sonde's own requests in flight and per second | `config.toml` | `[settings] concurrency`, `rate-limit` |
-| Theme, contrast, language | `config.toml` | `[settings] theme`, `high-contrast`, `language` |
+| Theme, language | `config.toml` | `[settings] theme`, `language` |
 | Where exports and downloads go | `config.toml` | `[settings] exports-dir`, `downloads-dir` |
 | The program's name | `sonde.toml` | `[program] name` |
 | Its budget and baseline | `sonde.toml` | `[check]` |
@@ -48,7 +48,6 @@ The CLI also takes `--config-dir` and `--data-dir`.
 concurrency = 16            # sonde's own requests in flight per job (not in the app)
 rate-limit = 50.0           # sonde's own requests per second per job; omit for none (not in the app)
 theme = "system"            # system, light, dark
-high-contrast = false
 language = "auto"           # auto, en, zh
 # exports-dir = "/srv/sonde/exports"
 # downloads-dir = "/srv/sonde/downloads"

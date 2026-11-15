@@ -43,7 +43,7 @@ function CommandBar() {
         <View class="flex-row items-center gap-1">
           <Text class="text-muted-foreground">$</Text>
           <Field bare mono testID="run-command" label={t("run.placeholder")} value={command()} placeholder={t("run.placeholder")} onChange={(v) => command.set(v)} onSubmit={run} class="flex-1" />
-          <If when={running()} else={<Button label={t("run.start")} onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
+          <If when={running()} else={<Button label={t("run.start")} onPress={run} disabled={!command().trim()} testID="run-start" />}>
             <Button variant="destructive" label={t("run.stop")} onPress={stop} testID="run-stop" />
           </If>
         </View>
@@ -72,7 +72,7 @@ function CommandBar() {
           leading={<Text class={`font-mono ${TEXT.bodyQuiet}`}>$</Text>}
         />
         {/* the one primary of the place: Run, Stop while it runs */}
-        <If when={running()} else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
+        <If when={running()} else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim()} testID="run-start" />}>
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
@@ -334,7 +334,8 @@ function Recent() {
             {(c) => (
               <ListRow lines={2} label={scrubCommand(c())} selected={command() === c()} onPress={() => command.set(c())}>
                 <Text class={`${TEXT.body} line-clamp-1`}>{programOf(c()) ?? scrubCommand(c())}</Text>
-                <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{scrubCommand(c())}</Text>
+                {/* a long command is cut in its middle: its end (the file, the bucket) tells commands apart */}
+                <Text class={`${TEXT.codeQuiet} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>{scrubCommand(c())}</Text>
               </ListRow>
             )}
           </Each>

@@ -106,17 +106,41 @@ fn template(key: &str) -> &'static str {
     t.unwrap_or("")
 }
 
+/// The arguments that are counts: a figure of four digits or more among
+/// them is said grouped, as every count is ("listed 87,139 times", beside
+/// "87,139 requests"); ids, years and keys are other arguments, left as
+/// written. The app's set (`app/src/phrases.ts`), and a fix's predicted
+/// saving.
+const COUNTS: &[&str] = &[
+    "n", "of", "count", "requests", "reads", "writes", "objects", "total", "was", "clean",
+    // a fix's predicted saving (`fix.saved`)
+    "p",
+];
+
+/// `template` filled with `arg`, its counts grouped ([`COUNTS`]).
+fn fill<'a>(template: &str, arg: impl Fn(&str) -> Option<&'a str>) -> String {
+    use std::borrow::Cow;
+    sonde_fmt::words::fill_with(template, |name| {
+        let v = arg(name)?;
+        let count = COUNTS.contains(&name) && v.len() >= 4 && v.bytes().all(|b| b.is_ascii_digit());
+        Some(match v.parse::<u64>() {
+            Ok(n) if count => Cow::Owned(sonde_fmt::count(n)),
+            _ => Cow::Borrowed(v),
+        })
+    })
+}
+
 impl Phrase {
     /// The phrase in English.
     pub fn en(&self) -> String {
-        sonde_fmt::words::fill(template(self.key), |name| self.args.get(name).map(|t| &**t))
+        fill(template(self.key), |name| self.args.get(name).map(|t| &**t))
     }
 }
 
 /// A phrase in English from a key and arguments kept as text (a verdict
 /// read back from its file).
 pub fn en_of(key: &str, args: &BTreeMap<String, String>) -> String {
-    sonde_fmt::words::fill(template(key), |name| args.get(name).map(String::as_str))
+    fill(template(key), |name| args.get(name).map(String::as_str))
 }
 
 /// A text in English: its phrases one after the other.
@@ -145,5 +169,22 @@ mod tests {
             "multipart upload b/%{n}%{s}.bin · 2 parts · 200 B (not completed)"
         );
         assert_eq!(p("size", &[("size", "1 B".into())]).en(), " · 1 B");
+        // a count is grouped, as the app says it; an id is not
+        assert_eq!(
+            p(
+                "obs.listed",
+                &[("prefix", "b/p/".into()), ("n", "87139".into())]
+            )
+            .en(),
+            "b/p/ was listed 87,139 times"
+        );
+        assert_eq!(
+            p(
+                "slate.walprobe",
+                &[("lo", "1000".into()), ("hi", "1128".into())]
+            )
+            .en(),
+            "looked for the newest WAL: probed ids 1000–1128"
+        );
     }
 }

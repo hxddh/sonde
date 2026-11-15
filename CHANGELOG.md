@@ -2,6 +2,61 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [24.0.0] - 2026-11-15
+
+24.0 gives back what 21–23 took from view, finds the S3 mistakes people really make, and gates CI from the first pull
+request. Finding identities (rules 4) and `[check] expect` change shape ([contract](docs/contract.md)).
+
+### Changed
+
+- **Nothing you read is lost.**
+  - The run header stays open on every pane and at every size, folding only as you scroll: endpoint, date, commit, SDK
+    and the run's sentence. Folded, latency says "median".
+  - "Since the run before" names the finding that changed.
+  - A bucket's tabs carry what is known: "Size · 176 MiB", "Incomplete uploads · 3" (marked when any is stale),
+    "Layouts · …".
+  - A program past its baseline is marked on its newest run in the sidebar.
+  - A trial's verdict says where it turned ("at PutObject …"), its reason before its history.
+  - The Time chart "Which kind of request got slow, and when?" is back as its own card.
+  - A chart's (i) and CSV are quiet, never hidden.
+  - An object says "Checksum: none stored" and "SSE: none reported".
+  - A release now names every phrase the app stopped using (CI checks it against the last tag).
+- **The sidebar says what sent each run's requests:** "boto3 · demo · 100 requests", "Lance, object_store · …", read
+  from the user agents (an application before its SDK). `sonde runs` has a client column.
+- **Findings for the mistakes people make:**
+  - many small writes (→ fewer, larger objects);
+  - deletes one at a time (→ DeleteObjects);
+  - read-modify-write with no If-Match (→ a conditional write);
+  - a missing key polled (→ back off, or a waiter).
+
+  Each finding has fixes for boto3, JS, Go and Java and its money a month, on runs and on imports. A key read again and
+  again is judged between its writes, with a floor of 10 reads saving 1%. Throttling is one kind; `obs.small` covers
+  small multipart uploads; a one-time orphan is `obs.orphans` (1 time). `docs/cli.md` lists every finding with its fix.
+- **CI from the first pull request:** with no stored baseline the Action records the merge-base in the same job (a
+  `setup` input prepares it). A `--demo` run is never held to its waiting.
+- **`[check] expect` takes a reason** (`expect = { "<identity>" = "<reason>" }`), shown in text, JSON, the PR comment
+  and to agents, who leave such findings alone.
+- **stale-list** is tried by default only on stores that are not AWS (AWS is strongly consistent; `--fault stale-list`
+  still runs it).
+- Runs written with `-o` elsewhere are listed in `sonde runs` and the app.
+- **Interface:**
+  - one clock, in the locale's hour cycle;
+  - the least useful words are cut first;
+  - Run, Record and Save say why on press instead of sitting disabled;
+  - the sidebar toggle always toggles;
+  - first-run labels are whole;
+  - Linux Chinese is set in an SC face;
+  - Buckets' objects table fills its pane;
+  - an import from several principals says "from N callers";
+  - counts are grouped everywhere ("87,139"); "probed ids 1–128".
+- Native Shell at its main (32f1635): Windows IME placement in Settings, terminal resizing, Linux focus.
+
+### Removed
+
+- `high-contrast` in config.toml (the system's contrast is followed).
+- The sidebar's "stays open here" refusal (`sidebar.held`): the toggle acts.
+- `obs.orphans.one` (folded into `obs.orphans`); the `[check] expect` list form.
+
 ## [23.0.1] - 2026-11-15
 
 ### Fixed

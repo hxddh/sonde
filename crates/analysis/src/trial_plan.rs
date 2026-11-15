@@ -68,7 +68,7 @@ pub fn of(s: &RunFile) -> Result<Plan, String> {
         scenarios: if own {
             project
         } else {
-            crate::trial::choose(&s.records)
+            crate::trial::choose(&s.records, &s.header.url)
         },
         project: own,
     })
@@ -134,7 +134,7 @@ mod tests {
     fn a_plan_is_the_scenarios_chosen_from_what_the_run_did() {
         let s = run("python job.py --out s3://b/x", None);
         let plan = of(&s).unwrap();
-        let chosen: Vec<String> = crate::trial::choose(&s.records)
+        let chosen: Vec<String> = crate::trial::choose(&s.records, &s.header.url)
             .into_iter()
             .map(|x| x.name)
             .collect();
@@ -172,6 +172,34 @@ mod tests {
             let e = plan.named(&[spec.into()]).unwrap_err();
             assert!(e.contains(says), "{spec}: {e}");
         }
+    }
+
+    #[test]
+    fn a_stale_listing_is_chosen_off_aws_and_tried_on_aws_when_named() {
+        // a program that lists what it wrote
+        let mut s = run("python job.py", None);
+        let mut list = s.records[1].clone();
+        list.id = 3;
+        list.method = "GET".into();
+        list.kind = "ListObjectsV2".into();
+        list.key = None;
+        s.records.push(list);
+        let names = |plan: &Plan| -> Vec<String> {
+            plan.scenarios.iter().map(|x| x.name.clone()).collect()
+        };
+        s.header.url = "http://127.0.0.1:9000".into();
+        assert!(names(&of(&s).unwrap()).contains(&"stale-list".into()));
+        // AWS S3 lists every write that finished: never by default there
+        s.header.url = "https://s3.us-east-1.amazonaws.com".into();
+        let plan = of(&s).unwrap();
+        assert!(
+            !names(&plan).contains(&"stale-list".into()),
+            "{:?}",
+            names(&plan)
+        );
+        // and still tried when asked by name (`--fault stale-list`)
+        let named = plan.named(&["stale-list".into()]).unwrap();
+        assert_eq!(named[0].name, "stale-list");
     }
 
     #[test]

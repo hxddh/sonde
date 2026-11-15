@@ -80,7 +80,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
     assert!(
         titles
             .iter()
-            .any(|t| t.starts_with("looked for the newest WAL: probed ids 1…")),
+            .any(|t| t.starts_with("looked for the newest WAL: probed ids 1–")),
         "{titles:?}"
     );
     let manifest = slate

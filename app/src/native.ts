@@ -66,7 +66,7 @@ export const api = {
   runs: {
     list: () => Runs.list() as T.RunInfo[],
     /** The programs run here, newest first, with their runs' trend. */
-    programs: async () => (await Runs.programs()) as unknown,
+    programs: async () => (await Runs.programs()) as T.ProgramInfo[],
     /** A run as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
     view: async (path: string) => (await Runs.view(path)) as T.RunView,
     /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a run of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */

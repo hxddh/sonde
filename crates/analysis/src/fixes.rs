@@ -104,6 +104,78 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.small" => vec![
             f(
                 "python",
+                "# many records in one object, not one object each\nbody = \"\\n\".join(json.dumps(e) for e in batch).encode()\ns3.put_object(Bucket=b, Key=f\"{prefix}{batch_id}.jsonl\", Body=body)",
+            ),
+            f(
+                "java",
+                "// many records in one object, not one object each\nString body = batch.stream().map(Object::toString).collect(Collectors.joining(\"\\n\"));\ns3.putObject(r -> r.bucket(b).key(prefix + batchId + \".jsonl\"), RequestBody.fromString(body));",
+            ),
+            f(
+                "go",
+                "// many records in one object, not one object each\nbody := bytes.Join(batch, []byte(\"\\n\"))\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + \".jsonl\"), Body: bytes.NewReader(body)})",
+            ),
+            f(
+                "js",
+                "// many records in one object, not one object each\nconst Body = batch.map((e) => JSON.stringify(e)).join(\"\\n\");\nawait s3.send(new PutObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.jsonl`, Body }));",
+            ),
+        ],
+        "obs.deletes" => vec![
+            f(
+                "python",
+                "# up to 1,000 keys a request\nfor i in range(0, len(keys), 1000):\n    s3.delete_objects(Bucket=b, Delete={\"Objects\": [{\"Key\": k} for k in keys[i:i + 1000]], \"Quiet\": True})",
+            ),
+            f(
+                "java",
+                "// up to 1,000 keys a request\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n}",
+            ),
+            f(
+                "go",
+                "// up to 1,000 keys a request\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    _, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n}",
+            ),
+            f(
+                "js",
+                "// up to 1,000 keys a request\nfor (let i = 0; i < keys.length; i += 1000)\n  await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));",
+            ),
+        ],
+        "obs.rmw" | "obs.rmw.log" => vec![
+            f(
+                "python",
+                "# write back only over what was read: another writer's change fails it (412), not lost\nobj = s3.get_object(Bucket=b, Key=k)\ns3.put_object(Bucket=b, Key=k, Body=changed(obj[\"Body\"].read()), IfMatch=obj[\"ETag\"])  # on 412, read again",
+            ),
+            f(
+                "java",
+                "// write back only over what was read: another writer's change fails it (412), not lost\nResponseBytes<GetObjectResponse> obj = s3.getObjectAsBytes(r -> r.bucket(b).key(k));\ns3.putObject(r -> r.bucket(b).key(k).ifMatch(obj.response().eTag()), RequestBody.fromBytes(changed(obj.asByteArray())));",
+            ),
+            f(
+                "go",
+                "// write back only over what was read: another writer's change fails it (412), not lost\nobj, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n_, err = s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: changed(obj.Body), IfMatch: obj.ETag})",
+            ),
+            f(
+                "js",
+                "// write back only over what was read: another writer's change fails it (412), not lost\nconst obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nawait s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body: changed(await obj.Body.transformToString()), IfMatch: obj.ETag }));",
+            ),
+        ],
+        "obs.polled" => vec![
+            f(
+                "python",
+                "# a waiter asks every 5 s, not in a loop as fast as it can\ns3.get_waiter(\"object_exists\").wait(Bucket=b, Key=k, WaiterConfig={\"Delay\": 5, \"MaxAttempts\": 60})",
+            ),
+            f(
+                "java",
+                "// a waiter backs off between tries\ns3.waiter().waitUntilObjectExists(r -> r.bucket(b).key(k));",
+            ),
+            f(
+                "go",
+                "// a waiter backs off between tries\nerr := s3.NewObjectExistsWaiter(s3c).Wait(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k}, 10*time.Minute)",
+            ),
+            f(
+                "js",
+                "// a waiter backs off between tries\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
+            ),
+        ],
+        "obs.small.parts" => vec![
+            f(
+                "python",
                 "# one PUT under the threshold\nfrom boto3.s3.transfer import TransferConfig\ns3.upload_file(path, b, k, Config=TransferConfig(multipart_threshold=64 * 1024 * 1024))",
             ),
             f(
@@ -395,7 +467,9 @@ fn kind_name(key: &str) -> &'static str {
         "obs.markers" => "directory markers deleted",
         "obs.listed" => "a prefix listed again and again",
         "obs.headget" => "HEAD before GET",
-        "obs.small" => "small files uploaded in parts",
+        "obs.small" | "obs.small.parts" => "small files",
+        "obs.deletes" => "objects deleted one at a time",
+        "obs.polled" => "a missing key polled",
         "obs.serial" => "requests one after another",
         _ => "another",
     }

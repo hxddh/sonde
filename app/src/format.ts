@@ -12,7 +12,7 @@ export function locale(): string {
 }
 
 const formats = new Map<string, Intl.DateTimeFormat>();
-function dateFormat(parts: "full" | "day" | "time" = "full"): Intl.DateTimeFormat | null {
+function dateFormat(parts: "full" | "day" | "time" | "seconds" = "full"): Intl.DateTimeFormat | null {
   const { hourCycle, timeZone } = localeSettings();
   const key = `${parts}|${locale()}|${hourCycle}|${timeZone}`;
   let f = formats.get(key);
@@ -20,7 +20,8 @@ function dateFormat(parts: "full" | "day" | "time" = "full"): Intl.DateTimeForma
     const day = { year: "numeric", month: "short", day: "numeric" } as const;
     const time = { hour: "numeric", minute: "2-digit", hourCycle } as const;
     try {
-      f = new Intl.DateTimeFormat(locale(), { ...(parts !== "time" ? day : {}), ...(parts !== "day" ? time : {}), timeZone });
+      const at = parts === "seconds" ? { ...time, second: "2-digit" as const } : parts !== "day" ? time : {};
+      f = new Intl.DateTimeFormat(locale(), { ...(parts === "full" || parts === "day" ? day : {}), ...at, timeZone });
     } catch {
       return null;
     }
@@ -235,15 +236,19 @@ export function cost(v: number, currency: string): string {
   return c.per1000 ? t("cost.perThousand", { v: c.figure, cur: currency }) : `${c.figure} ${c.unit}`;
 }
 
-/** A moment on the reader's clock, to the precision its list needs:
- * `14:02`, `14:02:11` or `14:02:11.204` (operations and output). */
+/** A moment on the reader's clock (its hour cycle: one clock everywhere, `hm`'s), to the precision its list
+ * needs: `14:02` or `2:02 PM`, `14:02:11`, `14:02:11.204` or `2:02:11.204 PM` (operations and output). */
 export function clock(iso: string, precision: "m" | "s" | "ms" = "ms"): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const hms = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  if (precision === "m") return hms;
-  const s = `${hms}:${p2(d.getSeconds())}`;
-  return precision === "s" ? s : `${s}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  if (precision === "m") return hm(iso);
+  const ss = p2(d.getSeconds());
+  const s = dateFormat("seconds")?.format(d) ?? `${p2(d.getHours())}:${p2(d.getMinutes())}:${ss}`;
+  if (precision === "s") return s;
+  // the thousandths after the seconds, wherever the locale puts them (before "PM", after "上午 2:02")
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  const at = s.search(new RegExp(`\\d[:.]${ss}(?![\\d:.])`));
+  return at < 0 ? `${s}.${ms}` : `${s.slice(0, at + 4)}.${ms}${s.slice(at + 4)}`;
 }
 
 /** A long key cut in its middle, so the end that tells keys apart stays:

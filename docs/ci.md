@@ -15,24 +15,28 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v23
+      - uses: hxddh/sonde@v24
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
 ```
 
 Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
-the newest one. This repository tests it against stand-ins on each pull request, and live (`action-live.yml`) after
-each release and daily, against a real baseline and a real comment.
+the newest one. With none kept (the pull request that adds the workflow, an artifact expired, a run an earlier major
+wrote), the pull request's merge-base is recorded in the same job: checked out beside it (a `git worktree`), `setup`
+run there, then the same command on the same runner, so its times compare. The job then takes about twice as long,
+and the program runs twice against the store. When it cannot be recorded, a warning says why and the run is held to
+its budget alone. This repository tests it against stand-ins on each pull request, and live (`action-live.yml`) after
+each release and daily, against a real baseline, a merge-base and a real comment.
 
 No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
-requests and findings (its times are not meaningful: leave `max-waiting` out).
+requests and findings; its times are not meaningful, so no check holds a demo run's waiting.
 
 | Step | Does |
 |---|---|
 | Install | The release binary (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. At a branch or a commit (`@main`, `@<sha>`), the newest release of the major its `Cargo.toml` says, never `latest`; none released yet fails the step. |
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
-| Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push, a schedule: the runs of its own event on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
+| Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push, a schedule: the runs of its own event on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None kept, on a pull request: its merge-base (`git merge-base origin/BASE HEAD`; a shallow checkout is fetched whole for it), recorded with `setup` and RUN in its checkout. None: a warning with why, and `check --baseline auto` says `no baseline yet` in every format. |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
@@ -47,11 +51,12 @@ requests and findings (its times are not meaningful: leave `max-waiting` out).
 | `check-args` | | `sonde check` flags: `--tolerance 5`, `--max-requests N`. |
 | `config` | found upward | `sonde.toml`. |
 | `baseline` | `auto` | `none`, a run's path, or an https URL. |
+| `setup` | | What the merge-base's checkout needs before RUN, run there in `working-directory` (`npm ci`, `pip install -r requirements.txt`): it has none of this checkout's untracked files. Fails: held to the budget, said. |
 | `artifact` | `sonde` | One per job (a matrix names each). |
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `23.0.1`, `23`, `latest`, `path`. Tag `@v23` installs the newest 23.x; `@v23.0.0` that release. `latest` is refused at a branch or commit. |
+| `version` | the action's tag; at a branch or commit, its own major | `24.0.0`, `24`, `latest`, `path`. Tag `@v24` installs the newest 24.x; `@v24.0.0` that release. `latest` is refused at a branch or commit. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
@@ -89,6 +94,7 @@ Outputs: `passed` (`true`/`false`), `file` (the run's), `report-url`, `comment-u
 | New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
 | Warnings now | A finding the baseline had as a note, a warning in this run (a baseline always holds the run to no new warning). |
 | Trials | Those that broke or degraded; the survived counted. |
+| Expected | Findings `[check] expect` keeps on purpose, each with its reason (said here, not as new). |
 | Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |
 

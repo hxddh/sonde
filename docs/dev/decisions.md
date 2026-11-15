@@ -229,3 +229,12 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-244 | Typed confirmation | always; above 100 | **Above 100 items, or a lifecycle**; below, a plain confirm. |
 | D-245 | Surfaces | cards in cards; one level | **One surface level**: tables fill their pane; a folded one-line run header on short panes and on Time and History. |
 | D-246 | A chart pressed with no mark under the pointer | nothing; its weightiest row | **The row that weighs most** (`pressedRow`); a chart's how-to-read is a popover. |
+| D-247 | What simplifying may take | anything quiet; nothing read | **Nothing a user reads**: the run header folds only on scroll; check-locales fails a release whose dropped phrases its changelog does not name. |
+| D-248 | A run's line in the sidebar | its argument or its requests; both, and what sent them | **Client · endpoint · requests**, the client read from user agents while counting (an application before its SDK; two when both send 10%). |
+| D-249 | Common mistakes | the kinds there were; four more, merged | **Small writes, single deletes, unconditional read-modify-write, a polled missing key**; throttling one kind, orphans one kind (identity rules 4). |
+| D-250 | Same-key reads | 10% of the run; a floor | **Per stretch between writes, at least 10 reads saving 1%** of requests or cost. |
+| D-251 | A PR with no stored baseline | the budget alone; its merge-base | **Its merge-base, recorded in the same job** (a `setup` input); a `--demo` run never held to its waiting. |
+| D-252 | Expected findings | a list; with reasons | **identity → reason**, said wherever the finding is; agents leave them. |
+| D-253 | stale-list by default | every store; not AWS | **Only off AWS** (strongly consistent since 2020). |
+| D-254 | Runs written elsewhere | unlisted; listed | **Listed by path** from the runs index, never pruned while the file is there. |
+| D-255 | Clock | 24-hour; the locale's | **The locale's hour cycle everywhere**, a day's group to the second when any row needs it. |

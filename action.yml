@@ -1,5 +1,5 @@
 name: sonde check
-description: Record a program's S3 requests, check them against the base branch's run, and keep one comment on the pull request up to date.
+description: Record a program's S3 requests, check them against the base branch's run (or the pull request's merge-base, recorded in the same job), and keep one comment on the pull request up to date.
 author: hxddh
 branding:
   icon: activity
@@ -22,8 +22,11 @@ inputs:
     description: The project's sonde.toml (default found from the working directory up).
     default: ""
   baseline:
-    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push). `none`, or a run's path or https URL."
+    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push); a pull request with none records its merge-base in this job. `none`, or a run's path or https URL."
     default: auto
+  setup:
+    description: "What the merge-base's checkout needs before the command, run there in the working directory (`npm ci`, `pip install -r requirements.txt`): a git worktree has none of this checkout's untracked files."
+    default: ""
   artifact:
     description: The name the run is kept under, and the baseline fetched by. One per job.
     default: sonde
@@ -37,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `23.0.1`, `latest`, or `path` (the one on PATH). Default: this action's tag (`@v23`: the newest 23.x); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `24.0.0`, `latest`, or `path` (the one on PATH). Default: this action's tag (`@v24`: the newest 24.x); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.
@@ -83,9 +86,14 @@ runs:
     - name: Baseline
       id: baseline
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         SONDE_BASELINE: ${{ inputs.baseline }}
         SONDE_ARTIFACT: ${{ inputs.artifact }}
+        SONDE_RUN: ${{ inputs.run }}
+        SONDE_RUN_ARGS: ${{ inputs.run-args }}
+        SONDE_NAME: ${{ inputs.name }}
+        SONDE_SETUP: ${{ inputs.setup }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" baseline
 

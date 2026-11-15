@@ -29,6 +29,10 @@ fix for the run's SDK; every operation, operation list and fix with `--all`), `o
 top, `--summary` and `show-summary.schema.json` go; findings are ordered by what they save; a program's first run's
 findings are `new`; identity rules 3 keep a digit inside a word.
 
+**24.0** broke: `[check] expect` says why each finding is kept (`expect = { "<identity>" = "<reason>" }`, the list
+goes), and `check -f json`'s `check.expected` is those findings, each `{identity, text, expected}`; `check` holds no
+`--demo` run to its waiting.
+
 ## Stable
 
 | | What | Documented in | Tested by |
@@ -36,7 +40,7 @@ findings are `new`; identity rules 3 keep a digit inside a word.
 | Run files | The `.sonde` format: header, records, log lines, versioning | [run-format.md](dev/run-format.md) | `the_format_as_its_spec_says` (`crates/analysis/src/run.rs`) |
 | JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
 | `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-errors`, `expect`, `tolerance`, `baseline`), `[program]` (`name`, `runs`, `runs-per-month`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/analysis/src/project.rs` (one reader for CLI and app) |
-| `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `high-contrast`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |
+| `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
 | Commands and flags | Subcommands, flags, arguments, `-f` formats, the environment a recorded program gets | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
 

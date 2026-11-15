@@ -415,6 +415,54 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
 }
 
+/// The demo store's times are not meaningful (`run --demo` says so): no
+/// row of `check` holds a demo run's waiting, to a budget or a baseline.
+#[test]
+fn a_demo_run_is_never_held_to_its_waiting() {
+    let t = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
+    }
+    let rows = runs_json(t.path());
+    let (newest, older) = (
+        rows[0]["name"].as_str().unwrap(),
+        rows[1]["name"].as_str().unwrap(),
+    );
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            newest,
+            "--baseline",
+            older,
+            "--max-waiting",
+            "0",
+            "--tolerance",
+            "0",
+            "-f",
+            "json",
+        ],
+    );
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
+    let rows = doc["check"]["verdicts"].as_array().unwrap();
+    assert!(rows.iter().all(|v| v["what"] != "waiting"), "{doc:#}");
+    assert!(rows.iter().any(|v| v["what"] == "requests"), "{doc:#}");
+    assert!(
+        stderr(&c).contains("its times are not meaningful, so max-waiting is not checked"),
+        "{}",
+        stderr(&c)
+    );
+    // held to its waiting alone: nothing checked, and no mistake (a demo in CI
+    // with a sonde.toml that sets max-waiting passes)
+    let c = sonde(t.path(), &["check", newest, "--max-waiting", "0"]);
+    assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
+    assert!(
+        stdout(&c).contains("nothing checked: a demo run's waiting is not held to a limit"),
+        "{}",
+        stdout(&c)
+    );
+}
+
 #[test]
 fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     let t = tempfile::tempdir().unwrap();
@@ -1073,8 +1121,14 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
         e.contains("sonde endpoints add ID URL") && e.contains("--url URL --path-style"),
         "{e}"
     );
-    // a time on the command line reads as sonde.toml's does
-    demo_run(t.path());
+    // a time on the command line reads as sonde.toml's does (of a run on a
+    // store: a demo run's waiting is held to nothing)
+    run_of(
+        t.path(),
+        "timed.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
     let o = sonde(t.path(), &["check", "--max-waiting", "2s", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["check"]["verdicts"][0]["limit"], 2000.0, "{v}");
@@ -1505,13 +1559,13 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
         .arg("runs")
         .env("SONDE_CONFIG_DIR", t.path().join("config"))
         .env("SONDE_DATA_DIR", t.path().join("data"))
-        .env("COLUMNS", "110")
+        .env("COLUMNS", "120")
         .output()
         .unwrap();
     let table = stdout(&narrow);
     let row = table.lines().find(|l| l.starts_with("long.sonde")).unwrap();
     assert!(
-        row.chars().count() <= 110,
+        row.chars().count() <= 120,
         "{} columns:\n{table}",
         row.chars().count()
     );
@@ -1964,6 +2018,75 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(!c.contains("✓ fixed"), "{c}");
 }
 
+/// A finding the project keeps on purpose carries why in every output of
+/// `show` and `check`: an agent and a reviewer read it and leave it.
+#[test]
+fn an_expected_finding_says_why_in_every_output() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("data/runs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = dir.join("etl-1-base.sonde");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../analysis/tests/fixtures/etl-1-base.sonde"),
+        &run,
+    )
+    .unwrap();
+    let why = "one at a time on purpose: the store limits us";
+    std::fs::write(
+        t.path().join("sonde.toml"),
+        format!(
+            "[program]\nname = \"etl\"\nruns = \"etl\"\n[check]\nmax-requests = 100000\nexpect = {{ \"obs.serial\" = {why:?} }}\n"
+        ),
+    )
+    .unwrap();
+    let here = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {}", stderr(&o));
+        stdout(&o)
+    };
+    let file = run.to_str().unwrap();
+    let shown: serde_json::Value =
+        serde_json::from_str(&here(&["show", file, "-f", "json"])).unwrap();
+    let serial = shown["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "obs.serial")
+        .unwrap();
+    assert_eq!(serial["expected"], why);
+    // only that one
+    assert_eq!(
+        shown["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f.get("expected").is_some())
+            .count(),
+        1
+    );
+    assert!(here(&["show", file]).contains(&format!("expected: {why}")));
+    let checked: serde_json::Value =
+        serde_json::from_str(&here(&["check", file, "-f", "json"])).unwrap();
+    assert_eq!(checked["check"]["expected"][0]["expected"], why);
+    assert_eq!(checked["check"]["expected"][0]["identity"], "obs.serial|");
+    assert!(here(&["check", file]).contains(&format!("(expected: {why})")));
+    let md = here(&["check", file, "-f", "markdown"]);
+    assert!(md.contains("**Expected** (sonde.toml)"), "{md}");
+    assert!(md.contains(&format!("expected: {why}")), "{md}");
+    // a warning kept on purpose is a notice, never a warning
+    let gh = here(&["check", file, "-f", "github"]);
+    let line = gh.lines().find(|l| l.contains("(expected: ")).unwrap();
+    assert!(line.starts_with("::notice "), "{gh}");
+    assert!(line.contains(why), "{gh}");
+}
+
 /// `[check] expect` names findings by identity: words of a finding's text,
 /// or a kind sonde does not find, are a mistake in sonde.toml.
 #[test]
@@ -1984,7 +2107,7 @@ fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
     ] {
         std::fs::write(
             &cfg,
-            format!("[check]\nmax-requests = 100000\nexpect = [{expect:?}]\n"),
+            format!("[check]\nmax-requests = 100000\nexpect = {{ {expect:?} = \"kept\" }}\n"),
         )
         .unwrap();
         let c = sonde(
@@ -2628,4 +2751,124 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", s, "-f", "json"]))).unwrap();
     assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);
     assert_eq!(j["whatIf"]["requests"], serde_json::json!([16, 8]));
+}
+
+/// A run written elsewhere with `-o` (as agents.md advises) is listed with
+/// the data directory's, by its path: people see an agent's runs. It is the
+/// writer's to keep (never pruned), and let go once it is gone.
+#[test]
+fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
+    let t = tempfile::tempdir().unwrap();
+    let agent = t.path().join("agent");
+    std::fs::create_dir_all(&agent).unwrap();
+    let out = agent.join("job.sonde");
+    // (--force: the run is written whole at its end, then renamed into place)
+    std::fs::write(&out, b"").unwrap();
+    let o = sonde(
+        t.path(),
+        &["run", "--demo", "-o", out.to_str().unwrap(), "--force"],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = runs_json(t.path());
+    // the tour's two runs: the job and the job fixed, beside it
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(listed.iter().all(|r| r["elsewhere"] == true), "{listed:?}");
+    let written = out.canonicalize().unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|r| r["path"] == written.to_str().unwrap() && r["name"] == r["path"]),
+        "{listed:?}"
+    );
+    assert!(listed.iter().all(|r| r["requests"].as_u64() > Some(0)));
+    // each named by the client that sent it (the tour plays boto3)
+    assert!(
+        listed
+            .iter()
+            .all(|r| r["clients"] == serde_json::json!(["boto3"])),
+        "{listed:?}"
+    );
+    let table = stdout(&sonde(t.path(), &["runs"]));
+    assert!(table.contains(written.to_str().unwrap()), "{table}");
+    assert!(
+        table.lines().next().is_some_and(|h| h.contains(" client ")),
+        "{table}"
+    );
+    // a program's run, recorded beside its file and put in its place at the end
+    let two = agent.join("two.sonde");
+    let o = sonde(
+        t.path(),
+        &[
+            "run",
+            "--demo",
+            "-o",
+            two.to_str().unwrap(),
+            "--force",
+            "--",
+            "true",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = runs_json(t.path());
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    let two = two.canonicalize().unwrap();
+    assert!(
+        listed.iter().any(|r| r["path"] == two.to_str().unwrap()),
+        "{listed:?}"
+    );
+    std::fs::remove_file(&two).unwrap();
+    // never pruned: the files are the agent's
+    let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
+    assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
+    assert!(out.is_file());
+    // gone from the disk: gone from the list
+    std::fs::remove_file(&out).unwrap();
+    assert_eq!(runs_json(t.path()).len(), 1);
+}
+
+/// An import from several principals says how many callers sent it, not the
+/// SDK most of them used; one from a single principal names its SDK.
+#[test]
+fn an_import_from_several_callers_says_how_many() {
+    let t = tempfile::tempdir().unwrap();
+    let line = |second: u32, who: &str, ua: &str| {
+        format!(
+            "79a5 lake [06/Feb/2026:00:00:{second:02} +0000] 192.0.2.3 arn:aws:iam::1:role/{who} A{second} REST.GET.OBJECT t/k \"GET /lake/t/k HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"{ua}\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n"
+        )
+    };
+    let log = t.path().join("access.log");
+    let many: String = [
+        line(1, "etl", "aws-sdk-java/2.29"),
+        line(2, "etl", "aws-sdk-java/2.29"),
+        line(3, "dashboard", "Boto3/1.44"),
+        line(4, "ingest", "aws-sdk-go-v2/1.32"),
+    ]
+    .concat();
+    std::fs::write(&log, many).unwrap();
+    let out = t.path().join("many.sonde");
+    let o = sonde(
+        t.path(),
+        &["import", log.to_str().unwrap(), "-o", out.to_str().unwrap()],
+    );
+    let said = format!("{}{}", stdout(&o), stderr(&o));
+    assert_eq!(o.status.code(), Some(0), "{said}");
+    assert!(said.contains("4 requests from 3 callers to "), "{said}");
+    let shown = stdout(&sonde(t.path(), &["show", out.to_str().unwrap()]));
+    assert!(shown.contains("4 requests from 3 callers to "), "{shown}");
+    let split = stdout(&sonde(
+        t.path(),
+        &["show", out.to_str().unwrap(), "--by", "kind"],
+    ));
+    assert!(split.contains(" from 3 callers to "), "{split}");
+    std::fs::write(&log, line(1, "etl", "aws-sdk-java/2.29")).unwrap();
+    let one = t.path().join("one.sonde");
+    let o = sonde(
+        t.path(),
+        &["import", log.to_str().unwrap(), "-o", one.to_str().unwrap()],
+    );
+    let said = format!("{}{}", stdout(&o), stderr(&o));
+    assert!(
+        said.contains("1 request from aws-sdk-java 2.29 to "),
+        "{said}"
+    );
 }

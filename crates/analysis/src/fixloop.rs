@@ -617,7 +617,7 @@ impl Program {
                 _ => id.as_str(),
             };
             let mut parts = base.split('|');
-            let kind = parts.next().unwrap_or("");
+            let kind = crate::profile::kind_of_phrase(parts.next().unwrap_or(""));
             let about: Vec<String> = parts.map(stable).collect();
             let new = format!("{kind}|{}", about.join("|"));
             by.entry(new).or_default().push((id, t));

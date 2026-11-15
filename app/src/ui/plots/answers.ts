@@ -6,7 +6,7 @@ import { bytes, change, cost, count, duration, percent, rate } from "../../forma
 import { t } from "../../i18n";
 import { FEW, sizeLabel } from "../../signals";
 import type { Profile, RunChange, Signals } from "../../types";
-import { groupName, slotMs } from "./system";
+import { groupName, sliceAt, slotMs } from "./system";
 
 /** A stretch of slices (a zoom), or every one: the indexes it covers. */
 const within = (n: number, range?: [number, number] | null): [number, number] => (range ? [Math.max(0, range[0]), Math.min(n - 1, range[1])] : [0, n - 1]);
@@ -351,4 +351,63 @@ export function liveSaid(s: Signals): string {
   const n = s.rate.requests;
   if (n === 0) return t("live.none");
   return [t("live.text", { n: count(n) }), s.latency.p95Ms != null ? `p95 ${duration(s.latency.p95Ms)}${few(n)}` : "", s.errors.count ? t("timeline.errors", { n: count(s.errors.count) }) : ""].filter(Boolean).join(" · ");
+}
+
+/** A busy kind's latency, slice by slice: its median and p95 in each slice it had requests. */
+export interface KindRate {
+  group: number;
+  name: string;
+  rows: { tMs: number; n: number; p50: number; p95: number }[];
+}
+
+/** The busiest kinds (at most `max`), each its median and p95 slice by slice, from the run's requests as the
+ * profile keeps them (`samples`: every request up to 4,000; past that the slowest 400 and an even spread of
+ * the rest, each of the spread weighed for the requests it stands for). Within `domainMs` when given; a kind
+ * seen in one slice alone draws no line and is left out. */
+export function kindRates(p: Profile, domainMs?: [number, number] | null, max = 5): KindRate[] {
+  const all = p.samples;
+  const total = p.rate.reduce((n, b) => n + requests(b), 0);
+  // past what is kept, the slowest are each themselves and the rest each stand for several
+  const SLOWEST = 400;
+  const sampled = total > all.length && all.length > SLOWEST;
+  // exactly the slowest 400 are themselves, by identity: samples of the spread can tie the 400th's latency, and a
+  // floor by latency would count them as themselves too (a tail of ties made the whole run look fast)
+  const slowest = sampled ? new Set([...all.keys()].sort((a, b) => all[b].ms - all[a].ms).slice(0, SLOWEST)) : null;
+  const spread = sampled ? (total - SLOWEST) / (all.length - SLOWEST) : 1;
+  const by = new Map<number, Map<number, { ms: number; w: number }[]>>();
+  for (const [i, x] of all.entries()) {
+    if (x.group >= max) continue;
+    if (domainMs && (x.tMs < domainMs[0] || x.tMs >= domainMs[1])) continue;
+    const bin = sliceAt(p, x.tMs);
+    const slices = by.get(x.group) ?? new Map<number, { ms: number; w: number }[]>();
+    by.set(x.group, slices);
+    slices.set(bin, [...(slices.get(bin) ?? []), { ms: Math.max(0, x.ms), w: !slowest || slowest.has(i) ? 1 : spread }]);
+  }
+  // a weighed percentile: the first latency by which `q` of the weight is done
+  const at = (xs: { ms: number; w: number }[], q: number) => {
+    const sum = xs.reduce((n, x) => n + x.w, 0);
+    let done = 0;
+    for (const x of xs) if ((done += x.w) >= q * sum) return x.ms;
+    return xs[xs.length - 1].ms;
+  };
+  return [...by.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([group, slices]) => ({
+      group,
+      name: groupName(p.groups[group]),
+      rows: [...slices.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([bin, xs]) => {
+          xs.sort((a, b) => a.ms - b.ms);
+          return { tMs: slotMs(p, bin), n: Math.round(xs.reduce((n, x) => n + x.w, 0)), p50: at(xs, 0.5), p95: at(xs, 0.95) };
+        }),
+    }))
+    .filter((k) => k.rows.length > 1 && p.groups[k.group]);
+}
+
+/** Which kind got slow, and when: the slowest p95 of a busy kind, and its moment. */
+export function kindsSaid(p: Profile, domainMs?: [number, number] | null): string {
+  let best: { name: string; p95: number; tMs: number } | null = null;
+  for (const k of kindRates(p, domainMs)) for (const r of k.rows) if (!best || r.p95 > best.p95) best = { name: k.name, p95: r.p95, tMs: r.tMs };
+  return best ? t("kinds.text", { kind: best.name, p95: duration(best.p95), at: duration(best.tMs) }) : "";
 }

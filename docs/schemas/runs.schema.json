@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/runs.schema.json",
   "title": "sonde runs -f json",
-  "description": "The runs recorded, newest first.",
+  "description": "The runs recorded, newest first: the data directory's, and those written elsewhere with `-o`.",
   "type": "array",
   "items": {
     "type": "object",
     "properties": {
       "name": {
         "type": "string",
-        "description": "The file's name."
+        "description": "The file's name; its path when it was written elsewhere."
       },
       "path": {
         "type": "string"
@@ -31,6 +31,13 @@
       "endpoint": {
         "type": "string"
       },
+      "clients": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The clients that sent its requests, by their user agents, with no version (`boto3`, `object_store`, `Lance`, `Iceberg (pyiceberg)`, `aws-cli`): the one that sent most, and a second when each sent a tenth or more; absent when none said."
+      },
       "bytes": {
         "type": "integer",
         "description": "The file's size."
@@ -51,6 +58,10 @@
       "exit": {
         "type": "integer",
         "description": "How its program exited (128 + a signal; 143 when sonde was sent SIGTERM); absent when not known (a proxy's, a replay's, an import's)."
+      },
+      "elsewhere": {
+        "const": true,
+        "description": "Written outside the data directory's runs folder (`-o`): listed by its path, never pruned; absent otherwise."
       }
     },
     "required": [

@@ -4,8 +4,14 @@
 // `core.<key>` (decoders, sonde-core, probes); Rust reads the English ones too. A phrase with no words in the
 // locale falls back to the English text, whole.
 
+import { count } from "./format";
 import { type Key, t, words } from "./i18n";
 import type { CorePhrase, EpisodeRow, Observation, Phrase } from "./types";
+
+/** The arguments that are counts: a figure of four digits or more among them is grouped as every count is
+ * ("listed 87,139 times", beside "87,139 requests"); ids, years and keys are other arguments, left as written. */
+const COUNTS = new Set(["n", "of", "count", "requests", "reads", "writes", "objects", "total", "was", "clean"]);
+const said = (k: string, v: string) => (COUNTS.has(k) && /^\d{4,}$/.test(v) ? count(Number(v)) : v);
 
 /** `text` said from the locale's `<family>.<key>` words, each phrase filled with its arguments in one pass (an
  * argument's own `%{n}` is not read as a placeholder); `fallback` where a phrase has no words. */
@@ -16,7 +22,7 @@ function sayFrom(family: "phrase" | "core", text: { key: string; args?: Record<s
     const tpl = words(`${family}.${p.key}`);
     if (tpl === null) return fallback;
     const args = p.args ?? {};
-    out += tpl.replace(/%\{(\w+)\}/g, (whole, k: string) => (Object.prototype.hasOwnProperty.call(args, k) ? args[k] : whole));
+    out += tpl.replace(/%\{(\w+)\}/g, (whole, k: string) => (Object.prototype.hasOwnProperty.call(args, k) ? said(k, args[k]) : whole));
   }
   return out;
 }
