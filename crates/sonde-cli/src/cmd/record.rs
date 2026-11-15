@@ -150,8 +150,12 @@ pub(super) async fn start_under(
     // share its clean run's)
     let made = of.made.clone().unwrap_or_default();
     let writer = Arc::new(RunWriter::create(&path, &header)?);
-    // a run written elsewhere is listed with the data directory's
-    if under.is_none() && r.out.is_some() {
+    // a run written elsewhere is listed with the data directory's (`run`'s
+    // recording under a name of its own is, once it is put in its place)
+    let staged = path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".recording"));
+    if under.is_none() && r.out.is_some() && !staged {
         sonde_analysis::index::note_elsewhere(&s.paths().runs(), &path);
     }
     let log = RequestLog::new(4096);

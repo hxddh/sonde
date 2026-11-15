@@ -2660,6 +2660,29 @@ fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
     assert!(listed.iter().all(|r| r["requests"].as_u64() > Some(0)));
     let table = stdout(&sonde(t.path(), &["runs"]));
     assert!(table.contains(written.to_str().unwrap()), "{table}");
+    // a program's run, recorded beside its file and put in its place at the end
+    let two = agent.join("two.sonde");
+    let o = sonde(
+        t.path(),
+        &[
+            "run",
+            "--demo",
+            "-o",
+            two.to_str().unwrap(),
+            "--force",
+            "--",
+            "true",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = runs_json(t.path());
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    let two = two.canonicalize().unwrap();
+    assert!(
+        listed.iter().any(|r| r["path"] == two.to_str().unwrap()),
+        "{listed:?}"
+    );
+    std::fs::remove_file(&two).unwrap();
     // never pruned: the files are the agent's
     let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));

@@ -864,6 +864,8 @@ async fn run_once(
         let run = RunFile::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         if let Some(t) = &target {
             started.path = place(&started.path, t, a.force)?;
+            // listed with the data directory's runs
+            sonde_analysis::index::note_elsewhere(&s.paths().runs(), &started.path);
         }
         // kept as the app keeps it: a run that failed is compared with none
         sonde_analysis::index::set(&started.path, sonde_analysis::index::Change::Exit(code));
