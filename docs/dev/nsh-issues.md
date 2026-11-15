@@ -1,6 +1,6 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at tag `v0.5.0` (all still stand). sonde works around them in its own code
+Drafts for `longbridge/nsh`, last checked at commit `e4749c9` (all still stand). sonde works around them in its own code
 (FINDINGS 18, 19) and does not patch Native Shell. The three Plot requests together would remove about 90 lines and
 seven casts (measured).
 
@@ -120,6 +120,8 @@ seven casts (measured).
 - **What**: a `Sheet` in a non-main window (Settings) draws text and controls but no SVG icons (no close button, no
   `Select` chevrons).
 - **Expected**: icons paint as in the window; and a way to place the sheet below the window's bar.
+- **Not re-checked** at `e4749c9`, where a Sheet became a dialog's modal root: sonde opens no Sheet in a second window
+  any more.
 
 ## On GTK, a programmatic unfocus focuses the first text field
 
