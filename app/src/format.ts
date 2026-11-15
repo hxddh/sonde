@@ -121,8 +121,9 @@ export function date(s: string | null | undefined, precision: "m" | "ms" = "m"):
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}${precision === "ms" ? fine : ""}`;
 }
 
+/** An amount of money: two decimals, or two significant figures under a cent (0.0040 USD), never "<0.01". */
 export function money(v: number, currency: string): string {
-  return `${v < 0.01 && v > 0 ? "<0.01" : v.toFixed(2)} ${currency}`;
+  return `${v < 0.01 && v > 0 ? v.toPrecision(2) : v.toFixed(2)} ${currency}`;
 }
 
 /** A length of time, the one way everywhere. As measured (the default):

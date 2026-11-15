@@ -8,6 +8,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 - A run in the sidebar says again where it went and how many requests it sent (`demo · 18 requests`), beside what
   tells it from its neighbours; 23.0.0 showed one or the other.
+- Compare's cost tile reads "Request cost" again (23.0.0 showed the two-store sentence's placeholders).
+- An amount under a cent is written in two figures (0.0040 USD), never "<0.01".
 
 ## [23.0.0] - 2026-11-15
 

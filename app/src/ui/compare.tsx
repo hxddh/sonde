@@ -159,7 +159,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
       </Text>
       {/* each store's request cost, at its own vendor's prices */}
       <If when={d.cost?.length === 2 ? d.cost : null}>
-        {(c) => <Text class={TEXT.note} testID="compare-cost">{t("compare.cost", { a: money(c()[0].amount, c()[0].currency), x: storeName(c()[0].endpoint), b: money(c()[1].amount, c()[1].currency), y: storeName(c()[1].endpoint) })}</Text>}
+        {(c) => <Text class={TEXT.note} testID="compare-cost">{t("compare.costStores", { a: money(c()[0].amount, c()[0].currency), x: storeName(c()[0].endpoint), b: money(c()[1].amount, c()[1].currency), y: storeName(c()[1].endpoint) })}</Text>}
       </If>
       <If when={d.relies?.length ? d.relies : null}>{(r) => <Relies relied={r()} program={program()} store={storeName(d.endpoints?.[1] ?? "")} />}</If>
       <If when={d.latency?.length}>

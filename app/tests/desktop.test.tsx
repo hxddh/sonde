@@ -145,7 +145,7 @@ test("a command keeps its secrets out and its Windows paths whole; sonde's own r
 test("a month of a program reads as money, not per 1,000 runs", async () => {
   const { money } = await import("../src/format");
   const { cost } = await import("../src/ui/plots");
-  expect(money(0.004, "USD")).toBe("<0.01 USD");
+  expect(money(0.004, "USD")).toBe("0.0040 USD");
   expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });
 

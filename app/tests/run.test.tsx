@@ -141,9 +141,11 @@ test("a run as a timeline, replayed from the app, and the answers compared", asy
   // what it relies on, and how that store answered; each store's request cost
   await app.waitFor("id:compare-relies");
   expect(app.shows("text:/^What curl relies on, and how .* answers$/")).toBe(true);
-  expect(app.shows("text:/^Request cost: /")).toBe(true);
+  expect(app.shows("text:/^Request cost: \\S+ USD.* on .+ → \\S+ USD/")).toBe(true);
   // one view: the answers, before and after, and the transcripts on demand
   await app.waitFor("id:run-change", { timeout: 10000 });
+  // no phrase is shown with its placeholders unfilled
+  expect(app.texts().filter((x) => x.includes("%{"))).toEqual([]);
   expect(app.shows("id:compare-diff")).toBe(false);
   await app.press("id:compare-transcripts");
   await app.waitFor("id:compare-diff");
