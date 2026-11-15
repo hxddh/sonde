@@ -104,7 +104,7 @@ impl Probe for PresignExpiry {
                 Verdict::Differs,
                 ph!(
                     "judge.presign.expiry.differs",
-                    p1 = format!("{:?}", long.status)
+                    p1 = crate::model::status_text(long.status)
                 ),
                 s,
             )
@@ -113,7 +113,7 @@ impl Probe for PresignExpiry {
                 Verdict::Differs,
                 ph!(
                     "judge.presign.expiry.differs.2",
-                    p1 = format!("{:?}", expired.status)
+                    p1 = crate::model::status_text(expired.status)
                 ),
                 s,
             )
@@ -208,8 +208,8 @@ impl Probe for ClockSkew {
                 Verdict::Differs,
                 ph!(
                     "judge.presign.clock-skew.differs.3",
-                    p1 = format!("{:?}", get.status),
-                    p2 = format!("{:?}", get.code)
+                    p1 = crate::model::status_text(get.status),
+                    p2 = crate::model::or_none(get.code.as_deref())
                 ),
                 s,
             )
@@ -267,8 +267,8 @@ impl Probe for MetadataLimit {
                 Verdict::Differs,
                 ph!(
                     "judge.meta.size-limit.differs.3",
-                    p1 = format!("{:?}", over.status),
-                    p2 = format!("{:?}", over.code)
+                    p1 = crate::model::status_text(over.status),
+                    p2 = crate::model::or_none(over.code.as_deref())
                 ),
                 s,
             )
@@ -462,8 +462,8 @@ impl Probe for ObjectLock {
                 Verdict::Differs,
                 ph!(
                     "judge.lock.retention.differs",
-                    p1 = format!("{:?}", del.status),
-                    p2 = format!("{:?}", ret.status)
+                    p1 = crate::model::status_text(del.status),
+                    p2 = crate::model::status_text(ret.status)
                 ),
                 s,
             )
@@ -548,8 +548,8 @@ impl Probe for SseC {
                 Verdict::Differs,
                 ph!(
                     "judge.sse-c.differs",
-                    p1 = format!("{:?}", none.status),
-                    p2 = format!("{:?}", wrong.status)
+                    p1 = crate::model::status_text(none.status),
+                    p2 = crate::model::status_text(wrong.status)
                 ),
                 s,
             )

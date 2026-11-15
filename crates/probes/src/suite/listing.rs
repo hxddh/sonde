@@ -91,9 +91,15 @@ impl Probe for SpecialKeys {
             if put.status.is_none() && put.body == s3raw::client::DOT_SEGMENT {
                 unsent.push(format!("{k:?}"));
             } else if !put.ok() {
-                bad.push(format!("{k:?}: PUT {:?}", put.status));
+                bad.push(format!(
+                    "{k:?}: PUT {}",
+                    crate::model::status_text(put.status)
+                ));
             } else if get.body != format!("body-{i}") {
-                bad.push(format!("{k:?}: GET {:?}", get.status));
+                bad.push(format!(
+                    "{k:?}: GET {}",
+                    crate::model::status_text(get.status)
+                ));
             } else if !listed.iter().any(|l| l == k) {
                 bad.push(format!("{k:?}: not listed as such"));
             }
@@ -279,7 +285,7 @@ impl Probe for TokenStability {
                 Verdict::Differs,
                 ph!(
                     "judge.list.token-stability.differs.3",
-                    p1 = format!("{:?}", s.at("reuse").status),
+                    p1 = crate::model::status_text(s.at("reuse").status),
                     p2 = format!("{:?}", s.at("reused-first").body)
                 ),
                 s,
@@ -435,8 +441,8 @@ impl Probe for DeleteBatchLimit {
                 Verdict::Differs,
                 ph!(
                     "judge.delete.batch-limit.differs.2",
-                    p1 = format!("{:?}", over.status),
-                    p2 = format!("{:?}", over.code),
+                    p1 = crate::model::status_text(over.status),
+                    p2 = crate::model::or_none(over.code.as_deref()),
                     deleted = deleted
                 ),
                 s,

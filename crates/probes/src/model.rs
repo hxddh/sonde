@@ -160,6 +160,17 @@ impl Step {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Steps(pub Vec<Step>);
 
+/// An answer's status as a verdict says it: `400`, or `no answer`.
+pub fn status_text(status: Option<u16>) -> String {
+    status.map_or_else(|| "no answer".into(), |s| s.to_string())
+}
+
+/// What an answer may not carry (a code, a header), as a verdict says it:
+/// itself, or `none`.
+pub fn or_none(v: Option<impl std::fmt::Display>) -> String {
+    v.map_or_else(|| "none".into(), |v| v.to_string())
+}
+
 impl Steps {
     pub fn get(&self, label: &str) -> Option<&Step> {
         self.0.iter().find(|s| s.label == label)
