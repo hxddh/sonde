@@ -1,6 +1,6 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at commit `e4749c9` (all still stand). sonde works around them in its own code
+Drafts for `longbridge/nsh`, last checked at commit `32f1635` (all still stand: none of its 17 commits since `e4749c9` touches them). sonde works around them in its own code
 (FINDINGS 18, 19) and does not patch Native Shell. The three Plot requests together would remove about 90 lines and
 seven casts (measured).
 
@@ -132,3 +132,5 @@ seven casts (measured).
   focused, its query selected (visible under `nsh test --target linux`).
 - **Expected**: no text field focused (as on macOS); `focus()` on a focusable view takes the keyboard there.
 - **sonde today**: an invisible read-only first field (`FocusRest`) per window, Linux only.
+- **At `32f1635`**: a removed view takes the focus with it (#2092), as pages and dialogs did; the triggers above
+  are not removals, so `FocusRest` stays.
