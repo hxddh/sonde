@@ -218,7 +218,7 @@ fn concurrent_uploads_to_one_key_each_get_their_own_create() {
     let obs = findings(&recs);
     let small = obs
         .iter()
-        .find(|o| key(o) == "obs.small")
+        .find(|o| key(o) == "obs.small.parts")
         .expect("small uploads");
     // three uploads of three requests each: every create counted once
     assert_eq!(small.impact, 9, "{small:#?}");

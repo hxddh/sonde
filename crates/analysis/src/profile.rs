@@ -1608,9 +1608,8 @@ fn identity_as(o: &Observation, literal: bool) -> String {
     let Some(p) = o.phrases.first() else {
         return o.text.clone();
     };
-    // one finding whatever its form: one or many, under a threshold or
-    // over. Reads and writes near a prefix's limit are two
-    let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
+    // one finding whatever its form ([`kind_of_phrase`])
+    let key = kind_of_phrase(p.key);
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
         .filter_map(|k| {
@@ -1660,6 +1659,19 @@ pub fn kind_of(identity: &str) -> &str {
     identity.split('|').next().unwrap_or("")
 }
 
+/// The kind of finding a phrase says, whatever its form: `obs.` and one
+/// word (`obs.small.parts` is `obs.small`, `obs.throttled.rate` and a
+/// prefix near its rate, `obs.prefixrate.reads`, are `obs.throttled`).
+pub fn kind_of_phrase(key: &str) -> &str {
+    if key.starts_with("obs.prefixrate") {
+        return "obs.throttled";
+    }
+    match key.match_indices('.').nth(1) {
+        Some((i, _)) => &key[..i],
+        None => key,
+    }
+}
+
 /// The kinds of finding, as an identity begins (`obs.hot` of `obs.hot|b/k`):
 /// what `[check] expect` may name.
 pub const FINDING_KINDS: &[&str] = &[
@@ -1669,11 +1681,12 @@ pub const FINDING_KINDS: &[&str] = &[
     "obs.hot",
     "obs.listed",
     "obs.headget",
+    "obs.deletes",
+    "obs.rmw",
+    "obs.polled",
     "obs.rename",
     "obs.markers",
     "obs.throttled",
-    "obs.prefixrate.reads",
-    "obs.prefixrate.writes",
     "obs.serial",
 ];
 
@@ -1681,8 +1694,9 @@ pub const FINDING_KINDS: &[&str] = &[
 /// and [`identity`]): kept with a program's findings (`findings.json`), so
 /// findings kept under older rules are made again by these, not read as one
 /// fixed and another new. 1 was 19.0's; 2 takes every number out; 3 keeps
-/// a digit inside a word (`s3out`).
-pub const IDENTITY_RULES: u32 = 3;
+/// a digit inside a word (`s3out`); 4 makes a prefix near its rate
+/// (`obs.prefixrate.reads`, `.writes`) a throttling (`obs.throttled`).
+pub const IDENTITY_RULES: u32 = 4;
 
 /// A key or prefix with what changes from one run of a program to the next
 /// taken out: the value of a `name=value` folder `name={v}`, a UUID
@@ -2222,7 +2236,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_and_writes_near_a_prefixs_limit_are_two_findings() {
+    fn every_form_of_throttling_is_one_kind_of_finding() {
         let of = |key: &'static str| Observation {
             level: "warn",
             text: String::new(),
@@ -2245,17 +2259,37 @@ mod tests {
             kind: String::new(),
             saves_cost: 0.0,
         };
+        // a prefix near its rate, reads or writes, is a throttling of it
+        // (a prefix is said near one of the two, the nearer)
         let (r, w) = (
             finding_identity(&of("obs.prefixrate.reads")),
             finding_identity(&of("obs.prefixrate.writes")),
         );
-        assert_eq!(r, "obs.prefixrate.reads|b/t/");
-        assert_eq!(w, "obs.prefixrate.writes|b/t/");
+        assert_eq!(r, "obs.throttled|b/t/");
+        assert_eq!(w, r);
+        assert_eq!(kind_of(&r), "obs.throttled");
         // one finding whatever its form
         assert_eq!(
             finding_identity(&of("obs.throttled.rate")),
             finding_identity(&of("obs.throttled"))
         );
+        assert_eq!(kind_of_phrase("obs.small.parts"), "obs.small");
+        assert_eq!(kind_of_phrase("obs.rmw.log"), "obs.rmw");
+        assert_eq!(kind_of_phrase("obs.hot"), "obs.hot");
+        // every kind is one of those `[check] expect` may name
+        for k in [
+            "obs.small",
+            "obs.small.parts",
+            "obs.deletes",
+            "obs.rmw",
+            "obs.rmw.log",
+            "obs.polled",
+            "obs.orphans",
+            "obs.throttled.rate",
+            "obs.prefixrate.writes",
+        ] {
+            assert!(FINDING_KINDS.contains(&kind_of_phrase(k)), "{k}");
+        }
     }
 
     #[test]

@@ -1676,6 +1676,44 @@ impl<V> ById<V> {
 /// grow past its baseline by default ([`crate::program::DEFAULT_TOLERANCE`]).
 pub const THROTTLED_SHARE: f64 = crate::program::DEFAULT_TOLERANCE;
 
+/// The size under which an object written alone is a small file: written
+/// together, 64 KiB or more is what one PUT's price is worth.
+pub const SMALL: u64 = 64 * 1024;
+
+/// A key's folder: all of it to its last `/` (`""` at the top).
+fn folder_of(key: &str) -> &str {
+    &key[..key.rfind('/').map_or(0, |i| i + 1)]
+}
+
+/// The folder `place` and every place before it (`under`) are in: what a
+/// finding about many objects is about.
+fn common_folder(under: Option<String>, place: &str) -> String {
+    match under {
+        None => folder_of(place).to_string(),
+        Some(u) => {
+            let same = u
+                .char_indices()
+                .zip(place.chars())
+                .take_while(|((_, x), y)| x == y)
+                .last()
+                .map_or(0, |((i, x), _)| i + x.len_utf8());
+            folder_of(&u[..same]).to_string()
+        }
+    }
+}
+
+/// How many of `n` tries for a key that is not there a program backing off
+/// (a second, doubling to a minute) makes over `span_s` seconds.
+fn backoff_tries(span_s: f64, n: usize) -> usize {
+    let (mut t, mut wait, mut tries) = (0.0, 1.0, 1);
+    while tries < n && t + wait <= span_s {
+        t += wait;
+        tries += 1;
+        wait = (wait * 2.0f64).min(60.0);
+    }
+    tries.min(n)
+}
+
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
     observations_at(records, episodes, false)
 }
@@ -1752,6 +1790,23 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saves_cost: 0.0,
     };
     let total = records.len().max(1);
+    // what a finding that saves requests must save to be one: 1% of the
+    // run's requests, or of its cost (at S3's prices: what is a share of
+    // cost does not hang on the store)
+    let prices = crate::profile::RequestPrices::default();
+    let cost_of = |ids: &[u64]| -> f64 {
+        ids.iter()
+            .filter_map(|id| by_id.get(id))
+            .map(|r| crate::profile::price(r, &prices))
+            .sum()
+    };
+    let run_cost: f64 = records
+        .iter()
+        .map(|r| crate::profile::price(r, &prices))
+        .sum();
+    let worth = |saved: &[u64]| {
+        saved.len() * 100 >= total || (run_cost > 0.0 && cost_of(saved) * 100.0 >= run_cost)
+    };
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
         of_episodes(&|e| e.shape == Shape::Multipart && e.title().ends_with("(not completed)"));
@@ -1772,17 +1827,13 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let impact = requests_of(&orphans);
         out.push(
             warn(
-                if n == 1 {
-                    p("obs.orphans.one", &[])
-                } else {
-                    p("obs.orphans", &[("n", n.to_string())])
-                },
+                p("obs.orphans", &[("n", n.to_string()), ("s", plural(n))]),
                 orphans,
             )
             .weigh(impact, 0, total),
         );
     }
-    // small files uploaded in parts: 3 requests where 1 PUT would do
+    // the uploads in parts, each by its upload id
     let mut uploads: HashMap<&str, (usize, u64, bool, Vec<u64>)> = HashMap::new();
     for r in records {
         if let Some(id) = query(r, "uploadId") {
@@ -1847,22 +1898,89 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         .iter()
         .filter(|(parts, bytes, done, _)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
         .collect();
-    if small.len() >= at(3, 1) {
-        let impact: usize = small.iter().map(|u| u.3.len()).sum();
+    // small files uploaded in parts: 3 requests where 1 PUT would do
+    let parts_found = small.len() >= at(3, 1);
+    let parts_ids: Vec<u64> = small.iter().flat_map(|u| u.3.iter().copied()).collect();
+    // one PUT for each: the rest of each upload's requests go
+    let parts_saved: Vec<u64> = parts_ids
+        .iter()
+        .copied()
+        .filter(|id| by_id.get(id).is_some_and(|r| r.kind != "UploadPart"))
+        .collect();
+    // small objects written one PUT each, many to a folder: the small-file
+    // problem (each a write's price, and a request to read it back). Written
+    // as objects of [`SMALL`] or more, a folder's PUTs are as few as its bytes
+    // fill. One key written again and again is no small file
+    let mut folders: HashMap<(&str, &str), (std::collections::HashSet<&str>, u64, Vec<u64>)> =
+        HashMap::new();
+    for r in records
+        .iter()
+        .filter(|r| r.kind == "PutObject" && !r.is_error())
+    {
+        let (Some(b), Some(k), Some(bytes)) =
+            (r.bucket.as_deref(), r.key.as_deref(), r.request_bytes.get())
+        else {
+            continue;
+        };
+        // a directory marker is its own finding
+        if bytes >= SMALL || k.ends_with('/') {
+            continue;
+        }
+        let f = folders.entry((b, folder_of(k))).or_default();
+        f.0.insert(k);
+        f.1 += bytes;
+        f.2.push(r.id);
+    }
+    let (mut put_ids, mut put_saved, mut put_bytes) = (Vec::new(), Vec::new(), 0u64);
+    let mut written_to: Option<String> = None;
+    for ((b, dir), (keys, bytes, ids)) in &folders {
+        let keep = (bytes.div_ceil(SMALL) as usize).max(1);
+        if keys.len() < 2 || ids.len() <= keep {
+            continue;
+        }
+        put_ids.extend_from_slice(ids);
+        put_saved.extend_from_slice(&ids[keep..]);
+        put_bytes += bytes;
+        written_to = Some(common_folder(written_to, &format!("{b}/{dir}")));
+    }
+    drop(folders);
+    put_ids.sort_unstable();
+    put_saved.sort_unstable();
+    // many, a fifth of what the run's requests cost or more
+    let puts_found = if any {
+        !put_saved.is_empty()
+    } else {
+        put_ids.len() >= 50 && cost_of(&put_ids) * 5.0 >= run_cost && worth(&put_saved)
+    };
+    // two findings of one kind: each is fixed on its own
+    if puts_found {
         out.push(
             info(
-                p("obs.small", &[("n", small.len().to_string())]),
-                of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
+                p(
+                    "obs.small",
+                    &[
+                        ("n", put_ids.len().to_string()),
+                        ("size", human(put_bytes)),
+                        (
+                            "prefix",
+                            written_to.filter(|d| !d.is_empty()).unwrap_or("/".into()),
+                        ),
+                    ],
+                ),
+                of_records(&mut put_ids.iter().copied()),
             )
-            // one PUT for each: the rest of each upload's requests go
-            .weigh(impact, impact - small.len(), total)
-            .saving_of(
-                small
-                    .iter()
-                    .flat_map(|u| u.3.iter().copied())
-                    .filter(|id| by_id.get(id).is_some_and(|r| r.kind != "UploadPart"))
-                    .collect(),
-            ),
+            .weigh(put_ids.len(), put_saved.len(), total)
+            .saving_of(put_saved),
+        );
+    }
+    if parts_found {
+        out.push(
+            info(
+                p("obs.small.parts", &[("n", small.len().to_string())]),
+                of_records(&mut parts_ids.iter().copied()),
+            )
+            .weigh(parts_ids.len(), parts_saved.len(), total)
+            .saving_of(parts_saved),
         );
     }
     // the same key read again and again, and the same each time: what a
@@ -1894,27 +2012,39 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         })
         .collect();
     reads.sort_by(|a, b| place(a).cmp(&place(b)));
-    let mut hot: Vec<(String, Vec<u64>)> = Vec::new();
+    // each stretch of a key's reads between its writes on its own: a cache
+    // the program keeps answers each stretch from its first read (and is
+    // told of its own writes). A key is a finding when its stretches that
+    // would be answered the same hold at least 10 reads and what a cache
+    // saves is at least 1% of the run's requests or of its cost
+    let mut hot: Vec<(String, Vec<u64>, Vec<u64>)> = Vec::new();
     for group in reads.chunk_by(|a, b| place(a) == place(b)) {
-        let n = group.len();
+        if group.len() < at(10, 2) {
+            continue;
+        }
+        let stretches = unchanging(records, group, &writes, &by_key);
+        let n: usize = stretches.iter().map(Vec::len).sum();
+        // a cache reads each stretch once
+        let again: Vec<u64> = stretches
+            .iter()
+            .flat_map(|s| s[1..].iter().copied())
+            .collect();
         let enough = if any {
-            n >= 2
+            !again.is_empty()
         } else {
-            n >= 10 && n * 10 >= total
+            n >= 10 && worth(&again)
         };
-        if enough && unchanging(records, group, &writes, &by_key) {
+        if enough {
             let (Some(b), Some(k)) = place(&group[0]) else {
                 continue;
             };
-            let ids = group.iter().map(|i| records[*i as usize].id).collect();
-            hot.push((format!("{b}/{k}"), ids));
+            hot.push((format!("{b}/{k}"), stretches.concat(), again));
         }
     }
     drop(reads);
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    for (k, ids) in hot.into_iter().take(most) {
+    for (k, ids, again) in hot.into_iter().take(most) {
         let n = ids.len();
-        let again = ids[1..].to_vec();
         out.push(
             info(
                 p(
@@ -1922,13 +2052,12 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("key", k),
                         ("n", n.to_string()),
-                        ("pct", (n * 100 / total).to_string()),
+                        ("pct", (n * 100 / total).max(1).to_string()),
                     ],
                 ),
                 of_records(&mut ids.into_iter()),
             )
-            // a cache reads it once
-            .weigh(n, n - 1, total)
+            .weigh(n, again.len(), total)
             .saving_of(again),
         );
     }
@@ -2007,19 +2136,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     pairs.extend([head, r.id]);
                     checked += 1;
                     // the folder all of them are in: what the finding is about
-                    let place = format!("{b}/{k}");
-                    under = Some(match under {
-                        None => place[..place.rfind('/').map_or(0, |i| i + 1)].to_string(),
-                        Some(u) => {
-                            let same = u
-                                .char_indices()
-                                .zip(place.chars())
-                                .take_while(|((_, x), y)| x == y)
-                                .last()
-                                .map_or(0, |((i, x), _)| i + x.len_utf8());
-                            u[..u[..same].rfind('/').map_or(0, |i| i + 1)].to_string()
-                        }
-                    });
+                    under = Some(common_folder(under, &format!("{b}/{k}")));
                 }
             }
             _ => {}
@@ -2098,6 +2215,162 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .weigh(ids.len(), unmarked.len(), total)
             .saving_of(unmarked),
         );
+    }
+    // objects deleted one request each: DeleteObjects takes up to 1,000 in
+    // one (a commit's renames and markers' deletes are their own findings)
+    {
+        let renamed: std::collections::HashSet<u64> = deletes.iter().copied().collect();
+        let mut by_bucket: HashMap<&str, Vec<u64>> = HashMap::new();
+        let mut under: Option<String> = None;
+        for r in records
+            .iter()
+            .filter(|r| r.kind == "DeleteObject" && !crate::summary::is_failure(r))
+        {
+            let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+                continue;
+            };
+            if k.ends_with('/') || renamed.contains(&r.id) {
+                continue;
+            }
+            by_bucket.entry(b).or_default().push(r.id);
+            under = Some(common_folder(under, &format!("{b}/{k}")));
+        }
+        let n: usize = by_bucket.values().map(Vec::len).sum();
+        let mut ids: Vec<u64> = Vec::with_capacity(n);
+        let mut saved: Vec<u64> = Vec::new();
+        for of_bucket in by_bucket.values() {
+            ids.extend_from_slice(of_bucket);
+            saved.extend_from_slice(&of_bucket[of_bucket.len().div_ceil(1000)..]);
+        }
+        ids.sort_unstable();
+        saved.sort_unstable();
+        let found = if any {
+            !saved.is_empty()
+        } else {
+            n >= 20 && worth(&saved)
+        };
+        if found {
+            out.push(
+                info(
+                    p(
+                        "obs.deletes",
+                        &[
+                            ("n", n.to_string()),
+                            (
+                                "prefix",
+                                under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                            ),
+                        ],
+                    ),
+                    of_records(&mut ids.iter().copied()),
+                )
+                .weigh(n, saved.len(), total)
+                .saving_of(saved),
+            );
+        }
+    }
+    // a key read and then written back with no condition (If-Match): a write
+    // by another between the read and this one is lost
+    {
+        let mut rw: Vec<u32> = (0..records.len() as u32)
+            .filter(|i| {
+                let r = &records[*i as usize];
+                r.bucket.is_some()
+                    && r.key.is_some()
+                    && !r.is_error()
+                    && (r.kind == "PutObject"
+                        || (r.kind == "GetObject" && header(r, "range").is_none()))
+            })
+            .collect();
+        rw.sort_by_cached_key(|i| {
+            let r = &records[*i as usize];
+            (r.bucket.as_deref(), r.key.as_deref(), order_of(r))
+        });
+        let mut cycles: Vec<(String, Vec<u64>)> = Vec::new();
+        for g in rw.chunk_by(|a, b| place(a) == place(b)) {
+            let mut read: Option<u64> = None;
+            let mut ids = Vec::new();
+            for r in g.iter().map(|i| &records[*i as usize]) {
+                if r.kind == "GetObject" {
+                    read = Some(r.id);
+                    continue;
+                }
+                if let Some(got) = read.take()
+                    && header(r, "if-match").is_none()
+                    && header(r, "if-none-match").is_none()
+                {
+                    ids.extend([got, r.id]);
+                }
+            }
+            if let (false, (Some(b), Some(k))) = (ids.is_empty(), place(&g[0])) {
+                cycles.push((format!("{b}/{k}"), ids));
+            }
+        }
+        drop(rw);
+        let n: usize = cycles.iter().map(|c| c.1.len() / 2).sum();
+        if n >= at(3, 1) {
+            cycles.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+            let key = cycles[0].0.clone();
+            let mut ids: Vec<u64> = cycles.into_iter().flat_map(|c| c.1).collect();
+            ids.sort_unstable();
+            out.push(
+                info(
+                    p(
+                        "obs.rmw",
+                        &[("key", key), ("n", n.to_string()), ("s", plural(n))],
+                    ),
+                    of_records(&mut ids.iter().copied()),
+                )
+                .weigh(ids.len(), 0, total),
+            );
+        }
+    }
+    // a key asked for again and again while it is not there: a loop polling
+    // for a marker. Backing off (a second, doubling to a minute) asks as
+    // often over the same time as [`backoff_tries`] says
+    {
+        let mut misses: Vec<u32> = (0..records.len() as u32)
+            .filter(|i| {
+                let r = &records[*i as usize];
+                r.bucket.is_some() && r.key.is_some() && is_miss(r)
+            })
+            .collect();
+        misses.sort_by_cached_key(|i| {
+            let r = &records[*i as usize];
+            (r.bucket.as_deref(), r.key.as_deref(), order_of(r))
+        });
+        let mut polled: Vec<(String, Vec<u64>, Vec<u64>)> = Vec::new();
+        for g in misses.chunk_by(|a, b| place(a) == place(b)) {
+            if g.len() < at(5, 2) {
+                continue;
+            }
+            let (first, last) = (&records[g[0] as usize], &records[g[g.len() - 1] as usize]);
+            let span = (last.time - first.time).num_milliseconds() as f64 / 1000.0;
+            let kept = backoff_tries(span, g.len());
+            let saved: Vec<u64> = g[kept..].iter().map(|i| records[*i as usize].id).collect();
+            let enough = if any {
+                !saved.is_empty()
+            } else {
+                worth(&saved)
+            };
+            if let (true, (Some(b), Some(k))) = (enough, place(&g[0])) {
+                let ids = g.iter().map(|i| records[*i as usize].id).collect();
+                polled.push((format!("{b}/{k}"), ids, saved));
+            }
+        }
+        drop(misses);
+        polled.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+        for (key, ids, saved) in polled.into_iter().take(most) {
+            let n = ids.len();
+            out.push(
+                info(
+                    p("obs.polled", &[("key", key), ("n", n.to_string())]),
+                    of_records(&mut ids.into_iter()),
+                )
+                .weigh(n, saved.len(), total)
+                .saving_of(saved),
+            );
+        }
     }
     // throttled: and how many requests were in flight when it happened
     // (the store's own: a 503 sonde answered in its place asks for nothing)
@@ -2371,52 +2644,74 @@ fn written_between(
         .any(|(_, k)| changes(k))
 }
 
-/// Whether every read of one key (`group`, by place) would be answered the
-/// same by a copy kept from the first: each found (no miss), whole (no range
-/// or part: those are the parallel reading of one object), of one ETag where
-/// the store said it, and with no write to the key between the first read
-/// and the last (`writes` and, by key, `by_key`). A key rewritten between
-/// its reads would be answered stale by a cache, and a miss is not kept by
-/// one (an exception is not cached; a key polled for appears): neither is a
-/// hot key to cache. A read that failed otherwise (throttled, a 500) said
-/// nothing of the key, and is passed over: a cache would not have sent it.
+/// The stretches of one key's reads (`group`, by place) between its writes
+/// (`writes` and, by key, `by_key`) that a copy kept from each stretch's
+/// first read would answer as the store did, each the ids of its reads, of
+/// two reads or more: each read found (no miss), whole (no range or part:
+/// those are the parallel reading of one object), and of one ETag where the
+/// store said it. A miss is not kept by a cache (an exception is not cached;
+/// a key polled for appears), so a stretch with one is none. A read that
+/// failed otherwise (throttled, a 500) said nothing of the key: it is
+/// counted in its stretch and judges nothing (a cache would not have sent
+/// it).
 fn unchanging(
     records: &[Record],
     group: &[u32],
     writes: &std::collections::HashMap<&str, Vec<(Order, &str)>>,
     by_key: &std::collections::HashMap<&str, Vec<u32>>,
-) -> bool {
-    let mut seen: Option<(Order, Order, Option<&str>)> = None;
-    for r in group.iter().map(|i| &records[*i as usize]) {
-        if crate::summary::is_failure(r) {
-            continue;
-        }
-        let at = order_of(r);
-        let whole = header(r, "range").is_none() && query(r, "partNumber").is_none();
-        let etag = response_header(r, "etag");
-        let (first, last, kept) = seen.get_or_insert((at, at, etag));
-        if !whole || is_miss(r) || etag.is_some() && kept.is_some() && etag != *kept {
-            return false;
-        }
-        (*first, *last) = ((*first).min(at), (*last).max(at));
-        *kept = kept.or(etag);
-    }
-    let (Some((first, last, _)), Some(r)) = (seen, group.first().map(|i| &records[*i as usize]))
-    else {
-        return false;
+) -> Vec<Vec<u64>> {
+    let Some(r) = group.first().map(|i| &records[*i as usize]) else {
+        return Vec::new();
     };
     let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
-        return false;
+        return Vec::new();
     };
-    let (Some(w), Some(at)) = (writes.get(b), by_key.get(b)) else {
-        return true;
+    // the key's writes, in time order
+    let of_key: &[u32] = match (writes.get(b), by_key.get(b)) {
+        (Some(w), Some(at)) => {
+            let from = at.partition_point(|i| w[*i as usize].1 < k);
+            let to = at.partition_point(|i| w[*i as usize].1 <= k);
+            &at[from..to]
+        }
+        _ => &[],
     };
-    // the key's writes, in time order: one after the first read, before the last
-    let from = at.partition_point(|i| w[*i as usize].1 < k);
-    let to = at.partition_point(|i| w[*i as usize].1 <= k);
-    let of_key = &at[from..to];
-    let next = of_key.partition_point(|i| w[*i as usize].0 <= first);
-    of_key.get(next).is_none_or(|i| w[*i as usize].0 >= last)
+    let w = writes.get(b);
+    // each read's stretch: how many of the key's writes were sent before it
+    let mut reads: Vec<(usize, Order, &Record)> = group
+        .iter()
+        .map(|i| &records[*i as usize])
+        .map(|r| {
+            let at = order_of(r);
+            let stretch = w.map_or(0, |w| of_key.partition_point(|i| w[*i as usize].0 < at));
+            (stretch, at, r)
+        })
+        .collect();
+    reads.sort_by_key(|(s, at, _)| (*s, *at));
+    let mut out = Vec::new();
+    for stretch in reads.chunk_by(|a, b| a.0 == b.0) {
+        if stretch.len() < 2 {
+            continue;
+        }
+        // (a read that failed judges nothing)
+        let answered = || {
+            stretch
+                .iter()
+                .filter(|(_, _, r)| !crate::summary::is_failure(r))
+        };
+        let kept = answered().find_map(|(_, _, r)| response_header(r, "etag"));
+        let same = answered().next().is_some()
+            && answered().all(|(_, _, r)| {
+                let etag = response_header(r, "etag");
+                header(r, "range").is_none()
+                    && query(r, "partNumber").is_none()
+                    && !is_miss(r)
+                    && (etag.is_none() || etag == kept)
+            });
+        if same {
+            out.push(stretch.iter().map(|(_, _, r)| r.id).collect());
+        }
+    }
+    out
 }
 
 /// Copies out of a `_temporary/` folder and the deletes of what they copied
@@ -2512,6 +2807,19 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
             o.fixes = crate::fixes::for_key("obs.throttled.rate");
             o.identity = crate::profile::finding_identity(o);
             o.kind = crate::profile::kind_of(&o.identity).to_string();
+        }
+        // a log says no request's headers: whether a write was conditional
+        // is not known
+        if key(o) == "obs.rmw" {
+            let said = &o.phrases[0];
+            let arg = |n: &str| said.args.get(n).map(|v| v.to_string()).unwrap_or_default();
+            let phrase = p(
+                "obs.rmw.log",
+                &[("key", arg("key")), ("n", arg("n")), ("s", arg("s"))],
+            );
+            o.text = phrase.en();
+            o.phrases = vec![phrase];
+            o.fixes = crate::fixes::for_key("obs.rmw.log");
         }
     }
     out
@@ -3381,45 +3689,47 @@ mod tests {
     /// saves would change what the program sees: each saved read answered
     /// as the first did, with no write to what it reads in between. What a
     /// hot key's cache and a listing kept from the first must hold.
+    /// Whether each read a finding saves would be answered as the store
+    /// did by the read of the same before it (one that failed answered
+    /// nothing to keep): nothing written there between, the same status and
+    /// ETag.
     fn a_kept_answer_is_the_same(records: &[Record], o: &Observation) -> bool {
         let by_id = |id: u64| records.iter().find(|r| r.id == id).unwrap();
-        let saved: Vec<&Record> = o.saved_ids.iter().map(|&id| by_id(id)).collect();
-        let Some(last) = saved.iter().map(|r| (r.time, r.id)).max() else {
-            return true;
-        };
         let etag = |r: &Record| response_header(r, "etag").map(str::to_string);
         let is_listing = |r: &Record| r.kind.starts_with("ListObjects");
         let place = |r: &Record| match query(r, "prefix") {
             Some(p) if is_listing(r) => p.to_string(),
             _ => r.key.as_deref().unwrap_or("").to_string(),
         };
-        let listing = is_listing(saved[0]);
-        // the read kept: the first of those that read what the saved ones do
-        // (a throttled read answered nothing to keep)
-        let first = records
-            .iter()
-            .filter(|r| crate::profile::is_read(r) && is_listing(r) == listing)
-            .filter(|r| !crate::summary::is_failure(r))
-            .filter(|r| place(r) == place(saved[0]))
-            .min_by_key(|r| (r.time, r.id))
-            .unwrap();
-        let changed = records.iter().any(|w| {
-            !crate::profile::is_read(w)
-                && (w.time, w.id) > (first.time, first.id)
-                && (w.time, w.id) < last
-                && w.key.as_deref().is_some_and(|k| {
-                    if listing {
-                        k.starts_with(&place(first))
-                    } else {
-                        k == place(first)
-                    }
-                })
-        });
-        !changed
-            && saved
+        o.saved_ids.iter().map(|&id| by_id(id)).all(|saved| {
+            if crate::summary::is_failure(saved) {
+                return true;
+            }
+            let listing = is_listing(saved);
+            let at = (saved.time, saved.id);
+            let Some(kept) = records
                 .iter()
+                .filter(|r| crate::profile::is_read(r) && is_listing(r) == listing)
                 .filter(|r| !crate::summary::is_failure(r))
-                .all(|r| r.status == first.status && etag(r) == etag(first))
+                .filter(|r| place(r) == place(saved) && (r.time, r.id) < at)
+                .max_by_key(|r| (r.time, r.id))
+            else {
+                return false;
+            };
+            let changed = records.iter().any(|w| {
+                !crate::profile::is_read(w)
+                    && (w.time, w.id) > (kept.time, kept.id)
+                    && (w.time, w.id) < at
+                    && w.key.as_deref().is_some_and(|k| {
+                        if listing {
+                            k.starts_with(&place(kept))
+                        } else {
+                            k == place(kept)
+                        }
+                    })
+            });
+            !changed && saved.status == kept.status && etag(saved) == etag(kept)
+        })
     }
 
     #[test]
@@ -3480,7 +3790,24 @@ mod tests {
         batch.rare_mut().request_body =
             Some("<Delete><Object><Key>conf.json</Key></Object></Delete>".into());
         deleted.push(batch);
-        assert!(hot(&deleted).is_empty());
+        // each stretch between the writes on its own: 7 reads, then 8, a
+        // cache reading each once
+        let between = hot(&deleted);
+        assert_eq!(between.len(), 1);
+        assert_eq!(
+            (
+                between[0].phrases[0].args["n"].as_ref(),
+                between[0].saves_requests
+            ),
+            ("15", 13)
+        );
+        // rewritten after its reads and read once more: the reads before
+        // are a finding still (hot.py with its write)
+        let mut once_more: Vec<Record> = (1..=25).map(|i| get(i, "conf.json", 200)).collect();
+        once_more.push(put(26, "conf.json"));
+        once_more.push(get(27, "conf.json", 200));
+        let found = hot(&once_more);
+        assert_eq!((found.len(), found[0].saves_requests), (1, 24));
         // changed by another writer: the store said another ETag
         let other: Vec<Record> = (1..=15)
             .map(|i| {
