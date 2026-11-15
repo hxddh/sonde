@@ -27,7 +27,11 @@ cat >"$t/bin/sonde" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$FAKE/sonde.$1"
 case "$1" in
-  run) while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done; exit "${FAKE_RUN_EXIT:-0}" ;;
+  run)
+    # where it ran, and the code there
+    pwd >"$FAKE/sonde.pwd"
+    cat etl.py >"$FAKE/sonde.code" 2>/dev/null || true
+    while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done; exit "${FAKE_RUN_EXIT:-0}" ;;
   check) echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
   show) exit "${FAKE_SHOW:-0}" ;;
   share) while [ $# -gt 0 ]; do [ "$1" = -o ] && echo page >"$2"; shift; done ;;
@@ -41,6 +45,8 @@ export PATH="$t/bin:$PATH" FAKE="$t" RUNNER_TEMP="$t/runner" GITHUB_OUTPUT="$t/o
 export GITHUB_REPOSITORY=o/r GITHUB_WORKFLOW_REF="o/r/.github/workflows/ci.yml@refs/pull/7/merge"
 export GITHUB_STEP_SUMMARY="$t/summary"
 step() { : >"$GITHUB_OUTPUT"; bash "$here/sonde-action.sh" "$@"; }
+# (out of any git checkout: a pull request's merge-base is recorded only in one, below)
+mkdir -p "$t/nogit" && cd "$t/nogit"
 output() { sed -n "s/^$1=//p" "$GITHUB_OUTPUT"; }
 failed=0
 is() {
@@ -104,6 +110,43 @@ is "it says why" "$(grep -c 'not one this sonde reads' "$t/said")" 1
 FAKE_RUNS="11" step baseline >"$t/said"
 is "none kept: auto" "$(output baseline)" auto
 is "none kept: a warning" "$(grep -c '^::warning title=sonde::no baseline' "$t/said")" 1
+is "it says why no merge-base was recorded" "$(grep -c 'its merge-base could not be recorded (not a git checkout)' "$t/said")" 1
+is "and nothing was run" "$([ -f "$t/sonde.pwd" ] && echo ran || echo none)" none
+
+# none kept, in a checkout: the pull request's merge-base, recorded in this job
+# (a shallow clone of the pull request, as actions/checkout makes one)
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_NOSYSTEM=1 HOME="$t"
+git init -q -b main "$t/src"
+(
+  cd "$t/src"
+  mkdir job && echo base >job/etl.py && git add . && git commit -qm base
+  git checkout -qb pr && echo pr >job/etl.py && git commit -qam pr
+  git checkout -q main && echo later >job/later && git add . && git commit -qm later
+)
+git clone -q --bare "$t/src" "$t/origin.git"
+git clone -q --depth 1 --branch pr "file://$t/origin.git" "$t/repo"
+cd "$t/repo/job"
+rm -f "$t/sonde.pwd"
+SONDE_RUN="python3 etl.py" SONDE_NAME=etl FAKE_RUNS="11" step baseline >"$t/said"
+is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base.sonde"
+is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge-base [0-9a-f]\{7\} of main, recorded in this job' "$t/said")" 1
+is "recorded from the merge-base's code (not the base branch's newest)" "$(cat "$t/sonde.code")" base
+is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
+is "the same command and name" "$(tail -n 4 "$t/sonde.run" | paste -sd'|')" "etl|--|python3|etl.py"
+is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
+# shellcheck disable=SC2016 # (expanded by setup, in its folder)
+SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
+is "setup runs first, in the same folder" "$(cat "$t/setup.pwd")" "$(cat "$t/sonde.pwd")"
+SONDE_RUN="python3 etl.py" SONDE_SETUP="false" step baseline >"$t/said"
+is "setup failed: held to its budget" "$(output baseline)" auto
+is "it says why" "$(grep -c 'could not be recorded (setup failed in the merge-base.s checkout)' "$t/said")" 1
+SONDE_RUN="python3 etl.py" FAKE_RUN_EXIT=3 step baseline >"$t/said"
+is "its program failed: held to its budget" "$(output baseline)" auto
+is "it says why, and what to set" "$(grep -c "the merge-base's program exited 3: .*the setup input" "$t/said")" 1
+# a push is no pull request: no merge-base
+GITHUB_BASE_REF="" GITHUB_REF_NAME=main SONDE_RUN="python3 etl.py" step baseline >"$t/said"
+is "a push with none kept: no merge-base" "$(grep -c 'merge-base' "$t/said")" 0
+cd "$t/nogit"
 SONDE_BASELINE=none step baseline
 is "none asked: none" "$(output baseline)" ""
 SONDE_BASELINE=https://x/b.sonde step baseline
