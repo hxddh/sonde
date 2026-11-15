@@ -29,6 +29,7 @@ printf '%s\n' "$@" >"$FAKE/sonde.$1"
 case "$1" in
   run) while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done; exit "${FAKE_RUN_EXIT:-0}" ;;
   check) echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
+  show) exit "${FAKE_SHOW:-0}" ;;
   share) while [ $# -gt 0 ]; do [ "$1" = -o ] && echo page >"$2"; shift; done ;;
 esac
 EOF
@@ -97,6 +98,9 @@ FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
 is "baseline from the base branch's run that has it" "$(output baseline)" "$t/runner/sonde/baseline/run.sonde"
 is "it says which run" "$(grep -c 'actions/runs/22' "$t/said")" 1
 is "of this workflow, on the base branch" "$(grep -c -- '--workflow ci.yml --branch main' "$t/gh.log")" 1
+FAKE_SHOW=65 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
+is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" auto
+is "it says why" "$(grep -c 'not one this sonde reads' "$t/said")" 1
 FAKE_RUNS="11" step baseline >"$t/said"
 is "none kept: auto" "$(output baseline)" auto
 is "none kept: a warning" "$(grep -c '^::warning title=sonde::no baseline' "$t/said")" 1

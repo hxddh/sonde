@@ -107,6 +107,11 @@ baseline() {
     if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$dir" >/dev/null 2>&1; then
       local file
       file="$(find "$dir" -name '*.sonde' | head -n 1)"
+      # (a run an earlier major wrote is not read: the next one back, else none)
+      if [ -n "$file" ] && ! sonde show "$file" -f json >/dev/null 2>&1; then
+        note "baseline: the run kept by run $id is not one this sonde reads (an earlier version's); looking further back"
+        continue
+      fi
       if [ -n "$file" ]; then
         note "baseline: the run of $base kept by ${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$id"
         out baseline "$file"
