@@ -441,9 +441,9 @@ for (const v of variants) {
     await charts("03h-runs");
     await app.press("id:compare-back");
 
-    // what a replay on another store would send, said before it runs
+    // will it work on another store: On another store… (in ⋯) says what its replay would send first
     await app.waitFor("id:run-more", { timeout: 10000 });
-    await act("replay-open", "Replay on…", "重放到…");
+    await act("run-another", "On another store…", "在另一个存储上…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");
@@ -465,7 +465,7 @@ for (const v of variants) {
     await app.press("id:store-section-multipart");
     await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
     await shot("04d-uploads");
-    // a change to the store: the plan, and the typed confirmation
+    // a change to the store: the plan, and its confirmation (two uploads: a plain confirm, typed only above 100)
     await app.press("id:plan-abort");
     await app.waitFor("id:confirm-dialog");
     await shot("04e-confirm");
@@ -529,18 +529,6 @@ for (const v of variants) {
     await new Promise((r) => setTimeout(r, 500));
     await settings("05d-endpoint-form");
     await app.press("id:ep-cancel");
-    // an endpoint's compatibility: every probe, in the bucket chosen in Buckets (filled in)
-    await app.press("id:compat-demo");
-    await app.waitFor("id:compat-dialog");
-    await settings("05e-compat");
-    // (macOS can hand the focus back to the main window as the picture is taken, and leave the dialog's foot
-    // unreachable: Settings is brought forward again and the dialog closed as a user would, with Escape)
-    if (app.shows("id:compat-close")) await app.press("id:compat-close");
-    else {
-      await app.keyboard.press("mod+,");
-      await app.keyboard.press("escape");
-    }
-    await app.waitFor("id:compat-dialog", { state: "gone" });
     await app.window("settings").pressClose();
     await app.keyboard.press("mod+k");
     await app.waitFor("id:palette-command");

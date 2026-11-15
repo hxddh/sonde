@@ -14,7 +14,7 @@ import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signa
 import type { Operations } from "../operations";
 import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
-import { titleCells, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -159,12 +159,14 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
       </If>
     );
   };
-  // folded: one line, what it ran and its first figures said with what they count (each still opens its
+  // folded: one line, what it ran and its first four figures said with what they count (each still opens its
   // chart), then the commands
-  const FOLDED = 3;
+  // (four: bytes is reached from a short pane too, whose header is always folded)
+  const FOLDED = 4;
   const said = (i: number, x: SignalTile) =>
     i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : x.value;
   const folded = () => (
+    <View class="gap-3">
     <View testID="run-folded" class="flex-row items-center gap-3">
       <View selectable class="min-w-0 flex-1">
         <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
@@ -185,6 +187,9 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
         </Each>
       </View>
       {acts()}
+    </View>
+    {/* what marks the run (a trial of another, how it ended) stays under the line */}
+    {props.children}
     </View>
   );
   return (
@@ -562,8 +567,9 @@ export function Observations(props: { view: RunView; filter?: number | null; onF
   );
 }
 
+// the operations and the output fill their pane bare: no box of their own, the hairline under their titles only
 const tableClasses = {
-  ...TABLE,
+  ...BARE_TABLE,
   rowActive: "bg-row-hover",
   resizeHandle: "bg-transparent group-hover:bg-border",
 };
@@ -760,7 +766,7 @@ export function OperationsTable(props: {
         return <Text class={`${TEXT.note} line-clamp-1`}>{c.text}</Text>;
       case "time":
         // from the episode, not the cell's text: DataTable fits that to the column with its own font
-        return <Text class={TEXT.codeQuiet}>{clock(e.start)}</Text>;
+        return <Text class={TEXT.time}>{clock(e.start)}</Text>;
       case "requests":
       case "duration":
         // figures line up at their end, under their titles
@@ -770,7 +776,7 @@ export function OperationsTable(props: {
     }
   };
   const grid = () => (
-    <View class={`min-h-0 flex-1 ${CARD}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+    <View class="min-h-0 flex-1" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
       ref={(r) => {
         table = r;
@@ -830,7 +836,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       ref={props.ref}
       testID="output"
       accessibilityLabel={t("runs.output")}
-      class={`min-h-0 flex-1 ${CARD}`}
+      class="min-h-0 flex-1"
       columns={[
         { key: "time", title: t("column.time"), width: COLUMN.outputTime },
         { key: "line", title: t("runs.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },

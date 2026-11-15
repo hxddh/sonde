@@ -331,8 +331,8 @@ async fn every_json_output_is_as_its_schema_says() {
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
         holds("show", &shown);
         holds(
-            "show-summary",
-            &b.json(&["show", q, "--summary", "-f", "json"], 0).await,
+            "show",
+            &b.json(&["show", q, "--all", "-f", "json"], 0).await,
         );
     }
     // one kind of request of many: not few, so `few` is left out
@@ -342,23 +342,27 @@ async fn every_json_output_is_as_its_schema_says() {
         let m = b.path("many.sonde");
         sonde_analysis::import::save(&run, &m).unwrap();
         let m = m.to_str().unwrap();
-        let summary = b.json(&["show", m, "--summary", "-f", "json"], 0).await;
+        let summary = b.json(&["show", m, "-f", "json"], 0).await;
         assert!(
             summary["summary"]["kinds"][0].get("few").is_none(),
             "{}",
             summary["summary"]["kinds"][0]
         );
-        holds("show-summary", &summary);
-        holds("show", &b.json(&["show", m, "-f", "json"], 0).await);
+        holds("show", &summary);
+        // an imported log's month, at the rate of its span
+        assert!(summary["month"].is_null() || summary["month"]["from"] == "log");
     }
     holds(
         "show",
         &b.json(&["show", s, "--errors", "-f", "json"], 0).await,
     );
-    let summary = b.json(&["show", s, "--summary", "-f", "json"], 0).await;
+    holds(
+        "show",
+        &b.json(&["show", s, "--all", "-f", "json"], 0).await,
+    );
+    let summary = b.json(&["show", s, "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
-    holds("show-summary", &summary);
-    for by in ["kind", "prefix", "size", "caller", "sdk", "status"] {
+    for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
@@ -380,7 +384,8 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
-    // replaying it on the small store, and the two compared
+    // replaying it on the small store, and the two compared (what the run
+    // read is written there first: nothing differs)
     let replayed = b.path("replay.sonde");
     let r = replayed.to_str().unwrap();
     holds(
@@ -399,13 +404,13 @@ async fn every_json_output_is_as_its_schema_says() {
                 "-f",
                 "json",
             ],
-            2,
+            0,
         )
         .await,
     );
     holds(
         "compare-answers",
-        &b.json(&["compare", s, r, "-f", "json"], 2).await,
+        &b.json(&["compare", s, r, "-f", "json"], 0).await,
     );
     holds(
         "compare-replay-stores",
@@ -423,7 +428,7 @@ async fn every_json_output_is_as_its_schema_says() {
                 "-f",
                 "json",
             ],
-            2,
+            0,
         )
         .await,
     );
@@ -526,7 +531,6 @@ fn the_checker_finds_what_does_not_hold() {
 fn every_schema_is_checked_and_documented() {
     let checked = [
         "show",
-        "show-summary",
         "show-by",
         "check",
         "compare",

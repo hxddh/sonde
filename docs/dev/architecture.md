@@ -92,7 +92,7 @@ Every size, count and duration in text comes from `sonde-fmt`, tested with the a
   | Window | Terminal |
   |---|---|
   | sidebar with Run, Runs, Buckets | a navigation stack with every place |
-  | Settings, Compatibility in their own windows (`Window.open`) | the F10 menu bar, keyboard shortcuts |
+  | Settings, a run in their own windows (`Window.open`) | the F10 menu bar, keyboard shortcuts |
   | Activity, bucket details in sheets (`setOverlay` in `store.ts`) | |
   | command palette, Canvas charts | tables and sentences |
 

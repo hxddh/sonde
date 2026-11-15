@@ -7,6 +7,7 @@ use std::path::Path;
 use reqlog::Record;
 use sonde_analysis::episode::Observation;
 use sonde_analysis::fixloop::{FindingChange, SinceLast, State};
+use sonde_analysis::month::Month;
 use sonde_analysis::profile::RunChange;
 use sonde_analysis::program::{money_text, ms_text};
 use sonde_analysis::run::RunHeader;
@@ -16,10 +17,16 @@ use sonde_core::Sonde;
 use super::record::{paint, request_prices_for};
 use crate::output;
 
-/// A finding: what it is, what acting on it saves, where in the program,
-/// and the fix for the SDK that sent its requests (`sdk`: the run's,
-/// when the finding's own requests do not say).
-pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> Vec<String> {
+/// A finding: what it is, what acting on it saves (in money a month, when
+/// `month` says one), where in the program, and the fix for the SDK that
+/// sent its requests (`sdk`: the run's, when the finding's own requests do
+/// not say).
+pub(super) fn finding_lines(
+    o: &Observation,
+    sdk: Option<&str>,
+    month: Option<&Month>,
+    color: bool,
+) -> Vec<String> {
     let mark = if o.level == "warn" {
         paint("!", "33", color)
     } else {
@@ -27,7 +34,14 @@ pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> 
     };
     let mut out = vec![format!("{mark} {}", o.text)];
     if let Some(saving) = &o.saving_text {
-        out.push(paint(&format!("    saving: {saving}"), "32", color));
+        let money = match month {
+            Some(m) if m.of(o.saves_cost) >= sonde_analysis::program::CENT => format!(
+                " · ≈ {} a month",
+                money_text(m.of(o.saves_cost), &m.currency)
+            ),
+            _ => String::new(),
+        };
+        out.push(paint(&format!("    saving: {saving}{money}"), "32", color));
     }
     for c in &o.callers {
         out.push(paint(
@@ -53,9 +67,10 @@ pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> 
 }
 
 /// A finding between two runs, on one line: `✓ fixed  … · saved 20
-/// requests (predicted 20)`; with the command changed between the runs
-/// (`command`), fixed, less and more say so in place of a saving.
-pub(super) fn change_line(f: &FindingChange, command: Option<&str>, color: bool) -> String {
+/// requests (predicted 20)`; with the command changed or the workload grown
+/// between the runs (`uncounted`, [`RunChange::uncounted`]), fixed, less
+/// and more say so in place of a saving.
+pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: bool) -> String {
     let (mark, tone) = match f.state {
         State::Fixed => ("✓", "32"),
         State::Less => ("↓", "36"),
@@ -88,14 +103,10 @@ pub(super) fn change_line(f: &FindingChange, command: Option<&str>, color: bool)
     if let Some(saved) = &f.saved_text {
         line.push_str(&paint(&format!(" · {saved}"), "32", color));
     }
-    if let Some(change) = command
+    if let Some(why) = uncounted
         && matches!(f.state, State::Fixed | State::Less | State::More)
     {
-        line.push_str(&paint(
-            &format!(" · the command changed ({change})"),
-            "33",
-            color,
-        ));
+        line.push_str(&paint(&format!(" · {why}"), "33", color));
     }
     line
 }
@@ -104,13 +115,13 @@ pub(super) fn change_line(f: &FindingChange, command: Option<&str>, color: bool)
 /// then those still open as they were, each named.
 pub(super) fn change_lines(
     findings: &[FindingChange],
-    command: Option<&str>,
+    uncounted: Option<&str>,
     color: bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = findings
         .iter()
         .filter(|f| f.state != State::Open)
-        .map(|f| change_line(f, command, color))
+        .map(|f| change_line(f, uncounted, color))
         .collect();
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
     // (each is listed above, with its line and fix: counted here)
@@ -142,9 +153,10 @@ pub(super) fn moved(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
     format!("{before} → {after}{pct}")
 }
 
-/// A program's command changed between two runs: said before the figures.
-pub(super) fn command_line(change: &str) -> String {
-    format!("the command changed ({change}): what moved is not counted as a fix")
+/// Why what moved between two runs is not counted as a fix (the command
+/// changed, the workload grew): said before the figures.
+pub(super) fn uncounted_line(why: &str) -> String {
+    format!("{why}: what moved is not counted as a fix")
 }
 
 /// The figures of a change on one line: requests, waiting, cost.
@@ -195,15 +207,12 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     out.push(paint(&format!("since the run before ({name})"), "1", color));
-    if let Some(ch) = &c.command_changed {
-        out.push(paint(&format!("  {}", command_line(ch)), "33", color));
+    let uncounted = c.uncounted(false);
+    if let Some(why) = c.uncounted(true) {
+        out.push(paint(&format!("  {}", uncounted_line(&why)), "33", color));
     }
     out.push(format!("  {}", figures_line(c)));
-    out.extend(change_lines(
-        &since.findings,
-        c.command_changed.as_deref(),
-        color,
-    ));
+    out.extend(change_lines(&since.findings, uncounted.as_deref(), color));
     out
 }
 

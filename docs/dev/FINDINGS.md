@@ -1,6 +1,6 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (now pinned at its main, commit `27f288e`, after `v0.5.1`, see `Cargo.toml`), without changing it. These are the gaps it
+sonde was written against Native Shell as it is (now pinned at its main, commit `e4749c9`, after `v0.5.1`, see `Cargo.toml`), without changing it. These are the gaps it
 met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
 
 ## Open
@@ -31,6 +31,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 23 | Components | `DataTable` has no way to open at its end or to tell where its viewport starts: `initialScrollAtEnd` and `measureScrollPosition()` (0.5.0) are a `List`'s. sonde's operations and output are tables. | A live table follows its end with what `DataTableRef` has: `onVisibleRowsChange` says where the view ended, `scrollToRow` takes it to the newest row while it was at the end (`OperationsTable`'s `follow`). A page read again keeps its rows' indices, so the table keeps its place by itself. |
 | 24 | Text (Linux) | A text cut in its middle (`textOverflow: "ellipsis-middle"`) on GTK leaves a gap of a few characters between its head and its tail (`slate/db/wal/0000…   0000000000000001.sst`, `GetBucketLif…  Configuration`): the two halves are laid out at the ends of the box as measured, and the text is measured wider than it is drawn (the converse of 15). A cut at the end has no gap. | None that keeps the middle: a cut by a count of characters would need the box's width, and a text sized by its content measures what it holds, so a cut made from it shrinks the box again. sonde keeps the platform's middle cut (both ends of a key or a name tell two apart) and accepts the gap. |
 | 25 | Charts | A `Bar` row whose value is 0 showed no `label` in 17.0's tour: a "0" beside a bar of a pair with a count was not there. | A bar of none that is said is drawn `ZERO_SLIVER` (0.6%) of the scale's top, a sliver on the baseline for its "0" to stand on (the sizes' pairs, the latency histogram's inner buckets). |
+| 26 | Testing | Since `e4749c9` a `Sheet` is a modal dialog: Escape closes it through the modal root's cancel. Under `nsh test` it does for a sheet opened from a button (Activity), not for one opened by a press on a `DataTable` row (a narrow pane's inspector): its `onCancel` is never heard, even after Tab or a press inside it. Not checked on a real desktop. | The inspector's Close (and the pane's own presses) close it; the test checks the dialog's name and Close. |
 
 18, 19, 22 and 23 are drafted as issues for Native Shell in [docs/dev/nsh-issues.md](nsh-issues.md).
 

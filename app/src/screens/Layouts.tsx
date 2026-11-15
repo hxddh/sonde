@@ -132,7 +132,6 @@ export function Layouts() {
   return (
     <Scroll testID="screen-layouts" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
-        title={terminal() ? undefined : sectionLabel("layouts")}
         scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
         // the measure that needs no known layout: any prefix's write cadence
         end={<More testID="layout-more" actions={() => [{ label: t("layouts.generic"), icon: "timer", run: () => void analyze("generic", pfx()), disabled: !bucket() || busy() }]} />}
@@ -158,7 +157,7 @@ export function Layouts() {
                 <Each of={f()}>
                   {(d) => (
                     // a row each: what it is and where, and under them what gave it away (whole names at any
-                    // width: no column cuts a name to make room for the next); Decode under the pointer or the keyboard
+                    // width: no column cuts a name to make room for the next); Decode quiet until the pointer or the keyboard is on it
                     <View class="group min-h-7 flex-row items-center gap-3 py-1">
                       <View class="min-w-0 flex-1 gap-1">
                         <View class="flex-row items-center gap-2">

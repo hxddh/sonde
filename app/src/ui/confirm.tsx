@@ -1,5 +1,6 @@
-// The guard of sonde's own destructive operations: the dry run and a typed
-// confirmation (the number of items, or the bucket name); each is audited.
+// The guard of sonde's own destructive operations: the dry run, then a plain
+// confirm, or for more than 100 items (or a bucket's lifecycle) a typed one
+// (the number of items, or the bucket name); each is audited.
 
 import { signal, Text, View } from "nsh";
 import { bytes, count, day } from "../format";
@@ -44,14 +45,14 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
   };
   // an id column where the items have one, named for what it is (an upload's, a version's)
   const withId = (p: Plan) => !!ID[p.action] && p.items.some((i) => i.id);
-  // what the commit needs: nothing running, and the words typed
-  const ready = () => !running() && props.plan !== null && typed().trim() === props.plan.confirm;
+  // what the commit needs: nothing running, and the words typed where they are asked for
+  const ready = () => !running() && props.plan !== null && (!props.plan.typed || typed().trim() === props.plan.confirm);
   const run = async () => {
     const p = props.plan;
     if (!p || !ready()) return;
     running.set(true);
     try {
-      const o = await api.executePlan(p.id, typed());
+      const o = await api.executePlan(p.id, p.typed ? typed() : p.confirm);
       if (o.errors.length === 0) notify(t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }));
       else {
         // one toast for all of them: how many failed, and why the first did (with the request id to quote)
@@ -107,8 +108,10 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
                 </View>
               )}
             </If>
-            {/* Return commits, once what is typed matches */}
-            <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono error={mismatch()} />
+            {/* more than 100 items: Return commits, once what is typed matches */}
+            <If when={p().typed}>
+              <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono error={mismatch()} />
+            </If>
             <Actions>
               <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />
               <Button variant="destructive" label={t(ACT[p().action], { n: count(p().items.length) })} disabled={!ready()} onPress={run} testID="confirm-run" />

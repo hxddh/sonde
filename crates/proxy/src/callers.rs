@@ -21,9 +21,13 @@ fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-/// The place in the program's code that sent `r`, when it says.
+/// The place in the program's code that sent `r`, when it says; for an
+/// imported log's request, who sent it (the access log's requester, the
+/// CloudTrail identity: an IAM principal).
 pub fn caller(r: &Record) -> Option<String> {
-    header(r, CALLER_HEADER).map(|v| unescape(v).chars().take(200).collect())
+    header(r, CALLER_HEADER)
+        .map(|v| unescape(v).chars().take(200).collect())
+        .or_else(|| r.rare().requester.clone())
 }
 
 /// A header is ASCII: the hook writes other characters of a path or a
@@ -211,12 +215,48 @@ pub fn caller_env(dir: &std::path::Path) -> std::io::Result<Vec<(String, String)
     Ok(env)
 }
 
-/// A place in the program, with how many of a finding's requests it sent.
+/// A place in the program, with how many of a finding's requests it sent:
+/// `place` as the program said it (`etl.py:25 process`), and read as its
+/// file, line and function when it is a place in code (an imported log's
+/// caller is who sent the requests, an IAM principal: none of these).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Caller {
     pub place: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
     pub requests: usize,
+    /// The line of code itself, when its file is there to read (`show`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+impl Caller {
+    /// `place`, read as a file, a line and a function when it is one.
+    pub fn at(place: String, requests: usize) -> Caller {
+        let (file, line, function) = match code_place(&place) {
+            Some((file, line)) => {
+                let function = place
+                    .rsplit_once(&format!(":{line}"))
+                    .map(|(_, f)| f.trim().to_string())
+                    .filter(|f| !f.is_empty());
+                (Some(file), Some(line), function)
+            }
+            None => (None, None, None),
+        };
+        Caller {
+            place,
+            file,
+            line,
+            function,
+            requests,
+            code: None,
+        }
+    }
 }
 
 /// The callers of `records`, most first (three at most), and their SDK.
@@ -233,7 +273,7 @@ pub fn of(records: &[&Record]) -> (Vec<Caller>, Option<String>) {
     }
     let mut callers: Vec<Caller> = places
         .into_iter()
-        .map(|(place, requests)| Caller { place, requests })
+        .map(|(place, requests)| Caller::at(place, requests))
         .collect();
     callers.sort_by(|a, b| b.requests.cmp(&a.requests).then(a.place.cmp(&b.place)));
     callers.truncate(3);
@@ -361,13 +401,20 @@ mod tests {
         let a = rec(&[("x-sonde-caller", "a.py:1")]);
         let b = rec(&[("x-sonde-caller", "b.py:2")]);
         let (callers, _) = of(&[&a, &b, &b]);
+        assert_eq!(callers[0], Caller::at("b.py:2".into(), 2));
         assert_eq!(
-            callers[0],
-            Caller {
-                place: "b.py:2".into(),
-                requests: 2
-            }
+            (
+                callers[0].file.as_deref(),
+                callers[0].line,
+                callers[0].requests
+            ),
+            (Some("b.py"), Some(2), 2)
         );
+        let c = Caller::at("etl/load.py:212 read_manifest".into(), 1);
+        assert_eq!(c.function.as_deref(), Some("read_manifest"));
+        // an IAM principal is no place in code
+        let c = Caller::at("arn:aws:iam::123456789012:role/etl".into(), 1);
+        assert_eq!((c.file, c.line, c.function), (None, None, None));
     }
 
     /// boto3 under the hook: a request names the line that sent it, and so

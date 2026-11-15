@@ -1,14 +1,17 @@
 // Two runs side by side — a recording and its replay on another
-// endpoint, or any two — and the dialog that starts a replay.
+// endpoint, or any two — and the dialog that starts a replay (a run's
+// Compare › On another store…): its answers, what the program relies on
+// and how that store answers, and each store's request cost.
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, clock, count, date, day, dayRange, duration, hm, percent, rate, costParts } from "../format";
+import { bytes, change, clock, cost as money, count, date, day, dayRange, duration, hm, percent, rate, costParts } from "../format";
 import { t } from "../i18n";
-import { say } from "../phrases";
+import { core, say } from "../phrases";
+import { verdictLabel, verdictTone } from "../labels";
 import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, runsChanged } from "../store";
-import type { LatencyChange, Profile, RunInfo, Signals } from "../types";
+import type { LatencyChange, Profile, Relied, RunInfo, Signals } from "../types";
 import { Icon } from "./icon";
 import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { RunChangeView } from "./runchange";
@@ -25,7 +28,36 @@ interface Comparison {
   unmatched: Record<string, number>;
 }
 
-type Answers = { comparison: Comparison; a: string; b: string; latency?: LatencyChange[]; endpoints?: [string, string] };
+/** A store's request cost for a run, at its vendor's prices. */
+type StoreCost = { endpoint: string; amount: number; currency: string };
+
+type Answers = { comparison: Comparison; a: string; b: string; latency?: LatencyChange[]; endpoints?: [string, string]; relies?: Relied[]; cost?: StoreCost[] };
+
+const storeName = (id: string) => endpoints().find((e) => e.id === id)?.name ?? id;
+
+/** "What etl relies on, and how rfs answers": a row a probe that matches what the run used, with its verdict. */
+function Relies(props: { relied: Relied[]; program: string; store: string }) {
+  return (
+    <View class="gap-2" testID="compare-relies">
+      <Heading>{t("relies.title", { program: props.program, store: props.store })}</Heading>
+      <Card pad="none">
+        <Each of={props.relied}>
+          {(r, i) => (
+            <Row wrap first={i() === 0}>
+              <View class="shrink-0">
+                <Badge label={verdictLabel(r().verdict)} tone={verdictTone(r().verdict)} />
+              </View>
+              <Text class={TEXT.body}>{core(r().titleText, r().title)}</Text>
+              <Text class={`font-mono ${TEXT.small}`}>{`${r().kind} ×${count(r().requests)}`}</Text>
+              {/* what showed it where the store passed; what it answered where it did not */}
+              <Muted class="min-w-0 flex-1 text-small line-clamp-1">{r().verdict === "pass" ? core(r().seenText, r().seen) : core(r().summaryText, r().summary)}</Muted>
+            </Row>
+          )}
+        </Each>
+      </Card>
+    </View>
+  );
+}
 
 /** Two runs side by side, the earlier first: whichever was opened, a run is compared with the
  * one before it ("before → after"), never the other way round. */
@@ -114,12 +146,22 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
     });
   };
   // one view: a replay's answers first, then before and after; the transcripts, request by request, on demand
+  // the recording's program, by its name everywhere
+  const program = () => {
+    const o = info(replayOf() === "a" ? props.b : props.a);
+    return o ? runName(o) : "";
+  };
   const answersPart = (d: Answers) => (
     <View class="gap-4">
       <Text class={TEXT.body} testID="compare-summary">
         {t("compare.summary", { n: d.comparison.compared, same: d.comparison.same })}
         {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
       </Text>
+      {/* each store's request cost, at its own vendor's prices */}
+      <If when={d.cost?.length === 2 ? d.cost : null}>
+        {(c) => <Text class={TEXT.note} testID="compare-cost">{t("compare.cost", { a: money(c()[0].amount, c()[0].currency), x: storeName(c()[0].endpoint), b: money(c()[1].amount, c()[1].currency), y: storeName(c()[1].endpoint) })}</Text>}
+      </If>
+      <If when={d.relies?.length ? d.relies : null}>{(r) => <Relies relied={r()} program={program()} store={storeName(d.endpoints?.[1] ?? "")} />}</If>
       <If when={d.latency?.length}>
         <Chart title={t("latency.title")} text={t("latency.hint")}>
           <StoreLatency changes={d.latency!} names={d.endpoints ?? ["A", "B"]} />
@@ -185,10 +227,12 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
 }
 
 interface ReplayPlan {
-  plan: { requests: number; writes: number; deletes: number; skipped: Record<string, number> };
+  plan: { requests: number; writes: number; deletes: number; seeds: number; seedBytes: number; skipped: Record<string, number> };
   prefix: string;
   buckets: string[];
   url: string;
+  /** the probes of what the program relies on, asked of the store afterwards */
+  relies: number;
 }
 
 /** One run replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
@@ -198,6 +242,8 @@ interface StoreRun {
   compared: number;
   differ: number;
   latency: LatencyChange[];
+  /** its request cost and the recording's, each at its store's prices */
+  cost: StoreCost[];
 }
 
 function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }) {
@@ -214,6 +260,11 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
   ];
   const rows = () => [
     { what: t("matrix.differ"), recorded: "—", ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, t("matrix.of", { n: r.differ, of: r.compared })])) },
+    {
+      what: t("matrix.cost"),
+      recorded: props.runs[0]?.cost[0] ? money(props.runs[0].cost[0].amount, props.runs[0].cost[0].currency) : "—",
+      ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, r.cost[1] ? money(r.cost[1].amount, r.cost[1].currency) : "—"])),
+    },
     ...kinds().map((k) => ({
       what: `${groupName(k)} · p95`,
       recorded: duration(k.p95Ms[0]),
@@ -236,7 +287,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
           terminal()
             ? undefined
             : (c) => {
-                const k = c.row > 0 && c.key.startsWith("s") ? kinds()[c.row - 1] : null;
+                const k = c.row > 1 && c.key.startsWith("s") ? kinds()[c.row - 2] : null;
                 const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
                 const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
                 // a figure much slower or much faster than the recording's: read at full colour, its dot in its tone
@@ -307,9 +358,9 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       // each store's replay on its own: one that fails leaves the others' results
       const settled = await Promise.allSettled(
         stores.map(async (id) => {
-          const r = (await api.runs.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] } };
+          const r = (await api.runs.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] }; cost: StoreCost[] };
           const c = (await api.runs.compare(props.path, r.path)) as { latency?: LatencyChange[] };
-          return { endpoint: endpoints().find((e) => e.id === id)?.name ?? id, path: r.path, compared: r.comparison.compared, differ: r.comparison.differences.reduce((s, d) => s + d.count, 0), latency: c.latency ?? [] };
+          return { endpoint: storeName(id), path: r.path, compared: r.comparison.compared, differ: r.comparison.differences.reduce((s, d) => s + d.count, 0), latency: c.latency ?? [], cost: r.cost ?? [] };
         }),
       );
       for (const x of settled) if (x.status === "rejected") report(x.reason);
@@ -343,6 +394,12 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         {(p) => (
           <View class="gap-1" testID="replay-plan">
             <Text class={TEXT.body}>{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
+            <If when={p().plan.seeds > 0}>
+              <Muted class="text-small">{t("replay.seeds", { n: p().plan.seeds, size: bytes(p().plan.seedBytes) })}</Muted>
+            </If>
+            <If when={p().relies > 0 && p().buckets.length > 0}>
+              <Muted class="text-small">{t("replay.relies", { n: p().relies, bucket: p().buckets[0] })}</Muted>
+            </If>
             <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
             <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${count(e()[1])} × ${e()[0]}`}</Muted>}</Each>
           </View>

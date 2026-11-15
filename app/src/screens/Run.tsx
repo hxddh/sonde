@@ -15,7 +15,7 @@ import { command, cwd, history, input, lastRun, onOutput, output, policy, resize
 import { away, endpoint, endpoints, go, openRun, report, runsTick, showInSidebar } from "../store";
 import type { RunInfo, RunView, Stretch } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Card, CARD, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
+import { Button, Card, CARD, IconButton, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/runview";
 import { type Policy, OperationsTable, RecordPanel } from "../ui/runparts";
 import { Chart, focusOf, LatencyBand, liveSaid, RunShape, STRIP } from "../ui/plots";
@@ -79,7 +79,7 @@ function CommandBar() {
       {/* where it runs and what it may do: one row, one height (where its requests go is the title bar's
           endpoint, said once; only its absence is said here) */}
       <View class="flex-row flex-wrap items-center gap-x-3 gap-y-2">
-        <Field bare small mono class={WIDTH.long} testID="run-cwd" label={t("run.cwd")} value={cwd()} placeholder={t("run.cwdHome")} onChange={(v) => cwd.set(v)} leading={<Icon name="folder" />} />
+        <Field bare small mono class={WIDTH.long} testID="run-cwd" label={t("run.cwd")} value={cwd()} placeholder={t("run.cwdHome")} onChange={(v) => cwd.set(v)} leading={<IconButton inField icon="folder" label={t("run.cwdPick")} testID="run-cwd-pick" onPress={() => api.runs.pickFolder().then((f) => f && cwd.set(f), report)} />} />
         <View class="min-w-0 flex-1 flex-row items-center gap-2">
           <If when={!ep()}>
             <Icon name="server" />
@@ -296,7 +296,8 @@ function NoRequests() {
 function Intro() {
   const recording = signal(api.runs.current());
   return (
-    <View class="flex-1 items-center justify-center p-6" testID="run-intro">
+    // under the command bar it introduces, not adrift in the middle of the page
+    <View class="flex-1 items-center p-6" testID="run-intro">
       <View class={`${READING} gap-6`}>
         <View class="gap-2">
           <Title page>{t("run.title")}</Title>

@@ -94,7 +94,7 @@ export function Welcome() {
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
             <If when={!terminal()}>
-              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
+              <Button small variant="ghost" icon="file-clock" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
             </If>
             <Button small variant="ghost" icon="scroll-text" label={t("example.open")} onPress={openExample} testID="open-example" class="justify-start" />
           </View>

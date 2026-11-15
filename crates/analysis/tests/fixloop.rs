@@ -122,7 +122,8 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     let first = since(RUNS[0]);
     assert_eq!(first.program, "etl");
     assert!(first.previous.is_none() && first.change.is_none());
-    assert!(first.findings.iter().all(|f| f.state == State::Open));
+    // a first run's findings are new: seen in no run before
+    assert!(first.findings.iter().all(|f| f.state == State::New));
     since(RUNS[1]);
     let third = since(RUNS[2]);
     assert!(third.previous.as_deref().unwrap().ends_with(RUNS[1]));
@@ -352,8 +353,9 @@ fn a_programs_kept_findings_do_not_grow_with_keys_that_change() {
     let mut kept = Vec::new();
     for seed in 1..=3u64 {
         let since = ran(dir.path(), seed as i64, &changing_run(seed), Some(0));
+        let state = if seed == 1 { State::New } else { State::Open };
         assert!(
-            since.findings.iter().all(|f| f.state == State::Open),
+            since.findings.iter().all(|f| f.state == state),
             "run {seed}: {:#?}",
             since.findings
         );
@@ -457,6 +459,40 @@ fn a_changed_command_is_said_and_saves_nothing() {
     // the same command again: a fix is counted as before
     let again = at(4, 1, &hot(1));
     assert!(again.change.unwrap().command_changed.is_none());
+}
+
+/// 22.0's review: a "fix" that processed all 400 files, not 30, read
+/// `✓ fixed` with savings counted. A workload grown by half or more with
+/// the same command is said, and fixed counts no saving.
+#[test]
+fn a_workload_that_grew_is_said_and_saves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot(30), Some(0));
+    // the hot key read once, but 400 other keys read too
+    let mut grown = hot(1);
+    grown.extend((2..=400).map(|i| get(i, &format!("in/part-{i}"))));
+    let after = ran(dir.path(), 2, &grown, Some(0));
+    let c = after.change.as_ref().unwrap();
+    assert_eq!(
+        c.workload_changed.as_deref(),
+        Some("requests 30 → 400, 13.3×")
+    );
+    assert_eq!(c.uncounted(false).as_deref(), Some("the workload grew"));
+    let f = after
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(f.state, State::Fixed);
+    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    // a real fix, fewer requests: counted
+    ran(dir.path(), 3, &hot(30), Some(0));
+    let fixed = ran(dir.path(), 4, &hot(1), Some(0));
+    let c = fixed.change.as_ref().unwrap();
+    assert!(c.workload_changed.is_none());
+    // and a small run's few more requests are no grown workload
+    assert_eq!(sonde_analysis::profile::workload_grew((3, 6)), None);
+    assert_eq!(sonde_analysis::profile::workload_grew((120, 170)), None);
 }
 
 /// Less is kept: over its threshold again it is back, not new.

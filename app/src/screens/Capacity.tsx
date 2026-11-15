@@ -10,7 +10,7 @@ import { bucket, endpoint, notify, offerCommands, prefix, report } from "../stor
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { sectionLabel } from "../labels";
-import { Row, Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
+import { Await, ProgressBar, Button, Empty, Field, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
@@ -148,7 +148,6 @@ export function Capacity() {
   return (
     <Scroll testID="screen-capacity" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
-        title={terminal() ? undefined : sectionLabel("capacity")}
         scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
         end={
           <If when={result()}>
@@ -184,7 +183,7 @@ export function Capacity() {
               <Tiles
                 min={SIZES.capacityTile}
                 items={[
-                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${day(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
+                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${day(r().scannedAt)}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
                   <Stat label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />,
                   <Stat label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />,
                   <Stat label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />,
@@ -202,20 +201,12 @@ export function Capacity() {
                   ]}
                   note={r().versionsUnknown ? t("du.versionsNotCounted") : undefined}
                 />
+                {/* why it is this big, under what it is made of: a plain list, a line a reason, and how it was listed */}
+                <View testID="du-findings" accessibilityLabel={t("du.why")} class="gap-1">
+                  <Each of={r().findings}>{(f, i) => <Text class={TEXT.small}>{core(r().findingsText?.[i()], f())}</Text>}</Each>
+                  <Text class={TEXT.note}>{t("du.source", { api: r().source })}</Text>
+                </View>
               </Chart>
-              {/* each reason a line of its own under a hairline: no bullets */}
-              <Card pad="none" testID="du-findings">
-                <Row first>
-                  <Heading>{t("du.why")}</Heading>
-                </Row>
-                <Each of={r().findings}>
-                  {(f, i) => (
-                    <Row>
-                      <Text class={TEXT.body}>{core(r().findingsText?.[i()], f())}</Text>
-                    </Row>
-                  )}
-                </Each>
-              </Card>
               <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
                 <Chart class={HALF} title={t("du.byClass")} text={classSaid(r())} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />

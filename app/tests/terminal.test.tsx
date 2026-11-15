@@ -81,7 +81,9 @@ test("multipart and the guard", async () => {
   await app.waitFor("text:/older than 7 days/", { timeout: 10000 });
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.enabled("id:confirm-run")).toBe(false);
+  // two uploads: a plain confirm (the count is typed only above 100)
+  expect(app.shows("id:confirm-input")).toBe(false);
+  expect(app.enabled("id:confirm-run")).toBe(true);
 });
 
 test("runs in a terminal: runs › operations › requests › request", async () => {

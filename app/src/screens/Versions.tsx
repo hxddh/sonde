@@ -99,7 +99,7 @@ export function KeyVersions(props: { objectKey: string; onBack: () => void }) {
                         </View>
                         {/* sizes in one column, at its end */}
                         <Text class={`${WIDTH.size} shrink-0 text-right tabular-nums ${TEXT.note}`}>{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
-                        {/* its removal under the pointer or the keyboard only */}
+                        {/* its removal, quiet until the pointer or the keyboard is on its row */}
                         <View class={REVEAL}>
                           <IconButton icon="trash" label={t("versions.deleteVersionOpen")} onPress={() => del(v().versionId, v().size)} />
                         </View>

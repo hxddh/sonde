@@ -71,7 +71,7 @@ export async function runView(app: App) {
   await app.waitFor("id:run-summary", { timeout: 10000 });
 }
 
-/** A run's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
+/** A run's command besides its one primary (Try under faults…, Compare… and its On another store…): behind its header's `⋯`,
  * by its words. */
 export async function runAction(app: App, label: string) {
   await app.press("id:run-more");

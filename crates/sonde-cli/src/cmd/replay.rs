@@ -83,6 +83,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         buckets: a.how.bucket.clone(),
     };
     let plan = rp::plan(&original.records, &opts);
+    let relies = probes::relies::relied_on(&original.records);
     let mut buckets: Vec<String> = original
         .records
         .iter()
@@ -103,6 +104,9 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         output::count(plan.writes, "write"),
         output::count(plan.deletes, "delete"),
     );
+    for line in before_lines(&plan, &relies, buckets.first()) {
+        eprintln!("  {line}");
+    }
     for (why, n) in &plan.skipped {
         eprintln!("  {n} left out: {why}");
     }
@@ -176,6 +180,13 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     }
     let left_behind = run.remaining > 0 || run.unaborted_uploads > 0;
     let c = run.comparison;
+    // what it relies on, asked of the store it was replayed on
+    let relied = answer_relies(s, &ep, buckets.first(), &relies, &path).await;
+    let replayed = RunFile::open(&path).ok();
+    let costs = vec![
+        store_cost(s, &original.header.endpoint, &original.records),
+        store_cost(s, &ep, replayed.as_ref().map_or(&[][..], |r| &r.records)),
+    ];
     match a.format {
         Format::Json => println!(
             "{}",
@@ -183,6 +194,8 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                 "plan": plan,
                 "run": path,
                 "comparison": c,
+                "relies": relied,
+                "cost": costs,
                 "removed": run.removed,
                 "removedVersions": run.removed_versions,
                 "remaining": run.remaining,
@@ -193,14 +206,19 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             }))
         ),
         _ => {
-            print_comparison(&c, std::io::stdout().is_terminal());
-            if let Ok(replayed) = RunFile::open(&path) {
+            let out = std::io::stdout().is_terminal();
+            print_comparison(&c, out);
+            if let Some(replayed) = &replayed {
                 print_latency(
                     &original.records,
                     &replayed.records,
                     (&original.header.endpoint, &replayed.header.endpoint),
                     &request_prices_for(s, &original.header.endpoint),
                 );
+            }
+            println!("\ncost  {}", cost_line(&costs));
+            for line in relies_lines(&program_of(&original.header), &ep, &relied, out) {
+                println!("{line}");
             }
             eprintln!("{}", paint(&format!("run: {}", path.display()), "2", color));
         }
@@ -230,6 +248,8 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         buckets: a.how.bucket.clone(),
     };
     let plan = rp::plan(&original.records, &opts);
+    let relies = probes::relies::relied_on(&original.records);
+    let first_bucket = rp::buckets_of(&original.records, &opts).into_iter().next();
     let mut targets = Vec::new();
     for e in &a.endpoint {
         let id = super::endpoint(s, Some(e))?;
@@ -243,6 +263,9 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         output::count(plan.writes, "write"),
         output::count(plan.deletes, "delete")
     );
+    for line in before_lines(&plan, &relies, first_bucket.as_ref()) {
+        eprintln!("  {line}");
+    }
     if !a.how.yes {
         eprintln!("\ndry run: to replay, run again with --yes");
         return Ok(4);
@@ -266,6 +289,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let mut stores = Vec::new();
     let mut differ_total = 0;
     let mut failed = 0;
+    let mut costs = vec![store_cost(s, &original.header.endpoint, &original.records)];
     for (id, path, run) in runs {
         let run = match run {
             Ok(r) => r,
@@ -286,12 +310,15 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             failed += 1;
         }
         let replayed = RunFile::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+        let relied = answer_relies(s, &id, first_bucket.as_ref(), &relies, &path).await;
         columns.push(id.clone());
+        costs.push(store_cost(s, &id, &replayed.records));
         stores.push((
             id,
             path,
             run.comparison,
             profile(&replayed.records, &prices),
+            relied,
         ));
     }
     let kinds: Vec<(String, bool)> = before
@@ -308,11 +335,13 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     if matches!(a.format, Format::Json) {
         let doc = serde_json::json!({
             "plan": plan,
-            "stores": stores.iter().map(|(id, path, c, p)| serde_json::json!({
+            "cost": costs,
+            "stores": stores.iter().map(|(id, path, c, p, relied)| serde_json::json!({
                 "endpoint": id,
                 "run": path,
                 "comparison": c,
                 "latency": sonde_analysis::profile::latency_changes(&before, p),
+                "relies": relied,
             })).collect::<Vec<_>>(),
         });
         println!("{}", output::json(&doc));
@@ -322,10 +351,19 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             r.extend(
                 stores
                     .iter()
-                    .map(|(_, _, c, _)| format!("{} of {}", c.differ(), c.compared)),
+                    .map(|(_, _, c, _, _)| format!("{} of {}", c.differ(), c.compared)),
             );
             r
         }];
+        // each store's request cost at its own vendor's prices
+        rows.push(
+            costs
+                .iter()
+                .fold(vec!["request cost".to_string()], |mut r, c| {
+                    r.push(money(c));
+                    r
+                }),
+        );
         for (op, missed) in &kinds {
             let name = if *missed {
                 format!("{op} (not found)")
@@ -339,18 +377,159 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             r.extend(
                 stores
                     .iter()
-                    .map(|(_, _, _, p)| p95(p, op, *missed).map(ms_text).unwrap_or_default()),
+                    .map(|(_, _, _, p, _)| p95(p, op, *missed).map(ms_text).unwrap_or_default()),
             );
             rows.push(r);
         }
         let mut headers = vec![""];
         headers.extend(columns.iter().map(String::as_str));
         output::print(&headers, &rows);
-        for (id, path, _, _) in &stores {
+        let color = std::io::stdout().is_terminal();
+        let program = program_of(&original.header);
+        for (id, _, _, _, relied) in &stores {
+            for line in relies_lines(&program, id, relied, color) {
+                println!("{line}");
+            }
+        }
+        for (id, path, _, _, _) in &stores {
             eprintln!("{id}: {}", path.display());
         }
     }
     Ok(replay_exit(failed, differ_total))
+}
+
+/// What a dry run adds to the plan: the stand-ins written first, and the
+/// probes of what the program relies on.
+fn before_lines(
+    plan: &sonde_analysis::replay::Plan,
+    relies: &[probes::relies::Reliance],
+    bucket: Option<&String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if plan.seeds > 0 {
+        out.push(format!(
+            "First, {} ({}) for what the run read and had not written.",
+            output::count(plan.seeds, "stand-in"),
+            output::bytes(plan.seed_bytes)
+        ));
+    }
+    if let (false, Some(b)) = (relies.is_empty(), bucket) {
+        out.push(format!(
+            "Then {} of what it relies on, under {b}/sonde-probe/ (removed after).",
+            output::count(relies.len(), "probe")
+        ));
+    }
+    out
+}
+
+/// The probes of what the program relies on, run on `endpoint` in
+/// `bucket`; kept with the replay's run for the app. A failure to run them
+/// is said, and leaves the list empty.
+async fn answer_relies(
+    s: &Arc<Sonde>,
+    endpoint: &str,
+    bucket: Option<&String>,
+    relies: &[probes::relies::Reliance],
+    run: &std::path::Path,
+) -> Vec<probes::relies::Relied> {
+    let Some(bucket) = bucket else {
+        return Vec::new();
+    };
+    match probes::relies::answer(s, endpoint, bucket, relies).await {
+        Ok(r) => {
+            if !r.is_empty() {
+                sonde_analysis::index::set(
+                    run,
+                    sonde_analysis::index::Change::Relies(
+                        serde_json::to_value(&r).unwrap_or_default(),
+                    ),
+                );
+            }
+            r
+        }
+        Err(e) => {
+            eprintln!(
+                "sonde: {endpoint}: the probes of what the program relies on did not run: {e}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// The name a program goes by in "what it relies on".
+pub(super) fn program_of(h: &sonde_analysis::run::RunHeader) -> String {
+    sonde_analysis::program::key_of(h).unwrap_or_else(|| "the program".into())
+}
+
+/// "What etl relies on, and how rfs answers": a line a probe.
+pub(super) fn relies_lines(
+    program: &str,
+    endpoint: &str,
+    relied: &[probes::relies::Relied],
+    color: bool,
+) -> Vec<String> {
+    use probes::Verdict;
+    if relied.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![
+        String::new(),
+        paint(
+            &format!("What {program} relies on, and how {endpoint} answers"),
+            "1",
+            color,
+        ),
+    ];
+    let wide = relied.iter().map(|r| r.on.probe.len()).max().unwrap_or(0);
+    let label = relied
+        .iter()
+        .map(|r| r.verdict.label().len())
+        .max()
+        .unwrap_or(0);
+    for r in relied {
+        let tone = match r.verdict {
+            Verdict::Pass => "32",
+            Verdict::Fail => "31",
+            _ => "33",
+        };
+        let mut line = format!(
+            "  {} {:<label$}  {:<wide$}  {} ×{}",
+            paint(r.verdict.symbol(), tone, color),
+            r.verdict.label(),
+            r.on.probe,
+            r.on.kind,
+            r.on.requests,
+        );
+        if r.verdict != Verdict::Pass && !r.summary.is_empty() {
+            line.push_str(&paint(&format!("  {}", r.summary), "2", color));
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// A store's request cost for `records`, at its vendor's prices.
+fn store_cost(s: &Sonde, endpoint: &str, records: &[reqlog::Record]) -> serde_json::Value {
+    let prices = request_prices_for(s, endpoint);
+    let c = profile(records, &prices).cost;
+    serde_json::json!({ "endpoint": endpoint, "amount": c.amount, "currency": c.currency })
+}
+
+fn money(c: &serde_json::Value) -> String {
+    sonde_analysis::program::money_text(
+        c["amount"].as_f64().unwrap_or(0.0),
+        c["currency"].as_str().unwrap_or(""),
+    )
+}
+
+/// Each store's request cost, the recording's first.
+fn cost_line(costs: &[serde_json::Value]) -> String {
+    costs
+        .iter()
+        .map(|c| format!("{} on {}", money(c), c["endpoint"].as_str().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join(" → ")
+        + " (requests, at each store's prices)"
 }
 
 /// What a replay on several stores exits with: a store it could not be

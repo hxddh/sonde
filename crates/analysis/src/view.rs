@@ -86,6 +86,8 @@ pub struct Analysis {
     pub profile: Profile,
     pub signals: Signals,
     pub what_if: Option<WhatIf>,
+    /// Its money a month, when that can be said ([`crate::month`]).
+    pub month: Option<crate::month::Month>,
     /// The SDK that sent most of its requests (`boto3 1.44`).
     pub sdk: Option<String>,
     /// The requests a fault scenario answered, by id.
@@ -154,7 +156,8 @@ impl Analysis {
         let signals = crate::signals::signals(records, prices);
         let profile = crate::profile::profile(records, prices);
         let episodes = episodes(records);
-        let observations = observations_of(header, records, &episodes);
+        let mut observations = observations_of(header, records, &episodes);
+        crate::fixes::rank_by_saving(&mut observations, records, &profile.prices);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
@@ -162,6 +165,12 @@ impl Analysis {
         // (an imported log's times are to the second: its waiting is not known)
         let what_if =
             crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
+        let month = crate::month::month(
+            header,
+            summary.seconds,
+            profile.cost.amount,
+            &profile.cost.currency,
+        );
         let owner = crate::episode::Owners::of(&episodes);
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
@@ -199,6 +208,7 @@ impl Analysis {
             shared_notes,
             profile,
             what_if,
+            month,
             owner,
             kinds,
             kind_names,
@@ -416,6 +426,7 @@ impl Analysis {
         v.insert("profile".into(), to(&self.profile));
         v.insert("signals".into(), to(&self.signals));
         v.insert("whatIf".into(), to(&self.what_if));
+        v.insert("month".into(), to(&self.month));
         v.insert("injected".into(), json!(self.injected));
         v.insert("sdk".into(), json!(self.sdk));
         v.insert("operations".into(), Value::Array(first));

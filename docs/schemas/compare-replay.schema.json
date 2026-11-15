@@ -37,6 +37,20 @@
     },
     "unabortedUploads": {
       "type": "integer"
+    },
+    "relies": {
+      "type": "array",
+      "description": "What the program relies on (only the probes matching features its requests used), run against the store.",
+      "items": {
+        "$ref": "#/$defs/relied"
+      }
+    },
+    "cost": {
+      "type": "array",
+      "description": "Each store's request cost, the recording's first.",
+      "items": {
+        "$ref": "#/$defs/cost"
+      }
     }
   },
   "required": [
@@ -49,7 +63,9 @@
     "remainingObjects",
     "remainingVersions",
     "remainingMarkers",
-    "unabortedUploads"
+    "unabortedUploads",
+    "relies",
+    "cost"
   ],
   "$defs": {
     "comparison": {
@@ -88,6 +104,26 @@
         "unmatched"
       ]
     },
+    "cost": {
+      "type": "object",
+      "description": "A store's request cost for the run, at its vendor's prices.",
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "amount",
+        "currency"
+      ]
+    },
     "difference": {
       "type": "object",
       "properties": {
@@ -124,6 +160,24 @@
         "conditions"
       ]
     },
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
     "plan": {
       "type": "object",
       "description": "What a replay sends.",
@@ -143,13 +197,91 @@
           "additionalProperties": {
             "type": "integer"
           }
+        },
+        "seeds": {
+          "type": "integer",
+          "description": "Stand-ins written first, of the recorded size, for what the run read and had not written."
+        },
+        "seedBytes": {
+          "type": "integer"
         }
       },
       "required": [
         "requests",
         "writes",
         "deletes",
-        "skipped"
+        "skipped",
+        "seeds",
+        "seedBytes"
+      ]
+    },
+    "relied": {
+      "type": "object",
+      "description": "A feature the run used, the probe that checks it, and how the store answered it.",
+      "properties": {
+        "probe": {
+          "type": "string",
+          "description": "The probe's id (`sonde probe list`)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The kind of request that showed it first."
+        },
+        "requests": {
+          "type": "integer",
+          "description": "How many requests used it."
+        },
+        "seen": {
+          "type": "string",
+          "description": "What showed it: a header as sent, a batch's size."
+        },
+        "seenText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "titleText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "differs",
+            "unsupported",
+            "error",
+            "skipped"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "summaryText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        }
+      },
+      "required": [
+        "probe",
+        "kind",
+        "requests",
+        "seen",
+        "title",
+        "verdict",
+        "summary"
       ]
     }
   }

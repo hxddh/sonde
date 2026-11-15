@@ -82,7 +82,7 @@ function DesktopShell() {
       activityOpen.set(true);
       return true;
     }
-    // (a bucket's tools and compatibility are sections of Buckets: the place itself)
+    // (a bucket's tools are sections of Buckets: the place itself)
     return false;
   });
   return (
@@ -114,7 +114,7 @@ function DesktopShell() {
           </Each>
         </ResizablePanel>
       </ResizablePanelGroup>
-      <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)} returnFocus={() => activityAnchor}>
+      <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)} label={t("nav.activity")} returnFocus={() => activityAnchor}>
         <Activity onClose={() => activityOpen.set(false)} />
       </SidePanel>
       <Palette />

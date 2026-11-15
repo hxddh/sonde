@@ -58,13 +58,6 @@ export const api = {
   duScan: (ep: string, b: string, p: string, mpu: boolean) => Sonde.duScan(ep, b, p, mpu),
   duCached: (ep: string, b: string, p: string) => Sonde.duCached(ep, b, p) as T.DuReport | null,
   duExport: (ep: string, b: string, p: string, format: "json" | "csv") => Sonde.duExport(ep, b, p, format),
-  probeCatalog: () => Sonde.probeCatalog() as T.ProbeMeta[],
-  runProbes: (eps: string[], o: { bucket: string; allowTempBuckets: boolean; includeSlow: boolean; only: string[] }) => Sonde.runProbes(eps, o),
-  probeRuns: () => Sonde.probeRuns() as T.ProbeRunSummary[],
-  probeRun: (id: string, ep: string) => Sonde.probeRun(id, ep) as T.ProbeRun | null,
-  probeMatrix: (runs?: string[]) => Sonde.probeMatrix(runs ?? null) as T.Matrix,
-  probeDiff: (a: string, b: string) => Sonde.probeDiff(a, b) as T.Change[],
-  exportProbes: (format: "markdown" | "json", runs?: string[]) => Sonde.exportProbes(format, runs ?? null),
   /** A chart's rows as CSV, written into the exports folder; the file's path. */
   exportCsv: (name: string, text: string) => Sonde.exportCsv(name, text) as string,
   detectLayouts: (ep: string, b: string, p: string) => Sonde.detectLayouts(ep, b, p),
@@ -108,6 +101,7 @@ export const api = {
     import: (name: string, text: string) => Runs.import(name, text) as string,
     importPath: (path: string) => Runs.importPath(path) as string,
     pick: (runsKind: string, trafficKind: string) => Runs.pick(runsKind, trafficKind) as Promise<string | null>,
+    pickFolder: () => Runs.pickFolder() as Promise<string | null>,
     openCode: (run: string, place: string) => Runs.openCode(run, place) as Promise<void>,
     rename: (path: string, title: string) => Runs.rename(path, title) as boolean,
     /** To the system's trash (deleted where there is none). */

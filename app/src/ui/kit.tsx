@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, type InputRef, type ViewRef } from "nsh";
+import { Animated, cleanup, Clipboard, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, windowSize, type InputRef, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
@@ -87,7 +87,26 @@ export const TEXT = {
   get codeQuiet() {
     return `font-mono ${captionSize()} text-muted-foreground`;
   },
+  /** a clock time in a list or a table (14:02:11.204): the interface's face with even figures, as the figures
+   * beside it are; on Linux the platform's monospace, whose figures are even without the font feature that GTK
+   * measures narrower than it draws (FINDINGS 15: the last digit was cut) */
+  get time() {
+    return platform.os === "linux" ? `font-mono ${captionSize()} text-muted-foreground` : "text-small tabular-nums text-muted-foreground";
+  },
 };
+
+/** Code inside a sentence (a command, a file's name), set in mono a step smaller than the words around it, in
+ * proportion to them (Native Shell's em `fontSize`): 11 in 13, and in Chinese never under 12. */
+const CODE_EM = () => (cjk() ? "0.923em" : "0.846em");
+/** A sentence whose `code` spans (between backticks, as the locale files write them) are set as code. */
+export function Prose(props: { text: string; class?: string; testID?: string }) {
+  const parts = () => props.text.split("`");
+  return (
+    <Text testID={props.testID} class={props.class ?? TEXT.note}>
+      <Each of={parts()}>{(p, i) => (i() % 2 === 1 && !terminal() ? <Text class="font-mono" style={{ fontSize: CODE_EM() }}>{p()}</Text> : <Text>{p()}</Text>)}</Each>
+    </Text>
+  );
+}
 
 /** Motion: four lengths (ms) and one ease (nsh.json's `ease-standard`, a soft
  * settle), and no others; lint-kit fails a `duration-N` outside the kit.
@@ -122,11 +141,10 @@ export const DOT = "size-2 shrink-0 rounded-full";
 export const HIGHLIGHT = "bg-accent";
 /** What is chosen in a list, a table, a tree or a row of tiles: one selection. */
 export const SELECTED = "bg-selection";
-/** Chrome that is there only when wanted: a row's trash, pencil or Decode,
- * a tile's chevron. Hidden until the pointer is over its `group` (a row, a
- * tile), the group is selected, or the keyboard is inside it; it keeps its
- * place, so nothing moves as it shows, and it is always reachable. */
-export const REVEAL = `opacity-0 group-hover:opacity-100 group-selected:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
+/** Chrome that is quiet until wanted: a row's trash or Decode. At rest it stands at a quiet strength, so a
+ * pointer finds it (it was hidden, and only the keyboard did); full under the pointer over its `group` (a
+ * row), on the selected row, or while the keyboard is inside it. It keeps its place, so nothing moves. */
+export const REVEAL = `opacity-60 group-hover:opacity-100 group-selected:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
 
 /** One vocabulary of tones, and one table of how each is drawn: its words
  * (`text`), a solid mark (`fill`: a bar, a lane), its dot (`dot`), its icon's
@@ -286,7 +304,7 @@ export const READING = "w-full max-w-[560px]";
  * comes in from the edge, and rows drop what ranks last). Two heights of a
  * run's pane: under `short` the shape strip goes and the findings keep
  * to a line or two; from `tall` each finding has its lines in full. */
-export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
+export const BREAK = { toolbar: 1040, inspector: 780, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
  * (a run's signal, a comparison's fact with its two lines, a bucket's
  * size), how high a dialog's scrolling part grows before it scrolls, a
@@ -336,9 +354,6 @@ export const COLUMN = {
   matrixWhat: 190,
   matrixRecorded: 90,
   matrixRun: 100,
-  /** the compatibility matrix: a probe, a store's verdict */
-  probe: 288,
-  probeStore: 150,
   /** an operation's title: before measuring, beside the output, and the least it keeps */
   title: 340,
   titleCompact: 220,
@@ -404,9 +419,9 @@ export const WIDTH = {
   chevron: "w-3.5",
   /** the digit that opens a place from a terminal's home list */
   digit: "w-4",
-  /** the title bar: the endpoint switcher, wide and tight; the search field's stand-in; the running program's pill at most */
-  switcher: "w-52",
-  switcherTight: "w-40",
+  /** the title bar: the endpoint switcher at most (as wide as its name), wide and tight; the search field's stand-in; the running program's pill at most */
+  switcher: "max-w-60",
+  switcherTight: "max-w-40",
   search: "w-44",
   pill: "max-w-[200px]",
 } as const;
@@ -445,11 +460,12 @@ const PANEL = { narrow: "w-[420px] max-w-[90%]", default: "w-[600px] max-w-[94%]
  * beside what it is about (Activity, a bucket's detail, a form). One width
  * per size, one surface, one header; Escape, the scrim and the close button
  * dismiss it. */
-export function SidePanel(props: { open: boolean; onClose: () => void; size?: keyof typeof PANEL; children: JSX.Element; returnFocus?: () => ViewRef | undefined }) {
+export function SidePanel(props: { open: boolean; onClose: () => void; /** its title: a screen reader hears a dialog by this name (Native Shell's Sheet is a modal dialog) */ label: string; size?: keyof typeof PANEL; children: JSX.Element; returnFocus?: () => ViewRef | undefined }) {
   return (
     <Sheet
       open={props.open}
       side="right"
+      accessibilityLabel={props.label}
       onOpenChange={(e) => !e.open && props.onClose()}
       // a screen reader goes back to what opened it, not to the window's start
       onClose={() => {
@@ -774,11 +790,12 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <Text class={`min-w-0 flex-1 ${TEXT.meta} ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
-  // where a press goes, said under the pointer or the keyboard only
+  // a tile that opens something says so at rest (a quiet chevron, full under the pointer): a
+  // tile that only shows a figure has none, so the two never look alike
   const chevron = () => (
     <If when={props.onPress}>
-      <View class={REVEAL}>
-        <Icon name="chevron-right" size={ICON.small} />
+      <View testID={props.testID ? `${props.testID}-opens` : undefined} class={`opacity-60 group-hover:opacity-100 ${TRANSITION}`}>
+        <Icon name="chevron-right" size={ICON.small} tint="muted-foreground" />
       </View>
     </If>
   );
@@ -786,7 +803,7 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   const figure = () => <Text class={`text-heading font-bold tabular-nums ${look() === "line" ? "shrink-0 line-clamp-1" : "min-w-0 flex-1 line-clamp-2"} ${tint()}`}>{props.value}</Text>;
   return (
     // (in a row of tiles, as high as the row: `Tiles` gives it its look)
-    <Card pad="tile" class={`${props.look ? "grow" : ""} ${props.class ?? ""}`} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
+    <Card pad="tile" class={`${props.look ? "grow" : ""} ${props.class ?? ""}`} testID={props.testID} label={said()} onPress={props.onPress}>
       <If
         when={look() !== "line"}
         else={
@@ -812,7 +829,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
         </If>
         <If when={look() === "full"}>
           <If when={!props.pending} else={<View class="h-3 w-32 max-w-full rounded-(--radius-sm) bg-muted/70" />}>
-            <Text class={`${TEXT.meta} ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
+            {/* one line, so tiles abreast stand level (what is cut stays in the tile's label) */}
+            <Text class={`${TEXT.meta} line-clamp-1`}>{props.detail ?? ""}</Text>
           </If>
         </If>
       </If>
@@ -982,6 +1000,29 @@ export function Figure(props: { value: string; label: string; /** `client`: fail
   );
 }
 
+/** How to read something, behind an info mark: a press, Return or a tap opens the words (Native Shell's
+ * Popover), Escape or a press outside closes them; the pointer's hover shows them too. A chart's how to read it. */
+export function InfoMark(props: { text: string; testID?: string }) {
+  return (
+    <Popover
+      placement="bottom"
+      align="end"
+      offset={6}
+      trigger={
+        <BaseButton testID={props.testID} accessibilityLabel={props.text} tooltip={<Tip text={props.text} />} class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-muted ${PRESS.control} ${FOCUS}`}>
+          <Icon name="info" tint="muted-foreground" />
+        </BaseButton>
+      }
+      popupClass={`max-w-80 ${POPUP} p-3 ${POPUP_MOTION.class}`}
+      popupStyle={glass}
+      popupStartingClass={POPUP_MOTION.starting}
+      popupEndingClass={POPUP_MOTION.ending}
+    >
+      <Text testID={props.testID ? `${props.testID}-text` : undefined} class={`${TEXT.small} text-popover-foreground`}>{props.text}</Text>
+    </Popover>
+  );
+}
+
 /** How many tiles go in a row `width` wide, of `n` that each need `min`: all
  * abreast where they fit, else rows of equal count (four are 2×2, six 3×3
  * or 2×3), never a row shorter than the others (five that do not fit are
@@ -1042,8 +1083,14 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
  * for a question or a short form, 640 for a dialog that lists (a plan, its
  * verdicts, a comparison). */
 const MODAL = { default: "w-[480px]", wide: "w-[640px]" } as const;
+/** A dialog's least distance from the room's edges (under the title bar, and the window's foot). */
+const MODAL_MARGIN = 16;
+/** A `steady` dialog's least height: it starts there and grows with what it holds, so it does not jump at each state. */
+const STEADY_LEAST = 480;
 
-export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string; /** one frame for all its states (a plan, its progress, its verdicts): as high as the window allows, its `ModalBody` scrolling inside, so it never changes size as it goes */ steady?: boolean }) {
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string; /** one frame for all its states (a plan, its progress, its verdicts): at least `STEADY_LEAST` high (what the window allows), growing with what it holds up to the window, its `ModalBody` scrolling inside, so it does not jump between sizes as it goes */ steady?: boolean }) {
+  // the room under the title bar, with a margin each side: the dialog is centred in it, never over the bar
+  const room = () => Math.max(0, windowSize().height - TITLE_BAR - MODAL_MARGIN * 2);
   return (
     <Dialog
       open={props.open}
@@ -1053,8 +1100,10 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
-      // never taller than the window: a body that grows (`ModalBody`) scrolls, its title and actions stay
-      class={`m-auto ${MODAL[props.size ?? "default"]} ${props.steady ? "h-[640px]" : ""} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 ${SHADOW.modal}`}
+      // never taller than the room under the title bar: a body that grows (`ModalBody`) scrolls, its title and
+      // actions stay; centred in that room (the window's middle, moved down by half the bar)
+      class={`m-auto ${MODAL[props.size ?? "default"]} max-w-[94%] gap-4 ${CARD} bg-popover p-4 ${SHADOW.modal}`}
+      style={terminal() ? undefined : { maxHeight: room(), minHeight: props.steady ? Math.min(STEADY_LEAST, room()) : undefined, translate: [0, TITLE_BAR / 2] }}
     >
       {props.children}
     </Dialog>
@@ -1150,11 +1199,15 @@ export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
 /** Names and their values, the one list of them: bare (no box, no rules
  * between its columns), a hairline between rows; names sans and muted,
  * values selectable, in mono only where they are identifiers (`mono`: ids,
- * hashes, headers' values). `dense` is the smaller size of an inspector's
- * long lists (a request's headers). Inside a card or the inspector it is
- * never boxed again. */
-export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dense?: boolean }) {
+ * hashes, headers' values). An identifier (`mono`, or a long value with no
+ * space: an ETag, a request id, a path) stays on one line, cut in its middle,
+ * and a press copies it whole (`onCopy`, else the clipboard alone). `dense` is
+ * the smaller size of an inspector's long lists (a request's headers). Inside a
+ * card or the inspector it is never boxed again. */
+export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dense?: boolean; onCopy?: (value: string) => void }) {
   const size = () => (props.dense ? "text-small" : "text-body");
+  const ident = (v: string) => !terminal() && (!!props.mono || (v.length > 24 && !/\s/.test(v)));
+  const copy = (v: string) => (props.onCopy ? props.onCopy(v) : void Clipboard.writeText(v).catch(() => {}));
   return (
     // a table to a screen reader: names in the first column, values in the second
     <View selectable>
@@ -1163,12 +1216,17 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dens
           <Each of={props.rows}>
             {(row, i) => (
               // off-scale: a long list's rows (6 pt around 20 pt lines) sit between the dense (4) and a card's (8)
-              <TableRow class={`flex-row gap-3 ${props.dense ? "py-1" : "py-1.5"} ${i() > 0 ? "border-t border-border" : ""}`}>
+              <TableRow class={`flex-row items-center gap-3 ${props.dense ? "py-1" : "py-1.5"} ${i() > 0 ? "border-t border-border" : ""}`}>
                 <TableCell class={`${props.dense ? "w-[136px]" : "w-44"} shrink-0`}>
                   <Text class={`${size()} text-muted-foreground line-clamp-1`}>{row()[0]}</Text>
                 </TableCell>
                 <TableCell class="min-w-0 flex-1">
-                  <Text class={`${size()} text-foreground ${props.mono ? "font-mono" : ""}`}>{row()[1]}</Text>
+                  <If when={ident(row()[1])} else={<Text class={`${size()} text-foreground ${props.mono ? "font-mono" : ""}`}>{row()[1]}</Text>}>
+                    {/* off-scale: the press area reaches 4 pt past the value without moving it off the column's edge */}
+                    <BaseButton accessibilityLabel={`${row()[0]}: ${row()[1]}`} tooltip={<Tip text={t("common.copy")} />} onPress={() => copy(row()[1])} class={`-mx-1 rounded-(--radius-sm) px-1 hover:bg-muted active:bg-muted ${TRANSITION} ${FOCUS}`}>
+                      <Text class={`${size()} font-mono text-foreground line-clamp-1`} style={{ textOverflow: "ellipsis-middle" }}>{row()[1]}</Text>
+                    </BaseButton>
+                  </If>
                 </TableCell>
               </TableRow>
             )}
@@ -1348,7 +1406,8 @@ export function SwitchRow(props: { label: string; checked: boolean; onChange: (v
       trackClass={`h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary ${TRANSITION}`}
       thumbClass={`h-4 w-4 rounded-full bg-switch-thumb ${SHADOW.control} checked:translate-x-4 checked:bg-primary-foreground ${GLIDE}`}
     >
-      <View class="flex-1">
+      {/* as wide as its words (in a toolbar's row it wraps to the next line whole, never cut to its first word) */}
+      <View class="min-w-0 shrink">
         <Text class={TEXT.body}>{props.label}</Text>
         <If when={props.hint}>
           <Text class={TEXT.note}>{props.hint}</Text>
@@ -1761,22 +1820,15 @@ export function Recoverable(props: { children: JSX.Element }) {
 }
 
 /** The head of every Buckets section, built one way (`PageHeader`'s
- * pattern): the section's title, what it looks at (`scope`: a bucket and
- * prefix), then at the row's end its actions (`children`: its command,
+ * pattern): what it looks at (`scope`: a bucket and prefix; the section's tab
+ * above names it), then at the row's end its actions (`children`: its command,
  * Cancel while it runs) and what else it offers (`end`: a `More`). One
- * middle, small controls; a narrow pane wraps the actions under the title,
+ * middle, small controls; a narrow pane wraps the actions under the scope,
  * never into it. */
-export function ToolBar(props: { title?: string; scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
+export function ToolBar(props: { scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
   return (
     <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-x-3 gap-y-2">
-      <View class="min-w-0 shrink flex-row items-baseline gap-2">
-        <If when={props.title}>
-          <Title lines={1} class="shrink-0">
-            {props.title}
-          </Title>
-        </If>
-        <If when={props.scope}>{(s) => <Path path={s()} max={40} class="min-w-0 shrink text-muted-foreground" />}</If>
-      </View>
+      <If when={props.scope}>{(s) => <Path path={s()} max={40} class="min-w-0 shrink text-muted-foreground" />}</If>
       <View class="flex-1" />
       <If when={props.children}>
         <View class="flex-row flex-wrap items-center gap-2">{props.children}</View>

@@ -43,15 +43,17 @@ operations (aborting uploads, deleting versions, delete markers or objects, repl
 never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
-2. It runs only with `--yes` (in the app, its confirmation), built again then: what it changes is what the dry run
-   would list at that moment.
+2. It runs only with `--yes` (in the app, its confirmation: the count or bucket name typed for more than 100 items
+   or a lifecycle, a plain confirm below), built again then: what it changes is what the dry run would list at
+   that moment.
 3. Plans expire after 10 minutes and run once.
 4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
 
 Probes write too (under `sonde-probe/` in the scratch bucket, and their own buckets when allowed):
 
-- They run only on the scratch bucket the user names (in the app or on the command line): naming it is the consent.
+- They run only on the scratch bucket the user names on the command line (naming it is the consent), or, after a
+  replay, in the bucket the replay wrote to (its dry run says so).
 - Each run is audited (`runProbes`: started, then the outcome, with anything cleanup could not remove).
 - A cancelled run still cleans up after the probe it stopped in.
 

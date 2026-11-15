@@ -1,0 +1,19 @@
+# sonde
+
+> sonde records what a program does to S3 (its requests, through a local endpoint) and explains it: findings with
+> the line of code that sent them and the fix, what fixing them saves, and whether a fix worked. A CLI, a desktop
+> app, a terminal UI and a GitHub Action.
+
+For a coding agent: `sonde run -o r.sonde -- <command>`, then `sonde show r.sonde -f json`; edit the code at
+`findings[].callers[].file:line`, run the same command again, and read `since.findings[].state`.
+
+## Docs
+
+- [For coding agents](https://github.com/hxddh/sonde/blob/main/docs/agents.md): the loop, the fields, the exit codes
+- [CLI](https://github.com/hxddh/sonde/blob/main/docs/cli.md): every command and flag
+- [JSON schemas](https://github.com/hxddh/sonde/tree/main/docs/schemas): every `-f json` output
+- [What is stable](https://github.com/hxddh/sonde/blob/main/docs/contract.md)
+- [Recording](https://github.com/hxddh/sonde/blob/main/docs/recording.md): how a program's requests reach sonde
+- [Trials](https://github.com/hxddh/sonde/blob/main/docs/trials.md): a program under faults
+- [CI](https://github.com/hxddh/sonde/blob/main/docs/ci.md): `sonde check` and the GitHub Action
+- [Configuration](https://github.com/hxddh/sonde/blob/main/docs/configuration.md): `sonde.toml` and `config.toml`

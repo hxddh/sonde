@@ -6,7 +6,7 @@ import { Bar, Dot, Plot, Rule } from "nsh/base/plot";
 import { count, duration, percent } from "../../format";
 import { t } from "../../i18n";
 import type { Signals } from "../../types";
-import { CROSS_BAND, ChartTip, type Focus, FOCUS_RULE, fitted, HEADROOM, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop, slotMs } from "./system";
+import { pressedRow, CROSS_BAND, ChartTip, type Focus, FOCUS_RULE, fitted, HEADROOM, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop, slotMs } from "./system";
 import { terminal } from "../kit";
 import { errorRateSaid, failuresSaid } from "./answers";
 
@@ -122,7 +122,9 @@ export function ErrorsOverTime(props: { signals: Signals; range?: [number, numbe
           accessibilityLabel={label()}
           disabled={!props.onFailures}
           onPress={() => {
-            const r = hovered() === null ? null : rows()[hovered()!];
+            // the slice under the pointer; with Return (no pointer), the one with the most failures
+            const i = pressedRow(hovered(), rows(), total);
+            const r = i === null ? null : rows()[i];
             if (r && total(r) > 0) props.onFailures?.([r.tMs, r.tMs + s().binMs]);
           }}
           class="rounded-(--radius)"

@@ -96,8 +96,8 @@ impl Probe for Single {
                         Verdict::Differs,
                         ph!(
                             "judge.checksum.differs",
-                            p1 = format!("{:?}", bad.status),
-                            p2 = format!("{:?}", bad.code)
+                            p1 = crate::model::status_text(bad.status),
+                            p2 = crate::model::or_none(bad.code.as_deref())
                         ),
                         s,
                     )
@@ -314,7 +314,7 @@ impl Probe for Trailing {
                 Verdict::Fail,
                 ph!(
                     "judge.checksum.trailing.fail",
-                    p1 = format!("{:?}", head.header("content-length"))
+                    p1 = crate::model::or_none(head.header("content-length"))
                 ),
                 s,
             );

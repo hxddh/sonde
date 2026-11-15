@@ -10,11 +10,11 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openRun, openRunFile, section, settings, runsTick, sideList, storeTab, useEndpoint } from "../store";
+import { type Area, area, bucket, shellWidth, crumb, crumbBack, endpoint, endpoints, go, notify, openRun, openRunFile, section, settings, runsTick, sideList, storeTab, useEndpoint } from "../store";
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./runview";
-import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
+import { BREAK, Button, CONTROL, Crumb, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -30,10 +30,14 @@ void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)
  * or a run to choose, a listing that failed). */
 export const sidebarOpen = () => wanted() || sidebarHeld();
 /** The place holds the sidebar open: it has nothing to show without its list.
- * The toggle does nothing then, and says why. */
+ * The toggle says so then, in a toast. */
 export const sidebarHeld = () => !!sideList()?.needed?.();
 export function toggleSidebar() {
-  if (sidebarHeld()) return;
+  // never a dead button: where the place needs its list, the press says why it stays
+  if (sidebarHeld()) {
+    notify(t("sidebar.held"), { kind: "info" });
+    return;
+  }
   wanted.set(!wanted());
   void Storage.setItem(SIDEBAR_KEY, `${wanted()}`).catch(() => {});
 }
@@ -75,7 +79,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
       ],
     },
     { label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), disabled: sidebarHeld(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
+    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
     { label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] },
   ];
 }
@@ -90,7 +94,14 @@ function Breadcrumb() {
   };
   return (
     <View class="min-w-0 flex-row items-center gap-2">
-      <Strong>{areaLabel(area())}</Strong>
+      {/* the place, as a link back to its list while it shows one of them (a run): a press there lets it go */}
+      <If when={detail() ? crumbBack() : null} else={<Strong>{areaLabel(area())}</Strong>}>
+        {(back) => (
+          <Crumb testID="crumb-place" href={`sonde://${area()}`} label={areaLabel(area())} onOpen={() => back()()}>
+            <Strong>{areaLabel(area())}</Strong>
+          </Crumb>
+        )}
+      </If>
       <If when={detail()}>
         {(d) => (
           <>
@@ -130,7 +141,7 @@ export function EndpointSwitcher(props: { class?: string }) {
       trigger={
         <View class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}>
           <Icon name="server" />
-          <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{current()?.name ?? t("common.chooseEndpoint")}</Text>
+          <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{current()?.name ?? t("common.chooseEndpoint")}</Text>
           <Icon name="chevrons-up-down" size={ICON.small} />
         </View>
       }
@@ -207,7 +218,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       class="flex-row items-center gap-2 border-b border-border bg-toolbar"
       style={{ height: height(), flexShrink: 0, paddingLeft: (isAvailable ? titleBar().left : 0) + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
     >
-      <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" tip={sidebarHeld() ? t("sidebar.held") : undefined} disabled={sidebarHeld()} onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
+      <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
       <View class="ml-1 min-w-0 flex-1">
         <Breadcrumb />
       </View>

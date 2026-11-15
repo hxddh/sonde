@@ -6,7 +6,7 @@
 import { cleanup, effect, signal, Text, untracked, View } from "nsh";
 import { language, t } from "../i18n";
 import { api, asError } from "../native";
-import { notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
+import { copy, notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
 import { Button, Choice, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
 import { Updates } from "../ui/updates";
@@ -177,7 +177,7 @@ export function SettingsScreen() {
 
             {/* the one place sonde says it sends nothing anywhere */}
             <Section title={t("settings.paths")} description={t("settings.telemetry")}>
-              <KeyValue dense mono rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), `${v}`])} />
+              <KeyValue dense mono rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), `${v}`])} onCopy={(v) => copy(v)} />
             </Section>
           </View>
         )}

@@ -92,6 +92,8 @@ export const compareOnOpen = signal<{ before: string; after: string } | null>(nu
 export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
 /** What the current place shows, for the toolbar's breadcrumb (a run's command). */
 export const crumb = signal<string | null>(null);
+/** Where the breadcrumb's place goes back to its list (Runs: the run let go, its list the page), while it has one. */
+export const crumbBack = signal<(() => void) | null>(null);
 /** Bumped when the list of runs changes (a run ended, an example opened, a replay). */
 /** The window is out of sight (minimized, hidden, another space): polls rest until it is back. */
 export const away = () => lifecycle() === "background";

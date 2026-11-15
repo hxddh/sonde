@@ -219,3 +219,13 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-234 | The proxy's crate | one; two | **`sonde-proxy` is the endpoint; `sonde-analysis` reads runs**, depending on the proxy, never the reverse. |
 | D-235 | A trial's flow | the CLI's and the bridge's; one | **`trial::Trying`** for both. |
 | D-236 | Generated TS types and schemas | generated; hand-written | **Hand-written**: the bridge's and CLI's answers are mostly `json!`; generating them would take more code, not less. |
+| D-237 | `show -f json` | everything; compact | **Compact by default** (a finding's first 20 operations and a total, the run's SDK's fix only); `--all` the whole; `--summary` goes. |
+| D-238 | What an agent needs | patches; places | **`kind`, callers as file/line/function/code, `verify`**: sonde names the line and checks the fix; it generates no patches. No MCP server. |
+| D-239 | A fix after more work | counted; not | **Not counted** when requests grew 1.5× (and by 10 or more) with the same command (`workloadChanged`). |
+| D-240 | Findings' order | severity; saving | **What they save**: money, then time, then requests. |
+| D-241 | A month | none; per source | **An import's own span; a run's `[program] runs-per-month`**. |
+| D-242 | Replay of a program that reads input | differences; stand-ins | **Stand-ins of the recorded size** for what it read first, written outside the replay's run and removed after. |
+| D-243 | Compatibility | every probe in Settings; what the program relies on | **Only the probes matching what the run used**, asked from a run (⋯ › On another store…); `probe` stays the catalogue. |
+| D-244 | Typed confirmation | always; above 100 | **Above 100 items, or a lifecycle**; below, a plain confirm. |
+| D-245 | Surfaces | cards in cards; one level | **One surface level**: tables fill their pane; a folded one-line run header on short panes and on Time and History. |
+| D-246 | A chart pressed with no mark under the pointer | nothing; its weightiest row | **The row that weighs most** (`pressedRow`); a chart's how-to-read is a popover. |
