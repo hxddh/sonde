@@ -2276,6 +2276,20 @@ mod tests {
         assert_eq!(kind_of_phrase("obs.small.parts"), "obs.small");
         assert_eq!(kind_of_phrase("obs.rmw.log"), "obs.rmw");
         assert_eq!(kind_of_phrase("obs.hot"), "obs.hot");
+        // the kinds `show -f json` says are these, in the order docs/cli.md lists them
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/schemas/show.schema.json")).unwrap();
+        let listed = &schema["$defs"]["observation"]["properties"]["kind"]["enum"];
+        assert_eq!(
+            listed.as_array().map(|a| a.len()),
+            Some(FINDING_KINDS.len()),
+            "{listed}"
+        );
+        assert!(
+            FINDING_KINDS
+                .iter()
+                .all(|k| listed.as_array().unwrap().iter().any(|v| v == k))
+        );
         // every kind is one of those `[check] expect` may name
         for k in [
             "obs.small",

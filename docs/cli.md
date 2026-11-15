@@ -169,6 +169,26 @@ The Java hook's sources are in `hooks/java` (`build.sh` rebuilds its jars). Othe
 own request hook. The hooks are written whole (a file renamed into place) and only when changed, so runs at once
 never load half of one.
 
+## Findings
+
+Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names), with what it saves (requests, time,
+money a month), the line that sent it and the fix for the SDK that sent it (boto3, Java, Go, JavaScript):
+
+| Kind | Found when | Fix |
+|---|---|---|
+| `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
+| `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
+| `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
+| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (`obs.small.parts`) | batch into fewer, larger objects; one PUT |
+| `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
+| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (an import: not known whether, `obs.rmw.log`) | a conditional write |
+| `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
+| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for one (`obs.prefixrate.reads`, `.writes`) | adaptive retries; keys spread over prefixes |
+| `obs.serial` | requests one after another (none reading or listing what the one before wrote) that 8 at once would finish 100 ms sooner | at once |
+| `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
+| `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
+| `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
+
 ## The fix loop
 
 A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts, and
@@ -179,7 +199,7 @@ of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot
 Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
 HEAD-then-GET is about the folder its objects are in.
 
-These rules have a version (3: a digit inside a word, `s3out`, stays), kept with each program's findings: findings kept under older rules are
+These rules have a version (4: a prefix near its rate is `obs.throttled`), kept with each program's findings: findings kept under older rules are
 made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
 
 Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):

@@ -14,7 +14,7 @@ sonde show after.sonde -f json                   # since.findings[].state: did i
 ```
 
 `run` leaves stdout to the program and prints its summary on stderr; read `show -f json`, not text (text may change
-in any release). `-o` keeps a handle on the run; without it, `show` takes the newest run of the program here.
+in any release). `-o` keeps a handle on the run (`sonde runs` and the app list it too); without it, `show` takes the newest run of the program here.
 
 ## The fields
 
@@ -23,7 +23,7 @@ From `show -f json` ([schema](schemas/show.schema.json)):
 | Field | What |
 |---|---|
 | `findings[]` | What to change, those that save the most first. Empty: nothing found. |
-| `findings[].kind` | `obs.hot` (a key read again and again), `obs.listed` (a prefix listed again and again), `obs.headget` (HEAD before GET), `obs.serial` (requests one after another), `obs.small`, `obs.rename`, `obs.markers`, `obs.throttled`, … |
+| `findings[].kind` | One of the [kinds](cli.md#findings): `obs.hot` (a key read again and again), `obs.small` (small objects one PUT each), `obs.deletes` (deletes one at a time), `obs.rmw` (written back with no `If-Match`), `obs.polled` (a missing key polled), `obs.throttled`, … `obs.rmw` saves nothing: it is a lost update to prevent. |
 | `findings[].callers[]` | Where its requests were sent from: `file` (relative to `run.cwd`), `line`, `function`, `requests`, and `code`, the line itself. Python's boto3, the AWS SDK for JavaScript v3 and for Java 2 name callers. |
 | `findings[].fixes[]` | The change for the run's SDK (`sdk`, `code`), with placeholders (`b` the bucket, `k` the key). Adapt it to the code at `callers[]`. |
 | `findings[].savesRequests`, `savesMs`, `savesCost` | What acting on it saves, predicted. |
