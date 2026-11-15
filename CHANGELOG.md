@@ -10,7 +10,7 @@ versions and keeps no old names ([contract](docs/contract.md)).
 ### Changed
 
 - A recording is a **run** everywhere: `sonde runs` (it lists by itself), the `runs/` folder, `"run"` in JSON, the
-  app's Runs area. `sonde layout` has no `inspect`.
+  file format `sonde-run`, the app's Runs area. `sonde layout` has no `inspect`.
 - Plain `run` and `proxy` record under `allow`; `--trial` and `--again` under `no-delete`, which refuses only deletes,
   aborts and lifecycle, policy and versioning changes.
 - With no endpoint configured, `run` goes where an AWS SDK would (the default chain and region). A bucket in another
@@ -39,6 +39,9 @@ versions and keeps no old names ([contract](docs/contract.md)).
 - Latest dependencies: reqwest 0.13 (the operating system verifies certificates), RustCrypto 0.11, rand 0.10,
   rcgen 0.14, toml 1; Rust 1.97; Native Shell at its main; macOS CI on macOS 26. The SDK smoke run uses the latest
   boto3, JS, Go and Java SDKs with nothing forced, plus the AWS CLI, its image through `docker run`, polars and `--tls`.
+
+- Inside: phrases live once, in `app/locales`, which Rust reads too; the analysis is its own crate (`sonde-analysis`)
+  beside the proxy; a trial runs through one flow for the CLI and the app.
 
 ### Removed
 

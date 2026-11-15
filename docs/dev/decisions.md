@@ -215,3 +215,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-230 | Throttles in charts | a 5xx; their own | **Their own class and colour**; a failure bar opens its requests. |
 | D-231 | Colour pairs | by eye; linted | **lint-charts checks distance under deuteranopia and protanopia**: chart-4 orange, fewer/more blue/orange. |
 | D-232 | Dependencies | as they come; monthly | **Dependabot monthly for every ecosystem**, RustCrypto as one group; its PRs run the whole CI. Rust 1.97 for every crate. |
+| D-233 | Phrases | a table per crate; one place | **`app/locales` only** (`phrase.*`, `core.*`): Rust reads `en.json` built in (`sonde-fmt::words`). |
+| D-234 | The proxy's crate | one; two | **`sonde-proxy` is the endpoint; `sonde-analysis` reads runs**, depending on the proxy, never the reverse. |
+| D-235 | A trial's flow | the CLI's and the bridge's; one | **`trial::Trying`** for both. |
+| D-236 | Generated TS types and schemas | generated; hand-written | **Hand-written**: the bridge's and CLI's answers are mostly `json!`; generating them would take more code, not less. |

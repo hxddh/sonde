@@ -145,7 +145,7 @@ jobs:
             dist/*.sha256
             dist/SHA256SUMS
 
-  # `uses: hxddh/sonde@v21` follows the newest 21.x
+  # `uses: hxddh/sonde@v22` follows the newest 22.x
   action-tag:
     needs: publish
     uses: ./.github/workflows/action-tag.yml
