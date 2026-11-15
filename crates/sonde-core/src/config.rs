@@ -222,8 +222,6 @@ pub struct Settings {
     pub prices: Prices,
     /// `system`, `light` or `dark`.
     pub theme: String,
-    /// Stronger borders and text: the theme's high-contrast variant.
-    pub high_contrast: bool,
     /// `auto`, `en` or `zh`.
     pub language: String,
     pub exports_dir: Option<PathBuf>,
@@ -241,7 +239,6 @@ impl Default for Settings {
             rate_limit: None,
             prices: Prices::default(),
             theme: "system".into(),
-            high_contrast: false,
             language: "auto".into(),
             exports_dir: None,
             downloads_dir: None,
