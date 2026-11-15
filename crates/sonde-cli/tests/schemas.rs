@@ -384,7 +384,8 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
-    // replaying it on the small store, and the two compared
+    // replaying it on the small store, and the two compared (what the run
+    // read is written there first: nothing differs)
     let replayed = b.path("replay.sonde");
     let r = replayed.to_str().unwrap();
     holds(
@@ -403,13 +404,13 @@ async fn every_json_output_is_as_its_schema_says() {
                 "-f",
                 "json",
             ],
-            2,
+            0,
         )
         .await,
     );
     holds(
         "compare-answers",
-        &b.json(&["compare", s, r, "-f", "json"], 2).await,
+        &b.json(&["compare", s, r, "-f", "json"], 0).await,
     );
     holds(
         "compare-replay-stores",
@@ -427,7 +428,7 @@ async fn every_json_output_is_as_its_schema_says() {
                 "-f",
                 "json",
             ],
-            2,
+            0,
         )
         .await,
     );

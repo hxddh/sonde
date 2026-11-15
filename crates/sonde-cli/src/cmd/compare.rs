@@ -173,20 +173,36 @@ async fn diff(
         &profile(&original.records, &prices),
         &replay_profile,
     );
+    // what the program relies on, as the replay asked the store
+    let relied: Vec<probes::relies::Relied> =
+        sonde_analysis::index::get(&super::runs::resolve(s, replay))
+            .relies
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
     match format {
-        Format::Json => println!(
-            "{}",
-            output::json(&serde_json::json!({
+        Format::Json => {
+            let mut doc = serde_json::json!({
                 "comparison": c,
                 "latency": latency,
-            }))
-        ),
+            });
+            if !relied.is_empty() {
+                doc["relies"] = serde_json::json!(relied);
+            }
+            println!("{}", output::json(&doc));
+        }
         _ => {
-            print_comparison(&c, std::io::stdout().is_terminal());
+            let color = std::io::stdout().is_terminal();
+            print_comparison(&c, color);
             print_latency_of(
                 &latency,
                 (&original.header.endpoint, &replay_header.endpoint),
             );
+            let program = super::replay::program_of(&original.header);
+            for line in
+                super::replay::relies_lines(&program, &replay_header.endpoint, &relied, color)
+            {
+                println!("{line}");
+            }
         }
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })

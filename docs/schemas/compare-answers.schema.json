@@ -13,6 +13,13 @@
       "items": {
         "$ref": "#/$defs/latencyChange"
       }
+    },
+    "relies": {
+      "type": "array",
+      "description": "When the replay asked them: what the program relies on, and how the store answered.",
+      "items": {
+        "$ref": "#/$defs/relied"
+      }
     }
   },
   "required": [
@@ -158,6 +165,93 @@
         "p50Ms",
         "p95Ms",
         "waitingMs"
+      ]
+    },
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "relied": {
+      "type": "object",
+      "description": "A feature the run used, the probe that checks it, and how the store answered it.",
+      "properties": {
+        "probe": {
+          "type": "string",
+          "description": "The probe's id (`sonde probe list`)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The kind of request that showed it first."
+        },
+        "requests": {
+          "type": "integer",
+          "description": "How many requests used it."
+        },
+        "seen": {
+          "type": "string",
+          "description": "What showed it: a header as sent, a batch's size."
+        },
+        "seenText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "titleText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "differs",
+            "unsupported",
+            "error",
+            "skipped"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "summaryText": {
+          "type": "array",
+          "description": "Display text, not stable.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        }
+      },
+      "required": [
+        "probe",
+        "kind",
+        "requests",
+        "seen",
+        "title",
+        "verdict",
+        "summary"
       ]
     }
   }

@@ -1678,5 +1678,6 @@
  "core.fact.Refs": "Refs",
  "core.fact.Unreferenced data": "Unreferenced data",
  "core.fact.WAL SSTs": "WAL SSTs",
- "core.fact.Writes per second": "Writes per second"
+ "core.fact.Writes per second": "Writes per second",
+ "core.relies.batch": "%{n} key%{s} in one DeleteObjects at most"
 }

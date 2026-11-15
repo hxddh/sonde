@@ -37,6 +37,10 @@ pub struct Entry {
     /// The title it was given (in the app).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// A replay's: what the program relies on, and how the store answered
+    /// (`probes::relies::Relied`, each).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relies: Option<Value>,
 }
 
 /// What the index keeps of the folder, each by its key.
@@ -66,6 +70,8 @@ pub enum Change {
     NoTrials,
     /// A run's title; none: no title.
     Title(Option<String>),
+    /// A replay's reliances and their verdicts.
+    Relies(Value),
     /// The run is gone: nothing of it is kept.
     Gone,
     /// A program's baseline run; none: no baseline.
@@ -127,6 +133,7 @@ fn apply(index: &mut Index, name: &str, change: Change) {
         Change::NoCounted => e.counted = None,
         Change::NoTrials => e.trials = None,
         Change::Title(t) => e.title = t.filter(|t| !t.trim().is_empty()),
+        Change::Relies(v) => e.relies = Some(v),
         _ => {}
     }
     if *e == Entry::default() {

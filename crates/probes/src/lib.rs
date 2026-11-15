@@ -11,6 +11,7 @@
 pub mod cx;
 pub mod model;
 pub use sonde_core::phrase;
+pub mod relies;
 pub mod report;
 pub mod runner;
 pub mod store;

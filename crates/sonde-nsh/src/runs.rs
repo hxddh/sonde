@@ -1808,12 +1808,15 @@ impl Runs {
             "buckets": replay::buckets_of(&original.records, &opts),
             "endpoint": endpoint,
             "url": base.config().endpoint.as_str(),
+            // the probes of what it relies on, asked afterwards
+            "relies": probes::relies::relied_on(&original.records).len(),
         }))
     }
 
-    /// Replays a run on `endpoint` under `prefix`, cleans up, and
-    /// compares: `{ path, plan, comparison, removed }`. Everything it wrote
-    /// under `prefix` is removed after.
+    /// Replays a run on `endpoint` under `prefix`, cleans up, compares,
+    /// and asks the store the probes of what the program relies on: `{ path,
+    /// plan, comparison, removed, relies, cost }`. Everything it wrote under
+    /// `prefix`, and the probes under `sonde-probe/`, is removed after.
     pub async fn replay(
         path: String,
         endpoint: String,
@@ -1832,14 +1835,46 @@ impl Runs {
             buckets: Vec::new(),
         };
         let file = out.clone();
-        let run = background(async move {
-            replay::replay_to_file(&base, &original, &opts, &out, |_, _| {}).await
+        let relies = probes::relies::relied_on(&original.records);
+        let bucket = replay::buckets_of(&original.records, &opts)
+            .into_iter()
+            .next();
+        let price = |ep: &str, records: &[reqlog::Record]| {
+            let c =
+                sonde_analysis::profile::profile(records, &crate::state::request_prices_for(ep))
+                    .cost;
+            json!({ "endpoint": ep, "amount": c.amount, "currency": c.currency })
+        };
+        let recorded = price(&original.header.endpoint, &original.records);
+        let target = endpoint.clone();
+        let (run, relied) = background(async move {
+            let run = replay::replay_to_file(&base, &original, &opts, &out, |_, _| {}).await?;
+            // what it relies on, asked of the store it was replayed on; kept with the replay
+            let relied = match &bucket {
+                Some(b) => probes::relies::answer(&s, &target, b, &relies)
+                    .await
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            if !relied.is_empty() {
+                sonde_analysis::index::set(
+                    &out,
+                    sonde_analysis::index::Change::Relies(
+                        serde_json::to_value(&relied).unwrap_or_default(),
+                    ),
+                );
+            }
+            Ok::<_, String>((run, relied))
         })
         .await
         .map_err(err_msg)?
         .map_err(err_msg)?;
         let _ = sonde_analysis::run::compress(&file);
-        Ok(to_json(run))
+        let replayed = RunFile::open(&file).map(|r| r.records).unwrap_or_default();
+        let mut doc = to_json(run);
+        doc["relies"] = json!(relied);
+        doc["cost"] = json!([recorded, price(&endpoint, &replayed)]);
+        Ok(doc)
     }
 
     /// Two runs side by side: how their answers compare (a replay's
@@ -1852,9 +1887,20 @@ impl Runs {
                 &sonde_analysis::profile::profile(&sa.records, &price(&sa)),
                 &sonde_analysis::profile::profile(&sb.records, &price(&sb)),
             );
+            // what the program relies on, as the replay asked its store
+            let relies = [&b, &a]
+                .iter()
+                .find_map(|p| sonde_analysis::index::get(Path::new(p)).relies)
+                .unwrap_or_else(|| json!([]));
+            let cost = |s: &RunFile| {
+                let c = sonde_analysis::profile::profile(&s.records, &price(s)).cost;
+                json!({ "endpoint": s.header.endpoint, "amount": c.amount, "currency": c.currency })
+            };
             Ok(json!({
                 "latency": latency,
                 "endpoints": [&sa.header.endpoint, &sb.header.endpoint],
+                "relies": relies,
+                "cost": [cost(&sa), cost(&sb)],
                 "comparison": replay::compare(&sa.records, &sb.records, &[]),
                 "a": replay::transcript(&sa.records),
                 "b": replay::transcript(&sb.records),

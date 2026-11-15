@@ -1678,5 +1678,6 @@
  "core.fact.Refs": "引用",
  "core.fact.Unreferenced data": "未被引用的数据",
  "core.fact.WAL SSTs": "WAL SST",
- "core.fact.Writes per second": "每秒写入次数"
+ "core.fact.Writes per second": "每秒写入次数",
+ "core.relies.batch": "一次 DeleteObjects 最多 %{n} 个键"
 }
