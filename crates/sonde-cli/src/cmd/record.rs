@@ -192,11 +192,15 @@ pub(super) async fn start_under(
 }
 
 /// Who sent a run's requests, as its head line says it: the SDK most did
-/// (" from boto3 1.34"); an import (no command) from several callers (its
-/// principals) says how many (the profile keeps the busiest 12), as the app
-/// does.
+/// (" from boto3 1.34"); an import (or a recording with no command) from
+/// several callers (an import's principals) says how many (the profile keeps
+/// the busiest 12).
 pub(super) fn from_whom(sdk: Option<&str>, header: &RunHeader, callers: usize) -> String {
-    if header.command.is_none() && callers > 1 {
+    let no_program = header
+        .command
+        .as_deref()
+        .is_none_or(|c| c.starts_with("imported from "));
+    if no_program && callers > 1 {
         let n = if callers >= 12 {
             "12+".to_string()
         } else {

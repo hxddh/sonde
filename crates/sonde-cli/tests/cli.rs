@@ -2825,3 +2825,50 @@ fn runs_written_elsewhere_are_listed_by_their_path_and_never_pruned() {
     std::fs::remove_file(&out).unwrap();
     assert_eq!(runs_json(t.path()).len(), 1);
 }
+
+/// An import from several principals says how many callers sent it, not the
+/// SDK most of them used; one from a single principal names its SDK.
+#[test]
+fn an_import_from_several_callers_says_how_many() {
+    let t = tempfile::tempdir().unwrap();
+    let line = |second: u32, who: &str, ua: &str| {
+        format!(
+            "79a5 lake [06/Feb/2026:00:00:{second:02} +0000] 192.0.2.3 arn:aws:iam::1:role/{who} A{second} REST.GET.OBJECT t/k \"GET /lake/t/k HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"{ua}\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n"
+        )
+    };
+    let log = t.path().join("access.log");
+    let many: String = [
+        line(1, "etl", "aws-sdk-java/2.29"),
+        line(2, "etl", "aws-sdk-java/2.29"),
+        line(3, "dashboard", "Boto3/1.44"),
+        line(4, "ingest", "aws-sdk-go-v2/1.32"),
+    ]
+    .concat();
+    std::fs::write(&log, many).unwrap();
+    let out = t.path().join("many.sonde");
+    let o = sonde(
+        t.path(),
+        &["import", log.to_str().unwrap(), "-o", out.to_str().unwrap()],
+    );
+    let said = format!("{}{}", stdout(&o), stderr(&o));
+    assert_eq!(o.status.code(), Some(0), "{said}");
+    assert!(said.contains("4 requests from 3 callers to "), "{said}");
+    let shown = stdout(&sonde(t.path(), &["show", out.to_str().unwrap()]));
+    assert!(shown.contains("4 requests from 3 callers to "), "{shown}");
+    let split = stdout(&sonde(
+        t.path(),
+        &["show", out.to_str().unwrap(), "--by", "kind"],
+    ));
+    assert!(split.contains(" from 3 callers to "), "{split}");
+    std::fs::write(&log, line(1, "etl", "aws-sdk-java/2.29")).unwrap();
+    let one = t.path().join("one.sonde");
+    let o = sonde(
+        t.path(),
+        &["import", log.to_str().unwrap(), "-o", one.to_str().unwrap()],
+    );
+    let said = format!("{}{}", stdout(&o), stderr(&o));
+    assert!(
+        said.contains("1 request from aws-sdk-java 2.29 to "),
+        "{said}"
+    );
+}
