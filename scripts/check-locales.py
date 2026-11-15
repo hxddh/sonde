@@ -8,8 +8,14 @@ template builds its keys from
 (t(`trial.${standing}`)). A family is listed here with its members, key by
 key: a prefix alone passes nothing (15.0 had 87 keys that passed only by
 one), a member with no words fails, and so does a template whose family is
-not listed. A key nothing uses is a sentence nobody keeps true (14.0 had 48)."""
-import json, pathlib, re, sys
+not listed. A key nothing uses is a sentence nobody keeps true (14.0 had 48).
+
+And what the app stopped saying is said: every key en.json had at the last
+release tag (vX.Y.Z) and has no more is named — its key, or its English
+words — in CHANGELOG.md's newest Removed or Changed section, or listed in
+`GONE` below with the reason it is no loss (reworded under another key). 23.0
+dropped the sidebar's request count and nobody's list said so."""
+import json, pathlib, re, subprocess, sys
 
 top = pathlib.Path(__file__).resolve().parent.parent
 root = top / "app" / "locales"
@@ -111,5 +117,61 @@ for k in en:
         continue
     print(f"en.json: {k} is used nowhere")
     bad += 1
+
+# Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
+# release (a release's changelog says what went); a key here is one whose words still reach the reader.
+GONE = {
+}
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", str(top), *args], capture_output=True, text=True)
+
+
+def last_release():
+    """The newest vX.Y.Z tag here, else fetched (a shallow CI checkout has none): its en.json, or None."""
+    semver = lambda tags: sorted((t for t in tags if re.fullmatch(r"v\d+\.\d+\.\d+", t)), key=lambda t: [int(x) for x in t[1:].split(".")])
+    tags = semver(git("tag", "--list", "v*").stdout.split())
+    if not tags:
+        remote = semver(re.findall(r"refs/tags/(v[\d.]+)$", git("ls-remote", "--tags", "origin").stdout, re.M))
+        if remote and git("fetch", "--quiet", "--depth=1", "origin", "tag", remote[-1], "--no-tags").returncode == 0:
+            tags = remote
+    if not tags:
+        return None, None
+    shown = git("show", f"{tags[-1]}:app/locales/en.json")
+    return (tags[-1], json.loads(shown.stdout)) if shown.returncode == 0 else (tags[-1], None)
+
+
+def newest_sections():
+    """The text of the changelog's newest release's Removed and Changed sections."""
+    log = (top / "CHANGELOG.md").read_text()
+    m = re.search(r"^## \[.*?(?=^## \[|\Z)", log, re.S | re.M)
+    newest = m.group(0) if m else ""
+    return "\n".join(re.findall(r"^### (?:Removed|Changed)\n(.*?)(?=^### |\Z)", newest, re.S | re.M))
+
+
+tag, was = last_release()
+if was is None:
+    print(f"check-locales: no release's en.json to hold the changelog to ({tag or 'no vX.Y.Z tag'}): skipped")
+else:
+    told = newest_sections()
+    words = lambda v: re.sub(r"\s+", " ", re.sub(r"%\{\w+\}", "", v)).strip().lower()
+    for k in sorted(set(was) - set(en)):
+        if k.endswith(".one") and k[: -len(".one")] in en:
+            continue
+        if k in GONE:
+            continue
+        w = words(was[k])
+        if k in told or (len(w) >= 8 and w in told.lower()):
+            continue
+        print(f"en.json: {k} (\"{was[k]}\") was said at {tag} and is gone: name it in CHANGELOG.md's newest Removed or Changed section, or in GONE with why it is no loss")
+        bad += 1
+    for k in sorted(GONE):
+        if k in en:
+            print(f"check-locales: GONE lists {k}, which en.json still has: delete it there")
+            bad += 1
+        elif k not in was:
+            print(f"check-locales: GONE lists {k}, which {tag} did not have: delete it there")
+            bad += 1
 print(f"locales: {len(en)} keys, {said} of them phrases Rust says, {families} by {len(FAMILIES)} listed families: " + ("ok" if not bad else f"{bad} problems"))
 sys.exit(1 if bad else 0)
