@@ -159,9 +159,10 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
       </If>
     );
   };
-  // folded: one line, what it ran and its first figures said with what they count (each still opens its
+  // folded: one line, what it ran and its first four figures said with what they count (each still opens its
   // chart), then the commands
-  const FOLDED = 3;
+  // (four: bytes is reached from a short pane too, whose header is always folded)
+  const FOLDED = 4;
   const said = (i: number, x: SignalTile) =>
     i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : x.value;
   const folded = () => (

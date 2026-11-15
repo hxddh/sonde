@@ -13,6 +13,9 @@ import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
+/** A day's heading over the runs, in points (8 above its caption's 16 pt line, 4 under it, its hairline): what a
+ * run brought to the top keeps clear of it. */
+const DAY_HEAD = 29;
 function dayLabel(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
@@ -99,10 +102,12 @@ export function RunList(props: {
     }
     return out;
   });
-  // a run chosen from elsewhere (the palette, a file opened, a run just ended) is brought to the list's middle,
-  // clear of the day stuck at its top, so no row is cut by it; one pressed in the list stays where it is
+  // a run chosen from elsewhere (the palette, a file opened, a run just ended) and not wholly in view is brought
+  // to the list's top, just under the day that stays there (its height kept clear), so the day never cuts it; one
+  // pressed in the list, or already in view, stays where it is
   let list: ListRef | undefined;
   let pressed = false;
+  let whole = new Set<number>();
   effect(() => {
     const sel = props.selected;
     if (pressed) {
@@ -111,7 +116,7 @@ export function RunList(props: {
     }
     if (!sel) return;
     const at = untracked(rows).findIndex((r) => !("day" in r) && r.s.path === sel);
-    if (at >= 0) setTimeout(() => list?.scrollToIndex({ index: at, viewPosition: 0.5, animated: false }), 0);
+    if (at >= 0 && !whole.has(at)) setTimeout(() => list?.scrollToIndex({ index: at, viewPosition: 0, viewOffset: DAY_HEAD, animated: false }), 0);
   });
   const select = (path: string) => {
     pressed = true;
@@ -149,7 +154,8 @@ export function RunList(props: {
         <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{told().get(x().s.path)?.twin ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
       <View class="flex-row items-center gap-2">
-        <If when={told().get(x().s.path)?.args ?? args(x().s)} else={<Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("runs.requestsN", { n: x().s.requests }), x().s.endpoint !== props.endpoint ? x().s.endpoint : ""].filter(Boolean).join(" · ")}</Text>}>
+        {/* (the same command again tells nothing apart by its words: its time does, to the second) */}
+        <If when={told().get(x().s.path)?.twin ? "" : (told().get(x().s.path)?.args ?? args(x().s))} else={<Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("runs.requestsN", { n: x().s.requests }), x().s.endpoint !== props.endpoint ? x().s.endpoint : ""].filter(Boolean).join(" · ")}</Text>}>
           {(a) => <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{a()}</Text>}
         </If>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
@@ -178,6 +184,8 @@ export function RunList(props: {
       estimatedItemSize={46}
       keyExtractor={(r) => ("day" in r ? `day:${r.day}` : r.s.path)}
       scrollbar={false}
+      viewabilityConfig={{ itemVisibleThreshold: 1 }}
+      onViewableItemsChange={({ viewableItems }) => (whole = new Set(viewableItems.map((v) => v.index)))}
     >
       {(r) => {
         // a recycled cell: what it shows follows the item it is given. A run's row reads the last run the

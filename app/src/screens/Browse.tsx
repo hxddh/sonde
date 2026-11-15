@@ -426,7 +426,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
         </View>
         {/* (too narrow for them all, beside the inspector: they wrap to a line of their own, then among themselves,
             never under the inspector nor into each other's words) */}
-        <View class="ms-auto min-w-0 flex-row flex-wrap items-center justify-end gap-2">
+        <View class="ms-auto min-w-0 shrink flex-row flex-wrap items-center justify-end gap-2">
           <Text class="shrink-0 text-small tabular-nums text-muted-foreground" testID="listing-count">
             {t("browse.objects", { n: count(total()) })}
             {done() ? "" : ` · ${t("browse.more")}`}

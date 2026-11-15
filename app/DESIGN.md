@@ -197,9 +197,10 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
     goes to the next line;
   - a run's header **folds to one line** on a short pane, on Time and History, and while the Operations under it
-    are scrolled from their top: what ran, its first three figures said with what they count ("172 requests · 0%
-    errors · 1.4 ms", quiet words, each still opens its chart), its commands; what marks the run (a trial) stays
-    under it. "Since the run before" is a sentence under the open header, its Compare a link;
+    are scrolled from their top: what ran, its first four figures said with what they count ("172 requests · 0%
+    errors · 1.4 ms · 71.5 KiB", quiet words, each still opens its chart), its commands; what marks the run (a
+    trial) and "Since the run before" (a sentence, its Compare a link) stay under it, the sentence not over Time
+    and History;
   - Run's terminal yields room to why when a program sent nothing (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯` by their words — never a row of unlabelled icons; they never wrap to a second line;
@@ -309,8 +310,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer, computed from what it draws over the
   stretch shown (`plots/answers.ts`: "2 requests failed, both 503 SlowDown, between +10 ms and +20 ms", "Most
   requests were GetObject (82%)"), never how to read it. How to read it is the frame's `how`: an info mark at
-  the title's end (`InfoMark`), the words in a popover a press, Return or a tap opens. A title is one line, so cards
-  abreast stand level: a unit is said in the sentence or on the axis. A terminal gets the sentence and a table.
+  the title's end (`InfoMark`), the words in a popover a press, Return or a tap opens. A title is a short question
+  (two lines at most), its unit said in the sentence or on the axis, so cards abreast stand level. A terminal gets the sentence and a table.
 - **One reading order** on the Time pane: four groups, **Traffic, Latency, Errors, Where** (parted by a hairline,
   named to a screen reader; each chart's card says its question), every chart
   shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last

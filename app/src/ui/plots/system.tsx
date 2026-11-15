@@ -447,9 +447,10 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
     <Card testID={props.testID} class={`group ${props.class ?? ""}`}>
       <View class="gap-1">
         <View class="min-h-7 flex-row items-center gap-2">
-          {/* one line: cards abreast keep one height (a unit is said in the sentence or on the axis, not here) */}
+          {/* a question, short: a unit is said in the sentence or on the axis, not here, so cards abreast keep
+              their titles to a line where they can (two at most, never cut mid-question in a wide pane) */}
           <View class="min-w-0 flex-1">
-            <Heading class="line-clamp-1">{props.title}</Heading>
+            <Heading class="line-clamp-2">{props.title}</Heading>
           </View>
           <If when={props.how || (props.onExport && !props.empty)}>
             <View class={CHROME}>

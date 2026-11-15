@@ -571,8 +571,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           <RunHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
             {props.note}
-            {/* what changed since the program's run before, in a sentence; Compare opens the two side by side */}
-            <If when={!v().trial && !folded()}>
+            {/* what changed since the program's run before, in a sentence (a short pane's too); Compare opens the
+                two side by side. Not over Time and History, nor while the operations are scrolled */}
+            <If when={!v().trial && pane() !== "time" && pane() !== "runs" && foldedOn() !== pane()}>
               <SinceRun since={since()} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
             </If>
           </RunHeader>
