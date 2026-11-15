@@ -2,8 +2,9 @@
 
 use std::path::Path;
 
-use sonde_proxy::episode::{Format, Outcome, Shape, episodes, observations};
-use sonde_proxy::run::RunFile;
+use sonde_analysis::episode::{Outcome, Shape, episodes, observations};
+use sonde_analysis::run::RunFile;
+use sonde_proxy::part::Format;
 
 fn load(name: &str) -> RunFile {
     RunFile::open(
@@ -90,7 +91,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
     assert!(manifest.notes().iter().any(|n| n.starts_with("after ")));
     assert!(eps.iter().all(|e| *e.outcome() == Outcome::Ok));
     // a format's shared habit is said once, among the operations' notes (no finding)
-    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+    let shared: Vec<(usize, String)> = sonde_analysis::episode::shared_notes(&eps)
         .into_iter()
         .map(|(_, n, with, _)| (with, n))
         .collect();
@@ -180,7 +181,7 @@ fn delta_rs_run_reads_as_commits() {
             .all(|e| e.format == Some(Format::Delta) && *e.outcome() == Outcome::Ok)
     );
     // a format's shared habit is said once, among the operations' notes (no finding)
-    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+    let shared: Vec<(usize, String)> = sonde_analysis::episode::shared_notes(&eps)
         .into_iter()
         .map(|(_, n, with, _)| (with, n))
         .collect();
@@ -225,7 +226,7 @@ fn lance_run_reads_as_versions() {
             .all(|e| e.format == Some(Format::Lance) && *e.outcome() == Outcome::Ok)
     );
     // a format's shared habit is said once, among the operations' notes (no finding)
-    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+    let shared: Vec<(usize, String)> = sonde_analysis::episode::shared_notes(&eps)
         .into_iter()
         .map(|(_, n, with, _)| (with, n))
         .collect();
@@ -242,7 +243,7 @@ fn lance_run_reads_as_versions() {
 /// English text (the app says them in Chinese from the same keys).
 #[test]
 fn every_text_is_phrases() {
-    use sonde_proxy::phrase::en;
+    use sonde_analysis::phrase::en;
     for name in [
         "slatedb.sonde",
         "iceberg.sonde",

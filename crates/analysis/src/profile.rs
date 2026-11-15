@@ -1227,7 +1227,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     // the places in the program's code that sent them, when it says
     let mut by_place: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
     for r in records {
-        if let Some(p) = crate::callers::caller(r) {
+        if let Some(p) = sonde_proxy::callers::caller(r) {
             by_place.entry(p).or_default().push(r);
         }
     }
@@ -2358,7 +2358,7 @@ mod tests {
                 latency_ms: 10.0,
                 lists: reqlog::Lists {
                     request_headers: vec![Header::new(
-                        crate::callers::CALLER_HEADER,
+                        sonde_proxy::callers::CALLER_HEADER,
                         if i < 4 {
                             "etl/load.py:12 read"
                         } else {
@@ -2826,6 +2826,22 @@ mod injected {
         assert_eq!(
             chains(&listed).iter().map(|c| c.requests).sum::<usize>(),
             11
+        );
+    }
+}
+
+#[cfg(test)]
+mod prefixes {
+    #[test]
+    fn a_requests_prefix_is_the_one_its_faults_are_paced_by() {
+        let r = reqlog::Record {
+            bucket: Some("b".into()),
+            key: Some("a/b/c/d/e.parquet".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            super::prefix_of(&r),
+            sonde_proxy::fault::rate_prefix(r.bucket.as_deref(), r.key.as_deref())
         );
     }
 }

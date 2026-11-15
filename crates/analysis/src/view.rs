@@ -186,7 +186,7 @@ impl Analysis {
             Some((start, end))
         });
         Analysis {
-            sdk: crate::callers::sdk_of(records),
+            sdk: sonde_proxy::callers::sdk_of(records),
             summary,
             signals,
             injected: records

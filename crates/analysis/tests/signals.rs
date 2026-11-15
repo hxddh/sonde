@@ -6,10 +6,10 @@ use std::time::Instant;
 
 use chrono::DateTime;
 use reqlog::Record;
-use sonde_proxy::profile::{RequestPrices, profile};
-use sonde_proxy::run::RunFile;
-use sonde_proxy::signals::{SPARK_COLUMNS, Signals, signals, sparkline, text};
-use sonde_proxy::summary::summarize;
+use sonde_analysis::profile::{RequestPrices, profile};
+use sonde_analysis::run::RunFile;
+use sonde_analysis::signals::{SPARK_COLUMNS, Signals, signals, sparkline, text};
+use sonde_analysis::summary::summarize;
 
 const FIXTURES: [&str; 6] = [
     "delta.sonde",
@@ -133,7 +133,7 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
         // the requests given up on: the failures no retry followed, as check counts them
         assert_eq!(
             sig.errors.gave_up,
-            sonde_proxy::signals::gave_up(recs)
+            sonde_analysis::signals::gave_up(recs)
                 .iter()
                 .filter(|g| **g)
                 .count(),
@@ -305,7 +305,7 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             // as wide as its slices, never wider than the line; none for no errors
             let bars = line.chars().filter(|c| ('▁'..='█').contains(c)).count();
             let none = label == "errors" && sig.errors.count == 0;
-            let few = sig.short || sig.rate.requests < sonde_proxy::signals::FEW;
+            let few = sig.short || sig.rate.requests < sonde_analysis::signals::FEW;
             let want = if none || few {
                 0
             } else {

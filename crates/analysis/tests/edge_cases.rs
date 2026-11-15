@@ -3,8 +3,8 @@
 
 use chrono::DateTime;
 use reqlog::{Record, Sink};
-use sonde_proxy::episode::{Shape, episodes, observations};
-use sonde_proxy::run::{RunFile, RunHeader, RunWriter};
+use sonde_analysis::episode::{Shape, episodes, observations};
+use sonde_analysis::run::{RunFile, RunHeader, RunWriter};
 
 fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
     Record {
@@ -145,8 +145,8 @@ fn a_replays_root_listing_reads_as_the_original() {
         .query
         .push(("prefix".into(), "replay-20261107-015048/".into()));
     assert_eq!(
-        sonde_proxy::replay::transcript(&[a]),
-        sonde_proxy::replay::transcript(&[b])
+        sonde_analysis::replay::transcript(&[a]),
+        sonde_analysis::replay::transcript(&[b])
     );
 }
 
@@ -248,7 +248,7 @@ fn a_head_before_ranged_reads_is_not_a_request_too_many() {
 
 #[test]
 fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
-    use sonde_proxy::replay::{ReplayOptions, plan};
+    use sonde_analysis::replay::{ReplayOptions, plan};
     let mut copy = rec(1, 0, "PUT", "CopyObject", Some("dst"), 200);
     copy.lists_mut().request_headers.push(reqlog::Header {
         name: "x-amz-copy-source".into(),
@@ -285,7 +285,7 @@ fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
 /// a replay confined to a prefix goes by the request, not by that name.
 #[test]
 fn a_misnamed_bucket_configuration_is_not_replayed_under_a_prefix() {
-    use sonde_proxy::replay::{ReplayOptions, plan};
+    use sonde_analysis::replay::{ReplayOptions, plan};
     let old = q(
         rec(1, 0, "PUT", "CreateBucket", None, 200),
         &[("inventory", ""), ("id", "daily")],
@@ -336,21 +336,21 @@ fn a_finished_run_is_compressed_and_still_opens() {
     w.flush().unwrap();
     drop(w);
     let plain = std::fs::metadata(&path).unwrap().len();
-    sonde_proxy::run::compress(&path).unwrap();
+    sonde_analysis::run::compress(&path).unwrap();
     let packed = std::fs::metadata(&path).unwrap().len();
     assert!(packed * 5 < plain, "{packed} of {plain}");
-    assert!(sonde_proxy::run::is_compressed(&path));
+    assert!(sonde_analysis::run::is_compressed(&path));
     let s = RunFile::open(&path).unwrap();
     assert_eq!(s.records.len(), 500);
     // compressing again changes nothing
-    sonde_proxy::run::compress(&path).unwrap();
+    sonde_analysis::run::compress(&path).unwrap();
     assert_eq!(std::fs::metadata(&path).unwrap().len(), packed);
 }
 
 #[test]
 fn a_growing_run_is_read_in_steps_without_repeats() {
     use reqlog::Sink;
-    use sonde_proxy::run::{RunFile, RunHeader, RunWriter, complete_len};
+    use sonde_analysis::run::{RunFile, RunHeader, RunWriter, complete_len};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("live.sonde");
     let w = RunWriter::create(&path, &RunHeader::new("e", "http://e", "r", None)).unwrap();
@@ -392,7 +392,7 @@ fn a_growing_run_is_read_in_steps_without_repeats() {
 #[test]
 fn a_record_written_after_a_newer_one_is_still_read() {
     use reqlog::Sink;
-    use sonde_proxy::run::{RunFile, RunHeader, RunWriter, complete_len};
+    use sonde_analysis::run::{RunFile, RunHeader, RunWriter, complete_len};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("live.sonde");
     let w = RunWriter::create(&path, &RunHeader::new("e", "http://e", "r", None)).unwrap();

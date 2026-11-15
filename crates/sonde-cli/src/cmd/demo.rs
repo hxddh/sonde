@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use reqlog::RequestLog;
 use s3raw::{Body, S3Request};
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
-use sonde_proxy::run::RunFile;
 
 use super::record::*;
 
@@ -105,7 +105,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
     let color = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let run = RunFile::open(&first).map_err(|e| anyhow::anyhow!(e))?;
     let analysis =
-        sonde_proxy::view::Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
+        sonde_analysis::view::Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
     print_summary_of(&analysis, &run.header, &first, color, true, false, None);
     drop(run);
     println!(
@@ -115,7 +115,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
     let fixed = play(s, &ep.id, fixed_out, &fixed_job(), "export-fixed.py").await?;
     let run = RunFile::open(&fixed).map_err(|e| anyhow::anyhow!(e))?;
     let analysis =
-        sonde_proxy::view::Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
+        sonde_analysis::view::Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
     let since = super::fixloop::since_last(s, &fixed, &run.header, &run.records, &analysis);
     println!("run: {}", fixed.display());
     if let Some(since) = &since {
@@ -222,7 +222,7 @@ async fn play(
     let file = started.path.clone();
     drop(app);
     drop(started);
-    let _ = sonde_proxy::run::compress(&file);
+    let _ = sonde_analysis::run::compress(&file);
     Ok(file)
 }
 

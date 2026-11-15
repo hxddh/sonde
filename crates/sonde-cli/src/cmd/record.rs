@@ -2,7 +2,7 @@
 //! recording's arguments, the proxy started, a run's summary). Each
 //! command is a module of its own, named here as it was.
 
-use sonde_proxy::program::money_text;
+use sonde_analysis::program::money_text;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -10,12 +10,12 @@ use std::sync::Arc;
 
 use clap::Args;
 use reqlog::{Record, RequestLog};
+use sonde_analysis::profile::{Profile, RequestPrices};
+use sonde_analysis::project::Project;
+use sonde_analysis::run::{RunHeader, RunWriter};
+use sonde_analysis::view::Analysis;
 use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
-use sonde_proxy::profile::{Profile, RequestPrices};
-use sonde_proxy::project::Project;
-use sonde_proxy::run::{RunHeader, RunWriter};
-use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 use crate::output;
@@ -124,9 +124,9 @@ pub(super) async fn start_under(
         (None, None) => {
             let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
-            let name = sonde_proxy::program::file_stem(of.name.as_deref(), command.as_deref())
+            let name = sonde_analysis::program::file_stem(of.name.as_deref(), command.as_deref())
                 .unwrap_or_else(|| "proxy".into());
-            sonde_proxy::run::fresh_path(
+            sonde_analysis::run::fresh_path(
                 &dir,
                 &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
             )
@@ -140,7 +140,7 @@ pub(super) async fn start_under(
     header.name = of.name.clone().filter(|n| !n.trim().is_empty());
     // a run recorded again starts with no verdict of its last recording
     if under.is_none() {
-        sonde_proxy::trial::remove(&path);
+        sonde_analysis::trial::remove(&path);
     }
     if let Some(u) = under {
         header.scenario = Some(u.scenario.name.clone());
@@ -239,7 +239,7 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
         .response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"));
-    let miss = sonde_proxy::summary::is_miss(r);
+    let miss = sonde_analysis::summary::is_miss(r);
     let status = match r.status {
         _ if refused => paint("BLOCK", "33", color),
         _ if miss => paint("404", "2", color),
@@ -333,7 +333,7 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
 /// CloudTrail import) are "—"; so is the waiting of a log timed to the
 /// second (`whole_seconds`), whose requests sonde spread over it.
 pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<String> {
-    use sonde_proxy::summary::FEW;
+    use sonde_analysis::summary::FEW;
     if p.groups.is_empty() {
         return Vec::new();
     }
@@ -341,7 +341,7 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
     let shown = if all { p.groups.len() } else { ROWS };
     // a percentile of a handful of requests is one of them: marked, when
     // others are of more
-    let few = |g: &sonde_proxy::profile::Group| g.requests < FEW as usize;
+    let few = |g: &sonde_analysis::profile::Group| g.requests < FEW as usize;
     let mark = p.groups.iter().any(few) && !p.groups.iter().all(few);
     let timed = p.groups.iter().any(|g| g.max_ms > 0.0);
     let time = |ms: f64, star: &str| {
@@ -437,7 +437,7 @@ pub(super) fn print_summary_of(
     color: bool,
     stdout: bool,
     all: bool,
-    since: Option<&sonde_proxy::fixloop::SinceLast>,
+    since: Option<&sonde_analysis::fixloop::SinceLast>,
 ) {
     // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
     let say = |line: String| {
@@ -470,7 +470,7 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(", waiting {}", output::duration(p.waiting_ms)));
     }
     // (under a cent the table's shares say it)
-    if p.cost.amount >= sonde_proxy::program::CENT {
+    if p.cost.amount >= sonde_analysis::program::CENT {
         head.push_str(&format!(
             ", cost ≈ {}",
             money_text(p.cost.amount, &p.cost.currency)
@@ -529,7 +529,7 @@ pub(super) fn print_summary_of(
         if header.whole_seconds {
             signals.in_flight.peak = 0;
         }
-        for line in sonde_proxy::signals::text(&signals, color).lines() {
+        for line in sonde_analysis::signals::text(&signals, color).lines() {
             say(line.to_string());
         }
     }
@@ -557,7 +557,7 @@ pub(super) fn refuse_existing(out: &Path, force: bool) -> anyhow::Result<()> {
 /// with the flag that lifts it (`1 × refused by sonde's no-delete policy:
 /// DeleteObject demo/old/report.csv (--policy allow lets it through)`), and
 /// the rest (S3 Express, a path that names no bucket), which no flag lifts.
-fn refused_lines(s: &sonde_proxy::summary::Summary, n: u64) -> Vec<String> {
+fn refused_lines(s: &sonde_analysis::summary::Summary, n: u64) -> Vec<String> {
     let mut reasons: Vec<(&str, Vec<&str>)> = Vec::new();
     for r in &s.refusals {
         match reasons.iter_mut().find(|(p, _)| *p == r.policy) {
@@ -611,12 +611,12 @@ pub(super) fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project
     let found = explicit.cloned().or_else(|| {
         std::env::current_dir()
             .ok()
-            .and_then(|d| sonde_proxy::project::find(&d))
+            .and_then(|d| sonde_analysis::project::find(&d))
     });
     let Some(path) = found else {
         return Ok(Project::default());
     };
-    sonde_proxy::project::read(&path).map_err(super::usage)
+    sonde_analysis::project::read(&path).map_err(super::usage)
 }
 
 /// How long a stopping proxy waits for the requests in flight.
@@ -663,10 +663,10 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
         if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
             continue;
         }
-        let Some(h) = sonde_proxy::run::read_header(&p).filter(|h| h.is_recording()) else {
+        let Some(h) = sonde_analysis::run::read_header(&p).filter(|h| h.is_recording()) else {
             continue;
         };
-        let key = sonde_proxy::program::key_of(&h).unwrap_or_else(|| "proxy".into());
+        let key = sonde_analysis::program::key_of(&h).unwrap_or_else(|| "proxy".into());
         keep(&mut any, h.created, &p, &key);
         if let Some(n) = name
             && of_program(&h, n)
@@ -705,7 +705,7 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
 
 /// Whether a run is of the program named `name`.
 pub fn of_program(h: &RunHeader, name: &str) -> bool {
-    sonde_proxy::program::key_of(h).as_deref() == Some(name)
+    sonde_analysis::program::key_of(h).as_deref() == Some(name)
 }
 
 /// The project's program's name here (`[program] name` of the sonde.toml
@@ -713,7 +713,7 @@ pub fn of_program(h: &RunHeader, name: &str) -> bool {
 /// names none here: `run` and `check` say what is wrong with it.
 pub fn project_name() -> Option<String> {
     let here = std::env::current_dir().ok()?;
-    sonde_proxy::project::of(&here)
+    sonde_analysis::project::of(&here)
         .ok()??
         .file
         .program
@@ -729,7 +729,7 @@ mod tests {
     /// let it through; 21.0 blamed an S3 Express refusal on the policy.
     #[test]
     fn refused_requests_are_named_a_line_for_each_reason() {
-        use sonde_proxy::summary::{Refusal, Summary};
+        use sonde_analysis::summary::{Refusal, Summary};
         let refusal = |policy: &str, request: &str| Refusal {
             policy: policy.into(),
             request: request.into(),

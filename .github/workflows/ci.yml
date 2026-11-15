@@ -78,7 +78,7 @@ jobs:
     # runs of any size, held (optimised, as released): each test's
     # peak memory, the same from run to run, against its budget; its time,
     # which a shared runner moves, said and held only past several times
-    # what it takes (crates/proxy/tests/budgets.rs, docs/dev/performance.md).
+    # what it takes (crates/analysis/tests/budgets.rs, docs/dev/performance.md).
     # Each test is a process of its own, so its peak is its own. A job of
     # its own beside the unit tests: its release build and its runs of
     # a million take longer than they do.
@@ -95,10 +95,10 @@ jobs:
         run: |
           set -o pipefail
           # (listed first: a build that fails, or lists none, fails the step)
-          tests=$(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p')
+          tests=$(cargo test --release --locked -p sonde-analysis --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p')
           [ -n "$tests" ] || { echo "::error title=Budgets::no budget test was listed"; exit 1; }
           for t in $tests; do
-            cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
+            cargo test --release --locked -p sonde-analysis --test budgets -- --ignored --nocapture --exact "$t" 2>&1 | tee -a budgets.log
           done
           { echo '```'; grep -h "^budget " budgets.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
@@ -112,14 +112,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: release, save-if: false }
-      # crates/proxy/tests/signals.rs: two seconds, optimised
+      # crates/analysis/tests/signals.rs: two seconds, optimised
       - name: The signals of a million requests
-        run: cargo test --release --locked -p sonde-proxy --test signals -- --ignored --nocapture
+        run: cargo test --release --locked -p sonde-analysis --test signals -- --ignored --nocapture
       # crates/sonde-nsh/src/runs.rs: what a window asks for when it opens a
       # large run, a later page, and the size of what crosses to it
       - name: A million requests through the app's bridge
         run: |
-          cargo run --release --locked -p sonde-proxy --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
+          cargo run --release --locked -p sonde-analysis --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
           SONDE_BIG_RUN="$RUNNER_TEMP/big.sonde" cargo test --release --locked -p sonde-nsh --lib -- --ignored a_large_run --nocapture
 
   ui-perf:

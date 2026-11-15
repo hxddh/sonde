@@ -222,7 +222,7 @@ prefixes near S3's rate, requests one after another (not one that reads or lists
 by rename, directory markers. Notes common to nearly every step of a format are said once among the operations; a
 retry, a lost race (412) and a slow request are in the operation and the charts, not findings.
 
-Fixtures (`crates/proxy/tests/fixtures`): SlateDB 0.18 (172 requests → 34 operations), pyiceberg 0.9.1 (116 → 6),
+Fixtures (`crates/analysis/tests/fixtures`): SlateDB 0.18 (172 requests → 34 operations), pyiceberg 0.9.1 (116 → 6),
 delta-rs 1.6 (49 → 5), boto3, the Java SDK.
 
 ## Replay on another endpoint

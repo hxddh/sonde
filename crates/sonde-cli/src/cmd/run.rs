@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
-use sonde_proxy::run::RunFile;
 
 use crate::Cli;
 
@@ -314,7 +314,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     }
     // what to try again is known before anything runs
     // the program's name, when it has one of its own
-    let command = sonde_proxy::program::shell_join(&a.command);
+    let command = sonde_analysis::program::shell_join(&a.command);
     let name = a
         .name
         .as_deref()
@@ -324,15 +324,15 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if a.again {
         let program = name
             .clone()
-            .or_else(|| sonde_proxy::program::program_key(Some(&command)))
+            .or_else(|| sonde_analysis::program::program_key(Some(&command)))
             .unwrap_or_default();
         let dir = match &a.rec.out {
             Some(out) => runs_dir(out),
             None => s.paths().runs(),
         };
-        let names = sonde_proxy::trial::to_try_again(&dir, &program);
+        let names = sonde_analysis::trial::to_try_again(&dir, &program);
         if names.is_empty() {
-            let tried = sonde_proxy::trial::read_verdicts(&dir).contains_key(&program);
+            let tried = sonde_analysis::trial::read_verdicts(&dir).contains_key(&program);
             if tried {
                 eprintln!(
                     "Nothing to try again: every scenario of `{program}` survived its last trial, or met nothing."
@@ -400,7 +400,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     } else if !project.scenarios.is_empty() {
         project.scenarios
     } else {
-        sonde_proxy::trial::choose(&clean_run.records)
+        sonde_analysis::trial::choose(&clean_run.records)
     };
     let of = file
         .file_name()
@@ -408,7 +408,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .unwrap_or_default();
     // trials are kept in a folder of their own: they are not runs of the
     // program (no trend, baseline or "newest" counts them)
-    let folder = sonde_proxy::trial::folder_for(&file);
+    let folder = sonde_analysis::trial::folder_for(&file);
     std::fs::create_dir_all(&folder)?;
     // where the program's runs are, and its verdicts kept
     let dir = runs_dir(&file);
@@ -424,10 +424,10 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let mut interrupted = None;
     // the program's verdicts before this trial, and this one's time: each
     // row says what changed ("broke on 12 Nov, survived since")
-    let program = sonde_proxy::program::key_of(&clean_run.header);
+    let program = sonde_analysis::program::key_of(&clean_run.header);
     let kept = program
         .as_deref()
-        .and_then(|p| sonde_proxy::trial::read_verdicts(&dir).remove(p))
+        .and_then(|p| sonde_analysis::trial::read_verdicts(&dir).remove(p))
         .unwrap_or_default();
     let now = chrono::Utc::now();
     for scenario in scenarios {
@@ -436,7 +436,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             // name is free, and is the one the verdict keeps)
             path: folder.join(format!(
                 "{}.sonde",
-                sonde_proxy::trial::run_stem(&file, &scenario)
+                sonde_analysis::trial::run_stem(&file, &scenario)
             )),
             of: of.clone(),
             scenario,
@@ -449,7 +449,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             break;
         }
         let run = RunFile::open(&ran.file).map_err(|e| anyhow::anyhow!(e))?;
-        let mut t = sonde_proxy::trial::judge(
+        let mut t = sonde_analysis::trial::judge(
             &under.scenario,
             &clean_run.records,
             code,
@@ -464,7 +464,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             .map(|n| n.to_string_lossy().into_owned());
         if program.is_some() {
             t.history = kept.get(&t.asked()).cloned().unwrap_or_default();
-            t.history.push(sonde_proxy::trial::Seen {
+            t.history.push(sonde_analysis::trial::Seen {
                 at: now,
                 standing: t.standing,
                 run: of.clone(),
@@ -478,9 +478,9 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if trials.is_empty() {
         let _ = std::fs::remove_dir(&folder);
     } else {
-        sonde_proxy::trial::save(&file, &trials)?;
+        sonde_analysis::trial::save(&file, &trials)?;
         if let Some(p) = &program
-            && let Err(e) = sonde_proxy::trial::record(&dir, p, &of, now, &trials)
+            && let Err(e) = sonde_analysis::trial::record(&dir, p, &of, now, &trials)
         {
             eprintln!("warning: the program's verdicts could not be kept: {e}");
         }
@@ -491,7 +491,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         return Ok(128 + signal);
     }
-    use sonde_proxy::trial::Standing;
+    use sonde_analysis::trial::Standing;
     let broke = trials
         .iter()
         .filter(|t| t.standing == Standing::Broke)
@@ -500,7 +500,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     eprintln!("\n{}", trials_summary(&standings));
     eprintln!("Each trial is a run:");
     for t in &trials {
-        if let Some(path) = sonde_proxy::trial::run_path(&file, t) {
+        if let Some(path) = sonde_analysis::trial::run_path(&file, t) {
             eprintln!("  sonde show {}", path.display());
         }
     }
@@ -520,8 +520,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
 
 /// What a trial's runs came to, in a sentence: "did not break" only when
 /// every scenario was judged; the ones that were not are said.
-fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
-    use sonde_proxy::trial::Standing;
+fn trials_summary(standings: &[sonde_analysis::trial::Standing]) -> String {
+    use sonde_analysis::trial::Standing;
     let count = |s: Standing| standings.iter().filter(|t| **t == s).count();
     let (broke, refused, untested) = (
         count(Standing::Broke),
@@ -555,9 +555,9 @@ fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
 /// the flags of the trial it repeats: the same store, policy and recording.
 /// A trial of scenarios named (`--fault`) names again the ones that did not
 /// survive.
-fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -> String {
-    use sonde_proxy::trial::Standing;
-    let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
+fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_analysis::trial::Trial]) -> String {
+    use sonde_analysis::trial::Standing;
+    let q = |w: &str| sonde_analysis::program::shell_join(&[w.to_string()]);
     let mut words = vec!["sonde run".to_string()];
     if a.faults.is_empty() {
         words.push("--again".into());
@@ -608,13 +608,13 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -
         words.push("--no-callers".into());
     }
     words.push("--".into());
-    words.push(sonde_proxy::program::shell_join(&a.command));
+    words.push(sonde_analysis::program::shell_join(&a.command));
     words.join(" ")
 }
 
 /// A trial's line: its standing, the scenario, what happened.
-pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
-    use sonde_proxy::trial::Standing;
+pub fn trial_line(t: &sonde_analysis::trial::Trial, color: bool) -> String {
+    use sonde_analysis::trial::Standing;
     let code = match t.standing {
         Standing::Survived => "32",
         Standing::Degraded => "33",
@@ -661,7 +661,7 @@ async fn run_once(
     ctx: &RunCtx,
 ) -> anyhow::Result<Ran> {
     use tokio::io::AsyncWriteExt;
-    let command = sonde_proxy::program::shell_join(&a.command);
+    let command = sonde_analysis::program::shell_join(&a.command);
     // `-o FILE` is recorded beside it under a name of its own and put in
     // its place at the end: two runs given one file never write into, or
     // print, each other's
@@ -669,7 +669,7 @@ async fn run_once(
     let rec = match &target {
         Some(t) => {
             // (its earlier verdicts go now, as a run recorded again)
-            sonde_proxy::trial::remove(t);
+            sonde_analysis::trial::remove(t);
             Recording {
                 out: Some(recording_path(t)),
                 ..ctx.rec.clone()
@@ -710,7 +710,7 @@ async fn run_once(
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
     // keys under the run's own place are its own to remove
     if ctx.trying {
-        for place in sonde_proxy::trial::places(&a.command, trial) {
+        for place in sonde_analysis::trial::places(&a.command, trial) {
             ctx.made.own_place(&place);
         }
     }
@@ -908,10 +908,10 @@ async fn run_once(
             started.path = place(&started.path, t, a.force)?;
         }
         // kept as the app keeps it: a run that failed is compared with none
-        sonde_proxy::index::set(&started.path, sonde_proxy::index::Change::Exit(code));
+        sonde_analysis::index::set(&started.path, sonde_analysis::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &run.header.endpoint);
-        let analysis = sonde_proxy::view::Analysis::of(&run, &prices);
+        let analysis = sonde_analysis::view::Analysis::of(&run, &prices);
         // against the program's run before: what the change did
         let since =
             super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);
@@ -935,7 +935,7 @@ async fn run_once(
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
-    let _ = sonde_proxy::run::compress(&file);
+    let _ = sonde_analysis::run::compress(&file);
     Ok(Ran {
         file,
         code,
@@ -981,7 +981,7 @@ fn place(
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "run".into());
-            let fresh = sonde_proxy::run::fresh_path(&runs_dir(target), &stem);
+            let fresh = sonde_analysis::run::fresh_path(&runs_dir(target), &stem);
             std::fs::rename(recorded, &fresh)?;
             eprintln!(
                 "sonde: {} was written by another run meanwhile: this run is {}",
@@ -1199,7 +1199,7 @@ mod tests {
 
     #[test]
     fn did_not_break_is_said_only_when_every_scenario_was_judged() {
-        use sonde_proxy::trial::Standing::*;
+        use sonde_analysis::trial::Standing::*;
         assert_eq!(
             trials_summary(&[Survived, Degraded]),
             "The program did not break."

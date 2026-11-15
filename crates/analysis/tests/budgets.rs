@@ -18,9 +18,9 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sonde_proxy::profile::RequestPrices;
-use sonde_proxy::run::RunFile;
-use sonde_proxy::view::Analysis;
+use sonde_analysis::profile::RequestPrices;
+use sonde_analysis::run::RunFile;
+use sonde_analysis::view::Analysis;
 
 /// One at a time: the peak of memory is the process's, and the clock is
 /// kinder to a test that has the cores to itself. The million goes first
@@ -159,7 +159,7 @@ fn a_million_requests_are_read_within_their_memory() {
 #[test]
 #[ignore = "two runs of a million requests: run in release, as CI does"]
 fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
-    use sonde_proxy::profile::{Run, compare_runs};
+    use sonde_analysis::profile::{Run, compare_runs};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let a = run(dir.path(), "lake-1000000-1.sonde", |p| {
@@ -273,24 +273,24 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
     // and it does not grow with the run: a page of operations, not all
     assert_eq!(
         view["operations"].as_array().map(Vec::len),
-        Some(sonde_proxy::view::PAGE)
+        Some(sonde_analysis::view::PAGE)
     );
     assert_eq!(view["operationsTotal"], a.episodes.len());
     assert!(sent < 2 << 20, "{sent} bytes sent");
     // the next page is a lookup, not another analysis
     let started = Instant::now();
-    let q: sonde_proxy::view::Query = serde_json::from_value(
+    let q: sonde_analysis::view::Query = serde_json::from_value(
         serde_json::json!({ "offset": 50_000, "sort": "duration", "descending": true }),
     )
     .expect("a query");
     let page = a.page(&q);
     assert_eq!(
         page["rows"].as_array().map(Vec::len),
-        Some(sonde_proxy::view::PAGE)
+        Some(sonde_analysis::view::PAGE)
     );
     let first = started.elapsed();
     let started = Instant::now();
-    let _ = a.page(&sonde_proxy::view::Query {
+    let _ = a.page(&sonde_analysis::view::Query {
         offset: 50_500,
         ..q
     });
@@ -312,8 +312,8 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
 #[test]
 #[ignore = "a million requests: run in release, as CI does"]
 fn the_time_pane_of_a_million_requests_draws_bounded_rows() {
-    use sonde_proxy::profile::{Timeline, profile, profile_from};
-    use sonde_proxy::signals::{signals, signals_from};
+    use sonde_analysis::profile::{Timeline, profile, profile_from};
+    use sonde_analysis::signals::{signals, signals_from};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = run(dir.path(), "lake-1000000-1.sonde", |p| {

@@ -160,8 +160,10 @@ impl Keyer {
                 prefix_for(&self.prefixes, &f).unwrap_or(&f).to_string()
             }
             Dimension::Size => BANDS[band(r)].1.to_string(),
-            Dimension::Caller => crate::callers::caller(r).unwrap_or_else(|| "(not named)".into()),
-            Dimension::Sdk => crate::callers::sdk(r).unwrap_or_else(|| "(unknown)".into()),
+            Dimension::Caller => {
+                sonde_proxy::callers::caller(r).unwrap_or_else(|| "(not named)".into())
+            }
+            Dimension::Sdk => sonde_proxy::callers::sdk(r).unwrap_or_else(|| "(unknown)".into()),
             Dimension::Status => r
                 .status
                 .map(|s| s.to_string())
@@ -177,7 +179,7 @@ impl Keyer {
 }
 
 /// The SDK most of `records` were sent by (one answer for every view).
-pub use crate::callers::sdk_of;
+pub use sonde_proxy::callers::sdk_of;
 
 /// The requests at or over the run's p90: the slowest tenth (none with
 /// fewer than [`FEW_SLOW`] of them, or no times).

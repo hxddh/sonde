@@ -5,9 +5,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
 use sonde_proxy::Proxy;
-use sonde_proxy::run::RunFile;
 
 use crate::Cli;
 
@@ -82,6 +82,6 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
-    let _ = sonde_proxy::run::compress(&file);
+    let _ = sonde_analysis::run::compress(&file);
     Ok(0)
 }

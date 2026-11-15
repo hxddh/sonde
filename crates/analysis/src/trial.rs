@@ -5,7 +5,7 @@
 //! leaves, and the program exited as its clean run did.
 //!
 //! A retry is counted against the clean run. A request is named by
-//! [`crate::fault::identity`]; the clean run says how many times the program
+//! [`sonde_proxy::fault::identity`]; the clean run says how many times the program
 //! means to send each. A failed write was sent again only if the trial run
 //! got at least that many answers for it: a program that writes `state`,
 //! waits and writes `state` again did not retry its first write because a
@@ -30,8 +30,8 @@ use reqlog::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::episode::{code_of, episodes, observations, retryable};
-use crate::fault::{Condition, commit_family, condition_of, identity, identity_of};
 use crate::program::ms_text;
+use sonde_proxy::fault::{Condition, commit_family, condition_of, identity, identity_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +146,7 @@ pub struct Trial {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub reuploaded: usize,
     /// Requests a stall held before their first byte
-    /// ([`crate::fault::STALL_MS`]); of them, the ones the program waited
+    /// ([`sonde_proxy::fault::STALL_MS`]); of them, the ones the program waited
     /// out instead of cutting short and sending again.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub held: usize,
@@ -294,10 +294,10 @@ fn is_write(r: &Record) -> bool {
 
 /// A download whose body sonde cut short.
 fn cut_body(r: &Record) -> bool {
-    faulted(r) && response_header(r, crate::CUT_HEADER).is_some()
+    faulted(r) && response_header(r, sonde_proxy::CUT_HEADER).is_some()
 }
 
-/// A listing sonde left keys out of ([`crate::fault::Effect::StaleList`]):
+/// A listing sonde left keys out of ([`sonde_proxy::fault::Effect::StaleList`]):
 /// the keys, as the listing wrote them.
 fn hidden(r: &Record) -> Vec<&str> {
     if !faulted(r) {
@@ -305,14 +305,17 @@ fn hidden(r: &Record) -> Vec<&str> {
     }
     r.response_headers()
         .iter()
-        .filter(|h| h.name.eq_ignore_ascii_case(crate::fault::HIDDEN_HEADER))
+        .filter(|h| {
+            h.name
+                .eq_ignore_ascii_case(sonde_proxy::fault::HIDDEN_HEADER)
+        })
         .map(|h| h.value.as_str())
         .collect()
 }
 
 /// A request a fault held that the program stopped waiting for.
 fn given_up(r: &Record) -> bool {
-    faulted(r) && response_header(r, crate::fault::GIVEN_UP_HEADER).is_some()
+    faulted(r) && response_header(r, sonde_proxy::fault::GIVEN_UP_HEADER).is_some()
 }
 
 /// A conditional write sonde answered 412.
@@ -510,8 +513,8 @@ fn named_request(r: &Record, name: &str) -> Named {
         .filter(|_| r.key.is_none() && !r.rare().request_body_truncated)
         .map(|b| unplace_both(b, name))
         .filter(|b| matches!(b, std::borrow::Cow::Owned(_)))
-        .map(|b| crate::fault::body_hash(b.as_bytes()))
-        .or_else(|| crate::fault::kept_body_hash(r));
+        .map(|b| sonde_proxy::fault::body_hash(b.as_bytes()))
+        .or_else(|| sonde_proxy::fault::kept_body_hash(r));
     let coarse = identity(
         &r.method,
         &r.kind,
@@ -629,7 +632,7 @@ fn cut_outcome(cut: &Record, later: &[&Record]) -> Cut {
     let sent = cut
         .response_bytes
         .get()
-        .or_else(|| response_header(cut, crate::CUT_HEADER)?.parse().ok())
+        .or_else(|| response_header(cut, sonde_proxy::CUT_HEADER)?.parse().ok())
         .unwrap_or(0);
     let from = first + sent;
     let mut spans: Vec<(u64, u64)> = later
@@ -679,7 +682,7 @@ fn where_of(r: &Record) -> Where {
     Where {
         kind: r.kind.to_string(),
         key: place_of(r),
-        caller: crate::callers::caller(r),
+        caller: sonde_proxy::callers::caller(r),
     }
 }
 
@@ -697,7 +700,7 @@ fn retry_setting(sdk: &str) -> Option<&'static str> {
 
 /// Reads the trial: `clean` is the run without faults, `run` the one with.
 pub fn judge(
-    scenario: &crate::fault::Scenario,
+    scenario: &sonde_proxy::fault::Scenario,
     clean: &[Record],
     clean_exit: i32,
     run: &[Record],
@@ -810,7 +813,10 @@ pub fn judge(
             m.is_some_and(|m| m.concurrent) || group.windows(2).any(|w| w[1].time < end_of(w[0]));
         // the wait from a failure to the attempt after it, within a sender
         let mut wait = |streak: u32, r: &Record, next: &Record| {
-            let same_place = match (crate::callers::caller(r), crate::callers::caller(next)) {
+            let same_place = match (
+                sonde_proxy::callers::caller(r),
+                sonde_proxy::callers::caller(next),
+            ) {
                 (Some(a), Some(b)) => a == b,
                 _ => true,
             };
@@ -1006,7 +1012,7 @@ pub fn judge(
             let r = group[i];
             condition_of(r) == Some(Condition::Create)
                 && lost_answer(r)
-                && !crate::fault::is_log(r.key.as_deref())
+                && !sonde_proxy::fault::is_log(r.key.as_deref())
         });
         for &i in &yields {
             if written_over(group[i]) {
@@ -1045,8 +1051,8 @@ pub fn judge(
                 let slate = r
                     .key
                     .as_deref()
-                    .and_then(crate::episode::part_of)
-                    .is_some_and(|p| p.format() == crate::episode::Format::SlateDB);
+                    .and_then(sonde_proxy::part::part_of)
+                    .is_some_and(|p| p.format() == sonde_proxy::part::Format::SlateDB);
                 let wrote_on = in_time
                     .iter()
                     .any(|w| (w.time, w.id) > (r.time, r.id) && is_write(w) && !faulted(w));
@@ -1179,7 +1185,7 @@ pub fn judge(
     // waited out
     let (mut held, mut waited) = (0, 0);
     let mut at_wait: Option<&Record> = None;
-    let stall = crate::fault::stall_of(scenario);
+    let stall = sonde_proxy::fault::stall_of(scenario);
     if stall.is_some() {
         for group in by_request.values() {
             for r in group.iter().filter(|r| r.rare().injected.is_some()) {
@@ -1206,7 +1212,7 @@ pub fn judge(
     let listings: Vec<&Record> = in_time
         .iter()
         .copied()
-        .filter(|x| crate::fault::LISTINGS.contains(&x.kind.as_str()) && done(x))
+        .filter(|x| sonde_proxy::fault::LISTINGS.contains(&x.kind.as_str()) && done(x))
         .collect();
     let mut at_clean_place: HashMap<Place, Vec<&str>> = HashMap::new();
     for (id, place) in &clean_place {
@@ -1433,9 +1439,13 @@ pub fn judge(
     }
     // the recording policy refused what the clean run did not ask for: the
     // policy's doing, not the fault's, whatever followed
-    let by_policy = |rs: &[Record]| rs.iter().filter(|r| crate::refused_by_policy(r)).count();
+    let by_policy = |rs: &[Record]| {
+        rs.iter()
+            .filter(|r| sonde_proxy::refused_by_policy(r))
+            .count()
+    };
     let blocked = by_policy(run).saturating_sub(by_policy(clean));
-    let first_blocked = run.iter().find(|r| crate::refused_by_policy(r));
+    let first_blocked = run.iter().find(|r| sonde_proxy::refused_by_policy(r));
     if blocked > 0 && matches!(standing, Standing::Broke | Standing::Degraded) {
         standing = Standing::Refused;
         let policy = first_blocked
@@ -1498,7 +1508,7 @@ pub fn judge(
         ))
     } else {
         turned_on.filter(|r| given_up(r)).map(|r| {
-            let sdk = crate::callers::sdk(r);
+            let sdk = sonde_proxy::callers::sdk(r);
             if cut_body(r) {
                 Said::new("trial.advice.cut", &[])
             } else if lost_race(r) {
@@ -1523,7 +1533,7 @@ pub fn judge(
     Trial {
         scenario: scenario.name.clone(),
         about: scenario.about.clone(),
-        times: crate::fault::pressed(scenario),
+        times: sonde_proxy::fault::pressed(scenario),
         standing,
         exit,
         clean_exit,
@@ -1584,8 +1594,8 @@ pub fn folder_for(run: &std::path::Path) -> std::path::PathBuf {
 
 /// The stem a trial's run file is given: `<run>.<scenario>`, and its
 /// strength when pressed (`<run>.slowdown-3x`): two strengths, two files.
-pub fn run_stem(run: &std::path::Path, scenario: &crate::fault::Scenario) -> String {
-    match crate::fault::pressed(scenario) {
+pub fn run_stem(run: &std::path::Path, scenario: &sonde_proxy::fault::Scenario) -> String {
+    match sonde_proxy::fault::pressed(scenario) {
         Some(n) => format!("{}.{}-{n}x", stem_of(run), scenario.name),
         None => format!("{}.{}", stem_of(run), scenario.name),
     }
@@ -1669,7 +1679,7 @@ pub fn worst(trials: &[Trial]) -> Option<Standing> {
 /// The places a command gives a run of a trial named `name` (`clean`, or
 /// the scenario's): each word with `{trial}`, up to its last `{trial}` and
 /// past any `=` and `scheme://` (`--out=s3://b/etl-{trial}/` is
-/// `b/etl-clean`). Keys under them are that run's own ([`crate::Made::own_place`]).
+/// `b/etl-clean`). Keys under them are that run's own ([`sonde_proxy::Made::own_place`]).
 pub fn places(command: &[String], name: &str) -> Vec<String> {
     command
         .iter()
@@ -2006,7 +2016,7 @@ impl Trial {
     }
 }
 
-/// Whether an SDK (as [`crate::callers::sdk`] names it) sends a request
+/// Whether an SDK (as [`sonde_proxy::callers::sdk`] names it) sends a request
 /// answered 403 RequestTimeTooSkewed again, signed by the answer's clock:
 /// the AWS SDKs for Java and JavaScript. botocore (boto3, the AWS CLI) does
 /// not.
@@ -2024,7 +2034,7 @@ pub fn retries_skew(sdk: &str) -> bool {
 /// one large enough to cut, and the late first byte if it downloads at all;
 /// the lost race if it commits on a condition; the stale listing if it
 /// lists what it wrote.
-pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
+pub fn choose(clean: &[Record]) -> Vec<sonde_proxy::fault::Scenario> {
     let has = |f: &dyn Fn(&Record) -> bool| clean.iter().any(f);
     let mut names = vec!["slowdown", "error"];
     // signed by the program as it sent it: every request sonde let in was,
@@ -2043,7 +2053,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     if !signed.is_empty()
         && signed
             .iter()
-            .all(|r| crate::callers::sdk(r).is_some_and(|sdk| retries_skew(&sdk)))
+            .all(|r| sonde_proxy::callers::sdk(r).is_some_and(|sdk| retries_skew(&sdk)))
     {
         names.push("skew");
     }
@@ -2059,7 +2069,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
             && done(r)
             && r.response_bytes
                 .get()
-                .is_some_and(|n| crate::fault::cut_at(n).is_some())
+                .is_some_and(|n| sonde_proxy::fault::cut_at(n).is_some())
     }) {
         names.push("cut-body");
     }
@@ -2073,7 +2083,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
         is_write(r)
             && match condition_of(r) {
                 Some(Condition::Match) => true,
-                Some(Condition::Create) => crate::fault::is_log(r.key.as_deref()),
+                Some(Condition::Create) => sonde_proxy::fault::is_log(r.key.as_deref()),
                 None => false,
             }
     }) {
@@ -2083,11 +2093,11 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     // under what it lists
     let mut writes: Vec<&Record> = clean
         .iter()
-        .filter(|r| crate::fault::MAKES_KEY.contains(&r.kind.as_str()) && done(r))
+        .filter(|r| sonde_proxy::fault::MAKES_KEY.contains(&r.kind.as_str()) && done(r))
         .collect();
     writes.sort_by_key(|r| (r.time, r.id));
     if has(&|l| {
-        crate::fault::LISTINGS.contains(&l.kind.as_str())
+        sonde_proxy::fault::LISTINGS.contains(&l.kind.as_str())
             && done(l)
             && writes.iter().any(|w| {
                 end_of(w) <= l.time
@@ -2102,7 +2112,7 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     }
     names
         .into_iter()
-        .filter_map(crate::fault::scenario)
+        .filter_map(sonde_proxy::fault::scenario)
         .collect()
 }
 
@@ -2134,8 +2144,8 @@ mod tests {
         r
     }
 
-    fn slowdown() -> crate::fault::Scenario {
-        crate::fault::scenario("slowdown").unwrap()
+    fn slowdown() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("slowdown").unwrap()
     }
 
     fn lost(r: Record, store: u16) -> Record {
@@ -2249,7 +2259,7 @@ mod tests {
 
     #[test]
     fn two_failures_in_a_row_are_two_retries_or_one_request_given_up() {
-        let twice = crate::fault::Scenario {
+        let twice = sonde_proxy::fault::Scenario {
             name: "twice".into(),
             about: String::new(),
             rules: Vec::new(),
@@ -2300,7 +2310,7 @@ mod tests {
         ];
         assert_eq!(judge(&slowdown(), &clean, 0, &run, 0).retried, 1);
         // an answer before the failure is not its retry
-        let limits = crate::fault::scenario("s3-limits").unwrap();
+        let limits = sonde_proxy::fault::scenario("s3-limits").unwrap();
         let run = vec![
             put(1, 0, "out/1800", 200),
             fault(put(2, 5, "out/1800", 503), "s3-limits"),
@@ -2364,7 +2374,7 @@ mod tests {
 
     #[test]
     fn a_lost_answer_retried_is_a_write_made_twice() {
-        let s = crate::fault::scenario("lost-answer").unwrap();
+        let s = sonde_proxy::fault::scenario("lost-answer").unwrap();
         let clean = vec![rec(1, 0, "PUT", "PutObject", "a", 200)];
         let run = vec![
             lost(put(1, 0, "a", 500), 200),
@@ -2376,7 +2386,7 @@ mod tests {
 
     #[test]
     fn a_retry_the_store_refused_is_not_a_second_write_and_says_why_it_broke() {
-        let s = crate::fault::scenario("lost-answer").unwrap();
+        let s = sonde_proxy::fault::scenario("lost-answer").unwrap();
         let complete = |id, at, status| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
             r.lists_mut().query = vec![("uploadId".into(), "u1".into())];
@@ -2407,7 +2417,7 @@ mod tests {
 
     #[test]
     fn a_lost_answer_never_asked_about_again_is_a_write_and_a_read_is_a_read() {
-        let s = crate::fault::scenario("lost-answer").unwrap();
+        let s = sonde_proxy::fault::scenario("lost-answer").unwrap();
         let clean = vec![
             put(1, 0, "a", 200),
             put(2, 10, "b", 200),
@@ -2441,7 +2451,7 @@ mod tests {
 
     #[test]
     fn jitter_is_judged_among_the_waits_before_one_attempt() {
-        let twice = crate::fault::Scenario {
+        let twice = sonde_proxy::fault::Scenario {
             name: "twice".into(),
             about: String::new(),
             rules: Vec::new(),
@@ -2492,7 +2502,7 @@ mod tests {
 
     #[test]
     fn a_fault_no_retry_is_owed_for_is_judged_by_the_exit_alone() {
-        let s = crate::fault::Scenario {
+        let s = sonde_proxy::fault::Scenario {
             name: "gone".into(),
             about: "404 NoSuchKey".into(),
             rules: Vec::new(),
@@ -2518,7 +2528,7 @@ mod tests {
 
     #[test]
     fn a_delay_prints_the_time_it_took_against_the_clean_runs() {
-        let s = crate::fault::scenario("slow").unwrap();
+        let s = sonde_proxy::fault::scenario("slow").unwrap();
         let clean = vec![get(1, 0, "a", 200), get(2, 100, "b", 200)];
         let mut run = vec![get(1, 0, "a", 200), get(2, 400, "b", 200)];
         for r in &mut run {
@@ -2580,7 +2590,7 @@ mod tests {
 
     #[test]
     fn a_scenario_that_met_nothing_is_untested_and_the_choice_follows_the_clean_run() {
-        let s = crate::fault::scenario("fail-complete").unwrap();
+        let s = sonde_proxy::fault::scenario("fail-complete").unwrap();
         let clean = vec![rec(1, 0, "GET", "GetObject", "a", 200)];
         let t = judge(&s, &clean, 0, &clean, 0);
         assert_eq!(t.standing, Standing::Untested);
@@ -2710,8 +2720,8 @@ mod tests {
         r
     }
 
-    fn lost_race_scenario() -> crate::fault::Scenario {
-        crate::fault::scenario("lost-race").unwrap()
+    fn lost_race_scenario() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("lost-race").unwrap()
     }
 
     /// A download of `key`: bytes `first..=last` of `whole`.
@@ -2743,12 +2753,12 @@ mod tests {
         r.rare_mut().transport_error = Some("sonde cut the response body".into());
         r.lists_mut()
             .response_headers
-            .push(Header::new(crate::CUT_HEADER, sent.to_string()));
+            .push(Header::new(sonde_proxy::CUT_HEADER, sent.to_string()));
         r
     }
 
-    fn cut_scenario() -> crate::fault::Scenario {
-        crate::fault::scenario("cut-body").unwrap()
+    fn cut_scenario() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("cut-body").unwrap()
     }
 
     #[test]
@@ -2815,8 +2825,8 @@ mod tests {
             r.key = None;
             let body = format!("<Delete><Object><Key>etl-{run}/a</Key></Object></Delete>");
             r.lists_mut().request_headers.push(Header::new(
-                crate::fault::BODY_HASH_HEADER,
-                crate::fault::body_hash(body.as_bytes()),
+                sonde_proxy::fault::BODY_HASH_HEADER,
+                sonde_proxy::fault::body_hash(body.as_bytes()),
             ));
             r.rare_mut().request_body = Some(body);
             r
@@ -2845,7 +2855,7 @@ mod tests {
 
     #[test]
     fn a_key_that_holds_the_scenarios_word_by_itself_is_matched_as_written() {
-        let error = crate::fault::scenario("error").unwrap();
+        let error = sonde_proxy::fault::scenario("error").unwrap();
         // `error/log` is the program's own key in both runs
         let clean = vec![put(1, 0, "error/log", 200), put(2, 200, "error/log", 200)];
         let run = vec![
@@ -2901,7 +2911,7 @@ mod tests {
         // a program that writes its state twice and swallows errors: broke,
         // whatever other word of the two runs' names the key holds; the same
         // program retrying survived
-        let error = crate::fault::scenario("error").unwrap();
+        let error = sonde_proxy::fault::scenario("error").unwrap();
         for (scenario, clean_key, trial_key) in [
             (
                 slowdown(),
@@ -2985,7 +2995,8 @@ mod tests {
     #[test]
     fn a_400_request_timeout_is_owed_a_retry_as_episodes_and_signals_read_it() {
         let timeout =
-            crate::fault::project_scenario("timeout", "400 RequestTimeout", &[], "", None).unwrap();
+            sonde_proxy::fault::project_scenario("timeout", "400 RequestTimeout", &[], "", None)
+                .unwrap();
         let failed = |r: Record| {
             let mut r = fault(r, "timeout");
             r.rare_mut().error_body =
@@ -3054,8 +3065,8 @@ mod tests {
         );
     }
 
-    fn skew() -> crate::fault::Scenario {
-        crate::fault::scenario("skew").unwrap()
+    fn skew() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("skew").unwrap()
     }
 
     fn skewed(r: Record) -> Record {
@@ -3090,7 +3101,7 @@ mod tests {
 
     #[test]
     fn a_completion_answered_500_is_retried_or_looked_for_and_never_uploaded_again() {
-        let s = crate::fault::scenario("complete-500").unwrap();
+        let s = sonde_proxy::fault::scenario("complete-500").unwrap();
         let upload = |id, at| {
             let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
             r.lists_mut().query = vec![("uploads".into(), "".into())];
@@ -3173,8 +3184,8 @@ mod tests {
         );
     }
 
-    fn stall_scenario() -> crate::fault::Scenario {
-        crate::fault::scenario("slow-first-byte").unwrap()
+    fn stall_scenario() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("slow-first-byte").unwrap()
     }
 
     /// A download a stall held: answered after it, or given up on.
@@ -3191,7 +3202,7 @@ mod tests {
                 .push(Header::new("x-sonde-fault", "slow-first-byte"));
             r.lists_mut()
                 .response_headers
-                .push(Header::new(crate::fault::GIVEN_UP_HEADER, "1"));
+                .push(Header::new(sonde_proxy::fault::GIVEN_UP_HEADER, "1"));
         }
         r
     }
@@ -3243,7 +3254,7 @@ mod tests {
         let t = judge(&stall_scenario(), &clean, 0, &run, 0);
         assert_eq!((t.dropped_reads, t.standing), (1, Standing::Degraded));
         // a delay under a stall only slows: `slow` is not held to it
-        let slow = crate::fault::scenario("slow").unwrap();
+        let slow = sonde_proxy::fault::scenario("slow").unwrap();
         let mut late = get(1, 0, "a", 200);
         late.rare_mut().injected = Some("slow".into());
         late.latency_ms = 305.0;
@@ -3251,8 +3262,8 @@ mod tests {
         assert_eq!((t.held, t.standing), (0, Standing::Survived));
     }
 
-    fn stale_scenario() -> crate::fault::Scenario {
-        crate::fault::scenario("stale-list").unwrap()
+    fn stale_scenario() -> sonde_proxy::fault::Scenario {
+        sonde_proxy::fault::scenario("stale-list").unwrap()
     }
 
     fn listing(id: u64, at_ms: i64, prefix: &str, hidden: &[&str]) -> Record {
@@ -3270,7 +3281,7 @@ mod tests {
             for k in hidden {
                 r.lists_mut()
                     .response_headers
-                    .push(Header::new(crate::fault::HIDDEN_HEADER, *k));
+                    .push(Header::new(sonde_proxy::fault::HIDDEN_HEADER, *k));
             }
         }
         r
@@ -3390,7 +3401,7 @@ mod tests {
         assert_eq!((t.not_retryable, t.dropped_writes), (1, 0), "{}", t.line());
         assert_eq!(t.standing, Standing::Survived);
         // a 501 sonde answers is no more owed a retry than a 404
-        let s = crate::fault::Scenario {
+        let s = sonde_proxy::fault::Scenario {
             name: "no".into(),
             about: String::new(),
             rules: Vec::new(),
@@ -3423,7 +3434,7 @@ mod tests {
         let from = |mut r: Record, place: &str| {
             r.lists_mut()
                 .request_headers
-                .push(Header::new(crate::callers::CALLER_HEADER, place));
+                .push(Header::new(sonde_proxy::callers::CALLER_HEADER, place));
             r
         };
         let clean = vec![put(1, 0, "k", 200), put(2, 100, "k", 200)];
@@ -3457,7 +3468,7 @@ mod tests {
 
     #[test]
     fn a_delete_made_twice_and_a_create_the_store_was_asked_not_to_repeat_are_not_written_twice() {
-        let s = crate::fault::scenario("lost-answer").unwrap();
+        let s = sonde_proxy::fault::scenario("lost-answer").unwrap();
         let del = |id, at, status| rec(id, at, "DELETE", "DeleteObject", "a", status);
         let clean = vec![
             del(1, 0, 204),
@@ -3781,7 +3792,7 @@ mod tests {
     fn a_broke_verdict_says_where_and_what_to_change() {
         let from = |mut r: Record| {
             r.lists_mut().request_headers.push(Header::new(
-                crate::callers::CALLER_HEADER,
+                sonde_proxy::callers::CALLER_HEADER,
                 "/home/me/job/etl.py:12 in save",
             ));
             r.lists_mut().request_headers.push(Header::new(

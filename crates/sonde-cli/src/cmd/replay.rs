@@ -1,14 +1,14 @@
 //! `sonde compare --replay`: a run's requests sent again, to one store or several.
 
-use sonde_proxy::program::ms_text;
+use sonde_analysis::program::ms_text;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::profile::{Profile, profile};
+use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
-use sonde_proxy::profile::{Profile, profile};
-use sonde_proxy::run::RunFile;
 
 use crate::output::{self, Format};
 
@@ -67,7 +67,7 @@ pub async fn replay(
 }
 
 async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
-    use sonde_proxy::replay::{self as rp, ReplayOptions};
+    use sonde_analysis::replay::{self as rp, ReplayOptions};
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
     }
@@ -116,7 +116,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         None => {
             let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
-            sonde_proxy::run::fresh_path(
+            sonde_analysis::run::fresh_path(
                 &dir,
                 &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
             )
@@ -130,7 +130,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     })
     .await
     .map_err(|e| anyhow::anyhow!(e))?;
-    let _ = sonde_proxy::run::compress(&path);
+    let _ = sonde_analysis::run::compress(&path);
     if show {
         eprint!("\r\x1b[2K");
     }
@@ -219,7 +219,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
 /// own prefix (cleaned up after), and the stores are compared side by side:
 /// how many answers differ from the recording, and each kind's p95.
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
-    use sonde_proxy::replay::{self as rp, ReplayOptions};
+    use sonde_analysis::replay::{self as rp, ReplayOptions};
     let (asked, original) = super::runs::open(s, &a.file)?;
     let prefix = match &a.how.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
@@ -251,11 +251,11 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     std::fs::create_dir_all(&dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let runs = futures::future::join_all(targets.iter().map(|(id, client)| {
-        let path = sonde_proxy::run::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
+        let path = sonde_analysis::run::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
         let (original, opts) = (&original, &opts);
         async move {
             let run = rp::replay_to_file(client, original, opts, &path, |_, _| {}).await;
-            let _ = sonde_proxy::run::compress(&path);
+            let _ = sonde_analysis::run::compress(&path);
             (id.clone(), path, run)
         }
     }))
@@ -312,7 +312,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                 "endpoint": id,
                 "run": path,
                 "comparison": c,
-                "latency": sonde_proxy::profile::latency_changes(&before, p),
+                "latency": sonde_analysis::profile::latency_changes(&before, p),
             })).collect::<Vec<_>>(),
         });
         println!("{}", output::json(&doc));
@@ -366,7 +366,7 @@ fn replay_exit(failed: usize, differ: usize) -> i32 {
     }
 }
 
-fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
+fn opts_bucket(o: &sonde_analysis::replay::ReplayOptions, b: &str) -> String {
     o.buckets
         .iter()
         .find(|(from, _)| from == b)

@@ -50,11 +50,11 @@ async fn baseline_of(
         return Ok(Some((super::runs::resolve(s, &PathBuf::from(asked)), None)));
     }
     let dir = s.paths().runs();
-    let key = sonde_proxy::run::read_header(file)
+    let key = sonde_analysis::run::read_header(file)
         .as_ref()
-        .and_then(sonde_proxy::program::key_of);
+        .and_then(sonde_analysis::program::key_of);
     let found = key.and_then(|k| {
-        sonde_proxy::program::baselines(&dir)
+        sonde_analysis::program::baselines(&dir)
             .get(&k)
             .map(|n| dir.join(n))
             .filter(|p| p.is_file())
@@ -99,9 +99,9 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     // the run is read for what it amounts to, and each request is
     // written from the file as its turn comes
     let keep = if a.redact {
-        sonde_proxy::run::Keep::All
+        sonde_analysis::run::Keep::All
     } else {
-        sonde_proxy::run::Keep::Analysis
+        sonde_analysis::run::Keep::Analysis
     };
     let mut run = super::runs::read(&file, keep)?;
     // priced before redaction hides the endpoint
@@ -111,7 +111,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     let compare = match &base {
         None => {
             if a.redact {
-                sonde_proxy::report::redact(&mut run);
+                sonde_analysis::report::redact(&mut run);
             }
             None
         }
@@ -120,21 +120,23 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
             let name = super::check::run_line(path, Some(&before.header));
             if a.redact {
                 // both together: their names become the same tokens
-                sonde_proxy::report::redact_all(&mut [&mut before, &mut run]);
+                sonde_analysis::report::redact_all(&mut [&mut before, &mut run]);
             }
-            let run_of = |x: &sonde_proxy::run::RunFile| {
-                sonde_proxy::profile::Run::analysed(&x.header, &x.records, &prices)
+            let run_of = |x: &sonde_analysis::run::RunFile| {
+                sonde_analysis::profile::Run::analysed(&x.header, &x.records, &prices)
             };
-            let change = sonde_proxy::profile::compare_runs(&run_of(&before), &run_of(&run))
+            let change = sonde_analysis::profile::compare_runs(&run_of(&before), &run_of(&run))
                 .of_programs(
-                    sonde_proxy::program::key_of(&before.header).as_deref(),
-                    sonde_proxy::program::key_of(&run.header).as_deref(),
+                    sonde_analysis::program::key_of(&before.header).as_deref(),
+                    sonde_analysis::program::key_of(&run.header).as_deref(),
                 );
-            let signals =
-                |x: &sonde_proxy::run::RunFile| sonde_proxy::signals::signals(&x.records, &prices);
-            let profile =
-                |x: &sonde_proxy::run::RunFile| sonde_proxy::profile::profile(&x.records, &prices);
-            let compared = sonde_proxy::share::Compared {
+            let signals = |x: &sonde_analysis::run::RunFile| {
+                sonde_analysis::signals::signals(&x.records, &prices)
+            };
+            let profile = |x: &sonde_analysis::run::RunFile| {
+                sonde_analysis::profile::profile(&x.records, &prices)
+            };
+            let compared = sonde_analysis::share::Compared {
                 name,
                 change,
                 signals: [signals(&before), signals(&run)],
@@ -147,7 +149,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     // written whole beside it, then put in its place: a page that could not be made leaves nothing
     let part = PathBuf::from(format!("{}.part", out.display()));
     let written = std::fs::File::create(&part).and_then(|page| {
-        sonde_proxy::share::write_page(&run, full, &prices, compare.as_ref(), page)
+        sonde_analysis::share::write_page(&run, full, &prices, compare.as_ref(), page)
     });
     if let Err(e) = written.and_then(|()| std::fs::rename(&part, &out)) {
         let _ = std::fs::remove_file(&part);

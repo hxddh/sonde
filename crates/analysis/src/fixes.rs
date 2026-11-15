@@ -191,7 +191,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
     }
 }
 
-/// The language of an SDK as [`crate::callers::sdk`] names it (`boto3
+/// The language of an SDK as [`sonde_proxy::callers::sdk`] names it (`boto3
 /// 1.44`): what picks the fix shown for it.
 pub fn language(sdk: &str) -> Option<&'static str> {
     let name = sdk.split_whitespace().next().unwrap_or("");

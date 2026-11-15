@@ -5,9 +5,9 @@ use std::io::IsTerminal;
 use std::sync::Arc;
 
 use reqlog::Record;
+use sonde_analysis::episode::episodes;
+use sonde_analysis::run::{RunFile, RunHeader};
 use sonde_core::Sonde;
-use sonde_proxy::episode::episodes;
-use sonde_proxy::run::{RunFile, RunHeader};
 
 use crate::output;
 
@@ -46,7 +46,7 @@ fn hold_unfinished(records: &mut Vec<Record>) -> Vec<Record> {
     let held: std::collections::HashSet<u64> = episodes(records)
         .iter()
         .filter(|e| {
-            e.shape == sonde_proxy::episode::Shape::Multipart
+            e.shape == sonde_analysis::episode::Shape::Multipart
                 && e.title().ends_with("(not completed)")
                 && newest - e.start < UPLOAD_WAITED
         })
@@ -113,12 +113,12 @@ pub(super) async fn import_logs(
     let client = s.client(&ep)?;
     let dir = s.paths().runs();
     std::fs::create_dir_all(&dir)?;
-    let key = format!("{}s3://{bucket}/{prefix}", sonde_proxy::program::LOGS_OF);
+    let key = format!("{}s3://{bucket}/{prefix}", sonde_analysis::program::LOGS_OF);
     // where the last import of the source got to, as the folder's index
     // keeps it: the newest file's time read, and the files read near it
     // (logs arrive late, and prefixes of regions or days list in any order,
     // so a time and the files seen, not the last key listed)
-    let mut mark: LogsMark = sonde_proxy::index::of(&dir)
+    let mut mark: LogsMark = sonde_analysis::index::of(&dir)
         .folder
         .marks
         .get(&key)
@@ -188,9 +188,9 @@ pub(super) async fn import_logs(
             }
         };
         downloaded += 1;
-        let text = sonde_proxy::import::text_of(&r.body)
+        let text = sonde_analysis::import::text_of(&r.body)
             .unwrap_or_else(|_| String::from_utf8_lossy(&r.body).into_owned());
-        if let Ok(i) = sonde_proxy::import::import_counted(&text, k) {
+        if let Ok(i) = sonde_analysis::import::import_counted(&text, k) {
             logs += 1;
             if i.malformed > 0 {
                 eprintln!(
@@ -236,9 +236,9 @@ pub(super) async fn import_logs(
     // the seen files old enough to be past the grace are forgotten
     mark.forget_old();
     if let Ok(v) = serde_json::to_value(&mark) {
-        let _ = sonde_proxy::index::update(&dir, |_| {
+        let _ = sonde_analysis::index::update(&dir, |_| {
             (
-                vec![(key.clone(), sonde_proxy::index::Change::Mark(Some(v)))],
+                vec![(key.clone(), sonde_analysis::index::Change::Mark(Some(v)))],
                 (),
             )
         });
@@ -257,7 +257,7 @@ pub(super) async fn import_logs(
     }
     let mut header = RunHeader::new(&ep, "", "", Some(key.clone()));
     header.created = chrono::Utc::now();
-    let path = sonde_proxy::run::fresh_path(
+    let path = sonde_analysis::run::fresh_path(
         &dir,
         &format!(
             "{}-logs-{bucket}",
@@ -269,7 +269,7 @@ pub(super) async fn import_logs(
         records,
         logs: Vec::new(),
     };
-    sonde_proxy::import::save(&run, &path)?;
+    sonde_analysis::import::save(&run, &path)?;
     drop(run);
     super::record::show_file(s, &path).await?;
     Ok(code)
@@ -278,7 +278,7 @@ pub(super) async fn import_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sonde_proxy::episode::observations;
+    use sonde_analysis::episode::observations;
 
     /// One import of the logs at `src` through `endpoint`.
     async fn import(s: &Arc<Sonde>, endpoint: &str, src: &str) -> i32 {

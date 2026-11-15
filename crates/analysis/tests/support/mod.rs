@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
 use reqlog::{Header, Record};
-use sonde_proxy::run::RunHeader;
+use sonde_analysis::run::RunHeader;
 
 /// A small generator of its own: the same numbers on every machine.
 pub struct Rng(u64);

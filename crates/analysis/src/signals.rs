@@ -290,7 +290,7 @@ fn took_ms(r: &Record) -> f64 {
     }
 }
 
-/// A request's name, as its retry repeats it: [`crate::fault::identity_of`]
+/// A request's name, as its retry repeats it: [`sonde_proxy::fault::identity_of`]
 /// and its `Range` (two ranges of one object are two requests).
 pub(crate) fn request_name(r: &Record) -> String {
     let range = r
@@ -298,7 +298,7 @@ pub(crate) fn request_name(r: &Record) -> String {
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("range"))
         .map_or("", |h| h.value.trim());
-    format!("{} {range}", crate::fault::identity_of(r))
+    format!("{} {range}", sonde_proxy::fault::identity_of(r))
 }
 
 /// Which records are requests the program gave up on: a failure (not a
@@ -316,7 +316,7 @@ pub fn gave_up(records: &[Record]) -> Vec<bool> {
 /// Each retry, as (the failure, the record that sent it again), by index:
 /// the same request sent again after a failure that asks for it.
 ///
-/// The rule. A request is named by [`crate::fault::identity_of`] and its
+/// The rule. A request is named by [`sonde_proxy::fault::identity_of`] and its
 /// `Range` (two ranges of one object are two requests). After a retryable
 /// failure ([`crate::episode::retryable`]: no answer, a 408, 429, 500, 502,
 /// 503 or 504, SlowDown), its retry is the next request of that name, in

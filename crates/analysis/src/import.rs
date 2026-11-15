@@ -396,7 +396,8 @@ fn record(
     status: u16,
     latency_ms: f64,
 ) -> Record {
-    let operation = crate::op::classify(method, bucket.as_deref(), key.as_deref(), &query, &[]);
+    let operation =
+        sonde_proxy::op::classify(method, bucket.as_deref(), key.as_deref(), &query, &[]);
     Record {
         time,
         method: method.into(),
@@ -747,7 +748,7 @@ fn har(
             },
         };
         let mut query = url.query().map(query_of).unwrap_or_default();
-        query.retain(|(k, _)| !crate::PRESIGN_PARAMS.contains(&k.as_str()));
+        query.retain(|(k, _)| !sonde_proxy::PRESIGN_PARAMS.contains(&k.as_str()));
         let headers: Vec<(String, String)> = req["headers"]
             .as_array()
             .map(|h| {
@@ -804,7 +805,7 @@ fn har(
             status,
             e["time"].as_f64().unwrap_or(0.0),
         );
-        r.kind = crate::op::classify(
+        r.kind = sonde_proxy::op::classify(
             method,
             r.bucket.as_deref(),
             r.key.as_deref(),
@@ -828,7 +829,7 @@ fn har(
         if url.query().is_some() {
             let kept: Vec<(String, String)> = url
                 .query_pairs()
-                .filter(|(k, _)| !crate::PRESIGN_PARAMS.contains(&k.as_ref()))
+                .filter(|(k, _)| !sonde_proxy::PRESIGN_PARAMS.contains(&k.as_ref()))
                 .map(|(k, v)| (k.into_owned(), v.into_owned()))
                 .collect();
             if kept.is_empty() {

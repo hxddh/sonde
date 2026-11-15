@@ -275,7 +275,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
         "{}",
         String::from_utf8_lossy(&set.stderr)
     );
-    assert!(!sonde_proxy::program::baselines(&t.path().join("data/runs")).is_empty());
+    assert!(!sonde_analysis::program::baselines(&t.path().join("data/runs")).is_empty());
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     // the mechanism, not this machine's timing: two runs of the demo may differ by more than 10% in waiting
@@ -1165,7 +1165,7 @@ fn demo_file(dirs: &Path) -> std::path::PathBuf {
 /// fixture's requests.
 fn run_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
     let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../proxy/tests/fixtures/sdk-python.sonde");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../analysis/tests/fixtures/sdk-python.sonde");
     let text = std::fs::read_to_string(fixture).unwrap();
     let (header, records) = text.split_once('\n').unwrap();
     let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
@@ -1306,7 +1306,7 @@ fn runs_are_listed_from_what_was_counted_in_the_folders_index() {
     let file = demo_file(t.path());
     // counted when it was recorded: in the folder's one index, with all else
     // kept beside the runs (a program's findings too): no other file there
-    let counted = || sonde_proxy::index::get(&file).counted.is_some();
+    let counted = || sonde_analysis::index::get(&file).counted.is_some();
     assert!(counted());
     let beside: Vec<String> = std::fs::read_dir(file.parent().unwrap())
         .unwrap()
@@ -1326,7 +1326,7 @@ fn runs_are_listed_from_what_was_counted_in_the_folders_index() {
     assert_eq!(listed[0]["program"], "tour");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
-    sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
+    sonde_analysis::index::set(&file, sonde_analysis::index::Change::NoCounted);
     assert!(!counted());
     assert!(stdout(&sonde(t.path(), &["runs"])).contains("tour"));
     assert!(counted());
@@ -1681,13 +1681,13 @@ fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
         "2026-11-09T02:00:00Z",
     );
     // a verdict kept in the folder's index
-    let broke: Vec<sonde_proxy::trial::Trial> = serde_json::from_str(
+    let broke: Vec<sonde_analysis::trial::Trial> = serde_json::from_str(
         r#"[{"scenario":"slowdown","about":"503 SlowDown","standing":"broke","exit":1,"cleanExit":0,
             "faults":2,"retried":0,"droppedReads":0,"droppedWrites":2,"attempts":1,"requests":10,
             "cleanRequests":13,"leftUploads":0,"wroteTwice":0,"reasons":["exited 1"]}]"#,
     )
     .unwrap();
-    sonde_proxy::trial::save(&file, &broke).unwrap();
+    sonde_analysis::trial::save(&file, &broke).unwrap();
     let c = sonde(t.path(), &["check", file.to_str().unwrap(), "-f", "json"]);
     assert_eq!(c.status.code(), Some(1), "{}{}", stdout(&c), stderr(&c));
     let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
@@ -1796,7 +1796,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     ];
     for r in runs {
         let from = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../proxy/tests/fixtures")
+            .join("../analysis/tests/fixtures")
             .join(format!("{r}.sonde"));
         std::fs::copy(from, dir.join(format!("{r}.sonde"))).unwrap();
     }
@@ -1908,7 +1908,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     header["created"] = "2030-01-01T00:00:00Z".into();
     let crashed = dir.join("etl-6-crashed.sonde");
     std::fs::write(&crashed, format!("{header}\n{records}")).unwrap();
-    sonde_proxy::index::set(&crashed, sonde_proxy::index::Change::Exit(3));
+    sonde_analysis::index::set(&crashed, sonde_analysis::index::Change::Exit(3));
     let s = stdout(&sonde(t.path(), &["show", "etl-6-crashed"]));
     assert!(s.contains("the run failed (exit 3); not compared"), "{s}");
     assert!(!s.contains("fixed"), "{s}");

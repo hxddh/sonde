@@ -5,13 +5,13 @@
 use std::path::Path;
 
 use reqlog::Record;
+use sonde_analysis::episode::Observation;
+use sonde_analysis::fixloop::{FindingChange, SinceLast, State};
+use sonde_analysis::profile::RunChange;
+use sonde_analysis::program::{money_text, ms_text};
+use sonde_analysis::run::RunHeader;
+use sonde_analysis::view::Analysis;
 use sonde_core::Sonde;
-use sonde_proxy::episode::Observation;
-use sonde_proxy::fixloop::{FindingChange, SinceLast, State};
-use sonde_proxy::profile::RunChange;
-use sonde_proxy::program::{money_text, ms_text};
-use sonde_proxy::run::RunHeader;
-use sonde_proxy::view::Analysis;
 
 use super::record::{paint, request_prices_for};
 use crate::output;
@@ -41,7 +41,7 @@ pub(super) fn finding_lines(o: &Observation, sdk: Option<&str>, color: bool) -> 
         ));
     }
     let sdk = o.sdk.as_deref().or(sdk);
-    if let Some(fix) = sonde_proxy::fixes::for_sdk(&o.fixes, sdk) {
+    if let Some(fix) = sonde_analysis::fixes::for_sdk(&o.fixes, sdk) {
         let whose = match (fix.sdk, sdk) {
             ("config", _) | (_, None) => "fix:".to_string(),
             (_, Some(sdk)) => format!("fix for {}:", sdk.split(' ').next().unwrap_or(sdk)),
@@ -165,8 +165,8 @@ fn figures_line(c: &RunChange) -> String {
 /// A cost before and after as [`moved`] says it; under a cent, its share
 /// alone (`-9%`).
 pub(super) fn cost_moved((a, b): (f64, f64), currency: &str) -> String {
-    if a.max(b) < sonde_proxy::program::CENT {
-        return sonde_proxy::program::share_moved(a, b);
+    if a.max(b) < sonde_analysis::program::CENT {
+        return sonde_analysis::program::share_moved(a, b);
     }
     moved(a, b, |v| money_text(v, currency))
 }
@@ -224,7 +224,7 @@ pub(super) fn since_last(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sonde_proxy::fixloop::Saving;
+    use sonde_analysis::fixloop::Saving;
 
     #[test]
     fn a_figure_that_did_not_move_says_no_change_not_plus_zero_percent() {

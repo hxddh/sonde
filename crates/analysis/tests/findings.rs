@@ -2,7 +2,7 @@
 
 use chrono::DateTime;
 use reqlog::Record;
-use sonde_proxy::episode::{Observation, episodes, observations};
+use sonde_analysis::episode::{Observation, episodes, observations};
 
 fn rec(id: u64, at_ms: i64, op: &str, key: Option<&str>, status: u16, latency: f64) -> Record {
     let method = match op {
@@ -152,7 +152,7 @@ fn warnings_come_first_then_the_findings_that_bear_on_more_requests() {
 
 #[test]
 fn a_finding_whose_details_change_is_the_same_finding() {
-    use sonde_proxy::profile::{RequestPrices, Run, compare_runs, profile};
+    use sonde_analysis::profile::{RequestPrices, Run, compare_runs, profile};
     let run = |slow: &str| {
         let mut recs: Vec<Record> = (0..20u64)
             .map(|i| rec(i + 1, i as i64 * 100, "GetObject", Some("k"), 200, 8.0))
@@ -267,7 +267,7 @@ fn a_prefix_near_s3s_rate_per_prefix_is_named() {
             )
         })
         .collect();
-    let p = sonde_proxy::profile::profile(&recs, &Default::default());
+    let p = sonde_analysis::profile::profile(&recs, &Default::default());
     assert_eq!(p.prefixes[0].prefix, "b/logs/2026/");
     assert_eq!(p.prefixes[0].peak_reads, 3000);
     assert!(
@@ -341,7 +341,7 @@ fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() 
             )
         })
         .collect();
-    let p = sonde_proxy::profile::profile(&recs, &Default::default());
+    let p = sonde_analysis::profile::profile(&recs, &Default::default());
     assert_eq!(p.chains.len(), 1);
     assert_eq!(p.chains[0].requests, 40);
     assert!(
@@ -380,7 +380,7 @@ fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() 
         })
         .collect();
     assert!(
-        sonde_proxy::profile::profile(&together, &Default::default())
+        sonde_analysis::profile::profile(&together, &Default::default())
             .chains
             .is_empty()
     );

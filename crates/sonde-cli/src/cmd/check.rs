@@ -1,16 +1,16 @@
 //! `sonde check`: a run held to a budget and a baseline.
 
+use sonde_analysis::program::{money_text, ms_text};
 use sonde_proxy::callers::code_place;
-use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Args;
+use sonde_analysis::project::Project;
+use sonde_analysis::run::{RunFile, RunHeader};
+use sonde_analysis::view::Analysis;
 use sonde_core::Sonde;
-use sonde_proxy::project::Project;
-use sonde_proxy::run::{RunFile, RunHeader};
-use sonde_proxy::view::Analysis;
 
 use crate::output;
 
@@ -87,17 +87,17 @@ pub enum Format {
 /// A run as `check` reads it: its figures, profile, findings and header,
 /// and the run as `compare` holds it when it is compared.
 type Checked = (
-    sonde_proxy::program::RunPoint,
-    sonde_proxy::profile::Profile,
-    Vec<sonde_proxy::episode::Observation>,
+    sonde_analysis::program::RunPoint,
+    sonde_analysis::profile::Profile,
+    Vec<sonde_analysis::episode::Observation>,
     RunHeader,
-    Option<sonde_proxy::profile::Run>,
+    Option<sonde_analysis::profile::Run>,
 );
 
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
 /// A duration on the command line, as `sonde.toml` writes one.
 fn duration_arg(text: &str) -> Result<f64, String> {
-    sonde_proxy::project::duration_text(text)
+    sonde_analysis::project::duration_text(text)
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
 }
 
@@ -121,7 +121,7 @@ fn of_project(h: &RunHeader, project: &Path, name: Option<&str>) -> bool {
 
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
 /// with room to grow, and the CI step that holds every run to it.
-fn init_project(a: &CheckArgs, run: &sonde_proxy::program::RunPoint) -> anyhow::Result<i32> {
+fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyhow::Result<i32> {
     let path = a
         .config
         .clone()
@@ -136,7 +136,7 @@ fn init_project(a: &CheckArgs, run: &sonde_proxy::program::RunPoint) -> anyhow::
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
-    let waiting = (run.waiting_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
+    let waiting = (run.waiting_ms * grow + sonde_analysis::program::WAITING_SLACK_MS).ceil();
     let text = [
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
@@ -198,14 +198,14 @@ fn action_line() -> String {
 }
 
 /// The runs of `key` up to `upto` (oldest first, 30 at most), each with
-/// the commit it recorded: what [`sonde_proxy::program::since`] walks.
+/// the commit it recorded: what [`sonde_analysis::program::since`] walks.
 fn program_runs(
     s: &Sonde,
     key: &str,
-    upto: (&Path, &RunHeader, &sonde_proxy::program::RunPoint),
+    upto: (&Path, &RunHeader, &sonde_analysis::program::RunPoint),
 ) -> Vec<(
-    sonde_proxy::program::RunPoint,
-    Option<sonde_proxy::run::GitStamp>,
+    sonde_analysis::program::RunPoint,
+    Option<sonde_analysis::run::GitStamp>,
 )> {
     let dir = s.paths().runs();
     let (upto, upto_header, upto_point) = upto;
@@ -217,8 +217,9 @@ fn program_runs(
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
-            let h = sonde_proxy::run::read_header(&p)?;
-            (sonde_proxy::program::key_of(&h).as_deref() == Some(key) && h.created <= upto_created)
+            let h = sonde_analysis::run::read_header(&p)?;
+            (sonde_analysis::program::key_of(&h).as_deref() == Some(key)
+                && h.created <= upto_created)
                 .then_some((h.created, p))
         })
         .collect();
@@ -231,9 +232,9 @@ fn program_runs(
     let mut runs: Vec<_> = found[from..]
         .iter()
         .filter_map(|(_, p)| {
-            let endpoint = sonde_proxy::run::read_header(p)?.endpoint;
+            let endpoint = sonde_analysis::run::read_header(p)?.endpoint;
             let (counted, figures) =
-                sonde_proxy::summary::figures(p, &request_prices_for(s, &endpoint))?;
+                sonde_analysis::summary::figures(p, &request_prices_for(s, &endpoint))?;
             Some((figures.point, counted.git))
         })
         .collect();
@@ -241,12 +242,12 @@ fn program_runs(
     runs
 }
 
-/// [`sonde_proxy::program::Since`] in a line: "over the baseline since
+/// [`sonde_analysis::program::Since`] in a line: "over the baseline since
 /// a1b2c3d, 2 runs ago; within at 9f8e7d6", or "the run before, at
 /// 9f8e7d6, was within it" when this run is the first past it. None when
 /// this run is the only one known: the verdict says it all.
-fn since_line(s: &sonde_proxy::program::Since) -> Option<String> {
-    let short = |g: &Option<sonde_proxy::run::GitStamp>, path: &str| match g {
+fn since_line(s: &sonde_analysis::program::Since) -> Option<String> {
+    let short = |g: &Option<sonde_analysis::run::GitStamp>, path: &str| match g {
         Some(g) => format!(
             "{}{}",
             &g.commit[..g.commit.len().min(7)],
@@ -366,7 +367,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
         return Ok(64);
     }
-    use sonde_proxy::program::{Budget, check, run_point};
+    use sonde_analysis::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
     let loaded = if a.init {
@@ -395,7 +396,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let mut project = loaded.file.check;
     if a.config.is_none()
         && let Some(toml) = &project_path
-        && let Some(h) = sonde_proxy::run::read_header(&file)
+        && let Some(h) = sonde_analysis::run::read_header(&file)
         && !of_project(&h, toml, project_name.as_deref())
     {
         let whose = match &project_name {
@@ -404,7 +405,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         };
         eprintln!(
             "note: the run is of `{}`, {whose}: its [check] is not applied",
-            sonde_proxy::program::key_of(&h)
+            sonde_analysis::program::key_of(&h)
                 .as_deref()
                 .unwrap_or("no command"),
         );
@@ -439,7 +440,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<Checked> {
-        let opened = super::runs::read(p, sonde_proxy::run::Keep::Analysis)?;
+        let opened = super::runs::read(p, sonde_analysis::run::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
@@ -454,7 +455,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             &ob,
         );
         let run = traced.then(|| {
-            sonde_proxy::profile::Run::of_run(
+            sonde_analysis::profile::Run::of_run(
                 &opened.header,
                 &opened.records,
                 &episodes,
@@ -474,10 +475,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     let run = read(&file)?;
     let header = run.3.clone();
-    let program = sonde_proxy::program::key_of(&header);
+    let program = sonde_analysis::program::key_of(&header);
     let dir = s.paths().runs();
     // the program failed: as the run's folder kept it when the program ended
-    let failed = sonde_proxy::fixloop::failed(&file);
+    let failed = sonde_analysis::fixloop::failed(&file);
     // a run that failed holds nothing to: what it did not get to is not there
     if let Some(x) = failed.filter(|_| a.init || a.set_baseline) {
         eprintln!(
@@ -494,7 +495,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if run.0.requests == 0 && (a.init || a.set_baseline) {
         eprintln!(
             "{}: the run recorded no request, so it is no {}. {}",
-            sonde_proxy::program::NOTHING_REACHED,
+            sonde_analysis::program::NOTHING_REACHED,
             if a.init {
                 "budget's source"
             } else {
@@ -527,7 +528,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        sonde_proxy::program::set_baseline(&dir, key, Some(&name))?;
+        sonde_analysis::program::set_baseline(&dir, key, Some(&name))?;
         eprintln!("baseline for `{key}`: {}", file.display());
     }
     let mut no_baseline: Option<String> = None;
@@ -538,7 +539,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         None => None,
         Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
         Some("auto") => {
-            let all = sonde_proxy::program::baselines(&dir);
+            let all = sonde_analysis::program::baselines(&dir);
             let found = program
                 .as_ref()
                 .and_then(|k| all.get(k).map(|n| dir.join(n)).filter(|p| p.is_file()));
@@ -565,11 +566,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     let base_program = match &base {
         Some(_) if by_program => program.clone(),
-        Some(b) => sonde_proxy::program::key_of(&b.3),
+        Some(b) => sonde_analysis::program::key_of(&b.3),
         None => None,
     };
     if let Some(b) = &base {
-        let bp = sonde_proxy::program::key_of(&b.3);
+        let bp = sonde_analysis::program::key_of(&b.3);
         if !by_program && bp != program {
             eprintln!(
                 "note: the baseline ran `{}`, this run `{}`",
@@ -604,9 +605,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     );
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
-    use sonde_proxy::program::{run_closing, run_passed};
+    use sonde_analysis::program::{run_closing, run_passed};
     // each scenario with what it was before ("broke on 12 Nov, survived since")
-    let trials = sonde_proxy::trial::load_with_history(&file, program.as_deref());
+    let trials = sonde_analysis::trial::load_with_history(&file, program.as_deref());
     // `c.passed` is of its rows; the whole check also fails on a trial that
     // broke, and on a program that failed
     let passed = run_passed(&c, &trials, failed);
@@ -621,7 +622,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if c.empty {
         eprintln!(
             "{}: the run recorded no request. {}",
-            sonde_proxy::program::NOTHING_REACHED,
+            sonde_analysis::program::NOTHING_REACHED,
             NOT_THROUGH_SONDE
         );
     }
@@ -657,7 +658,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let since = match (&base, &program) {
         (Some(b), Some(key)) if !c.passed => {
             let runs = program_runs(s, key, (&file, &header, &run.0));
-            sonde_proxy::program::since(&runs, &b.0, budget.tolerance.unwrap_or(0.1))
+            sonde_analysis::program::since(&runs, &b.0, budget.tolerance.unwrap_or(0.1))
         }
         _ => None,
     };
@@ -666,11 +667,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // is gone, not measured: no record is counted here)
     let change = match (&base, &run.4) {
         (Some(b), Some(r)) => b.4.as_ref().map(|br| {
-            sonde_proxy::profile::compare_runs(br, r)
+            sonde_analysis::profile::compare_runs(br, r)
                 .of_programs(base_program.as_deref(), program.as_deref())
                 .of_exits((
-                    base_path.as_deref().and_then(sonde_proxy::fixloop::failed),
-                    sonde_proxy::fixloop::failed(&file),
+                    base_path
+                        .as_deref()
+                        .and_then(sonde_analysis::fixloop::failed),
+                    sonde_analysis::fixloop::failed(&file),
                 ))
         }),
         _ => None,
@@ -723,7 +726,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 "::error title=sonde check::{}",
                 gh_escape(&format!(
                     "{}: the run recorded no request. {NOT_THROUGH_SONDE}",
-                    sonde_proxy::program::NOTHING_REACHED
+                    sonde_analysis::program::NOTHING_REACHED
                 ))
             );
         }
@@ -761,7 +764,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         for t in trials
             .iter()
-            .filter(|t| t.standing == sonde_proxy::trial::Standing::Broke)
+            .filter(|t| t.standing == sonde_analysis::trial::Standing::Broke)
         {
             println!(
                 "::error title=sonde check::{}",
@@ -770,8 +773,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         for t in &trials {
             let said = match t.standing {
-                sonde_proxy::trial::Standing::Degraded => "degraded under",
-                sonde_proxy::trial::Standing::Refused => "refused by the policy under",
+                sonde_analysis::trial::Standing::Degraded => "degraded under",
+                sonde_analysis::trial::Standing::Refused => "refused by the policy under",
                 _ => continue,
             };
             println!(
@@ -787,11 +790,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         for f in run.2.iter().take(10) {
             // what the project expects is said, never warned of
-            let level = if f.level == "warn" && !sonde_proxy::program::expected(f, &budget.expect) {
-                "warning"
-            } else {
-                "notice"
-            };
+            let level =
+                if f.level == "warn" && !sonde_analysis::program::expected(f, &budget.expect) {
+                    "warning"
+                } else {
+                    "notice"
+                };
             match f.callers.first().and_then(|c| code_place(&c.place)) {
                 Some((file, line)) => println!(
                     "::{level} file={},line={line},title=sonde::{}",
@@ -808,9 +812,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if matches!(a.format, Format::Markdown) {
         print!(
             "{}",
-            sonde_proxy::program::check_comment(
+            sonde_analysis::program::check_comment(
                 &c,
-                &sonde_proxy::program::Comment {
+                &sonde_analysis::program::Comment {
                     currency: &run.0.currency,
                     since: since_text.as_deref(),
                     findings: &run.2,
@@ -822,7 +826,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 }
             )
         );
-        println!("\n*{}*", sonde_proxy::program::md_text(&judged));
+        println!("\n*{}*", sonde_analysis::program::md_text(&judged));
         return Ok(if passed { 0 } else { 1 });
     }
     let rows: Vec<Vec<String>> = c
@@ -856,7 +860,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
     }
     for t in &trials {
-        use sonde_proxy::trial::Standing;
+        use sonde_analysis::trial::Standing;
         println!(
             "{}  {}{}",
             paint(
@@ -910,7 +914,7 @@ fn no_baseline_text(program: Option<&str>) -> String {
 /// A run by name and time, as `sonde check` says which run it judged:
 /// `run 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
 /// as `sonde runs` lists it.
-pub(super) fn run_line(file: &Path, header: Option<&sonde_proxy::run::RunHeader>) -> String {
+pub(super) fn run_line(file: &Path, header: Option<&sonde_analysis::run::RunHeader>) -> String {
     let name = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -937,7 +941,7 @@ pub(super) fn run_line(file: &Path, header: Option<&sonde_proxy::run::RunHeader>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sonde_proxy::program::md_text;
+    use sonde_analysis::program::md_text;
 
     #[test]
     fn a_findings_text_is_shown_as_written_in_a_pr_comment() {
@@ -947,7 +951,7 @@ mod tests {
         );
         // sonde's own sentence keeps its code spans spans: 20.0 escaped
         // their backticks, and the comment showed them
-        use sonde_proxy::program::md_said;
+        use sonde_analysis::program::md_said;
         assert_eq!(
             md_said("no baseline yet for program `python etl_job.py --x *`"),
             "no baseline yet for program `python etl_job.py --x *`"
@@ -976,8 +980,8 @@ mod tests {
 
     #[test]
     fn since_says_the_runs_and_commits_around_and_never_this_run_as_a_commit() {
-        use sonde_proxy::program::Since;
-        use sonde_proxy::run::GitStamp;
+        use sonde_analysis::program::Since;
+        use sonde_analysis::run::GitStamp;
         let at = |c: &str| {
             Some(GitStamp {
                 commit: c.into(),

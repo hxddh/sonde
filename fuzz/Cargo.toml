@@ -22,7 +22,7 @@ bytes = "1"
 futures = "0.3"
 decoders = { path = "../crates/decoders" }
 s3raw = { path = "../crates/s3raw" }
-sonde-proxy = { path = "../crates/proxy" }
+sonde-analysis = { path = "../crates/analysis" }
 
 # a workspace of its own: the repository's does not build it
 [workspace]

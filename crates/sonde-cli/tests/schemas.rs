@@ -294,8 +294,8 @@ async fn every_json_output_is_as_its_schema_says() {
     // the run tried under a fault, and its program tried before: a verdict
     // with its history
     {
-        use sonde_proxy::trial;
-        let clean = sonde_proxy::run::RunFile::open(&run).unwrap();
+        use sonde_analysis::trial;
+        let clean = sonde_analysis::run::RunFile::open(&run).unwrap();
         let slowdown = sonde_proxy::fault::scenario("slowdown").unwrap();
         let now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
         trial::save(&run, std::slice::from_ref(&now)).unwrap();
@@ -324,8 +324,8 @@ async fn every_json_output_is_as_its_schema_says() {
         .unwrap();
         let q = b.path("quiet.sonde");
         let text = std::fs::read_to_string(&quiet).unwrap();
-        let (_, run) = sonde_proxy::import::import(&text, "quiet").unwrap();
-        sonde_proxy::import::save(&run, &q).unwrap();
+        let (_, run) = sonde_analysis::import::import(&text, "quiet").unwrap();
+        sonde_analysis::import::save(&run, &q).unwrap();
         let q = q.to_str().unwrap();
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);

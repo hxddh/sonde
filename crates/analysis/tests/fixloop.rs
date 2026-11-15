@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use chrono::DateTime;
 use reqlog::Record;
-use sonde_proxy::fixloop::{self, State};
-use sonde_proxy::profile::{RequestPrices, Run, compare_runs};
-use sonde_proxy::run::RunFile;
+use sonde_analysis::fixloop::{self, State};
+use sonde_analysis::profile::{RequestPrices, Run, compare_runs};
+use sonde_analysis::run::RunFile;
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -147,11 +147,17 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     );
 
     // an older run shown again changes nothing kept
-    let before = sonde_proxy::index::of(dir.path()).folder.findings.clone();
+    let before = sonde_analysis::index::of(dir.path())
+        .folder
+        .findings
+        .clone();
     let again = since(RUNS[2]);
     assert_eq!(state_of(&again.findings, "obs.headget"), State::Fixed);
     assert_eq!(
-        sonde_proxy::index::of(dir.path()).folder.findings.clone(),
+        sonde_analysis::index::of(dir.path())
+            .folder
+            .findings
+            .clone(),
         before
     );
 }
@@ -179,11 +185,11 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
     let after: Vec<Record> = (1..=3).map(|i| get(i, "hot")).collect();
     let once: Vec<Record> = vec![get(1, "hot")];
     let of = |rs: &[Record]| {
-        let eps = sonde_proxy::episode::episodes(rs);
+        let eps = sonde_analysis::episode::episodes(rs);
         Run::of(
             rs,
-            sonde_proxy::profile::profile(rs, &RequestPrices::default()),
-            sonde_proxy::episode::observations(rs, &eps),
+            sonde_analysis::profile::profile(rs, &RequestPrices::default()),
+            sonde_analysis::episode::observations(rs, &eps),
         )
     };
     let a = of(&before);
@@ -265,11 +271,11 @@ fn changing_run(seed: u64) -> Vec<Record> {
 }
 
 fn run_of(rs: &[Record]) -> Run {
-    let eps = sonde_proxy::episode::episodes(rs);
+    let eps = sonde_analysis::episode::episodes(rs);
     Run::of(
         rs,
-        sonde_proxy::profile::profile(rs, &RequestPrices::default()),
-        sonde_proxy::episode::observations(rs, &eps),
+        sonde_analysis::profile::profile(rs, &RequestPrices::default()),
+        sonde_analysis::episode::observations(rs, &eps),
     )
 }
 
@@ -301,9 +307,9 @@ fn two_runs_of_an_unchanged_program_whose_keys_change_every_run_read_no_change()
 }
 
 /// A run of `records` written to `path`, as `sonde run` leaves one.
-fn write_run(path: &Path, header: &sonde_proxy::run::RunHeader, records: &[Record]) {
+fn write_run(path: &Path, header: &sonde_analysis::run::RunHeader, records: &[Record]) {
     use reqlog::Sink;
-    let w = sonde_proxy::run::RunWriter::create(path, header).unwrap();
+    let w = sonde_analysis::run::RunWriter::create(path, header).unwrap();
     for r in records {
         w.write(r);
     }
@@ -316,15 +322,15 @@ fn ran(dir: &Path, minute: i64, records: &[Record], exit: Option<i32>) -> fixloo
     let (path, header) = job(dir, minute);
     write_run(&path, &header, records);
     if let Some(x) = exit {
-        sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(x));
+        sonde_analysis::index::set(&path, sonde_analysis::index::Change::Exit(x));
     }
     shown(dir, minute, records)
 }
 
 /// The run of `job` recorded `minute` minutes in: its path and header.
-fn job(dir: &Path, minute: i64) -> (PathBuf, sonde_proxy::run::RunHeader) {
+fn job(dir: &Path, minute: i64) -> (PathBuf, sonde_analysis::run::RunHeader) {
     let mut header =
-        sonde_proxy::run::RunHeader::new("e", "http://e", "", Some("python job.py".into()));
+        sonde_analysis::run::RunHeader::new("e", "http://e", "", Some("python job.py".into()));
     header.name = Some("job".into());
     header.created = DateTime::from_timestamp_millis(1_700_000_000_000 + minute * 60_000).unwrap();
     (dir.join(format!("run-{minute:02}.sonde")), header)
@@ -366,13 +372,19 @@ fn a_run_that_failed_is_not_compared_and_changes_nothing_kept() {
     let dir = tempfile::tempdir().unwrap();
     let first = ran(dir.path(), 1, &hot(12), Some(0));
     assert!(first.failed.is_none());
-    let kept = sonde_proxy::index::of(dir.path()).folder.findings.clone();
+    let kept = sonde_analysis::index::of(dir.path())
+        .folder
+        .findings
+        .clone();
     // it crashed after one request
     let crashed = ran(dir.path(), 2, &hot(1), Some(3));
     assert_eq!(crashed.failed, Some(3));
     assert!(crashed.change.is_none() && crashed.findings.is_empty());
     assert_eq!(
-        sonde_proxy::index::of(dir.path()).folder.findings.clone(),
+        sonde_analysis::index::of(dir.path())
+            .folder
+            .findings
+            .clone(),
         kept
     );
     // the next is compared with the last that did not fail
@@ -412,7 +424,7 @@ fn a_changed_command_is_said_and_saves_nothing() {
         let (path, mut header) = job(dir.path(), minute);
         header.command = Some(format!("python job.py --limit {limit}"));
         write_run(&path, &header, records);
-        sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
+        sonde_analysis::index::set(&path, sonde_analysis::index::Change::Exit(0));
         fixloop::since_last(
             dir.path(),
             &path,
@@ -718,7 +730,7 @@ fn runs_that_end_out_of_order_keep_all_their_findings() {
             let (path, header) = job(dir.path(), i as i64 + 1);
             let rs: Vec<Record> = (1..=12).map(|n| get(n, w)).collect();
             write_run(&path, &header, &rs);
-            sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
+            sonde_analysis::index::set(&path, sonde_analysis::index::Change::Exit(0));
             (i as i64 + 1, rs)
         })
         .collect();
@@ -765,11 +777,11 @@ fn findings_kept_under_older_rules_are_made_again() {
             }
         }
     });
-    sonde_proxy::index::update(dir.path(), |_| {
+    sonde_analysis::index::update(dir.path(), |_| {
         (
             vec![(
                 "job".to_string(),
-                sonde_proxy::index::Change::Findings(Some(old["job"].clone())),
+                sonde_analysis::index::Change::Findings(Some(old["job"].clone())),
             )],
             (),
         )
@@ -777,7 +789,7 @@ fn findings_kept_under_older_rules_are_made_again() {
     .unwrap();
     let kept = fixloop::read(dir.path());
     let job = &kept["job"];
-    assert_eq!(job.rules, sonde_proxy::profile::IDENTITY_RULES);
+    assert_eq!(job.rules, sonde_analysis::profile::IDENTITY_RULES);
     let ids: Vec<&String> = job.findings.keys().collect();
     assert_eq!(ids, ["obs.hot|b/day={v}/part-{n}"]);
     // back, as it was fixed before: not new

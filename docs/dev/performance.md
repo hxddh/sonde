@@ -13,8 +13,8 @@ cargo build --release -p sonde-cli --features tui
 python3 scripts/perf.py target/release/sonde                    # terminal binary in a pty (pip install pyte)
 (cd app && nsh test tests/perf.test.tsx --target tui --trace)   # headless UI: 100k rows, 500 scroll frames
 cargo run --release -p sonde-proxy --example overhead           # proxy overhead (OVERHEAD_URL, OVERHEAD_BUCKET, AWS keys)
-cargo run --release -p sonde-proxy --example scale -- 1000000   # a synthetic run of a million requests
-cargo test --release -p sonde-proxy --test budgets -- --ignored # the size budgets (CI runs them)
+cargo run --release -p sonde-analysis --example scale -- 1000000   # a synthetic run of a million requests
+cargo test --release -p sonde-analysis --test budgets -- --ignored # the size budgets (CI runs them)
 ```
 
 The UI measures use the built-in demo endpoint (`sonde tui --demo`, bucket `demo-large`, 100 000 keys), so they
@@ -41,7 +41,7 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 it shares, its operation's 88, and the analysis's room), so 8 GB holds about twenty million.
 
 Measured 2026-11-14 (22.0), release build, `/usr/bin/time` (peak resident memory), the commands once, the budgets
-twice (their ranges below). The runs are the budgets' lake job with real headers (`crates/proxy/tests/support`):
+twice (their ranges below). The runs are the budgets' lake job with real headers (`crates/analysis/tests/support`):
 a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 
 | A million requests | Time | Peak memory |
@@ -53,7 +53,7 @@ a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 | `sonde compare` (two millions) | 20 s | 510 MiB |
 | `sonde share` | not yet measured | |
 
-Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
+Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
 peak memory (what is measured and about an eighth more; a million's is the 400 MiB 22.0 set out for), which moves
 by a few percent from run to run. Time moves with a shared runner: it is said in the job's summary and fails only
 past several times what it takes.

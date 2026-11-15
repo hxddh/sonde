@@ -26,7 +26,7 @@ export { clock };
 
 const time = (iso: string) => new Date(iso).getTime();
 
-/** Where a finding stands against its program's run before (crates/proxy/src/fixloop.rs). */
+/** Where a finding stands against its program's run before (crates/analysis/src/fixloop.rs). */
 export type FindingState = FindingChange["state"];
 const STATE_TONE: Record<FindingState, Tone> = { fixed: "ok", less: "info", more: "warn", back: "warn", new: "info", open: "quiet" };
 /** A state as the reader's language says it ("Fixed", "又出现"). */

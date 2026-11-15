@@ -1,15 +1,15 @@
 //! `sonde compare`: two runs of a program, a run and its replay, or a
 //! run replayed on another endpoint (`--replay`).
 
-use sonde_proxy::program::ms_text;
+use sonde_analysis::program::ms_text;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
 use reqlog::Record;
+use sonde_analysis::profile::{RequestPrices, profile};
 use sonde_core::Sonde;
-use sonde_proxy::profile::{RequestPrices, profile};
 
 use crate::output::{self, Format};
 
@@ -40,7 +40,7 @@ pub struct CompareArgs {
     pub(super) format: Format,
 }
 
-pub(super) fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
+pub(super) fn print_comparison(c: &sonde_analysis::replay::Comparison, color: bool) {
     let mut head = format!(
         "{} compared: {} the same",
         output::grouped(c.compared as u64),
@@ -102,13 +102,13 @@ pub(super) fn print_latency(
     prices: &RequestPrices,
 ) {
     print_latency_of(
-        &sonde_proxy::profile::latency_changes(&profile(a, prices), &profile(b, prices)),
+        &sonde_analysis::profile::latency_changes(&profile(a, prices), &profile(b, prices)),
         names,
     );
 }
 
 /// [`print_latency`] of the changes reckoned already.
-fn print_latency_of(changes: &[sonde_proxy::profile::LatencyChange], names: (&str, &str)) {
+fn print_latency_of(changes: &[sonde_analysis::profile::LatencyChange], names: (&str, &str)) {
     if changes.is_empty() {
         return;
     }
@@ -147,15 +147,15 @@ async fn diff(
     // read one after the other, each for what it amounts to: the replay
     // kept as its answers and its profile, then the run read against them
     let original_file = super::runs::resolve(s, original);
-    let prices = sonde_proxy::run::read_header(&original_file)
+    let prices = sonde_analysis::run::read_header(&original_file)
         .map(|h| request_prices_for(s, &h.endpoint))
         .unwrap_or_default();
     let (replay_header, answers, is_replay, replay_profile) = {
         let (_, replay) = super::runs::open_lean(s, replay)?;
         (
             replay.header,
-            sonde_proxy::replay::answers(&replay.records),
-            sonde_proxy::replay::is_replay(&replay.records),
+            sonde_analysis::replay::answers(&replay.records),
+            sonde_analysis::replay::is_replay(&replay.records),
             profile(&replay.records, &prices),
         )
     };
@@ -168,8 +168,8 @@ async fn diff(
             original_file.display()
         )));
     }
-    let c = sonde_proxy::replay::compare_answers(&original.records, &answers, &[]);
-    let latency = sonde_proxy::profile::latency_changes(
+    let c = sonde_analysis::replay::compare_answers(&original.records, &answers, &[]);
+    let latency = sonde_analysis::profile::latency_changes(
         &profile(&original.records, &prices),
         &replay_profile,
     );
@@ -192,7 +192,7 @@ async fn diff(
     Ok(if c.differ() > 0 { 2 } else { 0 })
 }
 
-fn named_replay(h: &sonde_proxy::run::RunHeader) -> bool {
+fn named_replay(h: &sonde_analysis::run::RunHeader) -> bool {
     h.command
         .as_deref()
         .is_some_and(|c| c.starts_with("replay of "))
@@ -233,7 +233,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     }
     // a run and its replay, in either order: their answers compared
     if let [x, y] = a.runs.as_slice() {
-        let header = |f: &PathBuf| sonde_proxy::run::read_header(&super::runs::resolve(s, f));
+        let header = |f: &PathBuf| sonde_analysis::run::read_header(&super::runs::resolve(s, f));
         match (header(x), header(y)) {
             (_, Some(h)) if named_replay(&h) => return diff(s, x, y, a.format).await,
             (Some(h), _) if named_replay(&h) => return diff(s, y, x, a.format).await,
@@ -251,10 +251,11 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     // one run read, reckoned and let go before the other is read: two runs
     // cost what the larger does, not both at once (the later counted
     // against what the earlier's findings would save)
-    let run = |f: &PathBuf, against: Option<&sonde_proxy::profile::Run>| -> anyhow::Result<_> {
+    let run = |f: &PathBuf, against: Option<&sonde_analysis::profile::Run>| -> anyhow::Result<_> {
         let (_, opened) = super::runs::open_lean(s, f)?;
         let prices = request_prices_for(s, &opened.header.endpoint);
-        let mut run = sonde_proxy::profile::Run::analysed(&opened.header, &opened.records, &prices);
+        let mut run =
+            sonde_analysis::profile::Run::analysed(&opened.header, &opened.records, &prices);
         if let Some(a) = against {
             run.measure(&opened.records, a);
         }
@@ -263,19 +264,19 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let (ha, ra) = run(&before, None)?;
     let (hb, rb) = run(&after, Some(&ra))?;
     let (ka, kb) = (
-        sonde_proxy::program::key_of(&ha),
-        sonde_proxy::program::key_of(&hb),
+        sonde_analysis::program::key_of(&ha),
+        sonde_analysis::program::key_of(&hb),
     );
-    let mut c = sonde_proxy::profile::compare_runs(&ra, &rb);
+    let mut c = sonde_analysis::profile::compare_runs(&ra, &rb);
     c.waiting_known = !ha.whole_seconds && !hb.whole_seconds;
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
         // a finding fixed by the earlier run or one before it is back, not new
-        let kept = sonde_proxy::fixloop::read(&sonde_proxy::fixloop::folder_of(&after));
+        let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(&after));
         if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
             program.mark_back(&mut c.findings, &ha.created.to_rfc3339());
-            use sonde_proxy::fixloop::{State, said};
+            use sonde_analysis::fixloop::{State, said};
             c.appeared = said(&c.findings, &[State::New, State::Back]);
         }
     } else {
@@ -283,8 +284,8 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     }
     // a run that failed: its figures compare, its findings do not
     let exits = (
-        sonde_proxy::fixloop::failed(&before),
-        sonde_proxy::fixloop::failed(&after),
+        sonde_analysis::fixloop::failed(&before),
+        sonde_analysis::fixloop::failed(&after),
     );
     c = c.of_exits(exits);
     if matches!(a.format, Format::Json) {
@@ -339,7 +340,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         && c.cost.0 == c.cost.1
         && c.findings
             .iter()
-            .all(|f| f.state == sonde_proxy::fixloop::State::Open)
+            .all(|f| f.state == sonde_analysis::fixloop::State::Open)
         && c.groups.iter().all(|g| g.requests.0 == g.requests.1);
     if unchanged {
         // only what was compared is said to be the same
@@ -385,7 +386,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     );
     // the kinds that changed, the largest change first; the rest counted
     const ROWS: usize = 10;
-    let changed: Vec<&sonde_proxy::profile::GroupChange> = c
+    let changed: Vec<&sonde_analysis::profile::GroupChange> = c
         .groups
         .iter()
         .filter(|g| {
@@ -454,16 +455,16 @@ fn runs_compared(
 
 /// A run and its program's run before it, or why it has none (its first).
 fn before_of(after: &std::path::Path) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
-    let h = sonde_proxy::run::read_header(after)
+    let h = sonde_analysis::run::read_header(after)
         .ok_or_else(|| super::usage(format!("{} is not a sonde run", after.display())))?;
-    let key = sonde_proxy::program::key_of(&h).ok_or_else(|| {
+    let key = sonde_analysis::program::key_of(&h).ok_or_else(|| {
         super::usage(format!(
             "{} is no run of a program (a replay or an import): name the two runs to compare",
             after.display()
         ))
     })?;
-    let before = sonde_proxy::fixloop::previous_run(
-        &sonde_proxy::fixloop::folder_of(after),
+    let before = sonde_analysis::fixloop::previous_run(
+        &sonde_analysis::fixloop::folder_of(after),
         &key,
         h.created,
         after,

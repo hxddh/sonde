@@ -551,7 +551,7 @@ fn the_program_command() -> Vec<String> {
 }
 
 fn trials(run: &Path) -> Vec<serde_json::Value> {
-    sonde_proxy::trial::load(run)
+    sonde_analysis::trial::load(run)
         .iter()
         .map(|t| serde_json::to_value(t).unwrap())
         .collect()
@@ -725,7 +725,7 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
         o.stderr.contains(&format!(
             "sonde run --fault slowdown -o {} --force --url {} --path-style --policy allow -- ",
             // quoted as the hint quotes it (a Windows path is)
-            sonde_proxy::program::shell_join(&[run.to_string_lossy().into_owned()]),
+            sonde_analysis::program::shell_join(&[run.to_string_lossy().into_owned()]),
             b.store.url
         )),
         "{}",
@@ -1243,7 +1243,8 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
 async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     let b = Bench::new().await;
     // the name is for the program this test's binary is
-    let runs = sonde_proxy::program::program_key(Some(&the_program_command().join(" "))).unwrap();
+    let runs =
+        sonde_analysis::program::program_key(Some(&the_program_command().join(" "))).unwrap();
     std::fs::write(
         b.path("sonde.toml"),
         format!("[program]\nname = \"nightly\"\nruns = \"{runs}\"\n"),
@@ -2295,7 +2296,7 @@ async fn a_plain_run_allows_deletes_and_a_trial_refuses_them() {
         )
         .await;
     assert_eq!(flag.code, Some(1), "{}", flag.stderr);
-    let s = sonde_proxy::run::RunFile::open(&b.path("flag.sonde")).unwrap();
+    let s = sonde_analysis::run::RunFile::open(&b.path("flag.sonde")).unwrap();
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
@@ -2460,7 +2461,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         )
         .await;
     assert_eq!(plain.code, Some(0), "{}", plain.stderr);
-    assert!(!sonde_proxy::trial::read_verdicts(&b.path(".")).is_empty());
+    assert!(!sonde_analysis::trial::read_verdicts(&b.path(".")).is_empty());
     // nothing left to try
     let none = b
         .run(
@@ -2550,11 +2551,11 @@ async fn trying_again_runs_every_strength_that_broke() {
         "at": "2026-11-01T00:00:00Z", "standing": "broke", "run": "run.sonde"
     }]);
     let kept = serde_json::json!({ "slowdown": broke, "slowdown:3": broke });
-    sonde_proxy::index::update(&b.path("."), |_| {
+    sonde_analysis::index::update(&b.path("."), |_| {
         (
             vec![(
                 "etl".to_string(),
-                sonde_proxy::index::Change::Verdicts(Some(kept)),
+                sonde_analysis::index::Change::Verdicts(Some(kept)),
             )],
             (),
         )

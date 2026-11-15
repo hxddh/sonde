@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use crate::fault::Scenario;
 use crate::run::RunFile;
+use sonde_proxy::fault::Scenario;
 
 /// A trial of a run, planned.
 #[derive(Debug)]
@@ -77,7 +77,7 @@ pub fn of(s: &RunFile) -> Result<Plan, String> {
 impl Plan {
     /// The scenarios asked for by name, from the plan's and the built-in
     /// ones (`slowdown:3`: pressed harder, see
-    /// [`crate::fault::scenario_asked`]); all of the plan's when none is
+    /// [`sonde_proxy::fault::scenario_asked`]); all of the plan's when none is
     /// named.
     pub fn named(&self, names: &[String]) -> Result<Vec<Scenario>, String> {
         if names.is_empty() {
@@ -96,7 +96,8 @@ impl Plan {
                         "{n}: {name} is the project's own scenario (sonde.toml says its times)"
                     ));
                 }
-                crate::fault::scenario_asked(n)?.ok_or_else(|| format!("{n}: no such scenario"))
+                sonde_proxy::fault::scenario_asked(n)?
+                    .ok_or_else(|| format!("{n}: no such scenario"))
             })
             .collect()
     }

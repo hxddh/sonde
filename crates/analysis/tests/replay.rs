@@ -1,5 +1,6 @@
 //! Record a workload through the proxy, replay it on other stores, compare.
 
+#[path = "../../proxy/tests/common/mod.rs"]
 mod common;
 
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::sync::Arc;
 use common::MiniS3;
 use reqlog::{Filter, RequestLog};
 use s3raw::{Body, ClientConfig, Credentials, S3Client, S3Request, StaticProvider};
-use sonde_proxy::replay::{ReplayOptions, compare, plan, replay};
+use sonde_analysis::replay::{ReplayOptions, compare, plan, replay};
 use sonde_proxy::{Proxy, ProxyConfig};
 
 fn client(url: &str, log: RequestLog) -> S3Client {
@@ -252,8 +253,8 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     workload(&app(&proxy)).await;
     let mut records = recorded.list(&Filter::default(), 1000);
     records.reverse();
-    let run = sonde_proxy::run::RunFile {
-        header: sonde_proxy::run::RunHeader::new("t", &original.url, "us-east-1", None),
+    let run = sonde_analysis::run::RunFile {
+        header: sonde_analysis::run::RunHeader::new("t", &original.url, "us-east-1", None),
         records,
         logs: Vec::new(),
     };
@@ -278,7 +279,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         prefix: "taken/".into(),
         buckets: vec![],
     };
-    let refused = sonde_proxy::replay::replay_to_file(
+    let refused = sonde_analysis::replay::replay_to_file(
         &app,
         &run,
         &opts,
@@ -294,7 +295,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         prefix: String::new(),
         buckets: vec![],
     };
-    let refused = sonde_proxy::replay::replay_to_file(
+    let refused = sonde_analysis::replay::replay_to_file(
         &app,
         &run,
         &in_place,
@@ -307,10 +308,10 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
 
     // "taken" names the folder taken/, never taken-not/
     let opts = ReplayOptions {
-        prefix: sonde_proxy::replay::normalize_prefix("fresh").unwrap(),
+        prefix: sonde_analysis::replay::normalize_prefix("fresh").unwrap(),
         buckets: vec![],
     };
-    let run = sonde_proxy::replay::replay_to_file(
+    let run = sonde_analysis::replay::replay_to_file(
         &app,
         &run,
         &opts,
@@ -354,7 +355,7 @@ async fn answering(status: u16, code: &'static str) -> String {
     format!("http://{addr}")
 }
 
-fn one_put() -> sonde_proxy::run::RunFile {
+fn one_put() -> sonde_analysis::run::RunFile {
     let r = reqlog::Record {
         id: 1,
         kind: "PutObject".into(),
@@ -365,8 +366,8 @@ fn one_put() -> sonde_proxy::run::RunFile {
         request_bytes: Some(1).into(),
         ..Default::default()
     };
-    sonde_proxy::run::RunFile {
-        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
+    sonde_analysis::run::RunFile {
+        header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records: vec![r],
         logs: Vec::new(),
     }
@@ -383,7 +384,8 @@ async fn a_replay_that_cannot_list_its_prefix_does_not_start() {
         buckets: vec![],
     };
     let out = dir.path().join("r.sonde");
-    let run = sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await;
+    let run =
+        sonde_analysis::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await;
     let why = run.expect_err("an unknown prefix is not replayed into");
     assert!(why.contains("could not check"), "{why}");
     assert!(!out.exists());
@@ -403,7 +405,7 @@ async fn a_bucket_that_is_not_there_is_not_created_and_nothing_is_sent() {
     };
     let out = dir.path().join("r.sonde");
     let Err(why) =
-        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await
+        sonde_analysis::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await
     else {
         panic!("replayed into a bucket that is not there");
     };
@@ -440,8 +442,8 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         request_bytes: Some(4).into(),
         ..Default::default()
     };
-    let run = sonde_proxy::run::RunFile {
-        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
+    let run = sonde_analysis::run::RunFile {
+        header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         // one key written twice: two versions of it
         records: vec![put(1, "a"), put(2, "a"), put(3, "dir/b")],
         logs: Vec::new(),
@@ -451,7 +453,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         prefix: "rp1/".into(),
         buckets: vec![],
     };
-    let run = sonde_proxy::replay::replay_to_file(
+    let run = sonde_analysis::replay::replay_to_file(
         &target,
         &run,
         &opts,
@@ -491,14 +493,17 @@ fn put_record(id: u64, key: &str) -> reqlog::Record {
     }
 }
 
-async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::replay::ReplayRun {
+async fn replayed(
+    store: &MiniS3,
+    records: Vec<reqlog::Record>,
+) -> sonde_analysis::replay::ReplayRun {
     let target = client(&store.url, RequestLog::default());
     target
         .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
         .await
         .unwrap();
-    let run = sonde_proxy::run::RunFile {
-        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
+    let run = sonde_analysis::run::RunFile {
+        header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records,
         logs: Vec::new(),
     };
@@ -507,7 +512,7 @@ async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::
         prefix: "rp1/".into(),
         buckets: vec![],
     };
-    sonde_proxy::replay::replay_to_file(
+    sonde_analysis::replay::replay_to_file(
         &target,
         &run,
         &opts,

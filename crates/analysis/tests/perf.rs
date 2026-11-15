@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use chrono::DateTime;
 use reqlog::{Record, Sink};
-use sonde_proxy::episode::{episodes, observations};
-use sonde_proxy::run::{RunFile, RunHeader, RunWriter};
-use sonde_proxy::summary::summarize;
+use sonde_analysis::episode::{episodes, observations};
+use sonde_analysis::run::{RunFile, RunHeader, RunWriter};
+use sonde_analysis::summary::summarize;
 
 pub fn busy(n: u64) -> Vec<Record> {
     (0..n)

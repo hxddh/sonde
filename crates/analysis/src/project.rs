@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::Policy;
-use crate::fault::Scenario;
 use crate::program::Budget;
+use sonde_proxy::Policy;
+use sonde_proxy::fault::Scenario;
 
 /// The `[check]` table: a run's budget, kept with the code it is about
 /// (`max-waiting` in ms, or "2s"; `baseline` a run,
@@ -123,7 +123,13 @@ pub struct ScenarioTable {
 
 impl ScenarioTable {
     pub fn scenario(&self) -> Result<Scenario, String> {
-        crate::fault::project_scenario(&self.name, &self.fault, &self.on, &self.prefix, self.times)
+        sonde_proxy::fault::project_scenario(
+            &self.name,
+            &self.fault,
+            &self.on,
+            &self.prefix,
+            self.times,
+        )
     }
 }
 
@@ -188,7 +194,7 @@ pub fn parse(text: &str) -> Result<Project, String> {
         return Err(why);
     }
     let scenarios =
-        crate::fault::project_scenarios(file.scenario.iter().map(ScenarioTable::scenario))?;
+        sonde_proxy::fault::project_scenarios(file.scenario.iter().map(ScenarioTable::scenario))?;
     let policy = file
         .record
         .policy

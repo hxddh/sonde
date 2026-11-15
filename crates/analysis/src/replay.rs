@@ -123,7 +123,7 @@ fn named(r: &Record) -> String {
         .iter()
         .map(|h| (h.name.to_string(), h.value.to_string()))
         .collect();
-    crate::op::classify(
+    sonde_proxy::op::classify(
         &r.method,
         r.bucket.as_deref(),
         r.key.as_deref(),

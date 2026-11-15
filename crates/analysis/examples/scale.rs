@@ -10,9 +10,9 @@ use std::time::Instant;
 
 use chrono::DateTime;
 use reqlog::Record;
-use sonde_proxy::episode::{episodes, observations};
-use sonde_proxy::profile::{RequestPrices, profile};
-use sonde_proxy::run::{RunFile, RunHeader, RunWriter, compress};
+use sonde_analysis::episode::{episodes, observations};
+use sonde_analysis::profile::{RequestPrices, profile};
+use sonde_analysis::run::{RunFile, RunHeader, RunWriter, compress};
 
 fn main() {
     let n: usize = std::env::args()

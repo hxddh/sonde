@@ -290,7 +290,7 @@ pub fn short_name(command: &str) -> Option<String> {
         return short_name(inner);
     }
     if matches!(base, "docker" | "podman")
-        && let Some(image) = crate::container::image(&after)
+        && let Some(image) = sonde_proxy::container::image(&after)
     {
         // `registry/amazon/aws-cli:2.40` is `aws-cli`
         let last = image.rsplit('/').next().unwrap_or(image);
@@ -482,7 +482,7 @@ pub fn run_point(
         findings: findings.len(),
         refused: records
             .iter()
-            .find(|r| crate::refused_by_policy(r))
+            .find(|r| sonde_proxy::refused_by_policy(r))
             .and_then(|r| r.rare().error_body.clone()),
     }
 }
@@ -1886,7 +1886,7 @@ mod tests {
         use crate::trial::{Standing, judge};
         let rs: Vec<Record> = (0..3).map(|i| rec(i + 1, &format!("k{i}"))).collect();
         let (pt, pr, ob) = point(&rs);
-        let scenario = crate::fault::scenario("slowdown").unwrap();
+        let scenario = sonde_proxy::fault::scenario("slowdown").unwrap();
         let mut broke = judge(&scenario, &rs, 0, &rs, 1);
         assert_eq!(broke.standing, Standing::Broke);
         let mut fine = broke.clone();

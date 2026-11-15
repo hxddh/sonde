@@ -1,7 +1,7 @@
 # The run file (`.sonde`)
 
 A run is the file a recording, replay, import or trial leaves. Any later sonde of the same format version reads
-it. This page is its contract ([contract.md](../contract.md)); `crates/proxy/src/run.rs` implements it and its test
+it. This page is its contract ([contract.md](../contract.md)); `crates/analysis/src/run.rs` implements it and its test
 `the_format_as_its_spec_says` checks it.
 
 ## The file

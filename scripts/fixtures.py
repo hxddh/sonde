@@ -18,13 +18,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = [ROOT / "crates/proxy/tests/fixtures", ROOT / "app/tests/fixtures/runs"]
+FIXTURES = [ROOT / "crates/analysis/tests/fixtures", ROOT / "app/tests/fixtures/runs"]
 # a record's fields the current version renamed: {old: new}
 RENAMES: dict[str, str] = {}
 
 
 def format_and_version() -> tuple[str, int]:
-    src = (ROOT / "crates/proxy/src/run.rs").read_text()
+    src = (ROOT / "crates/analysis/src/run.rs").read_text()
     name = re.search(r'pub const FORMAT: &str = "([^"]+)";', src).group(1)
     return name, int(re.search(r"pub const VERSION: u32 = (\d+);", src).group(1))
 

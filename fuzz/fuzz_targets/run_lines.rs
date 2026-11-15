@@ -2,7 +2,7 @@
 //! whole and lean (as `show` reads one).
 #![no_main]
 
-use sonde_proxy::run::{Keep, RunFile};
+use sonde_analysis::run::{Keep, RunFile};
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     // a run is read from a file: one per process, written over each time
@@ -12,5 +12,5 @@ libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     }
     let _ = RunFile::read(&path, Keep::All);
     let _ = RunFile::read(&path, Keep::Analysis);
-    let _ = sonde_proxy::run::read_header(&path);
+    let _ = sonde_analysis::run::read_header(&path);
 });

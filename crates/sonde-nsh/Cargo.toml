@@ -16,6 +16,7 @@ decoders.workspace = true
 reqlog.workspace = true
 s3raw.workspace = true
 sonde-proxy.workspace = true
+sonde-analysis.workspace = true
 nsh-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
