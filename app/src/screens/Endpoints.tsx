@@ -58,6 +58,8 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
   };
   const save = () => {
     const x = d();
+    // what is missing is said on its field: Save is never a control that does nothing
+    if (!x.url.trim()) return void refused.set({ field: "url", why: t("endpoints.urlNeeded") });
     const id = idFor(x);
     try {
       api.saveEndpoint({
@@ -137,7 +139,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
       <Field label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} onSubmit={save} placeholder="logs, backups" mono />
       <Actions note={<Muted class="text-small">{t("endpoints.cred.note")}</Muted>}>
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} testID="ep-cancel" />
-        <Button variant="primary" label={t("common.save")} onPress={save} testID="ep-save" disabled={!d().url} />
+        <Button variant="primary" label={t("common.save")} onPress={save} testID="ep-save" />
       </Actions>
     </View>
   );
@@ -276,8 +278,8 @@ export function Endpoints() {
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}
-          <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} testID="import-endpoints" />
-          <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} testID="add-endpoint" />
+          <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} tip={mode() !== "list" ? t("endpoints.formOpen") : undefined} testID="import-endpoints" />
+          <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} tip={mode() !== "list" ? t("endpoints.formOpen") : undefined} testID="add-endpoint" />
         </PageHeader>
         {/* the form in place, a card of its own: a sheet in the Settings
             window would cover its tabs and lose its icons (nsh-issues) */}

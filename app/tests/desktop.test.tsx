@@ -469,6 +469,10 @@ test("one function writes a duration, and a scenario has words", async () => {
   expect(coarse.includes("22")).toBe(true);
   expect(fine.replace(":25.074", "")).toBe(coarse);
   expect(fine.startsWith(format.day(at))).toBe(true);
+  // one clock: a time to the minute, the second or the millisecond follows the reader's hour cycle (hm's)
+  expect(format.clock(at, "m")).toBe(format.hm(at));
+  expect(format.clock(at).replace(".074", "")).toBe(format.clock(at, "s"));
+  expect(format.clock(at, "s").replace(":25", "")).toBe(format.hm(at));
   const { scenarioLabel } = await import("../src/ui/history");
   const { scenarioAbout } = await import("../src/trials");
   // how hard the two that can be pressed harder press, said where it is more than once
@@ -649,6 +653,8 @@ test("what looks pressable answers a press: a chart without the pointer, its how
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
   await app.waitFor("id:chart-distribution-how", { timeout: 5000 });
+  // quiet at rest, never hidden: what is pressed is seen
+  expect(app.viewStyle("id:chart-distribution-how")?.effectiveOpacity ?? 0).toBeGreaterThan(0.3);
   await app.press("id:chart-distribution-how");
   await app.waitFor("id:chart-distribution-how-text", { timeout: 2000 });
   await app.keyboard.press("escape");
@@ -656,11 +662,13 @@ test("what looks pressable answers a press: a chart without the pointer, its how
   // the title bar's place is a way back to its list: the run let go
   await app.press("id:crumb-place");
   await app.waitUntil(() => !app.shows("id:run-pane"), { timeout: 2000 });
-  // with no run chosen the sidebar holds its list: its toggle is never dimmed, and a press says why it stays
+  // the sidebar's toggle always toggles, with a run chosen or none: the empty pane then offers the list back
   expect(app.viewStyle("id:toggle-sidebar")?.effectiveOpacity ?? 0).toBe(1);
   await app.press("id:toggle-sidebar");
-  await app.waitFor("text:/^The sidebar stays open here/", { timeout: 2000 });
-  expect(app.shows("id:sidebar")).toBe(true);
+  await app.waitUntil(() => !app.shows("id:sidebar"), { timeout: 2000 });
+  await app.press("id:show-sidebar");
+  await app.waitFor("id:sidebar", { timeout: 2000 });
+  expect(app.shows("id:show-sidebar")).toBe(false);
 });
 
 test("a row's actions are there for the pointer: an endpoint's always, a quiet one at rest", async () => {

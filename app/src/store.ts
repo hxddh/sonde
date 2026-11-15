@@ -110,13 +110,11 @@ export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
  * (its runs, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */
-export const sideList = signal<{ key: string; render: () => JSX.Element; needed?: () => boolean } | null>(null);
+export const sideList = signal<{ key: string; render: () => JSX.Element } | null>(null);
 /** Gives the sidebar a place's list while the place is on screen; returns
- * what takes it back. `needed`: the place has nothing to show until
- * something in the list is chosen (or the list has an error to say), so a
- * hidden sidebar comes back for it rather than leave a dead end. */
-export function showInSidebar(key: string, render: () => JSX.Element, needed?: () => boolean): () => void {
-  const mine = { key, render, needed };
+ * what takes it back. */
+export function showInSidebar(key: string, render: () => JSX.Element): () => void {
+  const mine = { key, render };
   sideList.set(mine);
   return () => {
     if (sideList() === mine) sideList.set(null);

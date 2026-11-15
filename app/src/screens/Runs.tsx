@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // run, and opens in a window of its own. In a terminal the levels stack.
 
-import { batch, cleanup, computed, effect, type JSX, LayoutAnimation, reduceMotion, Scroll, signal, untracked, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, type JSX, LayoutAnimation, reduceMotion, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
@@ -19,8 +19,9 @@ import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, co
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace } from "../ui/kit";
 import { Toaster } from "../ui/toast";
+import { ShowSidebar } from "../ui/shell";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, RunHeader, RunList } from "../ui/runparts";
@@ -459,7 +460,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   );
   const body = (v: () => RunView) => {
     if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -571,9 +572,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           <RunHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
             {props.note}
-            {/* what changed since the program's run before, in a sentence (a short pane's too); Compare opens the
-                two side by side. Not over Time and History, nor while the operations are scrolled */}
-            <If when={!v().trial && pane() !== "time" && pane() !== "runs" && foldedOn() !== pane()}>
+            {/* what changed since the program's run before, in a sentence, on every pane; Compare opens the
+                two side by side. Not while the pane under it is scrolled (the header is folded) */}
+            <If when={!v().trial && foldedOn() !== pane()}>
               <SinceRun since={since()} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
             </If>
           </RunHeader>
@@ -601,9 +602,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // (another pane, or the same back at its top, opens it again)
   // (kept by pane: another pane opens unfolded in the same moment it is shown)
   const foldedOn = signal<Pane | null>(null);
-  // and always on a short pane, and on Time and History, whose charts and runs need the height more than the tiles
-  // (each figure still opens its chart from the folded line)
-  const folded = () => foldedOn() === pane() || box().h < BREAK.short || pane() === "time" || pane() === "runs";
+  // only on a scroll, at every size and on every pane: what the run is (where, when, its sentence) is read
+  // first, and stays until the reader goes past it (each figure still opens its chart from the folded line)
+  const folded = () => foldedOn() === pane();
   const scrolled = (away: boolean) => {
     const want = away ? untracked(pane) : null;
     if (untracked(foldedOn) !== want) foldedOn.set(want);
@@ -718,9 +719,11 @@ function openRunWindow(path: string) {
   Window.open(
     () => (
       // a pane that fails to draw says so in its window, and can try again
-      <Recoverable>
-        <RunWindow path={path} />
-      </Recoverable>
+      <View class={`flex-1 ${windowFace()}`}>
+        <Recoverable>
+          <RunWindow path={path} />
+        </Recoverable>
+      </View>
     ),
     { id: windowId(path), title: me ? runName(me) : fileName(path), defaultSize: { width: 1100, height: 720 }, restoreBounds: true },
   );
@@ -783,6 +786,17 @@ const query = signal("");
 
 export function Runs() {
   const runs = signal<RunInfo[]>(api.runs.list());
+  // the newest run of each program past its baseline: marked on its row (what v21's program list said)
+  const past = resource(
+    () => [runsTick(), runs().length] as const,
+    async () => {
+      try {
+        return new Set((await api.runs.programs()).filter((p) => p.regressed && p.latest).map((p) => p.latest!));
+      } catch {
+        return new Set<string>();
+      }
+    },
+  );
   // a terminal starts on the list; a window on the run it showed last, or the newest
   // (the newest is shown in passing: nobody opened it, so it is not held as read)
   let passing: string | null = null;
@@ -871,6 +885,7 @@ export function Runs() {
           <View class={terminal() ? "flex-1" : "min-h-0 flex-1 px-2"}>
           <RunList
             runs={shown()}
+            past={past()}
             selected={selected()}
             onSelect={choose}
             onContextMenu={isAvailable ? rowMenu : undefined}
@@ -938,8 +953,7 @@ export function Runs() {
   }
 
   // the runs are the sidebar's list while this place shows
-  // (with none chosen the list is all there is to act on: a hidden sidebar comes back)
-  if (!terminal()) cleanup(showInSidebar("runs", list, () => runs().length > 0 && !selected()));
+  if (!terminal()) cleanup(showInSidebar("runs", list));
 
   return (
     <View class="flex-1" testID="screen-runs">
@@ -948,7 +962,8 @@ export function Runs() {
         when={terminal()}
         else={
           <If when={runs().length > 0} else={nothing()}>
-            <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")} />}>
+            {/* none chosen: the list is all there is to act on, a press away while the sidebar is hidden */}
+            <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")}><ShowSidebar /></Empty>}>
               {keyed()}
             </If>
           </If>
