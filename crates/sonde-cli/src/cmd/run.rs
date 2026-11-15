@@ -400,7 +400,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     } else if !project.scenarios.is_empty() {
         project.scenarios
     } else {
-        sonde_analysis::trial::choose(&clean_run.records)
+        sonde_analysis::trial::choose(&clean_run.records, &clean_run.header.url)
     };
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
     let program = sonde_analysis::program::key_of(&clean_run.header);
