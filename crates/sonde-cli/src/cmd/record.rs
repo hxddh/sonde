@@ -449,9 +449,9 @@ pub(super) fn print_summary_of(
     };
     let s = &a.summary;
     let p = &a.profile;
-    // operations said when they are not the requests again
+    // operations said when they are not the requests again (nor nearly)
     let mut head = output::count(s.requests as usize, "request");
-    if a.episodes.len() != s.requests as usize {
+    if a.episodes.len() * 100 < s.requests as usize * 99 {
         head.push_str(&format!(
             " ({})",
             output::count(a.episodes.len(), "operation")
@@ -474,6 +474,19 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(
             ", cost ≈ {}",
             money_text(p.cost.amount, &p.cost.currency)
+        ));
+    }
+    // a month of it: a log at its rate, a program at its runs a month
+    if let Some(m) = &a.month
+        && m.cost >= sonde_analysis::program::CENT
+    {
+        let rate = match m.from {
+            "log" => "at this rate".to_string(),
+            _ => format!("at {} runs a month", m.times),
+        };
+        head.push_str(&format!(
+            " · ≈ {} a month {rate}",
+            money_text(m.cost, &m.currency)
         ));
     }
     if s.errors > 0 {
@@ -503,13 +516,13 @@ pub(super) fn print_summary_of(
         say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once, and so the waiting, is not known".into());
     }
     for o in &a.observations {
-        for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), color) {
+        for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), a.month.as_ref(), color) {
             say(line);
         }
     }
-    // acting on all of them, at once
+    // the list's total: acting on all of them, at once
     if let Some(w) = &a.what_if {
-        say(paint(&w.line(), "32", color));
+        say(paint(&w.line(a.month.as_ref()), "32", color));
     }
     for line in kinds_table(p, all, header.whole_seconds) {
         say(line);

@@ -277,6 +277,22 @@
       "type": "string",
       "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `measured` or `saved`."
     },
+    "workloadChanged": {
+      "type": "string",
+      "description": "Display text, not stable: how much the workload grew between two runs of one program with the same command (`requests 120 → 402, 3.4×`), by half or more. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+    },
+    "endpoints": {
+      "type": "array",
+      "description": "The two runs' endpoints, when they differ: the same workload on two stores.",
+      "prefixItems": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
     "latency": {
       "type": "array",
       "description": "Each run's latency on the same buckets.",

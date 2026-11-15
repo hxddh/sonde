@@ -176,10 +176,7 @@ fn the_demo_records_a_run_that_every_command_reads() {
     );
 
     // a run by its name alone
-    let by_name = sonde(
-        t.path(),
-        &["show", name.trim_end_matches(".sonde"), "--summary"],
-    );
+    let by_name = sonde(t.path(), &["show", name.trim_end_matches(".sonde")]);
     assert_eq!(by_name.status.code(), Some(0));
     assert!(stdout(&by_name).contains("9 requests"));
 
@@ -329,7 +326,7 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     );
     assert!(lines.iter().any(|l| l.starts_with("HeadObject")), "{out}");
     // the summary's head line names it too
-    let summary = stdout(&sonde(t.path(), &["show", "--summary"]));
+    let summary = stdout(&sonde(t.path(), &["show"]));
     assert!(summary.contains(" from boto3 "), "{summary}");
     // a dimension it does not know, and a flag it would ignore
     assert_eq!(
@@ -485,7 +482,7 @@ fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
         String::from_utf8_lossy(&by_name.stderr)
     );
     // what goes to a file has no colour in it
-    assert!(!stdout(&sonde(t.path(), &["show", "--summary"])).contains('\u{1b}'));
+    assert!(!stdout(&sonde(t.path(), &["show"])).contains('\u{1b}'));
 }
 
 #[test]
@@ -850,6 +847,43 @@ fn demo_run(dirs: &Path) -> String {
     tour_runs(dirs)[0].clone()
 }
 
+/// `show -f json` is the answer an agent reads: each finding's kind, its
+/// callers as file, line and function, the fix for the run's SDK alone, the
+/// command that records it again; a first run's findings are new.
+#[test]
+fn show_json_is_compact_and_names_what_to_change_and_where() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    // the tour's first run: the job before its fix
+    let name = tour_runs(t.path())[1].clone();
+    let shown = sonde(t.path(), &["show", &name, "-f", "json"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
+    let j: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert!(j.get("operations").is_none(), "only with --all");
+    assert_eq!(j["verify"], "sonde run --demo");
+    let f = &j["findings"][0];
+    assert_eq!(f["kind"], "obs.headget");
+    assert_eq!(f["callers"][0]["file"], "export.py");
+    assert!(f["callers"][0]["line"].as_u64().is_some(), "{f}");
+    assert_eq!(f["callers"][0]["function"], "read_reports");
+    assert_eq!(f["fixes"].as_array().unwrap().len(), 1, "{f}");
+    assert_eq!(f["fixes"][0]["sdk"], "python");
+    assert_eq!(
+        f["operationsTotal"],
+        f["operations"].as_array().unwrap().len()
+    );
+    assert_eq!(j["since"]["findings"][0]["state"], "new");
+    // --all: every SDK's fix and every operation
+    let all: serde_json::Value =
+        serde_json::from_slice(&sonde(t.path(), &["show", &name, "--all", "-f", "json"]).stdout)
+            .unwrap();
+    assert!(all["findings"][0]["fixes"].as_array().unwrap().len() > 1);
+    assert_eq!(
+        all["operations"].as_array().unwrap().len() as u64,
+        all["operationsTotal"].as_u64().unwrap()
+    );
+}
+
 /// The runs listed, newest first (`runs -f json`).
 fn runs_json(dirs: &Path) -> Vec<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(&stdout(&sonde(dirs, &["runs", "-f", "json"])))
@@ -979,13 +1013,13 @@ fn the_newest_run_is_the_newest_recording_not_an_import() {
     std::fs::write(&log, A_LOG_LINE).unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    let shown = sonde(t.path(), &["show", "--summary", "-f", "json"]);
+    let shown = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 9, "the demo's, not the import's");
     let checked = sonde(t.path(), &["check", "--max-requests", "100"]);
     assert!(stdout(&checked).contains(&name), "{}", stdout(&checked));
     // the import is still a run, read by its name
-    let named = sonde(t.path(), &["show", "later", "--summary", "-f", "json"]);
+    let named = sonde(t.path(), &["show", "later", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&named.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 1);
     // and the list says what each holds
@@ -1423,11 +1457,8 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
         &["compare", "a", "b", "-f", "json"],
     )))
     .unwrap();
-    let shown: serde_json::Value = serde_json::from_str(&stdout(&sonde(
-        t.path(),
-        &["show", "a", "--summary", "-f", "json"],
-    )))
-    .unwrap();
+    let shown: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["show", "a", "-f", "json"]))).unwrap();
     let kinds = shown["waiting"]["byKind"].as_array().unwrap();
     for g in json["groups"].as_array().unwrap() {
         let s = kinds
@@ -1453,7 +1484,7 @@ fn a_compressed_run_cut_short_is_read_up_to_its_cut() {
     gz.write_all(&text).unwrap();
     let whole = gz.finish().unwrap();
     std::fs::write(&file, &whole[..whole.len() * 3 / 4]).unwrap();
-    let shown = sonde(t.path(), &["show", "cut", "--summary"]);
+    let shown = sonde(t.path(), &["show", "cut"]);
     assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
     assert!(
         stderr(&shown).contains("its compressed text stops short"),
@@ -1512,7 +1543,7 @@ fn a_trials_run_is_found_by_its_name() {
         "run.slowdown.sonde",
         "trials/run.slowdown.sonde",
     ] {
-        let o = sonde(t.path(), &["show", name, "--summary"]);
+        let o = sonde(t.path(), &["show", name]);
         assert_eq!(o.status.code(), Some(0), "{name}: {}", stderr(&o));
         assert!(stdout(&o).contains("9 requests"), "{name}");
     }
@@ -1571,7 +1602,17 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_run() {
     // the requests only when asked for
     let lean: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
-    assert!(lean.get("requests").is_none() && lean["operations"].is_array());
+    assert!(lean.get("requests").is_none() && lean["operationsTotal"].is_number());
+    // its operations every one with --all
+    let whole: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", out, "--all", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(
+        whole["operations"].as_array().unwrap().len() as u64,
+        whole["operationsTotal"].as_u64().unwrap()
+    );
     assert_eq!(all["requests"][7]["status"], 403);
     // a long run: its first and last hundred, and how many are between
     let shown = stdout(&sonde(t.path(), &["show", out, "--requests"]));
@@ -1885,7 +1926,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     );
     let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
         t.path(),
-        &["show", "etl-3-no-head", "--summary", "-f", "json"],
+        &["show", "etl-3-no-head", "-f", "json"],
     )))
     .unwrap();
     assert_eq!(
@@ -2165,7 +2206,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         stderr(&ck)
     );
     // show, compare and share take the same run: this folder's, not the newest
-    let shown = sonde_in(t.path(), &a, &["show", "--summary", "-f", "json"]);
+    let shown = sonde_in(t.path(), &a, &["show", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
     assert_eq!(doc["run"]["command"], "sh get.sh", "{doc}");
     let compared = sonde_in(t.path(), &a, &["compare"]);
@@ -2579,7 +2620,7 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
     let shown = stdout(&sonde(t.path(), &["show", s]));
     let line = shown
         .lines()
-        .find(|l| l.starts_with("acting on"))
+        .find(|l| l.starts_with("in all"))
         .unwrap_or_else(|| panic!("{shown}"));
     assert!(line.contains("16 → 8 requests"), "{line}");
     assert!(!line.contains("waiting"), "{line}");

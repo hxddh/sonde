@@ -16,6 +16,7 @@ pub mod fixloop;
 pub mod import;
 pub mod index;
 pub mod logs;
+pub mod month;
 pub mod phrase;
 pub mod profile;
 pub mod program;

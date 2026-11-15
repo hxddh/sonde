@@ -234,6 +234,38 @@ pub struct WhatIf {
     pub counted: Vec<String>,
 }
 
+/// Prices what each finding would save ([`Observation::saves_cost`]) and
+/// orders the findings by it: those that save money first, the most first,
+/// then those that save time, then those that save requests; the rest as
+/// they were (warnings first, by the requests they bear on).
+pub fn rank_by_saving(
+    findings: &mut [Observation],
+    records: &[Record],
+    prices: &crate::profile::RequestPrices,
+) {
+    if findings.iter().any(|o| !o.saved_ids.is_empty()) {
+        let by_id = crate::episode::RecordsById::of(records);
+        for o in findings.iter_mut() {
+            o.saves_cost = o
+                .saved_ids
+                .iter()
+                .filter_map(|id| by_id.get(id))
+                .map(|r| crate::profile::price(r, prices))
+                .sum::<f64>();
+            // (a sum of small prices, without its float's noise)
+            o.saves_cost = (o.saves_cost * 1e9).round() / 1e9;
+        }
+    }
+    findings.sort_by(|a, b| {
+        let saves = |o: &Observation| o.saves_requests > 0 || o.saves_ms > 0.0;
+        saves(b)
+            .cmp(&saves(a))
+            .then(b.saves_cost.total_cmp(&a.saves_cost))
+            .then(b.saves_ms.total_cmp(&a.saves_ms))
+            .then(b.saves_requests.cmp(&a.saves_requests))
+    });
+}
+
 /// What acting on the findings would leave, measured and not estimated: the
 /// requests the findings name are taken out of the run, and the run
 /// without them is reckoned again. The waiting is the time with a request
@@ -303,8 +335,9 @@ pub fn what_if(
 }
 
 impl WhatIf {
-    /// The line `sonde show` closes its findings with.
-    pub fn line(&self) -> String {
+    /// The line `sonde show` closes its findings with: their total, the
+    /// cost a month when `month` says one.
+    pub fn line(&self, month: Option<&crate::month::Month>) -> String {
         use crate::program::money_text;
         use crate::signals::{count_text, ms_text};
         let which = if self.findings < self.of_findings {
@@ -312,7 +345,7 @@ impl WhatIf {
             let mut kinds: Vec<&str> = self.counted.iter().map(|k| kind_name(k)).collect();
             kinds.dedup();
             format!(
-                "{} of {} findings ({})",
+                "{} of {} findings: {}",
                 count_text(self.findings),
                 count_text(self.of_findings),
                 kinds.join(", ")
@@ -337,22 +370,20 @@ impl WhatIf {
         {
             parts.push(format!("waiting {} → {}", ms_text(before), ms_text(after)));
         }
-        let (before, after) = (
-            money_text(self.cost.0, &self.currency),
-            money_text(self.cost.1, &self.currency),
-        );
+        let (a, b, a_month) = match month {
+            Some(m) => (m.of(self.cost.0), m.of(self.cost.1), " a month"),
+            None => (self.cost.0, self.cost.1, ""),
+        };
+        let (before, after) = (money_text(a, &self.currency), money_text(b, &self.currency));
         // under a cent, an amount nobody acts on: its share
-        if self.cost.0.max(self.cost.1) < crate::program::CENT {
-            if self.cost.0 != self.cost.1 {
-                parts.push(format!(
-                    "cost {}",
-                    crate::program::share_moved(self.cost.0, self.cost.1)
-                ));
+        if a.max(b) < crate::program::CENT {
+            if a != b {
+                parts.push(format!("cost {}", crate::program::share_moved(a, b)));
             }
         } else if before != after {
-            parts.push(format!("cost {before} → {after}"));
+            parts.push(format!("cost {before} → {after}{a_month}"));
         }
-        format!("acting on {which}: {}", parts.join(" · "))
+        format!("in all ({which}): {}", parts.join(" · "))
     }
 }
 
@@ -512,8 +543,8 @@ mod tests {
         // and it is the same on every reading
         assert_eq!(what_if(&rs, &p, &obs, true), Some(w.clone()));
         assert_eq!(
-            w.line(),
-            "acting on 1 finding: 9 → 6 requests · waiting 195 ms → 189 ms",
+            w.line(None),
+            "in all (1 finding): 9 → 6 requests · waiting 195 ms → 189 ms",
             "a cost that reads the same before and after is not printed as a change"
         );
     }
@@ -547,11 +578,11 @@ mod tests {
         assert_eq!((w.findings, w.of_findings), (1, 2));
         assert_eq!(w.requests, (20, 1));
         assert!(
-            w.line().starts_with(
-                "acting on 1 of 2 findings (a key read again and again): 20 → 1 requests"
+            w.line(None).starts_with(
+                "in all (1 of 2 findings: a key read again and again): 20 → 1 requests"
             ),
             "{}",
-            w.line()
+            w.line(None)
         );
         // nothing that can be counted: nothing is said
         assert_eq!(what_if(&rs, &p, &[vague], true), None);

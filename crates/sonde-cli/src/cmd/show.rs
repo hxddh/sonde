@@ -17,12 +17,9 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// A run's file (default: the newest in the data directory's runs/).
+    /// A run's file or name (default: the newest run of the program here,
+    /// else the newest run).
     pub(super) file: Option<PathBuf>,
-    /// Only the summary: what a table shows by default; with `-f json`,
-    /// the summary without the operations and requests.
-    #[arg(long)]
-    pub(super) summary: bool,
     /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
     pub(super) errors: bool,
@@ -31,16 +28,18 @@ pub struct ShowArgs {
     #[arg(long)]
     pub(super) requests: bool,
     /// Everything: each operation on its line, then the summary with every
-    /// kind of request, the signals over the run, first byte and cost.
+    /// kind of request, the signals over the run, first byte and cost. With
+    /// `-f json`: every operation, and each finding's operations and fixes
+    /// whole.
     #[arg(long)]
     pub(super) all: bool,
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     pub(super) app: bool,
-    /// The requests split by kind, prefix, size, caller, sdk or status,
-    /// and where the slow and the costly requests are.
+    /// The requests split by kind, prefix, size, caller, sdk, status or
+    /// key, and where the slow and the costly requests are.
     #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
-          conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
+          conflicts_with_all = ["errors", "requests", "all", "app"])]
     pub(super) by: Option<Dimension>,
     /// The format written: text or json.
     #[arg(
@@ -91,11 +90,13 @@ fn print_split(
             color
         )
     );
+    // an imported log's waiting is not known: no column says it
+    let waiting = !header.whole_seconds;
     let rows: Vec<Vec<String>> = split
         .rows
         .iter()
         .map(|r| {
-            vec![
+            let mut row = vec![
                 if r.other {
                     format!("other ({})", output::count(r.requests, "request"))
                 } else {
@@ -114,27 +115,20 @@ fn print_split(
                 output::duration(r.p50_ms),
                 output::duration(r.p95_ms),
                 output::duration(r.p99_ms),
-                share_text(r.share),
-                money_text(r.cost, &split.currency),
-            ]
+            ];
+            if waiting {
+                row.push(share_text(r.share));
+            }
+            row.push(money_text(r.cost, &split.currency));
+            row
         })
         .collect();
-    println!(
-        "{}",
-        output::table(
-            &[
-                split.by.name(),
-                "requests",
-                "errors",
-                "p50",
-                "p95",
-                "p99",
-                "waiting",
-                "cost",
-            ],
-            &rows,
-        )
-    );
+    let mut heads = vec![split.by.name(), "requests", "errors", "p50", "p95", "p99"];
+    if waiting {
+        heads.push("waiting");
+    }
+    heads.push("cost");
+    println!("{}", output::table(&heads, &rows));
     if !split.text.is_empty() {
         println!("{}", split.text);
     }
@@ -266,46 +260,51 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // against the program's run before it, as `run` said it: in every format
     let since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
     match a.format {
-        // the summary alone: what the table's summary shows, and no more
-        Format::Json if a.summary => {
-            let prof = &analysis.profile;
-            println!(
-                "{}",
-                output::json(&serde_json::json!({
-                    "run": run.header,
-                    "summary": analysis.summary,
-                    "operations": eps.len(),
-                    "waiting": {
-                        "waitingMs": prof.waiting_ms,
-                        "wallMs": prof.wall_ms,
-                        "peakInFlight": prof.peak_in_flight,
-                        "p50Ms": prof.p50_ms,
-                        "p95Ms": prof.p95_ms,
-                        "p99Ms": prof.p99_ms,
-                        "byKind": prof.groups,
-                    },
-                    "cost": prof.cost,
-                    "whatIf": analysis.what_if,
-                    "findings": analysis.observations,
-                    "since": since,
-                    "trials": trials,
-                }))
-            );
-        }
-        // written as it is made: an operation, then a request, at a time
+        // the answer: the summary, the findings each cut to what to change
+        // and where; every operation (--all), the failed ones (--errors), the
+        // requests (--requests) when asked, written as they are made
         Format::Json => {
             use std::io::Write;
+            let prof = &analysis.profile;
+            let sdk = analysis.sdk.as_deref();
+            let cwd = run.header.cwd.as_deref().map(Path::new);
+            let findings: Vec<serde_json::Value> = analysis
+                .observations
+                .iter()
+                .map(|o| finding_json(o, a.all, sdk, cwd))
+                .collect();
             let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
             let mut w = sonde_analysis::share::JsonOut::new(out, true);
             w.begin_object()?;
-            // one word each: operations, findings, requests (asked for: a
-            // million of them is a gigabyte of text)
-            w.array(
-                "operations",
-                eps.iter()
-                    .filter(|e| !a.errors || *e.outcome() != Outcome::Ok),
+            w.field("run", &run.header)?;
+            w.field("summary", &analysis.summary)?;
+            w.field("operationsTotal", &eps.len())?;
+            w.field(
+                "waiting",
+                &serde_json::json!({
+                    "waitingMs": prof.waiting_ms,
+                    "wallMs": prof.wall_ms,
+                    "peakInFlight": prof.peak_in_flight,
+                    "p50Ms": prof.p50_ms,
+                    "p95Ms": prof.p95_ms,
+                    "p99Ms": prof.p99_ms,
+                    "byKind": prof.groups,
+                }),
             )?;
-            w.field("findings", &analysis.observations)?;
+            w.field("cost", &prof.cost)?;
+            w.field("month", &analysis.month)?;
+            w.field("whatIf", &analysis.what_if)?;
+            w.field("findings", &findings)?;
+            w.field("verify", &verify_command(&run.header))?;
+            w.field("since", &since)?;
+            w.field("trials", &trials)?;
+            if a.all || a.errors {
+                w.array(
+                    "operations",
+                    eps.iter()
+                        .filter(|e| !a.errors || *e.outcome() != Outcome::Ok),
+                )?;
+            }
             if a.requests {
                 w.key("requests")?;
                 w.begin_array()?;
@@ -321,11 +320,6 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 )?;
                 w.end_array()?;
             }
-            w.field("run", &run.header)?;
-            w.field("summary", &analysis.summary)?;
-            w.field("whatIf", &analysis.what_if)?;
-            w.field("trials", &trials)?;
-            w.field("since", &since)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -338,7 +332,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             }
             // a list asked for: the requests (then the summary), or what
             // failed (alone)
-            if !a.summary && a.requests {
+            if a.requests {
                 let shown: Vec<&Record> = all
                     .iter()
                     .filter(|r| !a.errors || sonde_analysis::summary::is_failure(r))
@@ -352,7 +346,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 if a.errors {
                     return Ok(0);
                 }
-            } else if !a.summary && (a.errors || a.all) {
+            } else if a.errors || a.all {
                 let shown: Vec<&Episode> = eps
                     .iter()
                     .filter(|e| !a.errors || *e.outcome() != Outcome::Ok)
@@ -433,13 +427,12 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     }
 }
 
-/// A run's summary and findings on stdout, as `sonde show --summary`.
+/// A run's summary and findings on stdout, as `sonde show` writes them.
 pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
     show(
         s,
         &ShowArgs {
             file: Some(file.to_path_buf()),
-            summary: true,
             errors: false,
             requests: false,
             all: false,
@@ -449,4 +442,96 @@ pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
         },
     )
     .await
+}
+
+/// Operations a finding names in `show -f json` (all of them with --all).
+const FINDING_OPERATIONS: usize = 20;
+
+/// A finding as `show -f json` writes it: its first operations and how many
+/// there are, the fix for the run's SDK (each SDK's with `all`, or when
+/// none is known), and each caller's line of code read from the folder the
+/// program ran in (`cwd`), when the file is there.
+fn finding_json(
+    o: &sonde_analysis::episode::Observation,
+    all: bool,
+    sdk: Option<&str>,
+    cwd: Option<&Path>,
+) -> serde_json::Value {
+    let mut v = serde_json::to_value(o).unwrap_or_default();
+    let Some(m) = v.as_object_mut() else {
+        return v;
+    };
+    m.insert("operationsTotal".into(), o.episodes.len().into());
+    if !all {
+        if o.episodes.len() > FINDING_OPERATIONS {
+            m.insert(
+                "operations".into(),
+                serde_json::json!(&o.episodes[..FINDING_OPERATIONS]),
+            );
+        }
+        let sdk = o.sdk.as_deref().or(sdk);
+        if let Some(fix) = sonde_analysis::fixes::for_sdk(&o.fixes, sdk) {
+            m.insert("fixes".into(), serde_json::json!([fix]));
+        }
+    }
+    if let Some(callers) = m.get_mut("callers").and_then(|c| c.as_array_mut()) {
+        for (c, caller) in callers.iter_mut().zip(&o.callers) {
+            if let (Some(file), Some(line), Some(c)) =
+                (caller.file.as_deref(), caller.line, c.as_object_mut())
+                && let Some(code) = code_line(cwd, file, line)
+            {
+                c.insert("code".into(), code.into());
+            }
+        }
+    }
+    v
+}
+
+/// Line `line` of `file` (relative to `cwd`, where the program ran), trimmed
+/// and cut to 200 characters; none when the file is not there to read.
+fn code_line(cwd: Option<&Path>, file: &str, line: u32) -> Option<String> {
+    use std::io::BufRead;
+    let path = Path::new(file);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd?.join(path)
+    };
+    let f = std::fs::File::open(path).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let text = std::io::BufReader::new(f)
+        .lines()
+        .nth(line.checked_sub(1)? as usize)?
+        .ok()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.chars().take(200).collect())
+}
+
+/// The command that records the program again, to see a fix work (`sonde
+/// run --demo -- python3 etl.py`, in the folder it ran in): none for a run
+/// that is no program's (an import, a replay).
+fn verify_command(header: &sonde_analysis::run::RunHeader) -> Option<String> {
+    let command = header.command.as_deref()?;
+    // the tour's runs: the tour again
+    if command.starts_with("sonde run") {
+        return Some(command.to_string());
+    }
+    if sonde_analysis::program::program_key(Some(command)).is_none()
+        || command.starts_with(sonde_analysis::program::LOGS_OF)
+    {
+        return None;
+    }
+    let store = if header.endpoint == "demo" {
+        "--demo".to_string()
+    } else {
+        format!("-e {}", header.endpoint)
+    };
+    let name = header
+        .name
+        .as_deref()
+        .map(|n| format!(" --name {n}"))
+        .unwrap_or_default();
+    Some(format!("sonde run {store}{name} -- {command}"))
 }

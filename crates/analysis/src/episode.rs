@@ -1483,6 +1483,12 @@ pub struct Observation {
     /// The same finding across runs (`sonde.toml`'s `expect` names it so).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
+    /// What kind of finding it is, as its identity begins (`obs.headget`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// What the requests it would save cost, in the run's currency.
+    #[serde(default, skip_serializing_if = "is_zero_ms")]
+    pub saves_cost: f64,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1723,6 +1729,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         callers: Vec::new(),
         sdk: None,
         identity: String::new(),
+        kind: String::new(),
+        saves_cost: 0.0,
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
@@ -1740,6 +1748,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         callers: Vec::new(),
         sdk: None,
         identity: String::new(),
+        kind: String::new(),
+        saves_cost: 0.0,
     };
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
@@ -2501,6 +2511,7 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
             o.phrases = vec![phrase];
             o.fixes = crate::fixes::for_key("obs.throttled.rate");
             o.identity = crate::profile::finding_identity(o);
+            o.kind = crate::profile::kind_of(&o.identity).to_string();
         }
     }
     out

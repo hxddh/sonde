@@ -269,6 +269,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     );
     let mut c = sonde_analysis::profile::compare_runs(&ra, &rb);
     c.waiting_known = !ha.whole_seconds && !hb.whole_seconds;
+    c.endpoints = (ha.endpoint != hb.endpoint).then(|| (ha.endpoint.clone(), hb.endpoint.clone()));
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
@@ -330,8 +331,12 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if let Some(t) = failed {
         println!("{}", paint(&t, "33", color));
     }
-    if let Some(ch) = &c.command_changed {
-        println!("{}", paint(&super::fixloop::command_line(ch), "33", color));
+    let uncounted = c.uncounted(false);
+    if let Some(why) = c.uncounted(true) {
+        println!(
+            "{}",
+            paint(&super::fixloop::uncounted_line(&why), "33", color)
+        );
     }
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1
@@ -365,7 +370,15 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     println!(
         "{}",
         paint(
-            &format!("{} → {}", file_name(&before), file_name(&after)),
+            &match &c.endpoints {
+                // two stores: the headline of a move from one to the other
+                Some((x, y)) => format!(
+                    "{} on {x} → {} on {y}",
+                    file_name(&before),
+                    file_name(&after)
+                ),
+                None => format!("{} → {}", file_name(&before), file_name(&after)),
+            },
             "1",
             color
         )
@@ -423,7 +436,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for line in super::fixloop::change_lines(&c.findings, c.command_changed.as_deref(), color) {
+    for line in super::fixloop::change_lines(&c.findings, uncounted.as_deref(), color) {
         println!("{line}");
     }
     Ok(0)

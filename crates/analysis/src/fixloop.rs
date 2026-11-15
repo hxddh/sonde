@@ -828,12 +828,6 @@ pub fn since_last(
     } else {
         None
     };
-    // a first run's findings are open unless back
-    if before.is_none() {
-        for f in findings.iter_mut().filter(|f| f.state == State::New) {
-            f.state = State::Open;
-        }
-    }
     let change = change.map(|mut c| {
         c.findings = findings.clone();
         c.appeared = said(&findings, &[State::New, State::Back]);
