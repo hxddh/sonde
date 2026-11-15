@@ -2140,8 +2140,10 @@ pub fn retries_skew(sdk: &str) -> bool {
 /// answered 500 if it uploads in parts; the body cut short if it downloads
 /// one large enough to cut, and the late first byte if it downloads at all;
 /// the lost race if it commits on a condition; the stale listing if it
-/// lists what it wrote.
-pub fn choose(clean: &[Record]) -> Vec<sonde_proxy::fault::Scenario> {
+/// lists what it wrote on a store that may answer so (`url` not AWS's:
+/// AWS S3 lists what was written since 2020, so no program there meets a
+/// stale listing; `--fault stale-list` still tries one).
+pub fn choose(clean: &[Record], url: &str) -> Vec<sonde_proxy::fault::Scenario> {
     let has = |f: &dyn Fn(&Record) -> bool| clean.iter().any(f);
     let mut names = vec!["slowdown", "error"];
     // signed by the program as it sent it: every request sonde let in was,
@@ -2203,24 +2205,42 @@ pub fn choose(clean: &[Record]) -> Vec<sonde_proxy::fault::Scenario> {
         .filter(|r| sonde_proxy::fault::MAKES_KEY.contains(&r.kind.as_str()) && done(r))
         .collect();
     writes.sort_by_key(|r| (r.time, r.id));
-    if has(&|l| {
-        sonde_proxy::fault::LISTINGS.contains(&l.kind.as_str())
-            && done(l)
-            && writes.iter().any(|w| {
-                end_of(w) <= l.time
-                    && w.bucket == l.bucket
-                    && l.query()
-                        .iter()
-                        .find(|(k, _)| k == "prefix")
-                        .is_none_or(|(_, p)| w.key.as_deref().unwrap_or("").starts_with(p.as_str()))
-            })
-    }) {
+    if !strongly_consistent(url)
+        && has(&|l| {
+            sonde_proxy::fault::LISTINGS.contains(&l.kind.as_str())
+                && done(l)
+                && writes.iter().any(|w| {
+                    end_of(w) <= l.time
+                        && w.bucket == l.bucket
+                        && l.query()
+                            .iter()
+                            .find(|(k, _)| k == "prefix")
+                            .is_none_or(|(_, p)| {
+                                w.key.as_deref().unwrap_or("").starts_with(p.as_str())
+                            })
+                })
+        })
+    {
         names.push("stale-list");
     }
     names
         .into_iter()
         .filter_map(sonde_proxy::fault::scenario)
         .collect()
+}
+
+/// Whether the store at `url` lists every write that finished before the
+/// listing: AWS S3 (`amazonaws.com`, in every partition) since December 2020.
+fn strongly_consistent(url: &str) -> bool {
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split(['/', ':', '?'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    host.ends_with(".amazonaws.com") || host.ends_with(".amazonaws.com.cn")
 }
 
 #[cfg(test)]
@@ -2713,7 +2733,10 @@ mod tests {
                     r
                 })
                 .collect();
-            choose(&java).into_iter().map(|s| s.name).collect()
+            choose(&java, "http://127.0.0.1:9000")
+                .into_iter()
+                .map(|s| s.name)
+                .collect()
         };
         assert_eq!(names(&clean[..0]), ["slowdown", "error"]);
         // a download: its first byte may come late
@@ -2796,6 +2819,34 @@ mod tests {
             names(&[put(1, 0, "out/1", 200), list(2, 50, "out/")]),
             ["slowdown", "error", "skew", "lost-answer", "stale-list"]
         );
+        // AWS S3 lists what was written: no stale listing chosen there, in
+        // any partition; another store (and the demo's) still gets one
+        let wrote_then_listed = [put(1, 0, "out/1", 200), list(2, 50, "out/")];
+        for url in [
+            "https://s3.eu-west-1.amazonaws.com",
+            "https://b.s3.amazonaws.com/",
+            "https://s3.cn-north-1.amazonaws.com.cn:443",
+        ] {
+            let chosen: Vec<String> = choose(&wrote_then_listed, url)
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            assert!(
+                !chosen.contains(&"stale-list".to_string()),
+                "{url}: {chosen:?}"
+            );
+        }
+        for url in [
+            "https://minio.example.com",
+            "https://amazonaws.com.evil.test",
+        ] {
+            assert!(
+                choose(&wrote_then_listed, url)
+                    .iter()
+                    .any(|s| s.name == "stale-list"),
+                "{url}"
+            );
+        }
         assert_eq!(
             names(&[put(1, 0, "out/1", 200), list(2, 50, "in/")]),
             ["slowdown", "error", "skew", "lost-answer"],
@@ -3966,7 +4017,7 @@ mod tests {
                 .push(Header::new("User-Agent", agent));
             r
         };
-        let skew = |c: &[Record]| choose(c).iter().any(|s| s.name == "skew");
+        let skew = |c: &[Record]| choose(c, "").iter().any(|s| s.name == "skew");
         assert!(skew(&[sent_by("aws-sdk-java/2.25.1 ua/2.0 os/linux")]));
         assert!(skew(&[sent_by("aws-sdk-js/3.600.0 ua/2.1 os/linux")]));
         // botocore does not retry it: a "broke" no code can change

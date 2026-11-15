@@ -27,12 +27,20 @@ pub(super) fn finding_lines(
     month: Option<&Month>,
     color: bool,
 ) -> Vec<String> {
-    let mark = if o.level == "warn" {
+    // one the project keeps on purpose is no warning: said with why
+    let mark = if o.level == "warn" && o.expected.is_none() {
         paint("!", "33", color)
     } else {
         paint("·", "2", color)
     };
     let mut out = vec![format!("{mark} {}", o.text)];
+    if let Some(why) = &o.expected {
+        out.push(paint(
+            &format!("    expected: {why} (sonde.toml)"),
+            "2",
+            color,
+        ));
+    }
     if let Some(saving) = &o.saving_text {
         let money = match month {
             Some(m) if m.of(o.saves_cost) >= sonde_analysis::program::CENT => format!(

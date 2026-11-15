@@ -145,10 +145,11 @@ max-waiting = "2s"        # or ms as a number
 max-errors = 0
 tolerance = 10            # % a run may grow over its baseline (and no new warning)
 baseline = "auto"         # or a run's path, or an https URL
-# findings kept on purpose, never a new warning: a finding's `identity`
-# (as `show -f json` and the app's "Expected" give it) or a kind for all of
-# it. Anything else is an error (exit 64)
-expect = ["obs.hot|data/conf.json", "obs.listed"]
+# findings kept on purpose, each with why: a finding's `identity` (as
+# `show -f json` and the app's "Expected" give it) or a kind for all of it,
+# and the reason. Never a new warning; `show`, `run` and `check` say the
+# reason with the finding (`expected` in JSON). Anything else is an error (exit 64)
+expect = { "obs.hot|data/conf.json" = "rewritten by the scheduler", "obs.listed" = "the catalog is listed each run" }
 ```
 
 

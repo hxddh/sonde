@@ -88,7 +88,7 @@ test("an example run reads as operations, each opening on its requests", async (
   await app.waitFor("id:run-summary", { timeout: 10000 });
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
-  expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
+  expect(app.shows("text:looked for the newest WAL: probed ids 1–128")).toBe(true);
   // nothing to act on: SlateDB rewrites what it lists and probes keys that are not there, so no copy kept would
   // answer as the store does (the findings and their fixes are the fix loop's test, on a run that has one)
   expect(app.shows("id:observation-0")).toBe(false);
@@ -212,8 +212,19 @@ test("a run's time: where it went, and two runs before and after", async () => {
   expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
   // what found nothing is no failure, and is said beside them
   expect(app.shows("label:/^Errors: 0%, 67% not found/")).toBe(true);
-  await app.press("id:signal-latency");
+  // on Time the header stays open until the board scrolls: where and when it ran, its SDK, and its sentence
+  await app.press("id:run-pane-mode-time");
   await app.waitFor("id:time-pane");
+  expect(app.shows("id:run-folded")).toBe(false);
+  expect(app.shows("text:/^rustfs · .* · from object_store/")).toBe(true);
+  expect(app.shows("id:run-story")).toBe(true);
+  // the busiest kinds over time, a chart of its own (v21's, dropped in 22)
+  await app.waitFor("text:Which kind of request got slow, and when?");
+  expect(app.shows("id:kinds-over-time")).toBe(true);
+  expect(app.shows("text:/^The slowest kind: PutObject, p95 /")).toBe(true);
+  // a chart's how to read is quiet at rest, never hidden
+  expect(app.viewStyle("id:chart-kinds-how")?.effectiveOpacity ?? 0).toBeGreaterThan(0.3);
+  await app.press("id:signal-latency");
   await app.waitFor("id:latency-over-time");
   // the board in its groups, each chart in the one frame
   expect(app.shows("id:board-latency")).toBe(true);
@@ -231,6 +242,9 @@ test("a run's time: where it went, and two runs before and after", async () => {
   for (const id of ["latency-as", "scatter-by", "spent-by", "sizes-by", "prefix-measure"]) expect(app.shows(`id:${id}`)).toBe(false);
   // where by prefix: one bar chart, each prefix's requests and its busiest second against S3's limit
   await app.scroll("id:time-pane", 900);
+  // scrolled, the header folds to a line whose latency says what it is
+  await app.waitFor("id:run-folded", { timeout: 3000 });
+  expect(app.shows("text:/^median \\d/")).toBe(true);
   await app.waitFor("id:prefix-use");
   expect(app.shows("label:/^Most at .*: \\d+ requests?, \\d+\\/s at its busiest$/")).toBe(true);
   // the operations sort by how long they took
@@ -459,7 +473,8 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   // the second: what changed since the run before, the finding fixed with what it saved
   await app.waitFor("id:since-run", { timeout: 10000 });
   // in a sentence: the finding fixed with what it saved, then the figures
-  expect(app.shows("text:/^Since the run before: 1 fixed, saved 9 requests \\(predicted 9\\) · Requests\\s10\\s→\\s1/")).toBe(true);
+  // (the one fixed, named: what it was, then what it saved)
+  expect(app.shows("text:/^Since the run before: 1 fixed: demo\\/README\\.md was read 10 times.*, saved 9 requests \\(predicted 9\\) · Requests\\s10\\s→\\s1/")).toBe(true);
   // compared: the two runs, the finding fixed with its measured saving
   await app.press("id:since-compare");
   await app.waitFor("id:run-change", { timeout: 10000 });
@@ -485,6 +500,8 @@ test("try again what broke: a fresh run, only what did not survive, each scenari
   await app.press("id:trial-start");
   await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
   expect(app.shows("label:Broke: The store asks to slow down")).toBe(true);
+  // where it turned: the request it broke at
+  expect(app.shows("text:/ · at PutObject \\S*again\\.txt$/")).toBe(true);
   // what broke, again, from the dialog: said first (only that scenario), then run on a fresh run
   await app.press("id:trial-again-here");
   await app.waitFor("id:trial-again-plan");
@@ -540,3 +557,42 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   await app.press("id:key-request-0");
   await app.waitFor("id:record-detail");
 });
+
+test("the least window keeps what a run is: where and when it ran, its SDK and its sentence, until its pane scrolls", async () => {
+  const app = await open("../App.tsx", { ...desktop, width: 900, height: 560 });
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  expect(app.shows("id:run-folded")).toBe(false);
+  expect(app.shows("text:/^rustfs · .* · from object_store/")).toBe(true);
+  expect(app.shows("id:run-story")).toBe(true);
+  // History too
+  await app.press("id:run-pane-mode-runs");
+  await app.wait(300);
+  expect(app.shows("id:run-meta")).toBe(true);
+});
+
+test("a program's newest run past its baseline says so in the sidebar", async () => {
+  const app = await demo();
+  // one read, then (the marker there) ten: the second run is past the first, its baseline
+  const marker = `/tmp/sonde-worse-${Date.now()}`;
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null";
+  const cmd = `if [ -e ${marker} ]; then n=10; else n=1; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
+  await app.clear("id:run-command");
+  await app.type("id:run-command", cmd);
+  await runCommand(app);
+  await runView(app);
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:history-pane", { timeout: 10000 });
+  await app.press("id:history-baseline");
+  await app.waitFor("label:Clear baseline");
+  await place(app, "run");
+  await app.clear("id:run-command");
+  await app.type("id:run-command", cmd);
+  await runCommand(app);
+  await runView(app);
+  await place(app, "runs");
+  await app.waitFor("id:run-0 >> id:run-past", { timeout: 10000 });
+  expect(app.shows("id:run-0 >> text:past its baseline")).toBe(true);
+  // the run before it is the baseline: within, no mark
+  expect(app.shows("id:run-1 >> id:run-past")).toBe(false);
+}, 120000);

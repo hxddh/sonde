@@ -1489,6 +1489,10 @@ pub struct Observation {
     /// What the requests it would save cost, in the run's currency.
     #[serde(default, skip_serializing_if = "is_zero_ms")]
     pub saves_cost: f64,
+    /// Why the project keeps it on purpose (`sonde.toml`'s `[check]
+    /// expect`): leave it ([`crate::program::mark_expected`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1769,6 +1773,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         identity: String::new(),
         kind: String::new(),
         saves_cost: 0.0,
+        expected: None,
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
@@ -1788,6 +1793,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         identity: String::new(),
         kind: String::new(),
         saves_cost: 0.0,
+        expected: None,
     };
     let total = records.len().max(1);
     // what a finding that saves requests must save to be one: 1% of the

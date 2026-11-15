@@ -67,6 +67,21 @@ jobs:
           base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/baseline.out")
           case "$base" in "" | auto) echo "::error::no baseline: no scheduled run of this workflow on main kept sonde-live"; exit 1 ;; esac
           echo "BASELINE=$base" >> "$GITHUB_ENV"
+      - name: A pull request with no run kept, checked against its merge-base recorded in the job
+        if: steps.released.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ steps.sonde.outputs.file }}
+        run: |
+          # (an artifact no run kept: as a new repository's first pull request)
+          GITHUB_BASE_REF=main SONDE_ARTIFACT=sonde-never-kept SONDE_RUN="aws s3 ls s3://demo" SONDE_RUN_ARGS=--demo \
+            GITHUB_OUTPUT="$RUNNER_TEMP/merge-base.out" bash action/sonde-action.sh baseline
+          base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/merge-base.out")
+          [ "$base" = "$RUNNER_TEMP/sonde/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
+          # the same code twice: within it (a demo run's waiting is never held)
+          sonde check "$RUN" --baseline "$base" -f markdown >"$RUNNER_TEMP/merge-base.md" || { cat "$RUNNER_TEMP/merge-base.md"; exit 1; }
+          cat "$RUNNER_TEMP/merge-base.md"
+          grep -q '^\*\*Against the baseline\*\*' "$RUNNER_TEMP/merge-base.md"
       - name: A real comment, on the issue kept for it
         if: steps.released.outputs.ok == 'true' && !inputs.after-release
         env:

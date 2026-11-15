@@ -38,7 +38,17 @@ case "$(uname -s)" in
       case "$w$h" in *[!0-9]* | "") ;; *) export SONDE_SHOT_MAX="$w"x"$((h - 80))" ;; esac
     fi
     echo "windows at most ${SONDE_SHOT_MAX:-as large as asked}" ;;
-  MINGW* | MSYS* | CYGWIN*) target=windows ;;
+  MINGW* | MSYS* | CYGWIN*)
+    target=windows
+    # the window must fit the screen's working area too: a window asked larger than it is fitted to the screen and
+    # kept there (restoreBounds), and the next variant's 900×560 never took (23.0's "min" pictures were 1028×779)
+    if [ -z "${SONDE_SHOT_MAX:-}" ]; then
+      res="$(powershell.exe -NoProfile -Command 'Add-Type -AssemblyName System.Windows.Forms; $a = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; "$($a.Width)x$($a.Height)"' 2>/dev/null | tr -d '\r')"
+      w="${res%x*}"; h="${res#*x}"
+      # (its frame and title bar: 16 across, 48 down)
+      case "$w$h" in *[!0-9]* | "") ;; *) export SONDE_SHOT_MAX="$((w - 16))"x"$((h - 48))" ;; esac
+    fi
+    echo "windows at most ${SONDE_SHOT_MAX:-as large as asked}" ;;
   *) target=linux ;;
 esac
 if [ "$target" = linux ] && [ -z "${DISPLAY:-}" ]; then

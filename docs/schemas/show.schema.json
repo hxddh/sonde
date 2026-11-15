@@ -286,6 +286,10 @@
           "type": "string",
           "description": "The same finding across runs: what `[check] expect` names."
         },
+        "expected": {
+          "type": "string",
+          "description": "Why the project keeps it on purpose (`[check] expect` in the run's sonde.toml): leave it."
+        },
         "kind": {
           "type": "string",
           "enum": [

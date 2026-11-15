@@ -25,6 +25,10 @@ test("a run's request in the inspector: details, copy as curl without a signatur
 
 test("multipart: scan, lifecycle verdict, the guard confirms a few plainly", async () => {
   const app = await withDemo("demo");
+  // what is known of the bucket, found out as its objects open, is said in its sections' titles: a warn dot while
+  // any upload is stale
+  await app.waitFor("id:store-section-multipart >> text:/^Incomplete uploads · \\d+$/", { timeout: 15000 });
+  expect(app.shows("label:/^Incomplete uploads · \\d+, 2 older than 7 days/")).toBe(true);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   // the figure is the count, said once; its line says how much they hold and how many are old
@@ -67,6 +71,8 @@ test("capacity: why the bucket is this big", async () => {
 test("layouts: detects and decodes the real SlateDB sample, with replay", async () => {
   const app = await withDemo("demo-layouts");
   await app.waitFor("text:slatedb/", { timeout: 15000 });
+  // the layouts it holds, named in their section's title
+  await app.waitFor("id:store-section-layouts >> text:/^Layouts · \\S/", { timeout: 15000 });
   await place(app, "layouts");
   await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
   expect(app.shows("id:analyze-iceberg")).toBe(true);
@@ -106,6 +112,9 @@ test("browse: an object's detail is one list of its own, never the one chosen be
   // one list, the response headers its one section that opens; a presigned URL is copied from ⋯
   await app.waitFor("text:ETag", { timeout: 10000 });
   expect(app.shows("text:Response headers")).toBe(true);
+  // what it lacks is said: no checksum stored, no encryption reported
+  expect(app.shows("text:none stored")).toBe(true);
+  expect(app.shows("text:none reported")).toBe(true);
   expect(app.shows("text:Presigned URL")).toBe(false);
   await app.press("id:object-more");
   await app.chooseMenuItem("Copy presigned URL");
@@ -208,7 +217,7 @@ test("language: Chinese strings", async () => {
   await app.waitFor("text:通用");
   // what sonde says about a run is said in Chinese too
   await openExample(app, true);
-  await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
+  await app.waitFor("text:查找最新的 WAL：探测了编号 1–128", { timeout: 10000 });
   await app.press("text:写入 manifest 3");
   await app.waitFor("id:operation-detail");
   expect(app.shows("text:/条件创建 \\(If-None-Match: \\*\\)/")).toBe(true);
@@ -385,3 +394,14 @@ test("a run of a hundred thousand operations opens on its totals and first page,
   await app.waitFor("text:/^300 of 100,000 operations$/", { timeout: 10000 });
   // (scrolling a table row by row takes the headless window a while)
 }, 120000);
+
+test("a run's row says what sent its requests, before where they went and how many", async () => {
+  const run = (name: string, clients?: string[]) => ({ path: `/nowhere/${name}.sonde`, name, created: "2026-11-15T09:00:00Z", endpoint: "demo", command: `python ${name}.py`, requests: 100, live: false, clients });
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.list": [run("load", ["boto3"]), run("lake", ["Lance", "boto3"]), run("plain")] } } });
+  await place(app, "runs");
+  await app.waitFor("id:run-list", { timeout: 10000 });
+  expect(app.shows("id:run-0 >> text:boto3 · demo · 100 requests")).toBe(true);
+  expect(app.shows("id:run-1 >> text:Lance, boto3 · demo · 100 requests")).toBe(true);
+  // none known: as 23.0.1, where they went and how many
+  expect(app.shows("id:run-2 >> text:demo · 100 requests")).toBe(true);
+});

@@ -52,17 +52,24 @@ function changeLine(s: SinceLast): string | null {
  * says what it saved. Nothing for a program's first run, nor when nothing changed. */
 export function SinceRun(props: { since: SinceLast | null | undefined; onCompare?: () => void }) {
   const s = () => props.since;
-  // what the findings did, counted: fixed, back, less, more, new (open ones say nothing new)
+  // the one finding named: the first that came back or is new, else the one fixed (several fixed: each in Compare)
+  const named = (): FindingChange | null => {
+    const f = s()?.findings ?? [];
+    const fixed = f.filter((x) => x.state === "fixed");
+    return f.find((x) => x.state === "back") ?? f.find((x) => x.state === "new") ?? (fixed.length === 1 ? fixed[0] : null);
+  };
+  // what the findings did, counted: fixed, back, less, more, new (open ones say nothing new); the named one's
+  // words beside its count, and a fixed one's measured saving after them
   const tally = () =>
     (["fixed", "back", "less", "more", "new"] as const)
-      .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st).length] as const)
-      .filter(([, n]) => n > 0)
-      .map(([st, n]) => {
-        const said = `${count(n)} ${say([{ key: "fix." + st, args: {} }], st)}`;
-        // one finding fixed: what it saved, measured, beside it (several: each in Compare)
-        const fixed = (s()?.findings ?? []).filter((f) => f.state === "fixed");
-        const saved = st === "fixed" && fixed.length === 1 ? savedText(fixed[0]) : null;
-        return saved ? `${said}, ${saved}` : said;
+      .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st)] as const)
+      .filter(([, of]) => of.length > 0)
+      .map(([st, of]) => {
+        const said = `${count(of.length)} ${say([{ key: "fix." + st, args: {} }], st)}`;
+        const one = named();
+        const what = one && one.state === st ? t("fix.named", { what: said, finding: say(one.phrases, one.text) }) : said;
+        const saved = st === "fixed" && of.length === 1 ? savedText(of[0]) : null;
+        return saved ? `${what}, ${saved}` : what;
       })
       .join(" · ");
   const changed = (x: SinceLast) => !!tally() || (!!x.change && (x.change.requests[0] !== x.change.requests[1] || x.change.errors[0] !== x.change.errors[1]));
@@ -72,7 +79,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; onCompare
       {(x) => (
         <View testID="since-run" class="flex-row items-center gap-2">
           <Icon name="git-compare-arrows" size={ICON.small} tint="muted-foreground" />
-          <Text testID="since-change" class={`min-w-0 shrink tabular-nums ${TEXT.note} line-clamp-1`}>
+          <Text testID="since-change" class={`min-w-0 shrink tabular-nums ${TEXT.note} line-clamp-2`}>
             {t("fix.since", { what: sentence(x()) })}
           </Text>
           <If when={props.onCompare}>

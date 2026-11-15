@@ -63,7 +63,7 @@ repeatable; duplicates run once.
 | `cut-body` | each download's first answer: status and full `Content-Length`, then the body stops at half and the connection drops | it downloaded a body ≥ 64 bytes |
 | `slow-first-byte` | the first download held 10 s before forwarding (one in all) | it downloaded |
 | `lost-race` | each commit's first conditional write (`If-None-Match: *`, `If-Match`) answered 412 | it commits on a condition (a create in a table's log, or `If-Match`), not a create of its own key (`_SUCCESS`, a lock) |
-| `stale-list` | `ListObjects`/`ListObjectsV2` leave out keys this run wrote, each key once | it listed a folder after writing in it |
+| `stale-list` | `ListObjects`/`ListObjectsV2` leave out keys this run wrote, each key once | it listed a folder after writing in it, on a store that is not AWS (AWS S3 lists every finished write): on AWS only `--fault stale-list` |
 | `slow` | every request 300 ms slower | only `--fault slow` |
 | `s3-limits` | 503 SlowDown past 5,500 reads or 3,500 writes a second per prefix | only `--fault s3-limits` |
 

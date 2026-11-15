@@ -2217,6 +2217,7 @@ mod tests {
             identity: String::new(),
             kind: String::new(),
             saves_cost: 0.0,
+            expected: None,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
         name_findings(&mut two, &[]);
@@ -2258,6 +2259,7 @@ mod tests {
             identity: String::new(),
             kind: String::new(),
             saves_cost: 0.0,
+            expected: None,
         };
         // a prefix near its rate, reads or writes, is a throttling of it
         // (a prefix is said near one of the two, the nearer)

@@ -400,7 +400,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     } else if !project.scenarios.is_empty() {
         project.scenarios
     } else {
-        sonde_analysis::trial::choose(&clean_run.records)
+        sonde_analysis::trial::choose(&clean_run.records, &clean_run.header.url)
     };
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
     let program = sonde_analysis::program::key_of(&clean_run.header);
@@ -871,7 +871,11 @@ async fn run_once(
         sonde_analysis::index::set(&started.path, sonde_analysis::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &run.header.endpoint);
-        let analysis = sonde_analysis::view::Analysis::of(&run, &prices);
+        let mut analysis = sonde_analysis::view::Analysis::of(&run, &prices);
+        sonde_analysis::program::mark_expected(
+            &mut analysis.observations,
+            &super::check::expect_of(&run.header),
+        );
         // against the program's run before: what the change did
         let since =
             super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);

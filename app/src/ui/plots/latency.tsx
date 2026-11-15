@@ -11,7 +11,7 @@ import type { Profile, Signals } from "../../types";
 import { FEW } from "../../signals";
 import { pressedRow, AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, runSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable, TEXT } from "../kit";
-import { scatterSaid } from "./answers";
+import { kindRates, scatterSaid } from "./answers";
 
 /** The two tones of latency's bands: the body of the requests (median to
  * p95) and their tail (p95 to p99). */
@@ -505,3 +505,57 @@ export function FirstByte(props: { signals: Signals; max?: number }) {
     </If>
   );
 }
+
+/** The busiest kinds of request, each its own row on one time axis: its median to p95 as a band, slice by
+ * slice. Which kind got slow, and when (v21's "by kind of request", a chart of its own since 24.0). */
+export function KindsOverTime(props: { profile: Profile; domainMs?: [number, number] | null }) {
+  const kinds = () => kindRates(props.profile, props.domainMs);
+  const top = () => Math.max(...kinds().flatMap((k) => k.rows.map((r) => r.p95)), 1e-3) * 1.15;
+  const domain = (): [number, number] => props.domainMs ?? runSpan(props.profile, props.profile.rate.length);
+  const hovered = signal<{ group: number; index: number } | null>(null);
+  const tipOf = (k: { group: number; name: string; rows: { tMs: number; n: number; p50: number; p95: number }[] }) => {
+    const r = hovered()?.group === k.group ? k.rows[hovered()!.index] : null;
+    return r ? { title: k.name, lines: [`+${duration(r.tMs)}`, `${t("kinds.median")} ${duration(r.p50)} · p95 ${duration(r.p95)}`] } : null;
+  };
+  return (
+    <If when={!textual()} else={<SimpleTable columns={[t("profile.kind"), t("kinds.slowest"), t("kinds.at")]} rows={kinds().map((k) => { const r = k.rows.reduce((m, x) => (x.p95 > m.p95 ? x : m), k.rows[0]); return [k.name, duration(r.p95), `+${duration(r.tMs)}`]; })} />}>
+      <View testID="kinds-over-time" class="gap-1">
+        <Each of={kinds()} key={(k) => `${k.group}`}>
+          {(k, i) => (
+            <View class="flex-row items-center">
+              <Text class={ROW_LABEL}>{axisName(k().name)}</Text>
+              <Plot
+                data={k().rows}
+                x="tMs"
+                xScale={{ type: "linear", domain: domain() }}
+                yScale={{ type: "linear", domain: [0, top()] }}
+                accessibilityLabel={`${k().name}: p95 ${duration(Math.max(...k().rows.map((r) => r.p95)))}`}
+                motion={MOTION}
+                crossLineClass={CROSS_LINE}
+                tooltipPlacement="pointer"
+                tooltipOffset={10}
+                tooltipContent={<ChartTip tip={tipOf(k())} />}
+                onHoverChange={({ index }) => hovered.set(index === null ? null : { group: k().group, index })}
+                style={{ height: PITCH }}
+                class={`flex-1 ${i() === kinds().length - 1 ? TICK_ROOM : ""}`}
+              >
+                <Area y0="p50" y1="p95" curve="linear" class="fill-chart-1/20" />
+                <Line y="p95" curve="linear" class={`stroke-chart-1 ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-chart-1" />
+                <Line y="p50" curve="linear" class={`stroke-chart-1/50 ${STROKE.hair}`} hoverDotClass="hidden" />
+                <If when={i() === kinds().length - 1}>
+                  <TimeAxis domain={domain()} />
+                </If>
+              </Plot>
+            </View>
+          )}
+        </Each>
+      </View>
+    </If>
+  );
+}
+
+/** The kinds chart's legend: p95 as a line, the median-to-p95 band. */
+export const kindsLegend = (): LegendItem[] => [
+  { label: "p95", swatch: "border-chart-1", line: "solid" },
+  { label: t("kinds.band"), swatch: "bg-chart-1/30" },
+];

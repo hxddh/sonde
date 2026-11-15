@@ -52,19 +52,69 @@ install() {
   echo "$dir" >>"${GITHUB_PATH:-/dev/null}"
 }
 
-# The program under `sonde run`, its run kept apart; its exit status is
-# the verdict's, after the report and the comment.
-record() {
-  [ -n "${SONDE_RUN:-}" ] || fail "the run input is empty"
-  local file="$work/run.sonde" args=() status=0
+# `sonde run -o FILE` of the program, as the inputs give it, in this
+# folder: its exit status.
+run_to() {
+  local file="$1" args=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
   eval "set -- $SONDE_RUN"
   rm -f "$file"
   sonde run -o "$file" ${args[@]+"${args[@]}"} -- "$@" || status=$?
+  return "$status"
+}
+
+# The program under `sonde run`, its run kept apart; its exit status is
+# the verdict's, after the report and the comment.
+record() {
+  [ -n "${SONDE_RUN:-}" ] || fail "the run input is empty"
+  local file="$work/run.sonde" status=0
+  run_to "$file" || status=$?
   out exit "$status"
   [ -f "$file" ] || fail "sonde run wrote no run (exit $status)"
   out file "$file"
+}
+
+# The pull request's merge-base, recorded here: the base branch's code at
+# the commit the pull request starts from, checked out beside this one (a
+# git worktree), `setup` run in it, then the same command, on the same
+# runner (so its times compare). Its run in $work/merge-base.sonde; on
+# failure, why in WHY.
+merge_base() {
+  local base="$1" dir="$work/merge-base" file="$work/merge-base.sonde" deep=() commit prefix status=0
+  WHY=""
+  git rev-parse --git-dir >/dev/null 2>&1 || { WHY="not a git checkout"; return 1; }
+  # the base branch, and this checkout's history down to where it left it
+  [ "$(git rev-parse --is-shallow-repository)" != true ] || deep=(--unshallow)
+  git fetch --no-tags --quiet ${deep[@]+"${deep[@]}"} origin "+refs/heads/$base:refs/remotes/origin/$base" ||
+    { WHY="git could not fetch $base"; return 1; }
+  commit="$(git merge-base "origin/$base" HEAD)" || { WHY="no merge-base of $base and this commit"; return 1; }
+  # the working directory, as far down the repository as here
+  prefix="$(git rev-parse --show-prefix)"
+  git worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
+  git worktree add --quiet --detach "$dir" "$commit" || { WHY="git could not check out $commit"; return 1; }
+  echo "::group::sonde: the merge-base ${commit:0:7} of $base, recorded"
+  local why="$work/merge-base.why"
+  rm -f "$why"
+  (
+    cd "$dir/$prefix" 2>/dev/null || { echo "the working directory is not in the merge-base's checkout" >"$why"; exit 1; }
+    if [ -n "${SONDE_SETUP:-}" ] && ! bash -ec "$SONDE_SETUP"; then
+      echo "setup failed in the merge-base's checkout" >"$why"
+      exit 1
+    fi
+    run_to "$file"
+  ) || status=$?
+  echo "::endgroup::"
+  git worktree remove --force "$dir" >/dev/null 2>&1 || true
+  if [ "$status" != 0 ] || [ ! -f "$file" ]; then
+    if [ -f "$why" ]; then
+      WHY="$(cat "$why")"
+    else
+      WHY="the merge-base's program exited $status: what its checkout needs (dependencies) goes in the setup input"
+    fi
+    return 1
+  fi
+  MERGE_BASE="$commit"
 }
 
 # The workflow file this run is of: `.github/workflows/ci.yml` of
@@ -76,9 +126,10 @@ workflow_file() {
 }
 
 # The run the latest earlier run of this workflow kept on the base
-# branch (a pull request's) or on this branch (a push); `auto` (said as "no
-# baseline yet" by every format of `check`) when there is none. Another input
-# is passed on as it is.
+# branch (a pull request's) or on this branch (a push); for a pull request
+# with none, its merge-base recorded here ([merge_base]); `auto` (said as
+# "no baseline yet" by every format of `check`) when there is none. Another
+# input is passed on as it is.
 baseline() {
   case "${SONDE_BASELINE:-auto}" in
     none | "") return ;;
@@ -119,6 +170,17 @@ baseline() {
       fi
     fi
   done
+  # a pull request with none kept: its merge-base, recorded in this job
+  if [ -n "${GITHUB_BASE_REF:-}" ]; then
+    if merge_base "$base"; then
+      note "baseline: the merge-base ${MERGE_BASE:0:7} of $base, recorded in this job (no run of $base kept the artifact $artifact)"
+      out baseline "$work/merge-base.sonde"
+      return
+    fi
+    warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget alone"
+    out baseline auto
+    return
+  fi
   warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget alone"
   out baseline auto
 }

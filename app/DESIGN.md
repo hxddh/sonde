@@ -35,6 +35,9 @@ the next action; counts and chips support it, they do not replace it.
   "Recent runs"; the example and the demo from the welcome and the palette; Buckets' sections from their row (and
   `⌥⌘1`–`⌥⌘4`; a finding whose fix is one of them leads to the same section); "See the whole run" in the palette on
   Run only.
+- **No control that does nothing.** A press with something missing says what (Run with no endpoint, Save with no
+  URL: on its field); a control that must stay dimmed says why in its tip. The sidebar's toggle always toggles; a
+  pane that waits on the sidebar's list offers "Show sidebar".
 
 ## Platforms
 
@@ -68,11 +71,11 @@ A page writes a **text role**, not its classes: `TEXT.body`, `bodyQuiet`, `note`
 are 12 on the same 16 pt line (`caption-cjk`), which is why `text-caption` is the kit's alone. Parentheses around
 Latin and figures alone are halfwidth in Chinese, "(94%)", not "（94%）", whose own side bearings read as gaps.
 
-The interface is the platform's font, and monospace the platform's (SF Mono or Menlo,
-Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys, commands, URLs,
-code and the columns of times. Figures outside tables use `tabular-nums` so live
-counters do not jitter. (A shipped face was tried and dropped: text in a registered
-font is measured narrower than it is drawn — FINDINGS 15.)
+The interface is the platform's font (in Chinese on Linux, with a Simplified Chinese face after it: `font-sc`), and
+monospace the platform's (SF Mono or Menlo, Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys,
+commands, URLs and code. Times in a column are the interface's face. Figures outside tables use `tabular-nums` so live
+counters do not jitter, except on Linux, whose faces have even figures of their own and whose GTK measures the feature
+narrower than it draws (FINDINGS 15; a shipped face was dropped for the same reason).
 
 ## Color
 
@@ -196,11 +199,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
     no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
     goes to the next line;
-  - a run's header **folds to one line** on a short pane, on Time and History, and while the Operations under it
-    are scrolled from their top: what ran, its first four figures said with what they count ("172 requests · 0%
-    errors · 1.4 ms · 71.5 KiB", quiet words, each still opens its chart), its commands; what marks the run (a
-    trial) and "Since the run before" (a sentence, its Compare a link) stay under it, the sentence not over Time
-    and History;
+  - a run's header (where and when it ran, its commit and SDK, its sentence, its tiles) **folds to one line** only
+    while the pane under it is scrolled from its top, at every size and on every pane: what ran, its first four
+    figures said with what they count ("172 requests · 0% errors · median 1.4 ms · 71.5 KiB", quiet words, each
+    still opens its chart), its commands; what marks the run (a trial) stays under it. "Since the run before" (a
+    sentence naming the finding that changed, its Compare a link) shows on every pane while the header is open;
   - Run's terminal yields room to why when a program sent nothing (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯` by their words — never a row of unlabelled icons; they never wrap to a second line;
@@ -233,7 +236,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 | Count | `count()`, tabular, never mono; a section's count is "Title · n" |
 | Size | `bytes()`, tabular, at the end of its column |
 | Duration | `duration()` (0.4 ms, 840 ms, 2.35 s, 3 min 05 s). One word per meaning: **Took** for how long an operation or a run lasted, **Waiting** for a program's time on the store, **Latency** for one request |
-| Time | clock time in lists (`14:02:11.204`), `date()` in headers, never raw ISO |
+| Time | one clock, the reader's hour cycle: `clock()` in lists (`14:02:11.204`, `2:02:11.204 PM`), every row of a day's group to the second when one needs it; `date()` in headers, never raw ISO |
 | Cost | `cost()` with its currency; one cost one writing on a pane (a column's small figures as `costParts` writes them, "0.0072", never "<0.01" beside it) |
 | Key or path | `Path`: mono, on one line, cut in its middle with no space against the cut, never cut and wrapped; keys listed together share their prefix as `…/` (`shortKeys`), each keeping its folder and what tells it apart |
 | Command | mono, `$ ` before it, variables' values hidden |

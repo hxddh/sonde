@@ -7,7 +7,7 @@ import { Grid, PlotAxis } from "nsh/base/plot";
 import { count, duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TRANSITION, TYPE } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TYPE, REVEAL } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
@@ -21,11 +21,11 @@ export const pct = percent;
 /** The chart components: each draws its `Plot`s as the body of a `Chart`
  * frame. lint-charts fails a `Plot` outside these, and one of these used
  * outside a frame. */
-export const CHARTS = ["Lanes", "RunShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy"] as const;
+export const CHARTS = ["Lanes", "RunShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy", "KindsOverTime"] as const;
 /** The charts drawn over time: each has the one time axis (`TimeAxis`), so
  * they name the same moments at the same places. lint-charts fails one
  * without it, and a time axis made any other way. */
-export const OVER_TIME = ["Lanes", "RunShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
+export const OVER_TIME = ["Lanes", "RunShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean", "KindsOverTime"] as const;
 /** The charts of counts: each has the one value scale (`ValueAxis`: zero and the peak, with its unit). */
 export const COUNTS = ["RunShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
 /** Marks that are not charts and stand in no frame: a run's requests a
@@ -418,10 +418,10 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
   );
 }
 
-/** A frame's own controls (how to read it, its rows out as CSV): quiet until
- * the pointer is over the chart or the keys are on one of them, the same on
+/** A frame's own controls (how to read it, its rows out as CSV): quiet, never
+ * hidden (the kit's `REVEAL`), whole under the pointer or the keys; the same on
  * every chart. */
-const CHROME = `flex-row opacity-0 group-hover:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
+const CHROME = `flex-row ${REVEAL}`;
 
 /** A chart in its frame, the same for every chart: what it asks (`title`,
  * the card's whole width), a sentence that answers it (`text`, computed from

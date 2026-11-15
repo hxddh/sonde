@@ -37,7 +37,6 @@ export interface Settings {
   "rate-limit": number | null;
   prices: Prices;
   theme: string;
-  "high-contrast"?: boolean;
   language: string;
   "exports-dir": string | null;
   "downloads-dir": string | null;
@@ -423,7 +422,9 @@ export interface RunInfo {
   shape?: number[];
   /** The run's trials, when it was tried under faults: how the program stood in each. */
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
-  /** The clients that sent its requests, by their user agents ("boto3", "Lance", "Iceberg (pyiceberg)"): the one that sent most, and a second that sent a tenth or more. Absent while it is recorded or when none said. */
+  /** What sent its requests: the services or clients, by their user agents (display names without a version, the
+   * dominant first, and a second that sent a tenth or more: "boto3", "Lance", "Iceberg (pyiceberg)"); absent when none
+   * is known. */
   clients?: string[];
   /** Written outside the runs folder (`sonde run -o FILE`, an agent's): listed, opened, never renamed or removed here. */
   elsewhere?: boolean;
@@ -781,7 +782,7 @@ export interface ProgramHistory {
   baseline: string | null;
   baselinePoint?: RunPoint | null;
   limits?: BaselineLimits | null;
-  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: string[] } | null;
+  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: { identity: string; text: string; expected: string }[] } | null;
   /** The check as a pull request's comment (`sonde check -f markdown`). */
   markdown?: string | null;
 }
@@ -816,6 +817,16 @@ export interface Saving {
 }
 
 /** A finding between two runs of a program: fixed (gone at any threshold), less or more (by its count), back (fixed or under its threshold before, here again), new or open. */
+/** A program run here, as `Runs.programs()` gives it (the fields the app reads). */
+export interface ProgramInfo {
+  program: string;
+  runs: number;
+  /** Its newest run, by path. */
+  latest?: string;
+  /** Its newest run is past its baseline (more than 10% more requests or waiting). */
+  regressed: boolean;
+}
+
 export interface FindingChange {
   identity: string;
   state: "fixed" | "less" | "more" | "back" | "new" | "open";

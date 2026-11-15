@@ -17,7 +17,7 @@ import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, RunView, Signals, Split, SplitBy, Stretch } from "../types";
 import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./runview";
-import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid } from "./plots";
+import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid, KindsOverTime, kindRates, kindsLegend, kindsSaid } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -442,6 +442,19 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       how: () => t("latencyHeat.hint"),
       legend: () => heatLegend(zp().latencyHeat.filter((c) => !zr() || (c.bin >= zr()![0] && c.bin <= zr()![1])).map((c) => c.n)),
       body: () => <LatencyHeat profile={zp()} range={zr()} focus={focus} />,
+    },
+    {
+      // the busiest kinds, each over time: which kind got slow, and when
+      id: "kinds",
+      group: "latency",
+      zooms: true,
+      when: () => graphic() && overTime() && kindRates(p()).length > 0,
+      title: () => t("kinds.title"),
+      text: () => kindsSaid(zp(), zoomMs()),
+      how: () => t("kinds.hint"),
+      legend: kindsLegend,
+      rows: () => ({ columns: ["kind", "ms", "requests", "p50_ms", "p95_ms"], rows: kindRates(zp(), zoomMs()).flatMap((k) => k.rows.map((r) => [k.name, r.tMs, r.n, r.p50, r.p95])) }),
+      body: () => <KindsOverTime profile={zp()} domainMs={zoomMs()} />,
     },
     {
       // every request, when it ran (a press opens it)

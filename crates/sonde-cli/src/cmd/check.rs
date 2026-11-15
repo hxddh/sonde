@@ -119,6 +119,32 @@ fn of_project(h: &RunHeader, project: &Path, name: Option<&str>) -> bool {
     }
 }
 
+/// What the project a run is of keeps on purpose (`[check] expect`, each
+/// with why): the sonde.toml of the folder the run ran in (else this one),
+/// when the run is that project's ([`of_project`]). A sonde.toml that
+/// cannot be read keeps nothing here: `run` and `check` say what is wrong.
+pub(super) fn expect_of(h: &RunHeader) -> std::collections::BTreeMap<String, String> {
+    let from = h
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|d| d.is_dir())
+        .or_else(|| std::env::current_dir().ok());
+    let Some(Ok(Some(p))) = from.map(|d| sonde_analysis::project::of(&d)) else {
+        return Default::default();
+    };
+    let name = p
+        .file
+        .program
+        .name
+        .as_deref()
+        .filter(|n| !n.trim().is_empty());
+    match &p.path {
+        Some(toml) if of_project(h, toml, name) => p.file.check.expect,
+        _ => Default::default(),
+    }
+}
+
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
 /// with room to grow, and the CI step that holds every run to it.
 fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyhow::Result<i32> {
@@ -473,7 +499,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             s.paths().runs().display()
         )));
     }
-    let run = read(&file)?;
+    let mut run = read(&file)?;
+    // what the project keeps on purpose, each finding with why
+    sonde_analysis::program::mark_expected(&mut run.2, &project.expect);
     let header = run.3.clone();
     let program = sonde_analysis::program::key_of(&header);
     let dir = s.paths().runs();
@@ -584,6 +612,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Some(p) => super::usage(format!("{}: {e}", p.display())),
         None => super::usage(e),
     };
+    // the built-in demo store's times are not meaningful (`run --demo`
+    // says so): no row holds a demo run's waiting, nor a run's against a
+    // demo baseline
+    let untimed = std::iter::once(&header)
+        .chain(base.as_ref().map(|b| &b.3))
+        .any(|h| h.endpoint == "demo");
     let budget = Budget {
         max_requests: a.max_requests.or(project.max_requests),
         max_waiting_ms: match a.max_waiting {
@@ -591,11 +625,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             None => project.max_waiting_ms().map_err(in_project)?,
         },
         max_errors: a.max_errors.or(project.max_errors),
-        expect: project.expect.clone(),
         tolerance: base
             .as_ref()
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
+        untimed,
     };
+    if untimed && budget.max_waiting_ms.is_some() {
+        eprintln!(
+            "note: a run on the built-in demo store (--demo): its times are not meaningful, so max-waiting is not checked"
+        );
+    }
     // (a run is held by its figures and its findings: `check` reads no
     // record of it, nor of its baseline)
     let c = check(
@@ -641,7 +680,14 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             println!("nothing checked: no budget, and no baseline yet");
             return Ok(0);
         }
-        if no_baseline.is_none() {
+        // a demo run held to its waiting alone: asked for, and not meaningful
+        // (said above); it passes, as a first run with nothing to hold it to
+        let waived = untimed && budget.max_waiting_ms.is_some();
+        if waived && a.format == Format::Text {
+            println!("nothing checked: a demo run's waiting is not held to a limit");
+            return Ok(0);
+        }
+        if no_baseline.is_none() && !waived {
             eprintln!(
                 "nothing to check: give a budget (--max-requests, --max-waiting, --max-errors, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
             );
@@ -789,20 +835,23 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             );
         }
         for f in run.2.iter().take(10) {
-            // what the project expects is said, never warned of
-            let level =
-                if f.level == "warn" && !sonde_analysis::program::expected(f, &budget.expect) {
-                    "warning"
-                } else {
-                    "notice"
-                };
+            // what the project keeps on purpose is said with why, never warned of
+            let level = if f.level == "warn" && f.expected.is_none() {
+                "warning"
+            } else {
+                "notice"
+            };
+            let text = match &f.expected {
+                Some(why) => format!("{} (expected: {why})", f.text),
+                None => f.text.clone(),
+            };
             match f.callers.first().and_then(|c| code_place(&c.place)) {
                 Some((file, line)) => println!(
                     "::{level} file={},line={line},title=sonde::{}",
                     gh_property(&repo_path(header.cwd.as_deref(), &file)),
-                    gh_escape(&f.text)
+                    gh_escape(&text)
                 ),
-                None => println!("::{level} title=sonde::{}", gh_escape(&f.text)),
+                None => println!("::{level} title=sonde::{}", gh_escape(&text)),
             }
         }
         println!("sonde: {closing} · {judged}");
@@ -885,8 +934,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     for w in &c.new_warnings {
         println!("{} {w}", paint("!", "33", color));
     }
-    for w in &c.expected {
-        println!("{} {w} (expected)", paint("·", "2", color));
+    for e in &c.expected {
+        println!(
+            "{} {} (expected: {})",
+            paint("·", "2", color),
+            e.text,
+            e.expected
+        );
     }
     if let Some(t) = &since_text {
         println!("{}", paint(t, "33", color));

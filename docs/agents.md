@@ -28,6 +28,7 @@ From `show -f json` ([schema](schemas/show.schema.json)):
 | `findings[].fixes[]` | The change for the run's SDK (`sdk`, `code`), with placeholders (`b` the bucket, `k` the key). Adapt it to the code at `callers[]`. |
 | `findings[].savesRequests`, `savesMs`, `savesCost` | What acting on it saves, predicted. |
 | `findings[].identity` | The same finding across runs; `[check] expect` in `sonde.toml` names one kept on purpose. |
+| `findings[].expected` | Why the project keeps it on purpose (`[check] expect`): leave it alone, do not "fix" it. |
 | `verify` | The command that records the program again, in `run.cwd`. |
 | `since.findings[].state` | Against the program's run before: `fixed`, `less`, `more`, `new`, `back`, `open`. A fixed one has `measured` and `savedText`: the saving, measured. |
 | `since.change.commandChanged`, `workloadChanged` | The command changed, or the workload grew by half or more: what moved is not counted as a fix. Check the job did the same work. |

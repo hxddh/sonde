@@ -37,6 +37,9 @@
     },
     "ease": {
       "standard": [0.22, 1, 0.36, 1]
+    },
+    "fontFamily": {
+      "sc": "system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', 'Noto Sans SC', 'WenQuanYi Micro Hei'"
     }
   },
   "capabilities": {

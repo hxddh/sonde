@@ -24,7 +24,8 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
   const open = signal(false);
   const start = async () => {
     const ep = endpoint();
-    if (!ep) return;
+    // a press with no endpoint says why, never a control that does nothing
+    if (!ep) return report({ kind: "config", message: t("run.chooseEndpoint") });
     try {
       await api.runs.start(ep, policy());
       open.set(false);
@@ -68,7 +69,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
                 </View>
               </If>
               <View class="flex-row gap-2">
-                <Button small variant="primary" icon="radio" label={t("timeline.start")} onPress={start} disabled={!endpoint()} testID="record-start" />
+                <Button small variant="primary" icon="radio" label={t("timeline.start")} onPress={start} testID="record-start" />
                 <Button small variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} testID="record-cancel" />
               </View>
             </Row>
