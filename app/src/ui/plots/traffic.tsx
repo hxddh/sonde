@@ -8,7 +8,7 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, runSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER, slotMs, sliceAt } from "./system";
+import { pressedRow, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, runSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER, slotMs, sliceAt } from "./system";
 import { terminal, textual, SimpleTable, TEXT, TONE } from "../kit";
 import { bytesSaid, lanesSaid, slicePeak } from "./answers";
 
@@ -104,7 +104,9 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
           accessibilityLabel={label()}
           disabled={!props.onRequest}
           onPress={() => {
-            const r = hovered() === null ? null : rows()[hovered()!];
+            // the cell under the pointer; with Return (no pointer), the first request
+            const i = pressedRow(hovered(), rows());
+            const r = i === null ? null : rows()[i];
             if (r) props.onRequest?.(r.id);
           }}
         >
@@ -263,7 +265,8 @@ export function RunShape(props: { profile: Profile; slice?: number | null; onSli
         accessibilityLabel={shapeSentence(props.profile)}
         disabled={!props.onSlice}
         onPress={() => {
-          const h = hovered();
+          // the slice under the pointer; with Return (no pointer), the busiest
+          const h = pressedRow(hovered(), rows(), (r) => r.ok + r.miss + r.client + r.server + r.injected);
           const i = h === null ? null : h + from();
           if (i !== null) props.onSlice?.(props.slice === i ? null : i);
         }}

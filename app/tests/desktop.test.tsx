@@ -1,7 +1,7 @@
 // The desktop form, headless (`platform: "macos"`, a window-sized viewport).
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, desktop, place } from "./helpers";
+import { openDemo, openExample, desktop, place } from "./helpers";
 import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
@@ -625,4 +625,50 @@ test("a scenario's verdicts over the program's runs read in a few words; the ref
   // "Try again what broke" takes up what did not survive, the refused with it
   const verdicts = (["survived", "degraded", "broke", "untested", "refused"] as const).map((standing) => ({ ...base, scenario: standing, standing }));
   expect(toTryAgain(verdicts).map((x) => x.scenario)).toEqual(["degraded", "broke", "refused"]);
+});
+
+test("what looks pressable answers a press: a chart without the pointer, its how to read, a tile, the title bar's place, the sidebar's toggle", async () => {
+  const app = await open("../App.tsx", desktop);
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  // a tile that opens its chart says so at rest, quietly; a press on it opens the chart
+  expect(app.viewStyle("id:signal-rate-opens")?.opacity ?? 0).toBeGreaterThan(0.5);
+  // the shape strip with no pointer over it (Return, or a press on no slice): its busiest slice narrows the operations
+  await app.press("id:run-shape");
+  await app.waitFor("id:clear-filter", { timeout: 5000 });
+  await app.press("id:clear-filter");
+  await app.waitUntil(() => !app.shows("id:clear-filter"), { timeout: 2000 });
+  // an operation's requests over its time, pressed with no pointer: its first request
+  await app.press("text:manifest 3 written");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:waterfall");
+  await app.waitFor("id:record-detail", { timeout: 5000 });
+  await app.press("id:inspector-close");
+  await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
+  // a chart's how to read opens on a press (not only under the pointer), and Escape closes it
+  await app.press("id:signal-latency");
+  await app.waitFor("id:time-pane");
+  await app.waitFor("id:chart-distribution-how", { timeout: 5000 });
+  await app.press("id:chart-distribution-how");
+  await app.waitFor("id:chart-distribution-how-text", { timeout: 2000 });
+  await app.keyboard.press("escape");
+  await app.waitUntil(() => !app.shows("id:chart-distribution-how-text"), { timeout: 2000 });
+  // the title bar's place is a way back to its list: the run let go
+  await app.press("id:crumb-place");
+  await app.waitUntil(() => !app.shows("id:run-pane"), { timeout: 2000 });
+  // with no run chosen the sidebar holds its list: its toggle is never dimmed, and a press says why it stays
+  expect(app.viewStyle("id:toggle-sidebar")?.effectiveOpacity ?? 0).toBe(1);
+  await app.press("id:toggle-sidebar");
+  await app.waitFor("text:/^The sidebar stays open here/", { timeout: 2000 });
+  expect(app.shows("id:sidebar")).toBe(true);
+});
+
+test("a row's actions are there for the pointer: an endpoint's always, a quiet one at rest", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "endpoints");
+  await openDemo(app);
+  await app.waitFor("id:edit-demo", { timeout: 10000 });
+  // a list of a few endpoints shows each one's edit and removal in full
+  expect(app.viewStyle("id:edit-demo")?.effectiveOpacity ?? 0).toBe(1);
+  expect(app.viewStyle("id:remove-demo")?.effectiveOpacity ?? 0).toBe(1);
 });

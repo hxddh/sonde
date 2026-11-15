@@ -9,7 +9,7 @@ import { bytes, cost, count, duration, percent, transfer } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
 import { FEW } from "../../signals";
-import { AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, runSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
+import { pressedRow, AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, runSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable, TEXT } from "../kit";
 import { scatterSaid } from "./answers";
 
@@ -416,7 +416,9 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
         accessibilityLabel={label()}
         disabled={!props.onRequest}
         onPress={() => {
-          const r = hovered() === null ? null : rows()[hovered()!];
+          // the dot under the pointer; with Return (no pointer), the slowest request
+          const i = pressedRow(hovered(), rows(), (x) => x.ms);
+          const r = i === null ? null : rows()[i];
           if (r) props.onRequest?.(r.id);
         }}
         // the plot as wide as the card, less its scale's room

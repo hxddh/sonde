@@ -6,7 +6,7 @@ import { Bar, Plot, PlotAxis } from "nsh/base/plot";
 import { duration } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, RecordSummary } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
+import { pressedRow, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
 import { terminal, TEXT } from "../kit";
 
 /** An operation's requests in time: a bar from each one's start to its end, so waits and overlaps show. */
@@ -44,7 +44,9 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
         accessibilityLabel={t("profile.waterfallText", { n: props.records.length, time: duration(end()) })}
         disabled={!props.onRecord}
         onPress={() => {
-          const r = hovered() === null ? null : rows()[hovered()!];
+          // the bar under the pointer; with Return (no pointer), the first
+          const i = pressedRow(hovered(), rows());
+          const r = i === null ? null : rows()[i];
           if (r) props.onRecord?.(r.id);
         }}
       >
