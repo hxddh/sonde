@@ -1,7 +1,7 @@
 // The runs in the sidebar, newest first, by day: a row a run — its
-// program (or the endpoint) and its time; then what tells it from its
-// neighbours (else its requests) and how it went (its trials, else a mark of
-// its requests over its time).
+// program (or the endpoint), what tells it from its neighbours and its time;
+// then where it went and its requests, and how it went (its trials, else a
+// mark of its requests over its time).
 
 import { computed, type ContextMenuEvent, effect, type JSX, List, type ListRef, Text, untracked, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
@@ -54,8 +54,6 @@ export function RunList(props: {
   onContextMenu?: (s: RunInfo, at?: { x: number; y: number }) => void;
   /** The context menu's commands, offered to screen readers on each row. */
   actions?: (s: RunInfo) => { name: string; label: string; run: () => void }[];
-  /** the endpoint in use: a run's own is said only where it is another */
-  endpoint?: string | null;
 }) {
   // one list, the days as headers that stay in view while their runs scroll
   type Row = { day: string } | { s: RunInfo; i: number };
@@ -143,21 +141,22 @@ export function RunList(props: {
       onPress={() => select(x().s.path)}
       class="mb-1"
     >
-      {/* two facts a line: what ran and when; then what tells it from its neighbours (else how much it did) and
-          how it went — its trials' verdict, else its requests over its time, never both */}
+      {/* what ran, what tells it apart and when; then where it went, how much it did, and how it went — its trials'
+          verdict, else its requests over its time, never both */}
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        {/* what tells it from its neighbours (the same command again tells nothing apart by its words: its time does,
+            to the second) */}
+        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.twin ? "" : (told().get(x().s.path)?.args ?? args(x().s))}</Text>
         {/* the same command run again: its time to the second */}
         <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{told().get(x().s.path)?.twin ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
       <View class="flex-row items-center gap-2">
-        {/* (the same command again tells nothing apart by its words: its time does, to the second) */}
-        <If when={told().get(x().s.path)?.twin ? "" : (told().get(x().s.path)?.args ?? args(x().s))} else={<Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("runs.requestsN", { n: x().s.requests }), x().s.endpoint !== props.endpoint ? x().s.endpoint : ""].filter(Boolean).join(" · ")}</Text>}>
-          {(a) => <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{a()}</Text>}
-        </If>
+        {/* where it went and how much it did, always */}
+        <Text testID="run-requests" class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[x().s.endpoint, t("runs.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
