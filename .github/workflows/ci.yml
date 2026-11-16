@@ -49,8 +49,6 @@ jobs:
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
         run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
-      - name: docs/probes.md is what the probe catalog makes
-        run: cargo build -p sonde-cli && python3 scripts/gen-probe-docs.py --check
       - name: nsh build reports no warnings
         run: |
           set -o pipefail
@@ -75,6 +73,10 @@ jobs:
         with: { shared-key: debug, save-if: "${{ github.ref == 'refs/heads/main' }}" }
       # every member, the app's bridge (sonde-nsh) included
       - run: cargo test --workspace --locked
+      # (the debug sonde the tests built)
+      - name: docs/probes.md is what the probe catalog makes
+        if: runner.os == 'Linux'
+        run: python3 scripts/gen-probe-docs.py --check
 
   budgets:
     # runs of any size, held (optimised, as released): each test's

@@ -30,10 +30,10 @@ cargo shear                              # no unused dependencies
 python3 scripts/fixtures.py --check      # run fixtures in the current format
 (cd app && nsh check)
 python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
-cargo build -p sonde-cli && python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog makes
 (cd app && nsh build App.tsx 2>&1 | tee build.log; ! grep -E "^warn" build.log)   # no warnings
 # unit
 cargo test --workspace --locked
+python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog makes (the debug sonde above)
 # ui
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own
 # action (then the action itself, with this commit's sonde)

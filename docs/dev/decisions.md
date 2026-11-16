@@ -161,7 +161,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-174 | When `skew` is offered | always; by SDK | **When the SDK retries it** (Java, JavaScript), or when named: botocore cannot. |
 | D-175 | Trying again | everything; what did not survive | **`--trial --again`: broke, degraded and refused**, with each scenario's history per program (in the runs folder's `.index.jsonl`). |
 | D-176 | A refusal by the policy in a trial | broke; its own | **`refused`**: the program was not judged; `check` warns. |
-| D-177 | A finding across runs | by id; by kind and what it is about | **Kind and what it is about**; states fixed, less, back, new, open per program (`findings.json`). |
+| D-177 | A finding across runs | by id; by kind and what it is about | **Kind and what it is about**; states fixed, less, back, new, open per program (kept in `.index.jsonl`). |
 | D-178 | Fixed or less | under the threshold; gone at any threshold | **Gone at any threshold**, else "less"; a fixed finding shows its measured saving beside the predicted. |
 | D-179 | Callers | opt-in; on | **On by default** (`--no-callers`): the fix loop needs the line; the Python hook loads lazily. |
 | D-180 | Default `show` | everything; the summary | **The summary, findings first, one table**; the rest behind `--all`. |

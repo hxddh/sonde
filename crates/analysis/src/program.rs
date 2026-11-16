@@ -1222,7 +1222,7 @@ pub struct Comment<'a> {
     pub change: Option<&'a crate::profile::RunChange>,
     /// Why there is no baseline, when one was asked for and none was found.
     pub no_baseline: Option<&'a str>,
-    /// Where the whole report is (`sonde share --html`, kept by CI).
+    /// Where the whole report is (`sonde share`'s page, kept by CI).
     pub report_url: Option<&'a str>,
     /// The program's exit status, when it is not 0, and why when the
     /// policy refused a request ([`RunPoint::refused`]).
