@@ -7,6 +7,8 @@ export { Listing, Runs, Sonde };
 
 /** The structured error sonde/native rejects or throws with. */
 export function asError(e: unknown): T.SondeError {
+  // one of ours already (a press that says why: `report({ kind: "config", message })`), not "[object Object]"
+  if (e && typeof e === "object" && !(e instanceof Error) && typeof (e as { message?: unknown }).message === "string") return e as T.SondeError;
   const message = e instanceof Error ? e.message : String(e);
   try {
     const v = JSON.parse(message);
@@ -59,7 +61,6 @@ export const api = {
   duCached: (ep: string, b: string, p: string) => Sonde.duCached(ep, b, p) as T.DuReport | null,
   duExport: (ep: string, b: string, p: string, format: "json" | "csv") => Sonde.duExport(ep, b, p, format),
   /** A chart's rows as CSV, written into the exports folder; the file's path. */
-  exportCsv: (name: string, text: string) => Sonde.exportCsv(name, text) as string,
   detectLayouts: (ep: string, b: string, p: string) => Sonde.detectLayouts(ep, b, p),
   analyzeLayout: (ep: string, b: string, format: string, root: string) => Sonde.analyzeLayout(ep, b, format, root),
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,

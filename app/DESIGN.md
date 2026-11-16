@@ -383,8 +383,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   ticks saying times.
 - **A budget on its chart**: `sonde.toml`'s `max-p95`, `max-errors` (as a share of the run) and `max-waiting`
   (over the runs) are dashed lines with a chip ("budget 50 ms"); the sentence says how far the run is.
-- **Out and kept**: a Time chart's rows go out as CSV (its title's button, to the exports folder); the stretch
-  chosen goes into a `sonde://` link and a shared page's `#range=` (D-123: still two presses).
+- **Out and kept**: a chart's title row holds only its (i): no export button (its data is `sonde show -f json`'s); the
+  stretch chosen goes into a `sonde://` link and a shared page's `#range=` (D-123: still two presses).
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its
   line of requests in flight, the findings' numbers and a trial's faults; the scatter's outcomes and its p95.
 - **The histogram**: each bar says how many requests it holds; the share done by each time is a dashed line on

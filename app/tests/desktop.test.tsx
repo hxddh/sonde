@@ -149,6 +149,52 @@ test("a month of a program reads as money, not per 1,000 runs", async () => {
   expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });
 
+test("money under a millionth is written out, never in exponent form (2.6e-7 USD)", async () => {
+  const { money, costParts, costColumn } = await import("../src/format");
+  // a tiny prefix's month: two significant figures, however many zeros before them
+  expect(money(2.6e-7, "USD")).toBe("0.00000026 USD");
+  expect(money(0.0099, "USD")).toBe("0.0099 USD");
+  expect(money(0.42, "USD")).toBe("0.42 USD");
+  // a run's few requests, per 1,000 runs, and a column of them
+  expect(costParts(2.6e-10, "USD").figure).toBe("0.00000026");
+  expect(costColumn([2.6e-10, 0.0004], "USD").figures).toEqual(["0.00000026", "0.40"]);
+  expect(costColumn([2.6e-7, 2], "USD").figures).toEqual(["0.00000026", "2.00"]);
+  for (const s of [money(1e-12, "USD"), costParts(1e-15, "USD").figure, ...costColumn([1e-15, 0.001], "USD").figures]) expect(s).not.toMatch(/e/);
+});
+
+test("every count in the app's words is grouped (1,500 requests); ids, exit codes and versions are not", async () => {
+  const { language, t } = await import("../src/i18n");
+  const { say } = await import("../src/phrases");
+  expect(t("runs.requestsN", { n: 1500 })).toBe("1,500 requests");
+  expect(t("run.bandRequests", { n: 87139 })).toBe("87,139 requests");
+  expect(t("runs.requestsN", { n: 999 })).toBe("999 requests");
+  // a figure written by the caller stays as written
+  expect(t("runs.requestsN", { n: "1,500" })).toBe("1,500 requests");
+  // what is no count: a chain's number, a program's exit, a version
+  expect(t("chains.row", { i: 1234, n: 1500 })).toBe("Chain 1234 · 1,500 requests");
+  expect(t("run.exited", { code: 3221 })).toBe("exited with 3221");
+  expect(t("updates.found", { version: "2026" })).toBe("sonde 2026 is out.");
+  // Rust's phrases as before
+  expect(say([{ key: "obs.hot", args: { n: "87139" } }], "x")).not.toMatch(/87139/);
+  // and in Chinese
+  language.set("zh");
+  try {
+    expect(t("runs.requestsN", { n: 1500 })).toBe("1,500 个请求");
+  } finally {
+    language.set("auto");
+  }
+});
+
+test("an import's callers: as many as the profile kept, \"12+\" only when it kept the busiest of more", async () => {
+  const { fromWhom } = await import("../src/ui/runview");
+  const callers = (k: number) => Array.from({ length: k }, (_, i) => ({ place: `arn:aws:iam::1:user/u${i}`, requests: 1, waitedMs: 0, errors: 0, cost: 0 }));
+  const view = (k: number, callersCut?: boolean) => ({ header: { endpoint: "demo", url: "", region: "", created: "", command: "imported from CloudTrail" }, sdk: null, profile: { callers: callers(k), callersCut } }) as never;
+  expect(fromWhom(view(12))).toBe("from 12 callers");
+  expect(fromWhom(view(12, false))).toBe("from 12 callers");
+  expect(fromWhom(view(12, true))).toBe("from 12+ callers");
+  expect(fromWhom(view(3))).toBe("from 3 callers");
+});
+
 test("a lane's cell shows the worst of the requests it holds, and says how many", async () => {
   const { laneCells } = await import("../src/ui/plots");
   // 96 slices of 10 ms: three short requests share the first cell of lane 0, the failure not the last of them
@@ -607,12 +653,6 @@ test("a stretch of time in a link: read from a query or a hash, as slices of the
   // past the run's end: up to its last slice; less than two slices: no stretch
   expect(slicesOf([1500, 9000], 100, 20)).toEqual([15, 19]);
   expect(slicesOf([120, 180], 100, 20)).toBe(null);
-});
-
-test("a chart's rows as CSV: a header, plain numbers, quoted where a field needs it", async () => {
-  const { toCsv } = await import("../src/csv");
-  expect(toCsv({ columns: ["ms", "p95_ms"], rows: [[0, 1.23456789], [100, null]] })).toBe("ms,p95_ms\r\n0,1.234568\r\n100,\r\n");
-  expect(toCsv({ columns: ["key"], rows: [['a,"b"'], ["line\nbreak"]] })).toBe('key\r\n"a,""b"""\r\n"line\nbreak"\r\n');
 });
 
 test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {

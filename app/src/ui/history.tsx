@@ -212,7 +212,7 @@ function Verdicts(props: { h: ProgramHistory }) {
   // each figure in its own unit: times as times, cost as cost, the rest counted
   const value = (what: string, v: number) => (what === "waiting" || what === "p95" ? duration(v) : what === "cost" ? cost(v, props.h.runs[0]?.currency ?? "USD") : count(Math.round(v)));
   // what went past, figure by figure, then the warnings that are new
-  const lines = () => [...failed().map((v) => `${t(`verdict.${v.what}` as never)}: ${value(v.what, v.value)} > ${value(v.what, v.limit)}`), ...c().newWarnings].join("\n");
+  const lines = () => [...failed().map((v) => `${t(`verdict.${v.what}` as never)}: ${value(v.what, v.value)} > ${value(v.what, v.limit)}`), ...c().newWarnings.map((w, i) => say(c().newWarningPhrases?.[i], w))].join("\n");
   return (
     <>
       <Notice testID="history-check" tone={c().passed ? "info" : "warn"} icon={c().passed ? "circle-check" : undefined} title={c().passed ? t("history.passed") : t("history.failed")} text={lines()}>
@@ -247,11 +247,16 @@ const commitText = (g?: GitStamp | null) => (g ? `${g.commit.slice(0, 7)}${g.dir
 function SinceRow(props: { h: ProgramHistory }) {
   const s = () => props.h.since!;
   const open = signal(false);
+  // each run by its commit, else (a run outside git) by its time, as the CLI names it by its file: never "at no commit"
+  const named = (g: GitStamp | undefined, run: string | undefined) => {
+    const at = run === undefined ? undefined : props.h.runs.find((r) => r.path === run)?.created;
+    return commitText(g) || (at ? date(at) : t("history.noCommit"));
+  };
   const text = () =>
     t("history.since", {
       n: s().runsAgo + 1,
-      commit: commitText(s().firstPastCommit) || t("history.noCommit"),
-      last: commitText(s().lastWithinCommit) || t("history.noCommit"),
+      commit: named(s().firstPastCommit, s().firstPast),
+      last: named(s().lastWithinCommit, s().lastWithin),
     });
   const canDiff = () => !!(s().lastWithin && s().firstPastCommit && s().lastWithinCommit && s().firstPastCommit!.commit !== s().lastWithinCommit!.commit);
   return (
@@ -323,7 +328,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -414,7 +419,8 @@ export function HistoryPane(props: { path: string; /** whether the pane is scrol
                 />
               </If>
               {/* one button, its words the action: set, or (already the baseline) clear */}
-              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />
+              {/* a run written elsewhere (`-o`) cannot be one: the button stays, and says why */}
+              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : props.elsewhere ? t("history.elsewhere") : undefined} disabled={props.elsewhere && !isBase()} onPress={toggle} testID="history-baseline" />
             </PageHeader>
             <If when={x().check}>
               <Verdicts h={x()} />

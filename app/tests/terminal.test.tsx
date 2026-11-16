@@ -2,7 +2,7 @@
 // (an in-memory terminal, the real Cell renderer and keyboard).
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, place } from "./helpers";
+import { elsewhereCommand, openDemo, openExample, place } from "./helpers";
 
 const term = { width: 960, height: 640 };
 
@@ -119,3 +119,25 @@ test("run in a terminal: the program above, its operations below", async () => {
   expect(app.shows("id:run-command")).toBe(true);
   await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
 });
+
+test("a run written with -o: a terminal's row menu opens and shares it, never renames or deletes it", async () => {
+  const app = await demo();
+  await place(app, "run");
+  await app.type("id:run-command", elsewhereCommand("python agent_terminal.py"));
+  await app.press("id:run-start");
+  await app.waitFor("id:run-summary", { timeout: 25000 });
+  await place(app, "runs");
+  await app.waitFor("text:agent_terminal.py", { timeout: 10000 });
+  await app.rightClick("text:agent_terminal.py");
+  const labels = app.menu()!.map((m) => m.label);
+  await app.keyboard.press("escape");
+  expect(labels).toContain("Share as a web page");
+  expect(labels).not.toContain("Rename…");
+  expect(labels).not.toContain("Delete…");
+  // the command's own run, the newest, in the runs folder, has both
+  await app.rightClick("id:run-0");
+  const own = app.menu()!.map((m) => m.label);
+  await app.keyboard.press("escape");
+  expect(own).toContain("Rename…");
+  expect(own).toContain("Delete…");
+}, 120000);

@@ -125,14 +125,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const o = rangeOnOpen();
     if (o && o.name === fileName(props.path)) untracked(() => batch(() => (linkRange.set(o.range), pane.set("time"), rangeOnOpen.set(null))));
   });
-  /** A chart's rows, written as CSV where exports go; said, with the file's path. */
-  const exportRows = (name: string, csv: string) => {
-    try {
-      notify(t("common.exportedTo", { path: api.exportCsv(`${fileName(props.path).replace(/\.sonde(\.gz)?$/, "")}-${name}`, csv) }));
-    } catch (e) {
-      report(e);
-    }
-  };
+
   /** A link to this run, over the stretch its Time pane shows (when one is chosen there). */
   const link = () => {
     const r = pane() === "time" ? (shownRange()[props.path] ?? null) : null;
@@ -373,7 +366,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
               .catch(report);
         },
       },
-      ...(me ? ([{ type: "separator" }, { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeRun(me) }] as MenuItem[]) : []),
+      // a run written elsewhere (`-o`) is listed and opened here, never renamed or removed: its file is its writer's
+      ...(me && !me.elsewhere ? ([{ type: "separator" }, { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeRun(me) }] as MenuItem[]) : []),
     ], moreButton);
   };
 
@@ -395,10 +389,10 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => RunView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} source={source} onScrolled={scrolled} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
+    <OperationsTable view={v()} source={source} onScrolled={scrolledBy("operations")} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
-  const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
+  const output = () => <OutputTable lines={lines()} onSelect={chooseLine} onScrolled={scrolledBy("output")} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
 
   const v0 = () => view();
   // a run of a program has runs (a trial is no run of its own: its verdict is on the run it is a trial of)
@@ -459,8 +453,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     </If>
   );
   const body = (v: () => RunView) => {
-    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
+    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -608,6 +602,15 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const scrolled = (away: boolean) => {
     const want = away ? untracked(pane) : null;
     if (untracked(foldedOn) !== want) foldedOn.set(want);
+  };
+  // Output beside the operations: each table says whether it is scrolled from its top, and the header folds while
+  // either is (the operations' table, at its top, telling of its rows again as the header folds does not open it)
+  let awayOn = { pane: "", operations: false, output: false };
+  const scrolledBy = (table: "operations" | "output") => (away: boolean) => {
+    const p = untracked(pane);
+    if (awayOn.pane !== p) awayOn = { pane: p, operations: false, output: false };
+    awayOn[table] = away;
+    scrolled(awayOn.operations || awayOn.output);
   };
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;
@@ -862,9 +865,14 @@ export function Runs() {
         { label: t("runs.window"), icon: iconSvg("app-window"), onSelect: () => openInWindow(s.path) },
         { label: t("runs.share"), icon: iconSvg("share-2"), onSelect: () => void shareRun(s.path) },
         { label: t("runs.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(s.path) },
-        { type: "separator" },
-        { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(s) },
-        { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: s.live, onSelect: () => void remove(s) },
+        // a run written elsewhere (`-o`) is listed and opened here, never renamed or removed: its file is its writer's
+        ...(s.elsewhere
+          ? []
+          : ([
+              { type: "separator" },
+              { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(s) },
+              { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: s.live, onSelect: () => void remove(s) },
+            ] as MenuItem[])),
       ],
       at,
     );
@@ -892,8 +900,8 @@ export function Runs() {
             actions={(s) => [
               { name: "window", label: t("runs.window"), run: () => openInWindow(s.path) },
               { name: "share", label: t("runs.share"), run: () => void shareRun(s.path) },
-              { name: "rename", label: t("runs.rename"), run: () => rename(s) },
-              ...(s.live ? [] : [{ name: "delete", label: t("runs.removeMenu"), run: () => void remove(s) }]),
+              ...(s.elsewhere ? [] : [{ name: "rename", label: t("runs.rename"), run: () => rename(s) }]),
+              ...(s.live || s.elsewhere ? [] : [{ name: "delete", label: t("runs.removeMenu"), run: () => void remove(s) }]),
             ]}
           />
           </View>

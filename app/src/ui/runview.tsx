@@ -112,6 +112,17 @@ export function gitText(g: RunView["header"]["git"]): string {
 
 
 /** The command and where it ran, then the run's figures. */
+/** Who sent a run's requests: the SDK most did ("from boto3 1.34"); an import (no command, or "imported from …") from
+ * several callers (its principals) says how many, not the one SDK most of them used — "12+" only where the profile
+ * kept the busiest of more (`callersCut`), never for exactly as many as it keeps. */
+export function fromWhom(view: Pick<RunView, "header" | "profile" | "sdk">): string {
+  const callers = view.profile?.callers?.length ?? 0;
+  const command = view.header.command;
+  const imported = !command || command.startsWith("imported from ");
+  if (imported && callers > 1) return t("run.callers", { n: view.profile?.callersCut ? `${count(callers)}+` : callers });
+  return view.sdk ? t("run.sdk", { sdk: view.sdk }) : "";
+}
+
 export function RunHeader(props: { view: RunView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the run (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
@@ -123,14 +134,7 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
   };
   const command = () => props.view.header.command;
   const acts = () => props.actions?.();
-  // who sent its requests: the SDK most did ("from boto3 1.34"); an import (no command, or "imported from …") from several callers (its
-  // principals) says how many, not the one SDK most of them used (the profile keeps the busiest 12)
-  const from = () => {
-    const callers = props.view.profile?.callers?.length ?? 0;
-    const imported = !command() || command()!.startsWith("imported from ");
-    if (imported && callers > 1) return t("run.callers", { n: callers >= 12 ? "12+" : count(callers) });
-    return props.view.sdk ? t("run.sdk", { sdk: props.view.sdk }) : "";
-  };
+  const from = () => fromWhom(props.view);
   if (terminal()) {
     return (
       <View class="gap-0">
@@ -349,8 +353,8 @@ export function whatIfText(v: RunView): string | null {
   // the cost as what changes: amounts of thousandths of a cent read as nothing
   const cut = w.cost[0] > 0 ? change(w.cost[0], w.cost[1]) : "—";
   // a log without times says nothing of waiting
-  if (!timed(v.profile) || !w.waitingMs) return t("whatIf.untimed", { n: w.findings, a: w.requests[0], b: w.requests[1], cut });
-  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
+  if (!timed(v.profile) || !w.waitingMs) return t("whatIf.untimed", { n: w.findings, a: count(w.requests[0]), b: count(w.requests[1]), cut });
+  return t("whatIf.text", { n: w.findings, a: count(w.requests[0]), b: count(w.requests[1]), wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
 }
 
 /** What stands out in a run — its core result. Each finding says what
@@ -837,7 +841,7 @@ export function OperationsTable(props: {
 }
 
 /** The program's output, one timed line per row. */
-export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[] }) {
+export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[]; /** whether the table is scrolled from its top (the run's header folds while it is), as the operations' */ onScrolled?: (away: boolean) => void }) {
   return (
     <DataTable
       ref={props.ref}
@@ -850,6 +854,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       ]}
       renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, {}])}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
+      onVisibleRowsChange={({ range }) => props.onScrolled?.(range.start > 0)}
       fontSize={TYPE.small}
       fontFamily={terminal() ? undefined : token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}

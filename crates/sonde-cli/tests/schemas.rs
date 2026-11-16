@@ -308,6 +308,34 @@ async fn every_json_output_is_as_its_schema_says() {
         trial::record(dir, "tour", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
+    // a run of the tour's program where nothing reached sonde: `since.empty`, not compared
+    {
+        let empty = b.path("empty.sonde");
+        let e = empty.to_str().unwrap();
+        let o = tokio::process::Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .current_dir(b.dir.path())
+            .env("SONDE_CONFIG_DIR", b.path("config"))
+            .env("SONDE_DATA_DIR", b.path("data"))
+            .args(["run", "--demo", "--name", "tour", "-o", e, "--", "true"])
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            o.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let shown = b.json(&["show", e, "-f", "json"], 0).await;
+        assert_eq!(
+            shown["since"]["empty"],
+            Value::Bool(true),
+            "{}",
+            shown["since"]
+        );
+        holds("show", &shown);
+    }
     // reading a run
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
     holds(

@@ -4,6 +4,7 @@
 
 import { effect, locale, signal } from "nsh";
 import { setLocale, t as translate } from "nsh/i18n";
+import { count } from "./format";
 
 /** Every key the app has words for (English has them all). */
 export type Key = keyof typeof import("../locales/en.json");
@@ -38,14 +39,29 @@ export function words(key: string): string | null {
   return lookup(key, undefined);
 }
 
+/** The arguments that are counts: a figure of four digits or more among them is grouped as every count is
+ * ("listed 87,139 times", beside "87,139 requests"); ids, years, ports, exit codes and versions are other
+ * arguments, left as written. The same for the app's words (`t`) and Rust's phrases ([`phrases.ts`](./phrases.ts)). */
+export const COUNTS = new Set(["n", "of", "count", "requests", "reads", "writes", "objects", "total", "was", "clean"]);
+
+/** An argument as it is said: a count grouped ("1,500"), anything else as given. */
+export function grouped(k: string, v: string | number): string | number {
+  if (!COUNTS.has(k)) return v;
+  if (typeof v === "number") return Number.isInteger(v) && Math.abs(v) >= 1000 ? count(v) : v;
+  return /^\d{4,}$/.test(v) ? count(Number(v)) : v;
+}
+
 /** The words for `key`, filled from `vars`. A count of one (`n: 1`) reads
- * `<key>.one` where the language has it ("1 request", not "1 requests"). */
+ * `<key>.one` where the language has it ("1 request", not "1 requests").
+ * A count is grouped wherever it is said ("1,500 requests"), whoever wrote
+ * the figure. */
 export function t(key: Key, vars?: Record<string, string | number>): string {
   // read so a view that shows it follows the setting at once
   lang();
+  const filled = vars && Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, grouped(k, v)]));
   if (vars && Number(vars.n) === 1) {
-    const one = lookup(`${key}.one`, vars);
+    const one = lookup(`${key}.one`, filled);
     if (one !== null) return one;
   }
-  return lookup(key, vars) ?? key;
+  return lookup(key, filled) ?? key;
 }

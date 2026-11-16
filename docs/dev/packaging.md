@@ -2,8 +2,8 @@
 
 | Artifact | Built by | How |
 |---|---|---|
-| `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release`, then `cargo build --release -p sonde-cli --features tui`: CLI and terminal UI in one binary, bundle and web viewer embedded. |
-| `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same, statically linked: runs on Alpine, distroless, old distributions (checked in `alpine`). `install.sh` takes it on musl systems or with `SONDE_STATIC=1`. |
+| `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release`, then `cargo build --release -p sonde-cli --features tui`: CLI and terminal UI in one binary, bundle and web viewer embedded. Dynamically linked: needs glibc 2.35 or newer. There is no static aarch64 build: `install.sh` refuses aarch64 on musl or an older glibc, saying so. |
+| `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same, statically linked: runs on Alpine, distroless, old distributions (checked in `alpine`). `install.sh` takes it on musl systems, with `SONDE_STATIC=1`, or when the glibc build cannot start (glibc older than 2.35). |
 | `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 26 (arm64) and macOS 26 Intel | The same. |
 | `sonde-windows-x86_64.zip` | `build.yml` on Windows (`x86_64-pc-windows-msvc`) | The same, `sonde.exe` (signed) in a `.zip`. |
 | `sonde-macos.dmg` | `build.yml` on macOS 26 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), then signed and notarized (below), and `scripts/macos-dmg.sh`. |
@@ -85,7 +85,7 @@ each release and daily.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.0`, or `24`: the newest 24.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.1`; `24`: the newest 24.x; `24.0`: the newest 24.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code

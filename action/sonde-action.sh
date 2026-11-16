@@ -28,7 +28,8 @@ install() {
   fi
   local ref="${GITHUB_ACTION_REF:-}"
   if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
-    # a release's tag (v24.0.1) is that release; a major's (v24) the newest of it
+    # a release's tag (v24.0.1) is that release; a major's (v24) the newest
+    # of it, a major and minor (v24.0) the newest of that (install.sh)
     [ -n "$version" ] || version="${ref#v}"
   else
     # a branch, a commit or a local checkout (`uses: ./`): its scripts are
@@ -36,7 +37,7 @@ install() {
     # major, never with whatever release is the newest
     local own major
     own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
-    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (24, 24.0.0)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (24, 24.0.1)"
     major="${own%%.*}"
     case "$version" in
       latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;
@@ -53,14 +54,21 @@ install() {
 }
 
 # `sonde run -o FILE` of the program, as the inputs give it, in this
-# folder: its exit status.
+# folder: its exit status. A command with shell syntax (`cd job && make`,
+# `etl | tee log`, `etl > out`) is bash's, as typed, all of it under sonde,
+# the program named by what bash is given to run; a plain command (`docker
+# run …`, `spark-submit …`) is run itself, so sonde sets up what it knows
+# (a container's network, a JVM engine's endpoint).
 run_to() {
-  local file="$1" args=() status=0
+  local file="$1" args=() cmd=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
-  eval "set -- $SONDE_RUN"
+  case "$SONDE_RUN" in
+    *[\;\&\|\<\>\(\)\$\`]* | *$'\n'* | cd\ *) cmd=(bash -c "$SONDE_RUN") ;;
+    *) eval "cmd=($SONDE_RUN)" ;;
+  esac
   rm -f "$file"
-  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "$@" || status=$?
+  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "${cmd[@]}" || status=$?
   return "$status"
 }
 
@@ -76,12 +84,17 @@ record() {
 }
 
 # The pull request's merge-base, recorded here: the base branch's code at
-# the commit the pull request starts from, checked out beside this one (a
-# git worktree), `setup` run in it, then the same command, on the same
-# runner (so its times compare). Its run in $work/merge-base.sonde; on
-# failure, why in WHY.
+# `git merge-base origin/BASE HEAD`, checked out beside this one (a git
+# worktree). Of actions/checkout's default checkout, the pull request merged
+# into its base (refs/pull/N/merge), that is the merge's first parent: the
+# base branch's newest when GitHub made the merge; of the pull request's
+# branch checked out, where it left the base. Then `setup` run in it, and
+# the same command, on the same runner (so its times compare). Its run in $work/merge-base-run/, a
+# folder of its own, as its data is: it is never "the run before" this
+# run's program (`sonde run` says what changed since the run before it in
+# the same folder), nor in the runner's history. On failure, why in WHY.
 merge_base() {
-  local base="$1" dir="$work/merge-base" file="$work/merge-base.sonde" deep=() commit prefix status=0
+  local base="$1" dir="$work/merge-base" file="$work/merge-base-run/merge-base.sonde" deep=() commit prefix status=0
   WHY=""
   git rev-parse --git-dir >/dev/null 2>&1 || { WHY="not a git checkout"; return 1; }
   # the base branch, and this checkout's history down to where it left it
@@ -96,7 +109,10 @@ merge_base() {
   echo "::group::sonde: the merge-base ${commit:0:7} of $base, recorded"
   local why="$work/merge-base.why"
   rm -f "$why"
+  rm -rf "$work/merge-base-run" "$work/merge-base-data"
+  mkdir -p "$work/merge-base-run"
   (
+    export SONDE_DATA_DIR="$work/merge-base-data"
     cd "$dir/$prefix" 2>/dev/null || { echo "the working directory is not in the merge-base's checkout" >"$why"; exit 1; }
     if [ -n "${SONDE_SETUP:-}" ] && ! bash -ec "$SONDE_SETUP"; then
       echo "setup failed in the merge-base's checkout" >"$why"
@@ -158,9 +174,11 @@ baseline() {
     if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$dir" >/dev/null 2>&1; then
       local file
       file="$(find "$dir" -name '*.sonde' | head -n 1)"
-      # (a run an earlier major wrote is not read: the next one back, else none)
+      # (a run of a format this sonde cannot read is skipped: the next one
+      # back, else none; one an earlier major wrote that it reads is a
+      # baseline as any is)
       if [ -n "$file" ] && ! sonde show "$file" -f json >/dev/null 2>&1; then
-        note "baseline: the run kept by run $id is not one this sonde reads (an earlier version's); looking further back"
+        note "baseline: the run kept by run $id is not one this sonde reads (an older format's); looking further back"
         continue
       fi
       if [ -n "$file" ]; then
@@ -174,7 +192,7 @@ baseline() {
   if [ -n "${GITHUB_BASE_REF:-}" ]; then
     if merge_base "$base"; then
       note "baseline: the merge-base ${MERGE_BASE:0:7} of $base, recorded in this job (no run of $base kept the artifact $artifact)"
-      out baseline "$work/merge-base.sonde"
+      out baseline "$work/merge-base-run/merge-base.sonde"
       return
     fi
     warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget alone"

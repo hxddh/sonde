@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, desktop, place, runCommand, runView, runAction, runMenu } from "./helpers";
+import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -598,4 +598,111 @@ test("a program's newest run past its baseline says so in the sidebar", async ()
   expect(app.shows("id:run-0 >> text:past its baseline")).toBe(true);
   // the run before it is the baseline: within, no mark
   expect(app.shows("id:run-1 >> id:run-past")).toBe(false);
+}, 120000);
+
+test("a run written with -o is listed and opened, and never offered Rename, Delete or Set as baseline", async () => {
+  const app = await demo();
+  await app.clear("id:run-command");
+  await app.type("id:run-command", elsewhereCommand("python agent_elsewhere.py"));
+  await runCommand(app);
+  await runView(app);
+  await place(app, "runs");
+  await app.waitFor("text:agent_elsewhere.py", { timeout: 10000 });
+  // its row's menu: opened, shared, its path copied; nothing that would fail on a file that is not sonde's
+  await app.rightClick("text:agent_elsewhere.py");
+  const row = app.menu()!.map((m) => m.label);
+  await app.closeMenu();
+  expect(row).toContain("Copy file path");
+  expect(row).not.toContain("Rename…");
+  expect(row).not.toContain("Delete…");
+  // its own ⋯ the same
+  await app.press("text:agent_elsewhere.py");
+  await app.waitFor("text:$ python agent_elsewhere.py", { timeout: 10000 });
+  const more = await runMenu(app);
+  expect(more).toContain("Copy file path");
+  expect(more).not.toContain("Rename…");
+  expect(more).not.toContain("Delete…");
+  // History's baseline stays, and says why it cannot be pressed
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:history-baseline", { timeout: 10000 });
+  expect(app.enabled("id:history-baseline")).toBe(false);
+  expect(app.shows("label:/^Set as baseline, Written outside sonde's runs folder \\(-o\\)/")).toBe(true);
+  // a run of the runs folder still has all three
+  await app.rightClick("id:run-0");
+  const own = app.menu()!.map((m) => m.label);
+  await app.closeMenu();
+  expect(own).toContain("Rename…");
+  expect(own).toContain("Delete…");
+}, 120000);
+
+test("Run with no command says why on press", async () => {
+  const app = await demo();
+  await app.clear("id:run-command");
+  expect(app.enabled("id:run-start")).toBe(true);
+  await app.press("id:run-start");
+  await app.waitFor("text:Type the command to run", { timeout: 3000 });
+  expect(app.shows("id:run-pane")).toBe(false);
+});
+
+test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
+  const app = await open("../App.tsx", desktop);
+  await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));
+  // (its row, among however many runs the tests before made)
+  await app.type("id:run-search", "grouped_counts");
+  await app.waitFor("text:· 1,500 requests", { timeout: 10000 });
+  expect(app.shows("text:· 1500 requests")).toBe(false);
+  await language(app, "zh");
+  try {
+    await app.press("id:nav-runs");
+    await app.clear("id:run-search");
+    await app.type("id:run-search", "grouped_counts");
+    await app.waitFor("text:· 1,500 个请求", { timeout: 10000 });
+  } finally {
+    await language(app, "en");
+  }
+}, 120000);
+
+test("scrolling the Output pane folds the run header, as the operations do", async () => {
+  const app = await open("../App.tsx", desktop);
+  await importRun(app, "printed.sonde", runText(400, "python printed_lines.py", "2026-01-04T09:00:00Z"));
+  await app.press("id:run-pane-mode-aligned");
+  await app.waitFor("id:output", { timeout: 5000 });
+  await app.wait(300);
+  expect(app.shows("id:run-folded")).toBe(false);
+  await app.scroll("id:output", 1500);
+  await app.waitFor("id:run-folded", { timeout: 3000 });
+  // back at its top, open again
+  await app.scroll("id:output", -100000);
+  await app.waitFor("id:run-folded", { state: "gone", timeout: 3000 });
+}, 120000);
+
+test("History in Chinese: the check's new warnings and where the runs went past the baseline, in its words", async () => {
+  const app = await open("../App.tsx", desktop);
+  await language(app, "zh");
+  try {
+    // a few reads, then many, a fifth of them throttled: the second run is past the first, and warns of what the first did not
+    await importRun(app, "warn1.sonde", runText(100, "python warn_twice.py", "2026-01-05T09:00:00Z"));
+    await app.press("id:run-pane-mode-runs");
+    await app.waitFor("id:history-baseline", { timeout: 10000 });
+    await app.press("id:history-baseline");
+    await app.waitFor("label:取消基线");
+    await importRun(app, "warn2.sonde", runText(1000, "python warn_twice.py", "2026-01-06T09:00:00Z", true));
+    await app.press("id:run-pane-mode-runs");
+    await app.waitFor("id:history-check", { timeout: 10000 });
+    await app.waitFor("id:history-since", { timeout: 10000 });
+    const texts = app.texts();
+    // no run here has a commit: each is named by its time, never "无提交"
+    const since = texts.find((t) => t.startsWith("最新一次运行"))!;
+    expect(since).toBeDefined();
+    expect(since).not.toMatch(/无提交/);
+    expect(since).toMatch(/最后一次在基线内是 \S/);
+    // the new warnings in Chinese, as the run's own findings are
+    // (its figures first: requests past the baseline's, then the warnings that are new)
+    const check = texts.find((t) => t.startsWith("请求数: ") && t.includes(" > "))!;
+    expect(check).toBeDefined();
+    expect(check).toMatch(/503/);
+    expect(check).not.toMatch(/throttled|requests/);
+  } finally {
+    await language(app, "en");
+  }
 }, 120000);

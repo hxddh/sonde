@@ -7,7 +7,7 @@ branding:
 
 inputs:
   run:
-    description: The program's command, as you would type it (`python etl.py --day 2`).
+    description: "The program's command, as you would type it, in the working directory (`python etl.py --day 2`; with shell syntax, `python etl.py && python report.py`, it is run by bash): all of it is recorded, and the program is named by what it runs (`etl`). A folder goes in working-directory, not `cd`."
     required: true
   run-args:
     description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`).
@@ -22,7 +22,7 @@ inputs:
     description: The project's sonde.toml (default found from the working directory up).
     default: ""
   baseline:
-    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push); a pull request with none records its merge-base in this job. `none`, or a run's path or https URL."
+    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push); a pull request with none records its merge-base (`git merge-base origin/BASE HEAD`: the base branch's commit the pull request is merged into, of actions/checkout's default checkout) in this job. `none`, or a run's path or https URL."
     default: auto
   setup:
     description: "What the merge-base's checkout needs before the command, run there in the working directory (`npm ci`, `pip install -r requirements.txt`): a git worktree has none of this checkout's untracked files."
@@ -40,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `24.0.0`, `latest`, or `path` (the one on PATH). Default: this action's tag (`@v24`: the newest 24.x); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `24.0.1`, `24` (the newest 24.x), `24.0` (the newest 24.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v24`: the newest 24.x; `@v24.0.1`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.
@@ -111,6 +111,7 @@ runs:
     - name: Report
       id: report
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         SONDE_FILE: ${{ steps.record.outputs.file }}
         SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}

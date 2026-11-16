@@ -777,10 +777,10 @@ mod tests {
         let paths = Paths::rooted(dir.path());
         let file = paths.config_file();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let text = "[[endpoint]]\nid = \"prod\"\nname = \"Prod\"\nurl = \"https://s3.example.com\"\nca-file = \"/nonexistent/ca.pem\"\n";
+        let text = "[[endpoint]]\nid = \"prod\"\nname = \"Prod\"\nurl = \"ftp://s3.example.com\"\n";
         std::fs::write(&file, text).unwrap();
         let s = Sonde::open_lenient(paths);
-        assert!(s.config_error().unwrap().contains("CA file"));
+        assert!(s.config_error().unwrap().contains("http or https"));
         assert!(s.endpoints().is_empty());
         let mut st = s.settings();
         st.theme = "dark".into();
@@ -796,11 +796,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
         // fixed by hand, then read again
         assert!(s.reload_config().is_err());
-        std::fs::write(
-            &file,
-            text.replace("ca-file = \"/nonexistent/ca.pem\"\n", ""),
-        )
-        .unwrap();
+        std::fs::write(&file, text.replace("ftp://", "https://")).unwrap();
         s.reload_config().unwrap();
         assert_eq!(s.config_error(), None);
         assert_eq!(s.endpoints().len(), 1);

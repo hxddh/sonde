@@ -110,3 +110,57 @@ export async function openDemo(app: App) {
   await app.wait(300);
   if (app.shows("id:palette-command")) await app.keyboard.press("escape");
 }
+
+/** A run's file, made up: `n` reads of 50 keys by boto3 on the demo, 5 ms apart from `created`, one in 97 not found,
+ * and a line of output every fifth (`processed part 5`, …) — the text of a `.sonde` file, for `importRun`. With
+ * `throttled`, every fifth read is refused 503 SlowDown instead (a warning: as many throttles as a check lets a run grow). */
+export function runText(n: number, command: string, created: string, throttled = false): string {
+  const t0 = Date.parse(created);
+  const ua = "Boto3/1.34.0 md/Botocore#1.34.0 ua/2.0 os/linux lang/python#3.12";
+  const lines = [JSON.stringify({ format: "sonde-run", version: 2, created, endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/job" })];
+  for (let i = 1; i <= n; i++) {
+    const time = new Date(t0 + 5 * i).toISOString();
+    const key = `data/part-${`${i % 50}`.padStart(4, "0")}.parquet`;
+    const miss = i % 97 === 0;
+    const slow = throttled && i % 5 === 0;
+    lines.push(
+      JSON.stringify({
+        id: i, time, endpoint: "demo", kind: "GetObject", method: "GET", url: `http://127.0.0.1:1/demo/${key}`, bucket: "demo", key, query: [], status: slow ? 503 : miss ? 404 : 200,
+        latencyMs: 2 + (i % 13) * 0.7, retries: 0, requestId: `R${i}`, hostId: "h", requestHeaders: [{ name: "user-agent", value: ua }],
+        responseHeaders: [{ name: "content-length", value: miss ? "0" : "4096" }], requestBytes: 0, responseBytes: miss ? 0 : 4096, firstByteMs: 1,
+      }),
+    );
+    if (i % 5 === 0) lines.push(JSON.stringify({ log: { time, text: `processed part ${i}\r\n` } }));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Opens a run's text as a file picked in Runs (⌘O) is opened: it joins the runs folder, and its pane shows. */
+export async function importRun(app: App, name: string, text: string) {
+  if (!app.shows("id:screen-runs")) await app.press("id:nav-runs");
+  app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name, data: new TextEncoder().encode(text) }] : null));
+  await app.keyboard.press("mod+o");
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+}
+
+/** A shell command for Run that writes a run outside the runs folder and lists it there as `sonde run -o` does (the
+ * runs folder's index names it, `elsewhere`), then sends the demo one request, so the run it is ends and is kept. */
+export function elsewhereCommand(command: string): string {
+  const head = JSON.stringify({ format: "sonde-run", version: 2, created: "2026-01-02T08:00:00Z", endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/agent" });
+  const rec = JSON.stringify({ id: 1, time: "2026-01-02T08:00:00.005Z", endpoint: "demo", kind: "GetObject", method: "GET", url: "http://127.0.0.1:1/demo/a.txt", bucket: "demo", key: "a.txt", query: [], status: 200, latencyMs: 2, retries: 0, requestId: "R1", hostId: "h", requestHeaders: [], responseHeaders: [], requestBytes: 0, responseBytes: 10 });
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md";
+  // a file of its own for each command (the tests share one data folder)
+  const file = `${command.replace(/[^A-Za-z0-9]+/g, "-")}.sonde`;
+  return `d="$SONDE_DATA_DIR/out" && mkdir -p "$d" "$SONDE_DATA_DIR/runs" && printf '%s\\n' '${head}' '${rec}' > "$d/${file}" && printf '{"name":"%s","set":"elsewhere","value":true}\\n' "$(cd "$d" && pwd -P)/${file}" >> "$SONDE_DATA_DIR/runs/.index.jsonl" && ${get}`;
+}
+
+/** The app's language, chosen in Settings (the setting outlives a test: a test that chooses Chinese chooses English
+ * again before it ends). */
+export async function language(app: App, to: "zh" | "en") {
+  await place(app, "settings");
+  await app.press(to === "zh" ? "label:Language" : "label:语言");
+  await app.press(to === "zh" ? "text:中文" : "text:English");
+  await app.waitFor(to === "zh" ? "text:通用" : "text:General");
+  await app.keyboard.press("mod+w");
+}

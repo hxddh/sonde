@@ -123,9 +123,11 @@ fn fill<'a>(template: &str, arg: impl Fn(&str) -> Option<&'a str>) -> String {
     sonde_fmt::words::fill_with(template, |name| {
         let v = arg(name)?;
         let count = COUNTS.contains(&name) && v.len() >= 4 && v.bytes().all(|b| b.is_ascii_digit());
+        // what it names from outside (a key) is one line of text: a
+        // newline or a control in it is written out ([`sonde_fmt::escape`])
         Some(match v.parse::<u64>() {
             Ok(n) if count => Cow::Owned(sonde_fmt::count(n)),
-            _ => Cow::Borrowed(v),
+            _ => sonde_fmt::escape(v),
         })
     })
 }
@@ -151,6 +153,26 @@ pub fn en(text: &[Phrase]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 24.0 broke a finding's line at a key's newline.
+    #[test]
+    fn a_key_s_newline_is_written_out_in_a_phrase() {
+        let x = p(
+            "obs.hot",
+            &[
+                ("key", "b/cfg/x\nbreak.json".into()),
+                ("n", "12".into()),
+                ("pct", "100".into()),
+            ],
+        );
+        assert_eq!(
+            x.en(),
+            "b/cfg/x\\nbreak.json was read 12 times (100% of all requests)"
+        );
+        // the phrase keeps the key as it is (the app's, JSON's)
+        let key: &str = x.args.get("key").unwrap().as_ref();
+        assert_eq!(key, "b/cfg/x\nbreak.json");
+    }
 
     #[test]
     fn a_phrase_is_said_from_the_locale() {

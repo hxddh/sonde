@@ -639,6 +639,8 @@ export interface Profile {
   latencyHeat: { bin: number; bucket: number; n: number }[];
   /** The places in the program's code that sent requests (x-sonde-caller). */
   callers?: { place: string; requests: number; waitedMs: number; errors: number; cost: number }[];
+  /** Whether `callers` was cut to the busiest ones (there were more than it lists); absent in older runs. */
+  callersCut?: boolean;
   /** Whether the requests' times are known (a CloudTrail file has none); absent in older shares. */
   timed?: boolean;
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
@@ -782,7 +784,7 @@ export interface ProgramHistory {
   baseline: string | null;
   baselinePoint?: RunPoint | null;
   limits?: BaselineLimits | null;
-  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: { identity: string; text: string; expected: string }[] } | null;
+  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; /** each of `newWarnings` as its finding's phrases (empty: said as it reads) */ newWarningPhrases?: Phrase[][]; expected?: { identity: string; text: string; expected: string }[] } | null;
   /** The check as a pull request's comment (`sonde check -f markdown`). */
   markdown?: string | null;
 }

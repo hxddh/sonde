@@ -342,7 +342,8 @@ pub fn rank_by_saving(
 /// requests the findings name are taken out of the run, and the run
 /// without them is reckoned again. The waiting is the time with a request
 /// in flight among those left (a request that ran beside another saves
-/// nothing by going), the cost is the price of those left. A finding that
+/// nothing by going), and a request one finding keeps in place of those it
+/// saves is never taken away by another's ([`Observation::kept_ids`]). The cost is the price of those left. A finding that
 /// saves time without removing a request (requests sent at once) takes its
 /// own figure off, when none of its requests is among those removed. A
 /// finding that does not name its requests is not counted. A run whose
@@ -369,6 +370,14 @@ pub fn what_if(
         }
         gone.extend(o.saved_ids.iter().copied());
         counted.push(o);
+    }
+    // what one finding keeps in place of what it saves stays, whatever
+    // another saves: a cache's first read of a key is not also a HEAD
+    // dropped before a GET the cache took away (one read is left, not none)
+    for o in &counted {
+        for id in &o.kept_ids {
+            gone.remove(id);
+        }
     }
     // never the whole run: a request each finding keeps is among the ids
     // it does not name. Those left are added up where they are, not copied

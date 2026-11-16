@@ -1466,6 +1466,11 @@ pub struct Observation {
     /// findings" takes away (their own waiting, their own price).
     #[serde(skip)]
     pub saved_ids: Vec<u64>,
+    /// The requests acting on it keeps in place of those it saves (a cache's
+    /// first read of each stretch): another finding's saving does not take
+    /// them away too ([`crate::fixes::what_if`]).
+    #[serde(skip)]
+    pub kept_ids: Vec<u64>,
     /// The requests a saving of time alone is about (those sent one after
     /// another), by id.
     #[serde(skip)]
@@ -1495,6 +1500,19 @@ pub struct Observation {
     pub expected: Option<String>,
 }
 
+/// `n` of `total` as a whole percent, rounded: one rule for every share a
+/// finding says (29 of 1,500 is 2%, as the 30 reads they are of). Never 0%
+/// for some, nor 100% for less than all.
+fn share_pct(n: usize, total: usize) -> usize {
+    let total = total.max(1);
+    let pct = (n * 100 + total / 2) / total;
+    match n {
+        0 => 0,
+        _ if n < total => pct.clamp(1, 99),
+        _ => pct,
+    }
+}
+
 fn is_zero(n: &usize) -> bool {
     *n == 0
 }
@@ -1510,6 +1528,12 @@ impl Observation {
         self
     }
 
+    /// Names the requests acting on it keeps in their place.
+    fn keeping(mut self, ids: Vec<u64>) -> Self {
+        self.kept_ids = ids;
+        self
+    }
+
     /// Weighs a finding: the requests it bears on and those acting on it would
     /// save (out of `total`).
     fn weigh(mut self, impact: usize, saves: usize, total: usize) -> Self {
@@ -1521,7 +1545,7 @@ impl Observation {
                 &[
                     ("n", saves.to_string()),
                     ("s", plural(saves)),
-                    ("pct", (saves * 100 / total.max(1)).max(1).to_string()),
+                    ("pct", share_pct(saves, total).to_string()),
                 ],
             );
             self.saving_text = Some(saving.en());
@@ -1766,6 +1790,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saves_requests: 0,
         saves_ms: 0.0,
         saved_ids: Vec::new(),
+        kept_ids: Vec::new(),
         timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
@@ -1786,6 +1811,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saves_requests: 0,
         saves_ms: 0.0,
         saved_ids: Vec::new(),
+        kept_ids: Vec::new(),
         timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
@@ -1945,16 +1971,19 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     let (mut put_ids, mut put_saved, mut put_bytes) = (Vec::new(), Vec::new(), 0u64);
     let mut written_to: Option<String> = None;
     for g in smalls.chunk_by(|a, b| folder(a) == folder(b)) {
-        let keys = g.chunk_by(|a, b| a.1 == b.1).count();
-        let bytes: u64 = g
+        // each key's first write: one key written again and again is no
+        // small file, and the finding counts objects, not PUTs
+        let firsts: Vec<u32> = g.chunk_by(|a, b| a.1 == b.1).map(|k| k[0].2).collect();
+        let keys = firsts.len();
+        let bytes: u64 = firsts
             .iter()
-            .filter_map(|s| records[s.2 as usize].request_bytes.get())
+            .filter_map(|i| records[*i as usize].request_bytes.get())
             .sum();
         let keep = (bytes.div_ceil(SMALL) as usize).max(1);
-        if keys < 2 || g.len() <= keep {
+        if keys < 2 || keys <= keep {
             continue;
         }
-        let ids: Vec<u64> = g.iter().map(|s| records[s.2 as usize].id).collect();
+        let ids: Vec<u64> = firsts.iter().map(|i| records[*i as usize].id).collect();
         put_saved.extend_from_slice(&ids[keep..]);
         put_ids.extend(ids);
         put_bytes += bytes;
@@ -2031,7 +2060,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // told of its own writes). A key is a finding when its stretches that
     // would be answered the same hold at least 10 reads and what a cache
     // saves is at least 1% of the run's requests or of its cost
-    let mut hot: Vec<(String, Vec<u64>, Vec<u64>)> = Vec::new();
+    let mut hot: Vec<(String, Vec<u64>, Vec<u64>, Vec<u64>)> = Vec::new();
     for group in reads.chunk_by(|a, b| place(a) == place(b)) {
         if group.len() < at(10, 2) {
             continue;
@@ -2052,12 +2081,16 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             let (Some(b), Some(k)) = place(&group[0]) else {
                 continue;
             };
-            hot.push((format!("{b}/{k}"), stretches.concat(), again));
+            let firsts: Vec<u64> = stretches
+                .iter()
+                .filter_map(|s| s.first().copied())
+                .collect();
+            hot.push((format!("{b}/{k}"), stretches.concat(), again, firsts));
         }
     }
     drop(reads);
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    for (k, ids, again) in hot.into_iter().take(most) {
+    for (k, ids, again, firsts) in hot.into_iter().take(most) {
         let n = ids.len();
         out.push(
             info(
@@ -2066,13 +2099,14 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("key", k),
                         ("n", n.to_string()),
-                        ("pct", (n * 100 / total).max(1).to_string()),
+                        ("pct", share_pct(n, total).to_string()),
                     ],
                 ),
                 of_records(&mut ids.into_iter()),
             )
             .weigh(n, again.len(), total)
-            .saving_of(again),
+            .saving_of(again)
+            .keeping(firsts),
         );
     }
     // the same prefix listed again and again, with nothing written under it

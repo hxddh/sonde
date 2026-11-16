@@ -2,6 +2,58 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [24.0.1] - 2026-11-16
+
+### Fixed
+
+- **The fix loop:**
+  - A finding fixed in part reads "less", not "fixed" and "new". A read written back, deletes one at a time and small
+    writes are now identified by their bucket (identity rules 5; findings kept under rules 4 are made again).
+  - A finding that fell under its threshold and then went away reads "fixed", and its return "back".
+  - A run where nothing reached sonde fixes nothing and is never "the run before" (`since.empty`).
+  - `sh -c X` and `bash -c X` are the same command as `X`.
+- `show`, `check`, `compare` and `share` with no run named take the runs written with `-o` too.
+- **Findings:**
+  - The what-if total keeps one read of a key a cache and GET-alone both act on.
+  - Small writes count objects, not PUTs.
+  - A saving's share rounds like the share beside it.
+  - A trial's "at …" names its first reason's request.
+  - "12+ callers" only when there were more.
+  - The footnote of a star only with a star.
+  - A newline in a key is written out.
+  - `compare` says "N still open", not "as above".
+  - "an Apache Iceberg".
+- **The app:**
+  - A run written with `-o` is not offered Rename, Delete or Set as baseline; they all failed.
+  - Every count is grouped ("1,500 requests"), in Chinese too.
+  - Money under a millionth is written out, never "2.6e-7 USD".
+  - Scrolling Output folds the run header.
+  - Run with no command says why.
+  - A reason given on press no longer reads "[object Object]".
+  - In Chinese: History's new warnings are translated, "AWS profile" reads 配置文件, and a run with no commit is named
+    by its time.
+- **install.sh and the Action:**
+  - install.sh takes the static build where glibc is older than 2.35 (RHEL 9, Amazon Linux 2023, Ubuntu 20.04),
+    refuses Linux aarch64 there and says why, and never says "installed" for a binary that cannot start. The README no
+    longer calls the binary static.
+  - The Action's `run` input is run by bash as typed: `&&`, `|`, `>` and `cd x &&` are all recorded.
+  - The Action's report is written in `working-directory`.
+  - The merge-base's run is kept apart and is never "the run before" the pull request's.
+  - The Action at `@v24.0` and `version: 24.0` install the newest 24.0.x.
+- One endpoint's missing `ca-file` no longer stops every command: it is said when that endpoint is used.
+- Docs:
+  - the merge-base;
+  - an earlier major's baseline;
+  - the newest 6 runs;
+  - `check -f json`'s `ok`;
+  - the findings table;
+  - `$XDG_DATA_HOME`.
+
+### Removed
+
+- A chart's "Save its rows as CSV" button: a button on every chart cluttered the cards. A run's data is
+  `sonde show -f json`'s; Capacity keeps its own export.
+
 ## [24.0.0] - 2026-11-15
 
 24.0 gives back what 21–23 took from view, finds the S3 mistakes people really make, and gates CI from the first pull

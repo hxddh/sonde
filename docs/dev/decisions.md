@@ -150,7 +150,6 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-160 | Findings in a short pane | a fixed height; whole findings | **Whole findings, with how many are in view**: no row cut. |
 | D-161 | A budget on its chart | the check's verdicts; `sonde.toml` | **`sonde.toml`** (`max-p95`, `max-errors` as a share, `max-waiting`), drawn as a dashed line. |
 | D-162 | A range in a link | slice indices; ms | **ms**: slices are the reader's, times the session's. |
-| D-163 | A chart's CSV | clipboard; save dialog; exports folder | **Exports folder**: Native Shell has no save dialog. |
 | D-164 | Widths in pages | constants per file; the kit's names | **The kit's `COLUMN` and `PANE`**, read by the layout lint. |
 | D-165 | A dialog taller than the window | fixed height; its body scrolls | **`ModalBody` scrolls; the title and actions stay.** |
 | D-166 | `record.rs` | one file; a module per command | **A module per command**; shared start code in `record.rs`. |
@@ -238,3 +237,4 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-253 | stale-list by default | every store; not AWS | **Only off AWS** (strongly consistent since 2020). |
 | D-254 | Runs written elsewhere | unlisted; listed | **Listed by path** from the runs index, never pruned while the file is there. |
 | D-255 | Clock | 24-hour; the locale's | **The locale's hour cycle everywhere**, a day's group to the second when any row needs it. |
+| D-256 | A chart's CSV | a button on each chart; none | **None**: a button on every chart cluttered the cards; a run's data is `sonde show -f json`'s, and Capacity keeps its own export. Supersedes D-163. |

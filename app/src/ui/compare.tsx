@@ -154,7 +154,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   const answersPart = (d: Answers) => (
     <View class="gap-4">
       <Text class={TEXT.body} testID="compare-summary">
-        {t("compare.summary", { n: d.comparison.compared, same: d.comparison.same })}
+        {t("compare.summary", { n: d.comparison.compared, same: count(d.comparison.same) })}
         {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
       </Text>
       {/* each store's request cost, at its own vendor's prices */}

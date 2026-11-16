@@ -2140,7 +2140,21 @@ impl Runs {
                     );
                     // the same check as a pull request's comment
                     let md = sonde_analysis::program::check_markdown(&c, &rp.currency, None, &rob);
-                    Some((c, md))
+                    // the new warnings as phrases too, each the run's finding it reads as, so the
+                    // app says them in its language (empty: said as they read)
+                    let phrases: Vec<_> = c
+                        .new_warnings
+                        .iter()
+                        .map(|w| {
+                            rob.iter()
+                                .find(|o| o.level == "warn" && &o.text == w)
+                                .map(|o| o.phrases.clone())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    let mut check = json!(c);
+                    check["newWarningPhrases"] = json!(phrases);
+                    Some((check, md))
                 }
                 _ => None,
             };

@@ -106,6 +106,24 @@ fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
     }
 }
 
+/// A prefix that is not of the layout asked for, and what it was found to
+/// be: "is not an Apache Iceberg layout", "a SlateDB".
+fn not_of_kind(prefix: &str, label: &str, seen: &[&str]) -> String {
+    let a = if label.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) {
+        "an"
+    } else {
+        "a"
+    };
+    format!(
+        "{prefix:?} is not {a} {label} layout{}; --kind generic shows the write cadence of any prefix",
+        if seen.is_empty() {
+            String::new()
+        } else {
+            format!(" (found: {})", seen.join(", "))
+        }
+    )
+}
+
 /// What to decode: what was found under the prefix, or the `--kind` asked
 /// for when it is there (any prefix is generic). `None`, said, when it is not.
 fn targets(kind: Option<Lf>, prefix: &str, found: Vec<(Lf, String)>) -> Option<Vec<(Lf, String)>> {
@@ -120,15 +138,7 @@ fn targets(kind: Option<Lf>, prefix: &str, found: Vec<(Lf, String)>) -> Option<V
                 .filter(|(f, _)| *f != Lf::Generic)
                 .map(|(f, _)| f.label())
                 .collect();
-            eprintln!(
-                "{prefix:?} is not a {} layout{}; --kind generic shows the write cadence of any prefix",
-                k.label(),
-                if seen.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (found: {})", seen.join(", "))
-                }
-            );
+            eprintln!("{}", not_of_kind(prefix, k.label(), &seen));
             None
         }
     }
@@ -234,4 +244,19 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
     } else {
         0
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 24.0 said "is not a Apache Iceberg layout".
+    #[test]
+    fn a_prefix_of_another_layout_is_not_an_apache_iceberg_one() {
+        assert_eq!(
+            not_of_kind("t/", "Apache Iceberg", &["SlateDB"]),
+            "\"t/\" is not an Apache Iceberg layout (found: SlateDB); --kind generic shows the write cadence of any prefix"
+        );
+        assert!(not_of_kind("t/", "SlateDB", &[]).starts_with("\"t/\" is not a SlateDB layout;"));
+    }
 }
