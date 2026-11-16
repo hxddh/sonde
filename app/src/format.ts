@@ -122,9 +122,16 @@ export function date(s: string | null | undefined, precision: "m" | "ms" = "m"):
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}${precision === "ms" ? fine : ""}`;
 }
 
+/** A figure under a hundredth to two significant figures, written out however small: 0.0040, 0.00000026 (never
+ * JavaScript's "2.6e-7", which `toPrecision` writes under a millionth). */
+function small(v: number): string {
+  const r = Number(v.toPrecision(2));
+  return r.toFixed(Math.min(100, Math.max(2, 1 - Math.floor(Math.log10(r)))));
+}
+
 /** An amount of money: two decimals, or two significant figures under a cent (0.0040 USD), never "<0.01". */
 export function money(v: number, currency: string): string {
-  return `${v < 0.01 && v > 0 ? v.toPrecision(2) : v.toFixed(2)} ${currency}`;
+  return `${v < 0.01 && v > 0 ? small(v) : v.toFixed(2)} ${currency}`;
 }
 
 /** A length of time, the one way everywhere. As measured (the default):
@@ -205,7 +212,7 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
   if (v > 0 && v < 0.01) {
     const k = v * 1000;
     // two significant figures under one (0.010 beside 0.0078, never 0.01 beside it), else two decimals
-    return { figure: k < 1 ? k.toPrecision(2) : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
+    return { figure: k < 1 ? small(k) : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
   }
   return { figure: v.toFixed(2), unit: currency, per1000: false };
 }
@@ -223,7 +230,7 @@ export function costColumn(values: number[], currency: string): { unit: string; 
     if (!Number.isFinite(v) || v < 0) return "—";
     if (v === 0) return "0";
     const x = per1000 ? v * 1000 : v;
-    return x < 0.01 ? x.toPrecision(2) : x.toFixed(2);
+    return x < 0.01 ? small(x) : x.toFixed(2);
   };
   return { unit, figures: values.map(figure) };
 }

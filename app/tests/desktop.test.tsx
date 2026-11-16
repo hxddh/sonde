@@ -149,6 +149,19 @@ test("a month of a program reads as money, not per 1,000 runs", async () => {
   expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });
 
+test("money under a millionth is written out, never in exponent form (2.6e-7 USD)", async () => {
+  const { money, costParts, costColumn } = await import("../src/format");
+  // a tiny prefix's month: two significant figures, however many zeros before them
+  expect(money(2.6e-7, "USD")).toBe("0.00000026 USD");
+  expect(money(0.0099, "USD")).toBe("0.0099 USD");
+  expect(money(0.42, "USD")).toBe("0.42 USD");
+  // a run's few requests, per 1,000 runs, and a column of them
+  expect(costParts(2.6e-10, "USD").figure).toBe("0.00000026");
+  expect(costColumn([2.6e-10, 0.0004], "USD").figures).toEqual(["0.00000026", "0.40"]);
+  expect(costColumn([2.6e-7, 2], "USD").figures).toEqual(["0.00000026", "2.00"]);
+  for (const s of [money(1e-12, "USD"), costParts(1e-15, "USD").figure, ...costColumn([1e-15, 0.001], "USD").figures]) expect(s).not.toMatch(/e/);
+});
+
 test("a lane's cell shows the worst of the requests it holds, and says how many", async () => {
   const { laneCells } = await import("../src/ui/plots");
   // 96 slices of 10 ms: three short requests share the first cell of lane 0, the failure not the last of them
