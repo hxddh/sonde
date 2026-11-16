@@ -62,8 +62,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SONDE_ARTIFACT: sonde-live
         run: |
-          # (a run by hand takes the schedule's too)
-          GITHUB_EVENT_NAME=schedule GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
+          # (a run by hand, on any branch, takes the schedule's on main too)
+          GITHUB_EVENT_NAME=schedule GITHUB_REF_NAME=main GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
           base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/baseline.out")
           case "$base" in "" | auto) echo "::error::no baseline: no scheduled run of this workflow on main kept sonde-live"; exit 1 ;; esac
           echo "BASELINE=$base" >> "$GITHUB_ENV"
