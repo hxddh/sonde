@@ -37,7 +37,7 @@ install() {
     # major, never with whatever release is the newest
     local own major
     own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
-    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (24, 24.0.0)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (24, 24.0.1)"
     major="${own%%.*}"
     case "$version" in
       latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;

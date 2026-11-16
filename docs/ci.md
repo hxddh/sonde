@@ -59,7 +59,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `24.0.0`, `24`, `24.0` (the newest 24.0.x), `latest`, `path`. Tag `@v24` installs the newest 24.x; `@v24.0.0` that release. `latest` is refused at a branch or commit. |
+| `version` | the action's tag; at a branch or commit, its own major | `24.0.1`, `24`, `24.0` (the newest 24.0.x), `latest`, `path`. Tag `@v24` installs the newest 24.x; `@v24.0.0` that release. `latest` is refused at a branch or commit. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
