@@ -301,6 +301,8 @@ jobs:
         env:
           SONDE_SHOT_MAX: ${{ runner.os == 'macOS' && '1024x688' || '' }}
           SHOTS_FILTER: ${{ matrix.filter }}
+          # software GL on AMD EPYC runners drew the Capacity screen blank at 256-bit vectors (Intel runners never)
+          LP_NATIVE_VECTOR_WIDTH: ${{ runner.os == 'Linux' && '128' || '' }}
         run: scripts/shots.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
