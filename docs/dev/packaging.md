@@ -85,7 +85,7 @@ each release and daily.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.0`, or `24`: the newest 24.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.0`; `24`: the newest 24.x; `24.0`: the newest 24.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code

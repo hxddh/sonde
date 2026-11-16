@@ -28,7 +28,8 @@ install() {
   fi
   local ref="${GITHUB_ACTION_REF:-}"
   if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
-    # a release's tag (v24.0.1) is that release; a major's (v24) the newest of it
+    # a release's tag (v24.0.1) is that release; a major's (v24) the newest
+    # of it, a major and minor (v24.0) the newest of that (install.sh)
     [ -n "$version" ] || version="${ref#v}"
   else
     # a branch, a commit or a local checkout (`uses: ./`): its scripts are
