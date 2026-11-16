@@ -31,7 +31,11 @@ case "$1" in
     # where it ran, and the code there
     pwd >"$FAKE/sonde.pwd"
     cat etl.py >"$FAKE/sonde.code" 2>/dev/null || true
-    while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done; exit "${FAKE_RUN_EXIT:-0}" ;;
+    # where it wrote, and its data folder; with FAKE_EXEC, the program, under it
+    printf '%s\n' "${SONDE_DATA_DIR:-}" >"$FAKE/sonde.data"
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do [ "$1" = -o ] && touch "$2"; shift; done
+    [ -z "${FAKE_EXEC:-}" ] || { shift; SONDE_UNDER=1 "$@" || true; }
+    exit "${FAKE_RUN_EXIT:-0}" ;;
   check) echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
   show) exit "${FAKE_SHOW:-0}" ;;
   share) while [ $# -gt 0 ]; do [ "$1" = -o ] && echo page >"$2"; shift; done ;;
@@ -132,7 +136,7 @@ is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-
 is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge-base [0-9a-f]\{7\} of main, recorded in this job' "$t/said")" 1
 is "recorded from the merge-base's code (not the base branch's newest)" "$(cat "$t/sonde.code")" base
 is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
-is "the same command and name" "$(tail -n 4 "$t/sonde.run" | paste -sd'|')" "etl|--|python3|etl.py"
+is "the same command and name" "$(tail -n 5 "$t/sonde.run" | paste -sd'|')" "etl|--|bash|-c|python3 etl.py"
 is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
 # shellcheck disable=SC2016 # (expanded by setup, in its folder)
 SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
@@ -164,12 +168,27 @@ GITHUB_EVENT_NAME=schedule GITHUB_REF_NAME=main GITHUB_RUN_ID=11 FAKE_RUNS="11 2
 is "a scheduled run takes the schedule's run before it" "$(output baseline)" "$t/runner/sonde/baseline/run.sonde"
 is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/gh.log")" 1
 
-# the program's command as typed; its status kept for the verdict
+# the program's command as typed, bash's; its status kept for the verdict
 SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --policy allow" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
 is "record writes a run" "$(output file)" "$t/runner/sonde/run.sonde"
-is "the command's words as typed" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|-c|print(1)"
+is "the command as typed, run by bash" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 -c 'print(1)'"
 is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
+# each shell operator as typed, all of it under sonde, none of it before
+# shellcheck disable=SC2016 # (expanded by the program's bash, under sonde)
+{
+  said() { : >"$t/ran"; SONDE_RUN="$1" FAKE_EXEC=1 step record >/dev/null; cat "$t/ran"; }
+  mkdir -p sub
+  is "cd x && runs both under sonde" "$(said 'cd sub && echo "$SONDE_UNDER ${PWD##*/}" >>"$FAKE/ran"')" "1 sub"
+  is "&& runs both under sonde" "$(said 'echo "a$SONDE_UNDER" >>"$FAKE/ran" && echo "b$SONDE_UNDER" >>"$FAKE/ran"' | paste -sd' ')" "a1 b1"
+  is "| pipes under sonde" "$(said 'echo "x$SONDE_UNDER" | tr x y >>"$FAKE/ran"')" y1
+  is "| is not sonde's command" "$(grep -c 'run.sonde$' "$t/sonde.run")" 1
+  is "> redirects the program's output" "$(said 'echo "out$SONDE_UNDER" >"$FAKE/ran"')" out1
+  is "; runs both under sonde" "$(said 'echo "a$SONDE_UNDER" >>"$FAKE/ran"; echo "b$SONDE_UNDER" >>"$FAKE/ran"' | paste -sd' ')" "a1 b1"
+  : >"$t/ran"
+  SONDE_RUN='true && echo outside >"$FAKE/ran"' step record >/dev/null || true
+  is "nothing runs outside sonde" "$(cat "$t/ran")" ""
+}
 
 # check: passed or not; anything else is the step's failure
 export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto

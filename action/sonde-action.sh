@@ -53,14 +53,15 @@ install() {
 }
 
 # `sonde run -o FILE` of the program, as the inputs give it, in this
-# folder: its exit status.
+# folder: its exit status. The command is bash's, as typed (`cd job &&
+# make`, `etl | tee log`, `etl > out`), all of it under sonde; the program
+# is named by what bash is given to run (`etl` of `python3 etl.py`).
 run_to() {
   local file="$1" args=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
-  eval "set -- $SONDE_RUN"
   rm -f "$file"
-  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "$@" || status=$?
+  sonde run -o "$file" ${args[@]+"${args[@]}"} -- bash -c "$SONDE_RUN" || status=$?
   return "$status"
 }
 
