@@ -77,7 +77,7 @@ jobs:
           GITHUB_BASE_REF=main SONDE_ARTIFACT=sonde-never-kept SONDE_RUN="aws s3 ls s3://demo" SONDE_RUN_ARGS=--demo \
             GITHUB_OUTPUT="$RUNNER_TEMP/merge-base.out" bash action/sonde-action.sh baseline
           base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/merge-base.out")
-          [ "$base" = "$RUNNER_TEMP/sonde/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
+          [ "$base" = "$RUNNER_TEMP/sonde/merge-base-run/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
           # the same code twice: within it (a demo run's waiting is never held)
           sonde check "$RUN" --baseline "$base" -f markdown >"$RUNNER_TEMP/merge-base.md" || { cat "$RUNNER_TEMP/merge-base.md"; exit 1; }
           cat "$RUNNER_TEMP/merge-base.md"
