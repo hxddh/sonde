@@ -427,12 +427,11 @@ const CHROME = `flex-row ${REVEAL}`;
  * the card's whole width), a sentence that answers it (`text`, computed from
  * what it draws; it wraps: never cut), how it is cut (`action`, a row of its
  * own under the sentence), how to read it (`how`: an info mark at the
- * title's end, the words its tooltip) and its rows out (`onExport`), both
- * shown under the pointer; the plot, its `legend` at the plot's left edge
+ * title's end, the words its tooltip); the plot, its `legend` at the plot's left edge
  * (`gutter` for a chart of rows), and `empty` said in the plot's room when
  * there is nothing to draw. A terminal gets the title and what the chart
  * says in words. */
-export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** its rows out as CSV (where the page can write a file): a button at the title's end */ onExport?: () => void }) {
+export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string }) {
   if (terminal()) {
     return (
       <View testID={props.testID} class="gap-0">
@@ -452,15 +451,10 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
           <View class="min-w-0 flex-1">
             <Heading class="line-clamp-2">{props.title}</Heading>
           </View>
-          <If when={props.how || (props.onExport && !props.empty)}>
+          {/* how to read it, behind its mark (a press opens it): the sentence under the title says what it shows */}
+          <If when={props.how}>
             <View class={CHROME}>
-              {/* how to read it, behind its mark (a press opens it): the sentence under the title says what it shows */}
-              <If when={props.how}>
-                <InfoMark text={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
-              </If>
-              <If when={props.onExport && !props.empty}>
-                <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
-              </If>
+              <InfoMark text={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
             </View>
           </If>
         </View>

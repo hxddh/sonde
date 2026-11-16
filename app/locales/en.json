@@ -426,7 +426,6 @@
  "runBars.more": "After, more",
  "budget.errors": "%{n} errors, within the project's budget of %{budget} (the dashed line: that many of this run's requests).",
  "budget.errors.over": "%{n} errors, past the project's budget of %{budget} (the dashed line: that many of this run's requests).",
- "chart.csv": "Save its rows as CSV",
  "budget.line": "budget %{v}",
  "profile.before": "Before",
  "profile.after": "After",

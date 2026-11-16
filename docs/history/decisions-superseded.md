@@ -26,3 +26,4 @@ order.
 | D-008 | Destructive confirmation | a checkbox; typed text | **Typed text** (the item count, or the bucket name); plans expire in 10 minutes and run once. | *(22.0)*
 | D-133 | How no-delete keeps objects | a HEAD before each write; `If-None-Match: *` | **`If-None-Match: *` on PutObject and CompleteMultipartUpload**, a HEAD for CopyObject: atomic, no extra request. A store that ignores it writes over (said; use read-only). | *(22.0)*
 | D-173 | What no-delete lets a program write over | its own run's writes; its earlier runs' writes | **What its earlier runs wrote** (per program and endpoint, `written.json`), and keys under a `{trial}` place: a re-run and a re-trial work. | *(22.0)*
+| D-163 | A chart's CSV | clipboard; save dialog; exports folder | **Exports folder**: Native Shell has no save dialog. | *(24.0.1)*

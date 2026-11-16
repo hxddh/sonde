@@ -59,7 +59,6 @@ export const api = {
   duCached: (ep: string, b: string, p: string) => Sonde.duCached(ep, b, p) as T.DuReport | null,
   duExport: (ep: string, b: string, p: string, format: "json" | "csv") => Sonde.duExport(ep, b, p, format),
   /** A chart's rows as CSV, written into the exports folder; the file's path. */
-  exportCsv: (name: string, text: string) => Sonde.exportCsv(name, text) as string,
   detectLayouts: (ep: string, b: string, p: string) => Sonde.detectLayouts(ep, b, p),
   analyzeLayout: (ep: string, b: string, format: string, root: string) => Sonde.analyzeLayout(ep, b, format, root),
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,

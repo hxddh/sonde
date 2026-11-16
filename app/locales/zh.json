@@ -426,7 +426,6 @@
  "runBars.more": "之后，更多",
  "budget.errors": "%{n} 个错误，在项目预算 %{budget} 个之内（虚线：本次运行请求中的这么多个）。",
  "budget.errors.over": "%{n} 个错误，超出了项目预算 %{budget} 个（虚线：本次运行请求中的这么多个）。",
- "chart.csv": "将数据另存为 CSV",
  "budget.line": "预算 %{v}",
  "profile.before": "之前",
  "profile.after": "之后",

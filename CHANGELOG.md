@@ -2,6 +2,13 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [24.0.1] - 2026-11-16
+
+### Removed
+
+- A chart's "Save its rows as CSV" button: a button on every chart cluttered the cards. A run's data is
+  `sonde show -f json`'s; Capacity keeps its own export.
+
 ## [24.0.0] - 2026-11-15
 
 24.0 gives back what 21–23 took from view, finds the S3 mistakes people really make, and gates CI from the first pull

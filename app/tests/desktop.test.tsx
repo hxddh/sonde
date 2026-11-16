@@ -609,12 +609,6 @@ test("a stretch of time in a link: read from a query or a hash, as slices of the
   expect(slicesOf([120, 180], 100, 20)).toBe(null);
 });
 
-test("a chart's rows as CSV: a header, plain numbers, quoted where a field needs it", async () => {
-  const { toCsv } = await import("../src/csv");
-  expect(toCsv({ columns: ["ms", "p95_ms"], rows: [[0, 1.23456789], [100, null]] })).toBe("ms,p95_ms\r\n0,1.234568\r\n100,\r\n");
-  expect(toCsv({ columns: ["key"], rows: [['a,"b"'], ["line\nbreak"]] })).toBe('key\r\n"a,""b"""\r\n"line\nbreak"\r\n');
-});
-
 test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {
   const { trialText } = await import("../src/ui/history");
   const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0, reasons: [] } as unknown as import("../src/types").Trial;

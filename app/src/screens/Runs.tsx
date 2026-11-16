@@ -125,14 +125,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const o = rangeOnOpen();
     if (o && o.name === fileName(props.path)) untracked(() => batch(() => (linkRange.set(o.range), pane.set("time"), rangeOnOpen.set(null))));
   });
-  /** A chart's rows, written as CSV where exports go; said, with the file's path. */
-  const exportRows = (name: string, csv: string) => {
-    try {
-      notify(t("common.exportedTo", { path: api.exportCsv(`${fileName(props.path).replace(/\.sonde(\.gz)?$/, "")}-${name}`, csv) }));
-    } catch (e) {
-      report(e);
-    }
-  };
+
   /** A link to this run, over the stretch its Time pane shows (when one is chosen there). */
   const link = () => {
     const r = pane() === "time" ? (shownRange()[props.path] ?? null) : null;
@@ -459,7 +452,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     </If>
   );
   const body = (v: () => RunView) => {
-    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
