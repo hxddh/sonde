@@ -1906,7 +1906,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         "{first}"
     );
     for said in [
-        "    saving: 20 fewer requests (21% of the run)",
+        "    saving: 20 fewer requests (22% of the run)",
         "    at etl.py:19 <module> (20 requests)",
         "    fix for boto3:",
         "      obj = s3.get_object(Bucket=b, Key=k)",

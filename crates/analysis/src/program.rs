@@ -723,10 +723,7 @@ pub fn mark_expected(
 /// An entry of `expect` as an identity: what it is about made
 /// [`crate::profile::stable`].
 fn expected_identity(e: &str) -> String {
-    let mut parts = e.split('|');
-    let kind = parts.next().unwrap_or("");
-    let about: Vec<String> = parts.map(crate::profile::stable).collect();
-    format!("{kind}|{}", about.join("|"))
+    crate::profile::by_rules(e)
 }
 
 /// What is wrong with an entry of `[check] expect`, when something is: its

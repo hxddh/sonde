@@ -1614,15 +1614,41 @@ fn identity_as(o: &Observation, literal: bool) -> String {
         .iter()
         .filter_map(|k| {
             p.args.get(k).map(|v| {
-                if literal {
-                    v.to_string()
-                } else {
-                    stable(v.as_ref())
-                }
+                let v = about_of(key, v.as_ref());
+                if literal { v.to_string() } else { stable(v) }
             })
         })
         .collect();
     format!("{key}|{}", about.join("|"))
+}
+
+/// The kinds of finding that are about a bucket, not the key or folder
+/// their text names: each is one finding a run, and what it names (the key
+/// read and written back the most, the folder all its keys share) moves
+/// with its counts. Fixed in part, one reads less, not fixed and new.
+const OF_BUCKET: &[&str] = &["obs.rmw", "obs.deletes", "obs.small"];
+
+/// What a finding of `kind` is about, of the key or prefix `v` it names:
+/// its bucket for the kinds [`OF_BUCKET`] (`demo` of `demo/out/a/`; several
+/// buckets' `/` as it is), else `v`.
+fn about_of<'a>(kind: &str, v: &'a str) -> &'a str {
+    if !OF_BUCKET.contains(&kind) {
+        return v;
+    }
+    match v.split_once('/') {
+        Some((b, _)) if !b.is_empty() => b,
+        _ => v,
+    }
+}
+
+/// An identity made by older rules (or written in `[check] expect`) made
+/// again by these ([`IDENTITY_RULES`]): its kind as one word, and what it is
+/// about as [`identity`] makes it.
+pub fn by_rules(id: &str) -> String {
+    let mut parts = id.split('|');
+    let kind = kind_of_phrase(parts.next().unwrap_or(""));
+    let about: Vec<String> = parts.map(|v| stable(about_of(kind, v))).collect();
+    format!("{kind}|{}", about.join("|"))
 }
 
 /// Names each of a run's findings ([`Observation::identity`]) by what it is
@@ -1695,8 +1721,10 @@ pub const FINDING_KINDS: &[&str] = &[
 /// findings kept under older rules are made again by these, not read as one
 /// fixed and another new. 1 was 19.0's; 2 takes every number out; 3 keeps
 /// a digit inside a word (`s3out`); 4 makes a prefix near its rate
-/// (`obs.prefixrate.reads`, `.writes`) a throttling (`obs.throttled`).
-pub const IDENTITY_RULES: u32 = 4;
+/// (`obs.prefixrate.reads`, `.writes`) a throttling (`obs.throttled`); 5
+/// makes a read written back, deletes one at a time and small writes about
+/// their bucket ([`OF_BUCKET`]).
+pub const IDENTITY_RULES: u32 = 5;
 
 /// A key or prefix with what changes from one run of a program to the next
 /// taken out: the value of a `name=value` folder `name={v}`, a UUID
@@ -1984,7 +2012,7 @@ impl Run {
         let traces = traces
             .into_iter()
             .map(|mut o| {
-                (o.episodes, o.saved_ids) = (Vec::new(), Vec::new());
+                (o.episodes, o.saved_ids, o.kept_ids) = (Vec::new(), Vec::new(), Vec::new());
                 (o.fixes, o.callers) = (Vec::new(), Vec::new());
                 (finding_identity(&o), o)
             })
@@ -2210,6 +2238,7 @@ mod tests {
             saves_requests: 0,
             saves_ms: 0.0,
             saved_ids: Vec::new(),
+            kept_ids: Vec::new(),
             timed_ids: Vec::new(),
             fixes: Vec::new(),
             callers: Vec::new(),
@@ -2252,6 +2281,7 @@ mod tests {
             saves_requests: 0,
             saves_ms: 0.0,
             saved_ids: Vec::new(),
+            kept_ids: Vec::new(),
             timed_ids: Vec::new(),
             fixes: Vec::new(),
             callers: Vec::new(),

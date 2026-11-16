@@ -599,12 +599,13 @@ impl Program {
     }
 
     /// The findings kept under older rules of identity, made again by
-    /// these ([`crate::profile::IDENTITY_RULES`]): what each is about made
-    /// [`crate::profile::stable`] again. Findings that become one, or were
+    /// these ([`crate::profile::IDENTITY_RULES`], [`crate::profile::by_rules`]):
+    /// what each is about made [`crate::profile::stable`] again, a bucket's
+    /// kinds' about their bucket. Findings that become one, or were
     /// told apart by rank (`#2`), are let go: what told them apart is not
     /// kept. How many were let go.
     pub fn rekey(&mut self) -> usize {
-        use crate::profile::{IDENTITY_RULES, stable};
+        use crate::profile::{IDENTITY_RULES, by_rules};
         if self.rules >= IDENTITY_RULES {
             return 0;
         }
@@ -616,11 +617,7 @@ impl Program {
                 Some((b, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => b,
                 _ => id.as_str(),
             };
-            let mut parts = base.split('|');
-            let kind = crate::profile::kind_of_phrase(parts.next().unwrap_or(""));
-            let about: Vec<String> = parts.map(stable).collect();
-            let new = format!("{kind}|{}", about.join("|"));
-            by.entry(new).or_default().push((id, t));
+            by.entry(by_rules(base)).or_default().push((id, t));
         }
         let mut dropped = 0;
         for (id, mut same) in by {
