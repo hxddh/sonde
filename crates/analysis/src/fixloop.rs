@@ -511,6 +511,46 @@ impl Program {
         }
     }
 
+    /// A finding the program keeps as still there (not fixed) that the run
+    /// before (`a`) had only under its threshold and `b` has at none is
+    /// fixed: gone at any threshold. ([`changes`] goes through `a`'s
+    /// findings over their threshold; 24.0 said nothing of this one and
+    /// kept it less, so its return read new, not back.)
+    pub fn mark_gone(&self, changes: &mut Vec<FindingChange>, a: &Run, b: &Run) {
+        let said: HashSet<&str> = changes.iter().map(|c| c.identity.as_str()).collect();
+        let in_b =
+            |id: &str| b.traces.contains_key(id) || b.observations.iter().any(|o| o.identity == id);
+        let gone: Vec<FindingChange> = self
+            .findings
+            .iter()
+            .filter(|(id, t)| t.state != State::Fixed && !said.contains(id.as_str()))
+            .filter(|(id, _)| !in_b(id) && !a.observations.iter().any(|o| &o.identity == *id))
+            .filter_map(|(id, _)| {
+                let was = a.traces.get(id)?;
+                Some(FindingChange {
+                    identity: id.clone(),
+                    state: State::Fixed,
+                    level: was.level,
+                    text: was.text.clone(),
+                    phrases: was.phrases.clone(),
+                    was: None,
+                    counts: Some([count_of(was), 0]),
+                    predicted: Saving::predicted(was),
+                    measured: None,
+                    saved: None,
+                    saved_text: None,
+                })
+            })
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        changes.extend(gone);
+        // fixed first, as [`changes`] orders them (a stable sort: each
+        // state's own order kept)
+        changes.sort_by_key(|c| c.state);
+    }
+
     /// Takes a run in (`run` its file name, `created` when it was
     /// recorded): its findings open (back, if fixed before), and those the
     /// change says are fixed or less, so. False, and nothing changed, for a
@@ -665,9 +705,16 @@ pub fn failed(run: &Path) -> Option<i32> {
     crate::index::get(run).exit.filter(|x| *x != 0)
 }
 
+/// Whether a run recorded no request: nothing reached sonde (the program
+/// sent its requests elsewhere, or none). It is compared with nothing, as
+/// a run that failed is not: what did not reach sonde is not fixed.
+pub fn empty(run: &Path) -> bool {
+    crate::summary::counted(run).is_some_and(|c| c.requests == 0)
+}
+
 /// The run of program `key` recorded last before `created`, in `dir`
-/// (not `not`, the run itself), that did not fail: what a run is compared
-/// with.
+/// (not `not`, the run itself), that did not fail and recorded requests
+/// ([`empty`]): what a run is compared with.
 pub fn previous_run(
     dir: &Path,
     key: &str,
@@ -675,7 +722,7 @@ pub fn previous_run(
     not: &Path,
 ) -> Option<PathBuf> {
     let not = not.canonicalize().ok();
-    std::fs::read_dir(dir)
+    let mut runs = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -689,9 +736,12 @@ pub fn previous_run(
             .then_some((h.created, p))
         })
         .filter(|(_, p)| not.is_none() || p.canonicalize().ok() != not)
-        .filter(|(_, p)| failed(p).is_none())
-        .max_by_key(|(at, _)| *at)
+        .collect::<Vec<_>>();
+    // the newest first: one that failed or is empty is passed over
+    runs.sort_by_key(|r| std::cmp::Reverse(r.0));
+    runs.into_iter()
         .map(|(_, p)| p)
+        .find(|p| failed(p).is_none() && !empty(p))
 }
 
 /// A run against the program's run before it.
@@ -704,6 +754,10 @@ pub struct SinceLast {
     /// program's kept findings are left as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<i32>,
+    /// The run recorded no request (nothing reached sonde): it is not
+    /// compared, and the program's kept findings are left as they were.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub empty: bool,
     /// The run before, by path: none for a program's first run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<String>,
@@ -721,7 +775,7 @@ pub struct SinceLast {
 /// A run (`path`, its `header`, its `records` and `run`, them analysed)
 /// against the program's run before it that did not fail, found in `dir`;
 /// and the program's kept findings brought up to it when it is its newest
-/// run. A run that failed is not compared. None for a run that is no
+/// run. A run that failed, or recorded no request, is not compared. None for a run that is no
 /// run of a program (a replay, an import, a trial).
 pub fn since_last(
     dir: &Path,
@@ -740,6 +794,19 @@ pub fn since_last(
         return Some(SinceLast {
             program: key,
             failed: Some(exit),
+            empty: false,
+            previous: None,
+            change: None,
+            findings: Vec::new(),
+            unsaved: None,
+        });
+    }
+    // nor is a run nothing reached: what it did not see is not gone
+    if records.is_empty() {
+        return Some(SinceLast {
+            program: key,
+            failed: None,
+            empty: true,
             previous: None,
             change: None,
             findings: Vec::new(),
@@ -812,6 +879,9 @@ pub fn since_last(
                     p
                 })
                 .unwrap_or_default();
+            if let Some((_, _, a)) = &before {
+                kept.mark_gone(&mut findings, a, &run);
+            }
             kept.mark_back(&mut findings, &upto);
             let changed = kept.take(&name, &created, &run.observations, &findings);
             let changes = match serde_json::to_value(&kept) {
@@ -835,6 +905,7 @@ pub fn since_last(
     Some(SinceLast {
         program: key,
         failed: None,
+        empty: false,
         previous: previous.map(|p| p.to_string_lossy().into_owned()),
         change,
         findings,

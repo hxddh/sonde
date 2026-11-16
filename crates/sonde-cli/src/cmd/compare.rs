@@ -292,9 +292,12 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         // a finding fixed by the earlier run or one before it is back, not new
         let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(&after));
         if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
+            // one under its threshold before and gone now is fixed
+            program.mark_gone(&mut c.findings, &ra, &rb);
             program.mark_back(&mut c.findings, &ha.created.to_rfc3339());
             use sonde_analysis::fixloop::{State, said};
             c.appeared = said(&c.findings, &[State::New, State::Back]);
+            c.resolved = said(&c.findings, &[State::Fixed]);
         }
     } else {
         c = c.of_programs(None, None);
@@ -305,6 +308,13 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         sonde_analysis::fixloop::failed(&after),
     );
     c = c.of_exits(exits);
+    // a run nothing reached: what it did not see is not fixed, nor new
+    let empty = (ra.requests == 0, rb.requests == 0);
+    if c.failed.is_none() && (empty.0 || empty.1) {
+        c.resolved.clear();
+        c.appeared.clear();
+        c.findings.clear();
+    }
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
@@ -341,6 +351,14 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         )),
         (Some(x), _) => Some(format!(
             "the run before failed (exit {x}); its findings are not compared"
+        )),
+        _ if empty.1 => Some(format!(
+            "{}: the run recorded no request; its findings are not compared",
+            sonde_analysis::program::NOTHING_REACHED
+        )),
+        _ if empty.0 => Some(format!(
+            "{} in the run before: it recorded no request; its findings are not compared",
+            sonde_analysis::program::NOTHING_REACHED
         )),
         _ => None,
     };
@@ -452,7 +470,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for line in super::fixloop::change_lines(&c.findings, uncounted.as_deref(), color) {
+    for line in super::fixloop::change_lines(&c.findings, uncounted.as_deref(), false, color) {
         println!("{line}");
     }
     Ok(0)

@@ -845,3 +845,59 @@ fn findings_kept_under_older_rules_are_made_again() {
     job.mark_back(&mut c, "2030-01-01T00:00:00+00:00");
     assert_eq!(c[0].state, State::Back);
 }
+
+/// 24.0 said nothing of a finding that went under its threshold and then
+/// was gone, kept it less, and called its return new.
+#[test]
+fn a_finding_under_its_threshold_and_then_gone_is_fixed_and_its_return_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = ran(dir.path(), 1, &hot(30), Some(0));
+    assert_eq!(state_of(&first.findings, "obs.hot"), State::New);
+    let less = ran(dir.path(), 2, &hot(9), Some(0));
+    assert_eq!(state_of(&less.findings, "obs.hot"), State::Less);
+    let gone = ran(dir.path(), 3, &hot(1), Some(0));
+    let f = gone
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap_or_else(|| panic!("{:#?}", gone.findings));
+    assert_eq!((f.state, f.counts), (State::Fixed, Some([9, 0])));
+    assert_eq!(gone.change.as_ref().unwrap().resolved.len(), 1);
+    let kept = &fixloop::read(dir.path())["job"];
+    assert_eq!(kept.findings["obs.hot|b/hot"].state, State::Fixed);
+    let back = ran(dir.path(), 4, &hot(30), Some(0));
+    assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
+}
+
+/// 24.0 called a run nothing reached a fix of every finding, and compared
+/// the next run with it.
+#[test]
+fn a_run_nothing_reached_fixes_nothing_and_is_never_the_run_before() {
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot(30), Some(0));
+    let kept = sonde_analysis::index::of(dir.path())
+        .folder
+        .findings
+        .clone();
+    let empty = ran(dir.path(), 2, &[], Some(0));
+    assert!(empty.empty, "{empty:#?}");
+    assert!(empty.change.is_none() && empty.findings.is_empty());
+    assert_eq!(
+        sonde_analysis::index::of(dir.path())
+            .folder
+            .findings
+            .clone(),
+        kept
+    );
+    let (path, header) = job(dir.path(), 3);
+    assert_eq!(
+        fixloop::previous_run(dir.path(), "job", header.created, &path)
+            .unwrap()
+            .file_name()
+            .unwrap(),
+        "run-01.sonde"
+    );
+    let next = ran(dir.path(), 3, &hot(30), Some(0));
+    assert!(next.previous.as_deref().unwrap().ends_with("run-01.sonde"));
+    assert_eq!(state_of(&next.findings, "obs.hot"), State::Open);
+}

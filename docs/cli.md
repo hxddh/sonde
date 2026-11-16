@@ -198,30 +198,33 @@ never what changes from run to run in a key: the value of a `name=value` folder 
 of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot|b/in/year={v}/month={v}/day={v}/hour={v}/conf.json`,
 `part-00000-<uuid>-c000.snappy.parquet` is `part-{n}-{uuid}-c{n}.snappy.parquet`, `job-3fa2b1c9` is `job-{id}`.
 Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
-HEAD-then-GET is about the folder its objects are in.
+HEAD-then-GET is about the folder its objects are in. A read written back, deletes one at a time and small writes are
+about their bucket (`obs.rmw|data`): one finding a run, whatever key or folder its text names as its counts move.
 
-These rules have a version (4: a prefix near its rate is `obs.throttled`), kept with each program's findings: findings kept under older rules are
+These rules have a version (5: a read written back, single deletes and small writes are about their bucket), kept with each program's findings: findings kept under older rules are
 made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
 
 Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):
 
 | State | When | Says |
 |---|---|---|
-| fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
+| fixed | gone at any threshold (over it in the run before, or under it and kept as less) | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
 | less | still there (at any threshold), fewer | what it saved so far, `· 92 → 41` |
 | more | still there (at any threshold), more | `↑ more … · 92 → 216` |
 | back | under its threshold in the run before, or fixed by it or an earlier run; over it now | |
 | new | in neither run before, at any threshold; every finding of a program's first run | |
-| open | as much in both, over its threshold or not | counted, `N still open, as above` (each is listed with its line and fix above) |
+| open | as much in both, over its threshold or not | counted, `N still open, as above` (each is listed with its line and fix above; `compare` lists none: `N still open`) |
 
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A program whose command changed between the two runs (beyond a trial's place) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`): a fix that read all 400 files, not 30, is not counted.
+A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`): a fix that read all 400 files, not 30, is not counted.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
-not compared`, and nothing kept changes; the next run is compared with the last that did not. Runs that end out of
+not compared`, and nothing kept changes; the next run is compared with the last that did not. Nor is a run that recorded
+no request (`nothing reached sonde: the run recorded no request; not compared`, `since.empty` in JSON): what did not reach
+sonde is not fixed, and it is never the run before. Runs that end out of
 order (several at once) each add their findings; an older run changes nothing a newer one said.
 
 Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding

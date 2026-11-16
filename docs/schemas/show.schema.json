@@ -107,7 +107,7 @@
         "object",
         "null"
       ],
-      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared). Null for a run that is no run of a program."
+      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
     },
     "operations": {
       "type": "array",
