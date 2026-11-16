@@ -74,10 +74,12 @@ jobs:
           RUN: ${{ steps.sonde.outputs.file }}
         run: |
           # (an artifact no run kept: as a new repository's first pull request)
-          GITHUB_BASE_REF=main SONDE_ARTIFACT=sonde-never-kept SONDE_RUN="aws s3 ls s3://demo" SONDE_RUN_ARGS=--demo \
+          # (in a folder of its own: a baseline step clears its baseline/, where the real one waits for the comment)
+          mkdir -p "$RUNNER_TEMP/mb"
+          RUNNER_TEMP="$RUNNER_TEMP/mb" GITHUB_BASE_REF=main SONDE_ARTIFACT=sonde-never-kept SONDE_RUN="aws s3 ls s3://demo" SONDE_RUN_ARGS=--demo \
             GITHUB_OUTPUT="$RUNNER_TEMP/merge-base.out" bash action/sonde-action.sh baseline
           base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/merge-base.out")
-          [ "$base" = "$RUNNER_TEMP/sonde/merge-base-run/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
+          [ "$base" = "$RUNNER_TEMP/mb/sonde/merge-base-run/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
           # the same code twice: within it (a demo run's waiting is never held)
           sonde check "$RUN" --baseline "$base" -f markdown >"$RUNNER_TEMP/merge-base.md" || { cat "$RUNNER_TEMP/merge-base.md"; exit 1; }
           cat "$RUNNER_TEMP/merge-base.md"
