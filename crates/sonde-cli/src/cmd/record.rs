@@ -691,7 +691,8 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 /// (`[program] name` in sonde.toml), else of the program recorded in this
 /// folder (the run's `cwd`), else the newest run of
 /// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
-/// named to be read. The run, and which it is in words.
+/// named to be read. Runs written elsewhere (`-o`) that the runs folder
+/// lists are runs like its own. The run, and which it is in words.
 pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
     let dir = s.paths().runs();
     let here = std::env::current_dir().ok();
@@ -704,11 +705,13 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
             *n = Some((at, p.clone(), key.to_string()));
         }
     };
-    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
-            continue;
-        }
+    let own = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"));
+    for p in own.chain(sonde_analysis::index::elsewhere(&dir)) {
         let Some(h) = sonde_analysis::run::read_header(&p).filter(|h| h.is_recording()) else {
             continue;
         };

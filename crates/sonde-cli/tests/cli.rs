@@ -2239,6 +2239,45 @@ fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// 24.0's `check` alone passed over a run written with `-o` from this very
+/// folder and checked another program's run: a run the runs folder lists
+/// is a run like its own.
+#[test]
+fn check_alone_takes_a_run_written_elsewhere_from_this_folder() {
+    let t = tempfile::tempdir().unwrap();
+    let (r, b, out) = (t.path().join("r"), t.path().join("b"), t.path().join("out"));
+    for d in [&r, &b, &out] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    // another program's run, in the runs folder
+    let o = sonde_in(t.path(), &b, &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let mv = out.join("mv.sonde");
+    let o = sonde_in(
+        t.path(),
+        &r,
+        &[
+            &["run", "--demo", "-o", mv.to_str().unwrap(), "--"][..],
+            &one_request(&r),
+        ]
+        .concat(),
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let ck = sonde_in(t.path(), &r, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(0), "{}{}", stdout(&ck), stderr(&ck));
+    assert!(
+        stderr(&ck).contains("the newest run of program `get` recorded in this folder"),
+        "{}",
+        stderr(&ck)
+    );
+    // and by its name in sonde.toml
+    std::fs::write(r.join("sonde.toml"), "[program]\nname = \"get\"\n").unwrap();
+    let shown = sonde_in(t.path(), &r, &["show", "-f", "json"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
+    assert_eq!(doc["run"]["command"], "sh get.sh", "{doc}");
+}
+
 /// 19.0 passed `check --program-exit 3` "within budget": a run whose
 /// program failed fails its check in every format, by the exit the run
 /// kept; and it is no baseline, nor `--init`'s source.
