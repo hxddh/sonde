@@ -37,7 +37,8 @@ pub const LOGS_OF: &str = "logs of ";
 pub fn command_change(a: Option<&str>, b: Option<&str>) -> Option<String> {
     let (a, b) = (a?, b?);
     let words = |c: &str| -> Vec<String> {
-        shell_words(c)
+        let c = shell_inner(c);
+        shell_words(&c)
             .iter()
             .map(|w| without_trial(&unquote(&scrub_word(w))))
             .flat_map(|w| w.split_whitespace().map(String::from).collect::<Vec<_>>())
@@ -74,6 +75,26 @@ pub fn command_change(a: Option<&str>, b: Option<&str>) -> Option<String> {
         part(&wa[same..wa.len() - tail]),
         part(&wb[same..wb.len() - tail])
     ))
+}
+
+/// The command a shell is given to run, `X` of `sh -c X` and `bash -c X`
+/// (a single argument to `-c`, nothing after it): the same command as `X`
+/// typed alone (the Action runs its `run` as `bash -c`). Any other
+/// command as it is.
+fn shell_inner(command: &str) -> std::borrow::Cow<'_, str> {
+    let words = shell_words(command);
+    match &words[..] {
+        [shell, c, inner]
+            if c == "-c"
+                && matches!(
+                    unquote(shell).rsplit(['/', '\\']).next(),
+                    Some("sh" | "bash")
+                ) =>
+        {
+            unquote(inner).into()
+        }
+        _ => command.into(),
+    }
 }
 
 /// A word without the trial's place in it (`{trial}`, `$SONDE_TRIAL`,
@@ -1881,6 +1902,19 @@ mod tests {
             change("TOKEN=abc etl", "TOKEN=xyz etl --all").as_deref(),
             Some("— → --all")
         );
+        // a shell given the command (the Action's `bash -c`) is the command
+        // typed alone: 24.0.1's Action against a 24.0.0 baseline
+        assert_eq!(
+            change("bash -c 'python3 etl.py --day 2'", "python3 etl.py --day 3"),
+            change("python3 etl.py --day 2", "python3 etl.py --day 3")
+        );
+        assert_eq!(change("bash -c 'python3 etl.py'", "python3 etl.py"), None);
+        assert_eq!(
+            change("python3 etl.py", "/bin/sh -c \"python3 etl.py\""),
+            None
+        );
+        // more than the one argument is another command
+        assert!(change("bash -c 'python3 etl.py' x", "python3 etl.py").is_some());
     }
 
     #[test]
