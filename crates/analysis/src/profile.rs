@@ -1727,7 +1727,7 @@ pub const FINDING_KINDS: &[&str] = &[
 ];
 
 /// The version of the rules a finding's identity is made by ([`stable`]
-/// and [`identity`]): kept with a program's findings (`findings.json`), so
+/// and [`identity`]): kept with a program's findings (in `.index.jsonl`), so
 /// findings kept under older rules are made again by these, not read as one
 /// fixed and another new. 1 was 19.0's; 2 takes every number out; 3 keeps
 /// a digit inside a word (`s3out`); 4 makes a prefix near its rate

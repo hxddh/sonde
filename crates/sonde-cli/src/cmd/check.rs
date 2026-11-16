@@ -48,15 +48,14 @@ pub struct CheckArgs {
     /// percent (10 unless sonde.toml says).
     #[arg(long)]
     tolerance: Option<f64>,
-    /// Write `sonde.toml` here with a `[check]` that this run passes (its
-    /// figures with --tolerance, 10%, of room) and, when the program has no
-    /// name, a `[program] name` for its runs and its baseline to go by.
-    /// Trials are not written: `sonde run --trial` tries the program, and a
-    /// `[[scenario]]` is the project's own to add.
+    /// Write `sonde.toml` here (or at --config) with a `[check]` that this
+    /// run passes: its figures with --tolerance, 10%, of room. Refused when
+    /// the file is there. Trials are not written: `sonde run --trial` tries
+    /// the program, and a `[[scenario]]` is the project's own to add.
     #[arg(long)]
     init: bool,
-    /// With -f markdown: the link to the whole report (`sonde share --html`,
-    /// kept by CI) the comment ends with.
+    /// With -f markdown: the link to the whole report (`sonde share`'s
+    /// page, kept by CI) the comment ends with.
     #[arg(long, value_name = "URL")]
     report_url: Option<String>,
     /// The format written: text, json, markdown (a pull request's comment) or github (annotations).

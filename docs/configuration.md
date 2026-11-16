@@ -26,19 +26,18 @@ in the contract ([contract](contract.md)).
 
 ## config.toml
 
-| | Linux | macOS |
-|---|---|---|
-| Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` |
-| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `$XDG_DATA_HOME/sonde`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
-| Exports | `<data>/exports` unless `exports-dir` | same |
-| Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` | `%SONDE_CONFIG_DIR%`, else `%XDG_CONFIG_HOME%\sonde`, else `%APPDATA%\sonde` |
+| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `$XDG_DATA_HOME/sonde`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` | `%SONDE_DATA_DIR%`, else `%APPDATA%\sonde` |
+| Exports | `<data>/exports` unless `exports-dir` | same | same |
+| Downloads | `~/Downloads/sonde` unless `downloads-dir` | same | same |
 
 The CLI also takes `--config-dir` and `--data-dir`.
 
 - Written atomically, mode `0600` on Unix (it may hold static keys).
-- Unknown or duplicate endpoint ids and bad URLs are refused on load (an endpoint's `ca-file` that does not exist is said
-  when that endpoint is used, and refused when it is added or changed);
-  other unknown keys are passed over.
+- Unknown or duplicate endpoint ids and bad URLs are refused on load; other unknown keys are passed over.
+- A `ca-file` that does not exist is refused when its endpoint is added or changed, and said when it is used.
 - A file that does not load is never overwritten: the app starts with no endpoints, shows why, and refuses saves
   until the file is fixed and reloaded.
 - A save rereads the file and applies only what changed, so edits made meanwhile (by hand or `sonde endpoints`) are
@@ -70,7 +69,7 @@ id = "prod"                                    # letters, digits, - _ .
 name = "Production (eu-west-1)"
 url = "https://s3.eu-west-1.amazonaws.com"
 region = "eu-west-1"
-vendor = "aws"                                 # aws r2 minio ceph-rgw aliyun-oss tigris backblaze-b2 wasabi gcs-xml other
+vendor = "aws"                                 # aws r2 minio ceph-rgw aliyun-oss tencent-cos tigris backblaze-b2 wasabi gcs-xml other
 path-style = false
 credentials = { kind = "profile", name = "prod" }
 
@@ -90,9 +89,6 @@ credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-v
 `credentials.kind`: `default`, `profile`, `env`, `imds`, `web-identity`, `process`, `static`, `anonymous`
 ([credentials](credentials.md)).
 
-sonde's own destructive acts are each a dry run, done with `--yes` and kept in the audit log; uploads are
-stale past 7 days.
-
 ### One-off endpoint
 
 `sonde --url <URL> [--region R] [--path-style] [--ca-file F]` adds an unsaved endpoint `adhoc` with the default
@@ -102,8 +98,9 @@ while the demo runs) is hidden for that run, not replaced.
 ## sonde.toml
 
 Read by `run`, `check`, `proxy` and the app's Run from the folder they run in or the nearest one above it, up to the
-repository's root (`check --config FILE` names another). Every key is checked: an unknown key, a policy that is not
-one of three or a scenario sonde cannot run is an error (exit 64), in the CLI and the app alike.
+repository's root (`check --config FILE` names another). `show`, `compare` and `share` read it too: `[program] name`
+to find the program's newest run, and `show` what `[check] expect` keeps. Every key is checked: an unknown key, a
+policy that is not one of three or a scenario sonde cannot run is an error (exit 64), in the CLI and the app alike.
 
 ```toml
 [program]

@@ -1463,7 +1463,7 @@
  "core.probe.range.unsatisfiable.description": "GET bytes=100-200 of a 10-byte object, and bytes=0- of an empty object.",
  "core.probe.range.unsatisfiable.aws": "416 InvalidRange with Content-Range: bytes */10; on an empty object 416 as well.",
  "core.probe.keys.special.title": "Special characters and Unicode in keys",
- "core.probe.keys.special.description": "PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII; the verdict is of the keys sent (sonde cannot send the two with a dot segment).",
+ "core.probe.keys.special.description": "PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII; the verdict is of the keys sent (sonde's own client cannot send the two with a dot segment; a recorded program's are forwarded as sent).",
  "core.probe.keys.special.aws": "Keys are opaque UTF-8: every key round-trips through PUT, GET and ListObjectsV2 (with encoding-type=url) exactly.",
  "core.probe.list.token-stability.title": "Continuation token stability",
  "core.probe.list.token-stability.description": "Lists 30 keys 10 at a time; between pages, adds keys before and after the position, then reuses the first token.",

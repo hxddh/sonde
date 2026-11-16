@@ -31,8 +31,8 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 | `AWS_VIRTUAL_HOSTED_STYLE_REQUEST` | `false` |
 | `AWS_EC2_METADATA_DISABLED` | `true` |
 
-- Removed: `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, the container-credential
-  variables.
+- Removed: `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_ROLE_ARN`,
+  `AWS_WEB_IDENTITY_TOKEN_FILE`, the container-credential variables.
 - Tested in CI (`scripts/sdk-smoke.sh`, against RustFS): boto3, AWS SDKs for JavaScript v3, Go v2, Java v2, the AWS
   CLI (also in its container image, through `run -- docker run`), polars (object_store), and boto3 under `--tls`.
 - An error that names a `SONDE…` key came from a store sonde was not in front of: the client did not take the
@@ -44,7 +44,7 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 | pyarrow `S3FileSystem()` | `S3FileSystem(endpoint_override=os.environ["AWS_ENDPOINT_URL"])` |
 | DuckDB | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
 | rclone | a remote of the environment's: `rclone ls :s3,env_auth=true:bucket` (a named remote keeps its own endpoint) |
-| a container | `sonde run -- docker run …` (or `podman run`) is given `--network host` and `-e NAME` for each variable above, by name only; a network of its own cannot reach 127.0.0.1. Docker Desktop needs host networking turned on |
+| a container | `sonde run -- docker run …` (or `podman run`) is given `--network host` (unless the command names a network) and `-e NAME` for each variable above, by name only; `--tls`'s certificate is mounted where it is. A network of its own cannot reach 127.0.0.1. Docker Desktop needs host networking turned on |
 
 Production that runs elsewhere (Kubernetes, serverless) is read from its logs: [`sonde import`](#production-traffic-access-logs-cloudtrail-har).
 
@@ -115,11 +115,9 @@ committer settings; empty `…/` directory markers are reported with their delet
    sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through, except: signed `aws-chunked`
    (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
    checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
-   `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged (not yet covered by the SDK tests).
+   `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged.
 6. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
 7. The response streams back unchanged; error bodies are kept whole.
-
-`sonde proxy` listens on loopback only; `--allow-remote` opens it to anyone holding the printed keys.
 
 A record holds the program's headers (signatures redacted), the URL sonde sent to, status, bytes each way, request
 ids, the error body, **latency** (the whole exchange, until the body is through or the program stops reading) and
@@ -152,12 +150,11 @@ and a path that names no bucket are no policy's.
 
 - JSON lines: a header, then a record per completed request ([format](dev/run-format.md)), redacted. A crash
   loses at most a torn last line, which is skipped.
-- In `<data>/runs/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
-  stays plain (the app reads only what was appended).
-- `sonde runs prune --keep N --yes` keeps the newest N and every baseline.
+- In `<data>/runs/` ([`sonde runs prune`](cli.md#read-a-run)), or `-o FILE`. Gzipped in place when finished (about
+  a tenth; still `.sonde`); a live one stays plain (the app reads only what was appended).
 
 ```
-172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
+172 requests (34 operations) from object_store 0.14 to adhoc in 467 ms, waiting 299 ms · 116 not found
 ```
 
 GET and HEAD answered 404 are **not found**, not errors. Errors: other 4xx/5xx, transport failures, refused requests.
@@ -181,7 +178,7 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 | Source | Times | Who sent it | SDK |
 |---|---|---|---|
 | Access log | total and first byte | requester | yes |
-| CloudTrail | none (no latency charts or findings) | IAM identity | yes |
+| CloudTrail | none (no latency charts, nor findings of requests one after another) | IAM identity | yes |
 | HAR | total | — | yes |
 
 ## Operations, not requests
@@ -269,18 +266,6 @@ so does a boto3 ETL that reads 40 objects it did not write (RustFS).
 In the app it is asked from a run: the run's ⋯ › On another store… shows the plan, runs it and opens the comparison:
 grouped differences, what the program relies on, the cost on each store, and both runs as transcripts
 (`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
-
-## Share a run
-
-```sh
-sonde share                              # newest run → ./<run>.html
-sonde share --redact -o run.html         # names replaced
-sonde share run.sonde --baseline auto    # what changed against the baseline, first
-```
-
-One HTML file: the app's own views (figures, findings, operations, output, the Time pane with every chart) and the
-run, everything computed. Nothing is fetched: it opens from a disk as from any web server. It holds what the run
-holds: share it as you would the file. `--redact`: [cli](cli.md#read-a-run).
 
 ## Limits
 

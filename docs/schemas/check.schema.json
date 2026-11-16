@@ -273,7 +273,7 @@
         },
         "history": {
           "type": "array",
-          "description": "The scenario's verdicts for the program, oldest first, up to this one (`verdicts.json` beside its runs).",
+          "description": "The scenario's verdicts for the program, oldest first, up to this one (kept in the runs folder's `.index.jsonl`).",
           "items": {
             "type": "object",
             "properties": {

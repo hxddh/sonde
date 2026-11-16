@@ -1,8 +1,8 @@
 # Credentials
 
-Credentials are resolved in Rust (`crates/sonde-core/src/credentials`), cached until five minutes before expiry, and
-used only to sign. The interface sees endpoint ids, names and a description of the source ("profile prod",
-"instance role (IMDSv2)"), never a key. Static keys can be set only in `config.toml`.
+Where an endpoint's credentials come from (`credentials` in [config.toml](configuration.md#configtoml)). They are
+cached until five minutes before expiry; static keys can be set only in `config.toml`. What the interface sees of them:
+[security](security.md#credential-isolation).
 
 | `kind` | Source |
 |---|---|
@@ -19,8 +19,8 @@ STS calls go to `sts.<region>.amazonaws.com` (`.com.cn` in China regions) or `AW
 
 ## Redaction
 
-Every request record is redacted when created, before the ring buffer, exports, the inspector or a probe
-report sees it (`crates/reqlog/src/redact.rs`):
+Every request record is redacted when created, before anything stores or shows it
+(`crates/reqlog/src/redact.rs`):
 
 | What | Done |
 |---|---|

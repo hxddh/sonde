@@ -8,20 +8,23 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - Credentials are resolved in Rust (`sonde-core::credentials`), held in `s3raw::Credentials` (its `Debug` masks
   them), and used only to sign.
 - The TSX interface (QuickJS) sees endpoints as `EndpointView`: id, name, URL, region, vendor, and *how* credentials
-  are obtained, never a key. The endpoint form cannot submit a key (`credentials: "keep"` keeps static keys without
-  reading them).
+  are obtained ("profile prod", "instance role (IMDSv2)"), never a key. The endpoint form cannot submit a key
+  (`credentials: "keep"` keeps static keys without reading them).
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
-  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, runs,
-  HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no signature.
+  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)), before anything stores or
+  shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no
+  signature.
 - `config.toml` is written with mode 0600 (its temporary file is created so).
 
 ## Network
 
-- All requests are made in Rust (`reqwest`, rustls). The app's `nsh.json` declares no network capability
-  (`"network": {"hosts": [], "http": []}`), so the TSX VM cannot connect.
+- All requests are made in Rust (`reqwest`, rustls). The app's `nsh.json` grants the TSX VM no network capability
+  (links open in the browser, through `openUrl`), so it cannot connect.
 - No telemetry, no background requests: every request answers a user action or a job the user started.
-- The app checks for updates only when asked (Settings › Updates): it reads `latest.json` on GitHub Releases and
-  verifies the archive's SHA-256 before installing.
+- The app checks for updates only when asked (Settings › Updates), with Native Shell's updater (`nsh/updater`): it
+  reads `latest.json` from the latest GitHub release, checks that it is this app's and newer, downloads the archive
+  checking its size and SHA-256, checks the new app (`codesign` on macOS) and swaps it in. The manifest is not signed:
+  it is as trusted as the release. A system install or the terminal binary is only linked to the release.
 - Custom CAs per endpoint (`ca-file`); TLS verification is never disabled.
 
 ## Files
@@ -67,13 +70,8 @@ you would without sonde.
 - Run starts the user's command through their shell with their rights, like a terminal.
 - The command gets a local endpoint and throwaway keys, never sonde's credentials; `AWS_SESSION_TOKEN`,
   `AWS_PROFILE` and similar are removed.
-- What it may do is the recording policy ([recording](recording.md#what-a-recorded-program-may-do)):
-  - `allow` (default): everything.
-  - `no-delete` (a trial's default, where sonde's faults could push a program down a bad path): no deletes, aborts,
-    lifecycle rules, bucket policies or versioning suspension, but of what the recording made itself. Writes go
-    through, over an object or not: use `read-only` to keep what is there.
-  - `read-only`: GET and HEAD only.
-- `sonde.toml` may set the policy when no flag does; in the app it may only narrow the chosen one.
+- What it may do is the recording policy, `allow` (default), `no-delete` (a trial's default) or `read-only`
+  ([recording](recording.md#what-a-recorded-program-may-do)).
 - The program's output is kept as printed, so printed secrets end up in the run; records stay redacted.
 - Only the app process starts commands: no listening socket; the TSX VM reaches it only through `sonde/native`.
 - "Name the code" (on by default; `--no-callers`) extends, never replaces, `PYTHONPATH`, `NODE_OPTIONS` and

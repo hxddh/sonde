@@ -32,6 +32,7 @@ sonde-fmt ← sonde-analysis, sonde-core, sonde-cli
 reqlog ← s3raw ← sonde-core
 reqlog ← s3raw ← sonde-proxy ← sonde-analysis
 sonde-core, probes, decoders, sonde-proxy, sonde-analysis ← sonde-nsh, sonde-cli
+sonde-nsh ← sonde-cli (optional, feature `tui`)
 ```
 
 - `sonde-proxy` needs no sonde configuration, only an endpoint.
@@ -46,8 +47,9 @@ sonde-core, probes, decoders, sonde-proxy, sonde-analysis ← sonde-nsh, sonde-c
 | Tokio runtime | Requests, jobs, the demo server. |
 | Jobs (`sonde-core::jobs`) | Each long operation: its own `Throttle` (concurrency, rate), a cancellation token, a broadcast of events. Cancelling drops the future and its requests; screens cancel theirs on `cleanup`. TSX follows one with `watchJob(id, listener)`. |
 
-Retries (`s3raw`): 5xx, 429 and transport errors, exponential backoff with full jitter, honouring `Retry-After`;
-each attempt is a record with its retry number.
+Retries (`s3raw`): 500, 502, 503, 504, 429, a 400 `RequestTimeout`, a 403 `RequestTimeTooSkewed` (signed again) and
+transport errors, exponential backoff with full jitter, honouring `Retry-After`; each attempt is a record with its
+retry number.
 
 ## Data paths
 
@@ -71,11 +73,15 @@ The proxy (`sonde-proxy`) re-signs each request, answers in the store's place un
 | `episode.rs` | requests → operations and findings |
 | `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
-| `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in `findings.json` beside its runs |
+| `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in the runs folder's `.index.jsonl` |
 | `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
 | `index.rs` | one `.index.jsonl` per runs folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Runs.view`, `Runs.episodes`): what crosses to the UI does not grow |
 | `phrase.rs` | each sentence as a key and arguments; its words, English included, are `phrase.<key>` of `app/locales` (read by `sonde-fmt`'s `words`), said per language by the app and viewer |
+
+The index is written under the folder's `.index.lock`. A run's counts (requests, time, errors, program, figures once
+checked) are reckoned again when missing, when the run's length or mtime (ns) changed, or when the analysis changed;
+a run's entry goes with the run.
 
 Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
 `crates/fmt/cases.json`.
@@ -83,8 +89,8 @@ Every size, count and duration in text comes from `sonde-fmt`, tested with the a
 ## The app
 
 - **UI layer** (`app/src/ui/`): the styled layer over `nsh/base` — theme tokens (`app/theme.json`, read by the
-  viewer too), icons (`icon.tsx`, Lucide data in `lucide.ts` from `scripts/lucide.py`), shortcuts (`keys.ts`),
-  controls (`kit.tsx`), toasts, toolbar and sidebar (`shell.tsx`), palette, and the run views shared with the
+  viewer too), icons (`icon.tsx`, Lucide data in `lucide.ts` from `scripts/lucide.py`), controls and shortcut labels
+  (`kit.tsx`), toasts, toolbar and sidebar (`shell.tsx`), palette, and the run views shared with the
   viewer (`runview.tsx`, `record.tsx`, `profile.tsx`). Pages compose these and never style base components.
   Standards: `app/DESIGN.md`.
 - **Two forms**: `App.tsx` branches on `platform.idiom === "terminal"`.

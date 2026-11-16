@@ -60,19 +60,18 @@ runs `sonde --version` in `debian:bookworm-slim`.
 | Pull request, Dependabot's too (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), budgets, supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
 | Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours; nightly and by hand, `timed` and `ui-perf` | everything a release ships |
 
-A tour's variants run side by side (`shots`); `shots-check` holds each platform's pictures, together the run's
-`sonde-shots-<platform>` artifact, to its approved ones (`app/shots.approved.json`; `scripts/shots-diff.py approve`
-on that artifact, then commit); a platform with none approved is reported, not held. Rust's caches are a few
+A tour's variants run side by side (`shots`); `shots-check` holds each platform's pictures to its approved ones
+([the tour](../../CONTRIBUTING.md#the-tour-and-its-pictures)). Rust's caches are a few
 shared keys (`debug`, `release`, `lint`, `app`, …), each saved by one job of `main`'s runs, so a pull request's
 never push out the ones every run reads. The Native Shell commit is read from `Cargo.toml` (`.github/actions/nsh`);
-the viewer's web runtime is kept by that commit and Rust's version. The nightly run (CI's schedule) and one by hand
-also run the timed tests (`timed`, `ui-perf`); `fuzz.yml` runs the fuzzers weekly, `action-live.yml` the Action after
-each release and daily.
+the viewer's web runtime is kept by that commit and Rust's version. `fuzz.yml` runs the fuzzers weekly,
+`action-live.yml` the Action after each release and daily.
 
 ## Releasing
 
 1. Update `CHANGELOG.md` (`## [x.y.z] - date`) and the versions: `Cargo.toml` `workspace.package.version`,
-   `app/nsh.json` `version` and `build`.
+   `app/nsh.json` `version` and `build`, `viewer/nsh.json` `version`; a new major also the action's `@vN` in
+   `README.md`, `docs/ci.md` and `action.yml`.
 2. Merge to `main`, then push tag `vx.y.z` on that commit, or run Actions › Release › Run workflow with `x.y.z` (it
    tags the chosen commit). `release.yml` builds nothing: it waits (up to two hours) for CI's run of that commit on
    `main` (its push, the nightly or one by hand; never a pull request's), refuses it unless it is green — every
@@ -86,7 +85,7 @@ each release and daily.
 | | |
 |---|---|
 | `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.1`; `24`: the newest 24.x; `24.0`: the newest 24.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
-| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
+| `scripts/shots.sh` | CI's `shots` job, [the tour](../../CONTRIBUTING.md#the-tour-and-its-pictures). The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code
 

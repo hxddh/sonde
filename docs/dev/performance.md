@@ -14,7 +14,14 @@ python3 scripts/perf.py target/release/sonde                    # terminal binar
 (cd app && nsh test tests/perf.test.tsx --target tui --trace)   # headless UI: 100k rows, 500 scroll frames
 cargo run --release -p sonde-proxy --example overhead           # proxy overhead (OVERHEAD_URL, OVERHEAD_BUCKET, AWS keys)
 cargo run --release -p sonde-analysis --example scale -- 1000000   # a synthetic run of a million requests
-cargo test --release -p sonde-analysis --test budgets -- --ignored # the size budgets (CI runs them)
+```
+
+The size budgets, each in a process of its own as CI runs them (a test's peak memory is then its own):
+
+```sh
+for t in $(cargo test --release -p sonde-analysis --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p'); do
+  cargo test --release -p sonde-analysis --test budgets -- --ignored --nocapture --exact "$t"
+done
 ```
 
 The UI measures use the built-in demo endpoint (`sonde tui --demo`, bucket `demo-large`, 100 000 keys), so they
@@ -31,8 +38,6 @@ The same 1 KiB GET against a local RustFS, 2 000 times direct and 2 000 through 
 | **overhead** | **+0.21 ms** | **+0.12 ms** | **+0.06 ms** |
 
 Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in the `record` job.
-
-<a id="a-run-of-a-million-requests-800"></a>
 
 ## Large runs
 
@@ -51,22 +56,20 @@ a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 | `sonde show -f json --requests` (1.6 GiB of JSON) | 38 s | 349 MiB |
 | `sonde check --baseline` (another million) | 17 s | 391 MiB |
 | `sonde compare` (two millions) | 20 s | 510 MiB |
-| `sonde share` | not yet measured | |
 
-Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
-peak memory (what is measured and about an eighth more; a million's is the 400 MiB 22.0 set out for), which moves
-by a few percent from run to run. Time moves with a shared runner: it is said in the job's summary and fails only
-past several times what it takes.
+Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past
+its peak memory (what is measured and about an eighth more), which moves by a few percent from run to run. Time
+moves with a shared runner: it is said in the job's summary and fails only past several times what it takes.
 
-| Budget | Measured (21.0) | Measured | Peak memory, held at | Time, held at |
-| --- | --- | --- | --- | --- |
-| a million read and analysed (`show`) | 1,107–1,126 MiB, 8.4–9.3 s | 333–368 MiB, 8.4–9.1 s | 400 MiB | 45 s |
-| two runs of a million compared | 1,269–1,357 MiB, 23–25 s | 490–548 MiB, 20–21 s | 560 MiB | 120 s |
-| an outage of 300 thousand | 511–517 MiB, 2.1–2.2 s | 199–211 MiB, 1.8–1.9 s | 240 MiB | 30 s |
-| small multipart uploads, 300 thousand | 430–441 MiB, 2.6–3.1 s | 234–235 MiB, 2.8 s | 270 MiB | 30 s |
-| the app's first view of 100 thousand (records whole) | 234–242 MiB, 0.7–1.0 s | 217–221 MiB, 1.0–1.1 s | 250 MiB | 6 s |
-| a sorted page of operations | 52 ms | 48–57 ms | | 1.5 s |
-| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 711–715 MiB, 6.6–7.4 s | 270–272 MiB, 4.9 s | 310 MiB | 45 s |
+| Budget | Measured | Peak memory, held at | Time, held at |
+| --- | --- | --- | --- |
+| a million read and analysed (`show`) | 333–368 MiB, 8.4–9.1 s | 400 MiB | 45 s |
+| two runs of a million compared | 490–548 MiB, 20–21 s | 560 MiB | 120 s |
+| an outage of 300 thousand | 199–211 MiB, 1.8–1.9 s | 240 MiB | 30 s |
+| small multipart uploads, 300 thousand | 234–235 MiB, 2.8 s | 270 MiB | 30 s |
+| the app's first view of 100 thousand (records whole) | 217–221 MiB, 1.0–1.1 s | 250 MiB | 6 s |
+| a sorted page of operations | 48–57 ms | | 1.5 s |
+| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 270–272 MiB, 4.9 s | 310 MiB | 45 s |
 
 How:
 - **The record** (`reqlog::Record`, 96 bytes): its kind, method and bucket are interned `Name`s (2 bytes each); a
@@ -86,7 +89,7 @@ How:
 
 ## Terminal binary
 
-`scripts/perf.py`, 120×40 pty, 20.0.0's `sonde-linux-x86_64` (CI's build), two runs:
+`scripts/perf.py`, 120×40 pty, two runs; measured at 20.0.0, on its `sonde-linux-x86_64` (CI's build):
 
 | Measure | Result |
 | --- | --- |
@@ -102,8 +105,8 @@ Binary: 79.7 MB (LTO thin, JS engine, the app's bundle and the viewer included),
 
 ## Headless UI
 
-`nsh test --target tui --trace`, debug host (v0.1.0): Browse › demo-large, flat, load all 100 000 rows, scroll the
-table 500 frames down and back.
+`nsh test --target tui --trace`, debug host, measured at sonde 0.1.0: Browse › demo-large, flat, load all 100 000
+rows, scroll the table 500 frames down and back.
 
 | Measure | Result |
 | --- | --- |
@@ -116,7 +119,7 @@ The DataTable is virtual: JS holds one 400-row window, fetched from Rust's `List
 
 ## Opening the Time pane
 
-Headless `nsh test --trace`, the example run (172 requests), Native Shell `v0.5.0`, three runs:
+Headless `nsh test --trace`, the example run (172 requests), three runs; measured at Native Shell `v0.5.0`:
 
 | The press's commit | Largest commit after it | All commits | Mount items |
 |---|---|---|---|
@@ -127,9 +130,7 @@ shorten (build charts as they come into view).
 
 ## Long jobs
 
-Probes, multipart scans, capacity and layout scans run in Rust on tokio and stream progress; the UI never blocks.
-Per job: 16 requests in flight (`settings.concurrency`), optional `settings.rate-limit`, exponential backoff with
-jitter on 503 SlowDown and throttling ([configuration](../configuration.md)).
+Off the UI's thread, each with its own throttle and retries: [architecture](architecture.md#threads).
 
 ## Not measured
 

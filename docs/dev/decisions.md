@@ -18,11 +18,11 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-017 | Closed formats | heuristics; cadence only | **Cadence only** (turbopuffer, WarpStream): their formats are not published. |
 | D-018 | Probe verdict "differs" vs "fail" | — | **fail** when a guarantee breaks; **differs** for other statuses or shapes. |
 | D-019 | Exit codes | 0/1; graded | **Graded** ([cli](../cli.md#exit-codes)): CI fails on broken guarantees (1) and still reports differences (2). |
-| D-020 | Linux binary | musl; glibc on an old base | **glibc on Ubuntu 22.04** (2.35): only libc/libm/libgcc_s; runs on Debian 12 slim. (A musl build was added later: [packaging](packaging.md).) |
+| D-020 | Linux binary | musl; glibc on an old base | **glibc on Ubuntu 22.04** (2.35): only libc/libm/libgcc_s; runs on Debian 12 slim. A static musl build beside it serves musl systems and older glibc ([packaging](packaging.md)). |
 | D-021 | Config path on macOS | `~/.config/sonde`; Application Support | **`~/Library/Application Support/sonde`**, the platform's convention; `$SONDE_CONFIG_DIR` / `$XDG_CONFIG_HOME` override. |
-| D-022 | App capabilities | `fs`; none | **`clipboard`, `notifications`, `windows`, `picker`**: Rust writes every file; the VM needs no `fs` or `network`. |
+| D-022 | App capabilities | `fs`; none | **`application`, `clipboard`, `notifications`, `windows`, `statusBar`, `picker`, `openUrl` (http, https, file)**: Rust writes every file; the VM needs no `fs` or `network`. |
 | D-023 | Integration targets in CI | MinIO + Ceph + RustFS; Ceph + RustFS | **Ceph RGW + RustFS**: MinIO's images are no longer public. `scripts/integration.sh minio` with `MINIO_IMAGE` still works. |
-| D-024 | macOS runners | macos-13/14; macos-15/15-intel | **macos-15 and macos-15-intel**: the older images never got a runner. |
+| D-024 | macOS runners | macos-13/14; macos-15/15-intel | **macos-26 and macos-26-intel**: the older images never got a runner. |
 | D-025 | Direction for 1.0 | a findings dashboard; the traffic | **The traffic** (record, explain, replay): sonde's edge is protocol truth; bucket dashboards compete with the cloud's tools. |
 | D-026 | How the recorder sees requests | HTTPS MITM; an endpoint that re-signs | **An endpoint that re-signs**: no CA to install, and the program never holds the real credentials. |
 | D-027 | 404 on GET/HEAD | errors; their own count | **"not found"**: formats probe for keys that do not exist yet (116 of SlateDB's 172 requests). |
@@ -51,7 +51,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-052 | Ranking findings | by kind; by requests | **Warnings first, then by requests affected**, with a saving where countable: requests are what a session measures honestly. |
 | D-053 | Throttling advice | a fixed concurrency; the session's | **The fewest in flight when throttled**; at 4 or fewer, the rate per prefix instead. |
 | D-054 | Sharing from the app | copy the command; write and serve | **Write and serve the page** on 127.0.0.1; a build without the viewer copies the command. |
-| D-055 | A session's titles | rewrite the header; a side file | **`titles.json` beside the sessions**: a session file stays as recorded, and renaming is free. |
+| D-055 | A run's title | rewrite the header; a side file | **In the runs folder's index (`.index.jsonl`)**: a run's file stays as recorded, and renaming is free. |
 | D-056 | Direction for 6.0 | more findings; time and cost | **Time and cost, seen** (`profile.rs`, compare, Plot charts); bugs first. |
 | D-057 | A kind's time | latencies added; union | **The union of its intervals**: ten parallel 50 ms reads are 50 ms of waiting. |
 | D-058 | Request cost | none; configurable prices | **S3 Standard us-east-1 by default** (`settings.prices.*`): an estimate for comparing runs, not a bill. |
@@ -101,7 +101,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-106 | Where the signals are computed | the app; Rust | **Rust (`signals.rs`)**: one JSON for app, page and CLI. |
 | D-107 | Charts | each its own; a registry and a lint | **One frame (`Chart`) and registries** checked by `scripts/lint-charts.py`. |
 | D-108 | A narrow pane | wrap and clip; rank | **Rank**: the lowest figures and columns leave first; nothing clipped mid-word. |
-| D-109 | Rust's sentences in Chinese | translate in Rust; phrases | **Phrases** (`decoders::phrase`, `corephrases.ts`); a test fails on a key without a template. The CLI stays English. |
+| D-109 | Rust's sentences in Chinese | translate in Rust; phrases | **Phrases** (`decoders::phrase`; their words are `phrase.*` in `app/locales`); a test fails on a key without a template. The CLI stays English. |
 | D-111 | A trial in the app | a row of verdicts; a marked session | **A marked session**, in no list (D-099); refused on a read-only endpoint. |
 | D-112 | "Acting on N findings" | an estimate; the requests named | **The named requests, subtracted**: the estimate overstated tiny HEADs. |
 | D-113 | Moving the Native Shell pin | with UI work; last | **Last, alone**: a moved pixel has one cause. |
@@ -159,9 +159,9 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-171 | What sonde keeps of each session | files beside it; one index per folder | **`.index.jsonl` per folder**, append-only, compacted when mostly stale. |
 | D-172 | A setting gone from `config.toml` | an error; ignored | **Ignored, said once, dropped at the next save**: an older file always loads. |
 | D-174 | When `skew` is offered | always; by SDK | **When the SDK retries it** (Java, JavaScript), or when named: botocore cannot. |
-| D-175 | Trying again | everything; what did not survive | **`--trial --again`: broke, degraded and refused**, with each scenario's history per program (`verdicts.json`). |
+| D-175 | Trying again | everything; what did not survive | **`--trial --again`: broke, degraded and refused**, with each scenario's history per program (in the runs folder's `.index.jsonl`). |
 | D-176 | A refusal by the policy in a trial | broke; its own | **`refused`**: the program was not judged; `check` warns. |
-| D-177 | A finding across runs | by id; by kind and what it is about | **Kind and what it is about**; states fixed, less, back, new, open per program (`findings.json`). |
+| D-177 | A finding across runs | by id; by kind and what it is about | **Kind and what it is about**; states fixed, less, back, new, open per program (kept in `.index.jsonl`). |
 | D-178 | Fixed or less | under the threshold; gone at any threshold | **Gone at any threshold**, else "less"; a fixed finding shows its measured saving beside the predicted. |
 | D-179 | Callers | opt-in; on | **On by default** (`--no-callers`): the fix loop needs the line; the Python hook loads lazily. |
 | D-180 | Default `show` | everything; the summary | **The summary, findings first, one table**; the rest behind `--all`. |
@@ -188,7 +188,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |
 | D-205 | Timed tests | nightly with a retry; every change, held | **Every change, held at peak memory with no retry** (each test optimised, in a process of its own); time is said, and held only past several times what it takes ([performance](performance.md)). Supersedes D-155. |
 | D-206 | Breaking a stable thing | announce one version ahead; break in the major that makes it | **In the major that makes it**, without notice, by the owner's decision (21.0): no aliases, shims or "deprecated". Supersedes D-197. |
-| D-207 | Native Shell's pin | a tag; its main | **Its main at 2ca3b80** (after v0.5.1): popups that come and go, quit requests, baselines, menus in the app's language; `"application"` granted. Supersedes D-002. |
+| D-207 | Native Shell's pin | a tag; its main | **Its main at 32f1635** (after v0.5.1): popups that come and go, quit requests, baselines, menus in the app's language; `"application"` granted. Supersedes D-002. |
 | D-208 | Type | sizes; sizes with their lines | **Each size with its line** (11/16 … 20/28); Chinese captions 12 pt; pages write `TEXT` roles. |
 | D-209 | Motion and depth | per component; tokens | **`TIMING` 120/180/240/360, one ease, three shadows**; a press sinks; nothing moves under reduce-motion. |
 | D-210 | Status colour | paints text and fills; marks | **Marks only**: a dot, an icon or a rule; one `TONE` table; verdicts are quiet words. |

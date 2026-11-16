@@ -2,36 +2,8 @@
 
 What is listed under **Stable** changes only in a major release; everything else may change in any release.
 
-The contract starts at 19.0 (D-138). 19.0 kept nothing of earlier versions: no folded commands, flags, files, settings
-or JSON names of before it are read or said ([changelog](../CHANGELOG.md), [0.1 to 18.0](history/changelog-0-18.md)).
-A break comes only in a major, in the major that makes it, and is said in its changelog: nothing is announced
-ahead, and nothing removed lives on as an alias.
-
-**20.0** broke: one name for each thing (an S3 call is a `kind`: `requests[].kind`, `summary.kinds`, `show --by kind`,
-session format 2), a program is its command with what changes between runs left out, `record-policy` and
-`name-callers` move to `sonde.toml`, `sonde demo` is `run --demo`, `--allow-writes` is `--policy allow`, `prune`
-confirms with `--confirm COUNT`, and display text leaves the promise. 20.0 reads 19.0's sessions (format 1).
-
-**21.0** broke: an operation's `kind` is its `shape` (`operations[].shape`), so a kind is only an S3 call; `check
---program-exit` is gone (the session keeps the exit); a program's key keeps its numbers (`--limit 30` and `--limit 5`
-are two programs); `compare -f json` requires `waitingKnown`; `--again` implies `--trial`.
-
-**22.0** broke: a recording is a run everywhere (`sonde runs`, the data directory's `runs/`, `"run"` for `"session"`
-in JSON, `runs.schema.json`, the file format `sonde-run`); `-f` is `text` or `json` (`check` adds `markdown`,
-`github`; `csv` and the other `markdown`s go); plain `run` and `proxy` default to policy `allow`; `share` writes one
-HTML file (`--html`, `--serve`, `--port`, `--otlp` and `--to` go); `proxy --rotate/--alert` and `import
---follow/--every/--alert` go; `--confirm` is `--yes` after a dry run; `check` loses `--max-cost`, `--max-p95` and
-`--no-new-warnings` (a baseline always holds a run to no new warning), and the `sonde.toml` keys with them; a program
-is named by `sh -c`'s command and a container's image; all state beside the runs is in the folder's one index.
-
-**23.0** broke: `show -f json` is the compact answer (each finding's first 20 operations and `operationsTotal`, the
-fix for the run's SDK; every operation, operation list and fix with `--all`), `operations` is `operationsTotal` at the
-top, `--summary` and `show-summary.schema.json` go; findings are ordered by what they save; a program's first run's
-findings are `new`; identity rules 3 keep a digit inside a word.
-
-**24.0** broke: `[check] expect` says why each finding is kept (`expect = { "<identity>" = "<reason>" }`, the list
-goes), and `check -f json`'s `check.expected` is those findings, each `{identity, text, expected}`; `check` holds no
-`--demo` run to its waiting.
+The contract starts at 19.0 (D-138). A break comes only in a major, in the major that makes it, and is said in its
+[changelog](../CHANGELOG.md); nothing removed lives on as an alias.
 
 ## Stable
 
@@ -69,28 +41,28 @@ goes), and `check -f json`'s `check.expected` is those findings, each `{identity
 - Text for people: `-f text`, `-f markdown`, `-f github`, all of stderr. Use `-f json`.
 - Display text inside JSON: each property a schema says is "Display text, not stable": the `*Text` phrase arrays,
   a finding's and an operation's sentences (`text`, `phrases`, `title`, `notes`), `show --by`'s sentence, and `layout
-  inspect`'s `headline`, `facts` and `tables` (which may also be absent). Read the figures and ids beside them.
+  -f json`'s `headline`, `facts` and `tables` (which may also be absent). Read the figures and ids beside them.
 - The desktop app, the terminal UI (its developer flags `--bundle`, `--fps`, `--log-file` too, left out of help), the
   shared HTML page, the app–Rust bridge.
 - The runs folder's index and the data directory's other files (probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.
-- A finding's text. Its `identity` (what `[check] expect` names) is made by versioned rules ([cli.md](cli.md#the-fix-loop)); a change of rules is a new version, and findings kept under older rules are made again by the new ones.
+- A finding's text. Its `identity` (what `[check] expect` names) is made by versioned rules ([cli.md](cli.md#the-fix-loop)).
 
 ## Versions
 
 | Release | Changes |
 |---|---|
-| **Major** (`20.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
-| **Minor** (`19.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
-| **Patch** (`19.0.1`) | fixes where documented behaviour did not hold |
+| **Major** (`25.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
+| **Minor** (`24.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
+| **Patch** (`24.0.2`) | fixes where documented behaviour did not hold |
 
 Within a major:
 
 - JSON objects may gain fields; read the ones you know (schemas leave objects open). An `enum` gains values only in
   a minor that says so.
-- A run's file may gain fields within its version. sonde reads every version up to its own and refuses a newer one
-  by name.
+- A run's file may gain fields within its version. sonde reads its own format version and refuses any other by
+  name.
 - `sonde.toml` may gain keys. An older sonde refuses an unknown key (exit 64) rather than half-reading the file.
 
 A change to a stable thing updates its documentation and its test in the same commit; a test failing on a change

@@ -2,6 +2,29 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [24.0.2] - 2026-11-16
+
+### Fixed
+
+- **The docs match what sonde does:**
+  - A run file is read in sonde's own format version only (contract.md said every older one).
+  - `check`'s wording as each format writes it ("past the N it may use" in markdown), its closings, its exit codes
+    and `--init` (refused when `sonde.toml` exists; errors as measured; the room is `--tolerance`).
+  - The head line of a run, the variables removed from a program's environment, what a CloudTrail import gives.
+  - What the app's update check does, and that `nsh.json` grants no network.
+  - The commands that read `sonde.toml`, `tencent-cos`, the paths on Windows.
+  - Every `x-sonde-*` header a run can hold; the retry rule; the Native Shell pin.
+- `sonde help check`: `--report-url` names `sonde share`'s page; `--init` no longer says it writes `[program]`.
+- `show -f json`: a trial's `where` and `advice` are in the schema (held by a test), and `agents.md` says how to
+  read `advice`.
+
+### Changed
+
+- **Each thing is said once in the docs, and linked elsewhere:** policies, safety, credentials, CI, sharing, the tour
+  and the version files. contract.md no longer lists each major's breaks (CHANGELOG does). Resolved Native Shell
+  findings moved to `docs/history`.
+- CI checks that `docs/probes.md` is what the probe catalog makes.
+
 ## [24.0.1] - 2026-11-16
 
 ### Fixed
