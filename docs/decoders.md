@@ -1,8 +1,8 @@
 # Layout decoders
 
-`crates/decoders` reads a storage layout through a read-only `Source` (S3, a local directory, memory) and produces a
-`Layout`: facts, issues (info, warning, error), a timeline, tables, and snapshots of the logical state over time
-(`Layout::state_at`). An unknown format version is reported, not decoded.
+What `sonde layout` decodes ([cli](cli.md)). `crates/decoders` reads a storage layout through a read-only `Source`
+(S3, a local directory, memory) and produces a `Layout`: facts, issues (info, warning, error), a timeline, tables, and
+snapshots of the logical state over time (`Layout::state_at`). An unknown format version is reported, not decoded.
 
 | Layout | Detected by | Decodes | Format versions |
 |---|---|---|---|
@@ -13,4 +13,5 @@
 | **turbopuffer**, **WarpStream** | Name patterns (`tpuf/`, `turbopuffer/`, `warpstream/`, `…/_segments/`) | **Not decoded: the formats are not published.** Prefix statistics and write cadence from the listing only. | — |
 | **Generic** | Any prefix (on request) | Objects and bytes by sub-prefix, writes per interval, median and p99 intervals, longest pause. | — |
 
-Delta Lake has no decoder; its `_delta_log` commits are recognized in recorded runs ([recording](recording.md#operations-not-requests)).
+Delta Lake, Lance, Hudi and Paimon have no decoder: their commits are recognized in recorded runs
+([recording](recording.md#operations-not-requests)).

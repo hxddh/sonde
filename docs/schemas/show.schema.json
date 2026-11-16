@@ -117,7 +117,7 @@
           "description": "The exit code of a run that failed: not compared."
         }
       },
-      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
+      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, more, back, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
     },
     "operations": {
       "type": "array",
@@ -729,6 +729,32 @@
         },
         "attempts": {
           "type": "integer"
+        },
+        "where": {
+          "type": "object",
+          "description": "The request the verdict turns on, when it is not `survived`.",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "description": "The S3 call (`PutObject`)."
+            },
+            "key": {
+              "type": "string",
+              "description": "`bucket/key`, or the bucket and what was listed."
+            },
+            "caller": {
+              "type": "string",
+              "description": "The line of the program that sent it (`etl.py:12 in save`), when the run named callers."
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        "advice": {
+          "$ref": "#/$defs/phrase",
+          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …) and its arguments."
         },
         "history": {
           "type": "array",

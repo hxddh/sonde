@@ -27,12 +27,11 @@ From `show -f json` ([schema](schemas/show.schema.json)):
 | `findings[].callers[]` | Where its requests were sent from: `file` (relative to `run.cwd`), `line`, `function`, `requests`, and `code`, the line itself. Python's boto3, the AWS SDK for JavaScript v3 and for Java 2 name callers. |
 | `findings[].fixes[]` | The change for the run's SDK (`sdk`, `code`), with placeholders (`b` the bucket, `k` the key). Adapt it to the code at `callers[]`. |
 | `findings[].savesRequests`, `savesMs`, `savesCost` | What acting on it saves, predicted. |
-| `findings[].identity` | The same finding across runs; `[check] expect` in `sonde.toml` names one kept on purpose. |
-| `findings[].expected` | Why the project keeps it on purpose (`[check] expect`): leave it alone, do not "fix" it. |
+| `findings[].identity`, `expected` | The same finding across runs; `expected`: why the project keeps it on purpose (`[check] expect` in `sonde.toml` names it by identity): leave it alone, do not "fix" it. |
 | `verify` | The command that records the program again, in `run.cwd`. |
 | `since.findings[].state` | Against the program's run before: `fixed`, `less`, `more`, `new`, `back`, `open`. A fixed one has `measured` and `savedText`: the saving, measured. |
 | `since.change.commandChanged`, `workloadChanged` | The command changed, or the workload grew by half or more: what moved is not counted as a fix. Check the job did the same work. |
-| `trials[]` | Verdicts under faults (`sonde run --trial -- …`): `standing` `broke` or `degraded`, with `where.caller` and `advice`. |
+| `trials[]` | Verdicts under faults (`sonde run --trial -- …`): `standing` is `survived`, `degraded`, `broke`, `untested` or `refused` ([trials](trials.md)). Not survived: `where`, the request it turns on (`kind`, `key`, and `caller`, the line that sent it), and `advice`, what to change as a phrase (`key`, e.g. `trial.advice.retries`, and its `args`, e.g. `sdk`, `setting`; the English is `phrase.<key>` in [`app/locales/en.json`](../app/locales/en.json)). |
 
 `--all` adds every operation and each finding's operations and fixes whole; it is large on a large run.
 

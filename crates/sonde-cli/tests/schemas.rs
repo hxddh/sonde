@@ -297,7 +297,18 @@ async fn every_json_output_is_as_its_schema_says() {
         use sonde_analysis::trial;
         let clean = sonde_analysis::run::RunFile::open(&run).unwrap();
         let slowdown = sonde_proxy::fault::scenario("slowdown").unwrap();
-        let now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
+        let mut now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
+        // one that degraded: the request it turns on, and what to change
+        now.standing = trial::Standing::Degraded;
+        now.at = Some(trial::Where {
+            kind: "PutObject".into(),
+            key: "b/state".into(),
+            caller: Some("etl.py:12 in save".into()),
+        });
+        now.advice = Some(trial::Said {
+            key: "trial.advice.retry".into(),
+            args: Default::default(),
+        });
         trial::save(&run, std::slice::from_ref(&now)).unwrap();
         let mut then = now.clone();
         then.standing = trial::Standing::Broke;
@@ -390,6 +401,13 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     let summary = b.json(&["show", s, "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
+    // a trial's `where` and `advice` are in the output, and typed by the schema
+    let t = &summary["trials"][0];
+    assert_eq!(t["where"]["kind"], "PutObject", "{t}");
+    assert_eq!(t["advice"]["key"], "trial.advice.retry", "{t}");
+    let props = &schema("show")["$defs"]["trial"]["properties"];
+    assert_eq!(props["where"]["type"], "object", "{props}");
+    assert_eq!(props["advice"]["$ref"], "#/$defs/phrase", "{props}");
     for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
         holds(
             "show-by",
