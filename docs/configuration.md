@@ -36,7 +36,8 @@ in the contract ([contract](contract.md)).
 The CLI also takes `--config-dir` and `--data-dir`.
 
 - Written atomically, mode `0600` on Unix (it may hold static keys).
-- Unknown or duplicate endpoint ids, bad URLs and an endpoint's `ca-file` that does not exist are refused on load;
+- Unknown or duplicate endpoint ids and bad URLs are refused on load (an endpoint's `ca-file` that does not exist is said
+  when that endpoint is used, and refused when it is added or changed);
   other unknown keys are passed over.
 - A file that does not load is never overwritten: the app starts with no endpoints, shows why, and refuses saves
   until the file is fixed and reloaded.
