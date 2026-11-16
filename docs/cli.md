@@ -72,7 +72,7 @@
 - Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `over its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`. A program that failed comes first: `the program failed (exit 3); within budget`. A run of no request fails as `nothing reached sonde`, against a budget or a baseline (its client went around sonde; `run` says so too).
 - No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. A baseline of another program is named on stderr.
 - Over a baseline for several runs: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once (`over the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6`; this run the first past: `the run before, at 9f8e7d6, was within it`).
-- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
+- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `ok`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
 - `--baseline auto` with none set and no budget: nothing checked, exit 0. Usage error (64): nothing to check (no
   budget, baseline or trials); `--tolerance` without a baseline; a `sonde.toml` that does not parse or has an unknown key.
 
@@ -180,11 +180,11 @@ money a month), the line that sent it and the fix for the SDK that sent it (boto
 | `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
 | `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
 | `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
-| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (`obs.small.parts`) | batch into fewer, larger objects; one PUT |
+| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (one finding of the run, `obs.small|`) | batch into fewer, larger objects; one PUT |
 | `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
-| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (an import: not known whether, `obs.rmw.log`) | a conditional write |
+| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (of an import, said as not known whether) | a conditional write |
 | `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
-| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for one (`obs.prefixrate.reads`, `.writes`) | adaptive retries; keys spread over prefixes |
+| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for reads or writes | adaptive retries; keys spread over prefixes |
 | `obs.serial` | requests one after another (none reading or listing what the one before wrote) that 8 at once would finish 100 ms sooner | at once |
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |

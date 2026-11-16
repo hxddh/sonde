@@ -31,6 +31,7 @@ case "$1" in
     # where it ran, and the code there
     pwd >"$FAKE/sonde.pwd"
     cat etl.py >"$FAKE/sonde.code" 2>/dev/null || true
+    ls >"$FAKE/sonde.ls"
     # where it wrote, and its data folder; with FAKE_EXEC, the program, under it
     printf '%s\n' "${SONDE_DATA_DIR:-}" >"$FAKE/sonde.data"
     while [ $# -gt 0 ] && [ "$1" != -- ]; do [ "$1" = -o ] && touch "$2"; shift; done
@@ -124,7 +125,8 @@ is "it says why no merge-base was recorded" "$(grep -c 'its merge-base could not
 is "and nothing was run" "$([ -f "$t/sonde.pwd" ] && echo ran || echo none)" none
 
 # none kept, in a checkout: the pull request's merge-base, recorded in this job
-# (a shallow clone of the pull request, as actions/checkout makes one)
+# (`git merge-base origin/BASE HEAD`), first of a shallow clone of the pull
+# request's branch (actions/checkout with `ref: head_ref`): where it left the base
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_NOSYSTEM=1 HOME="$t"
 git init -q -b main "$t/src"
 (
@@ -140,7 +142,8 @@ rm -f "$t/sonde.pwd"
 SONDE_RUN="python3 etl.py" SONDE_NAME=etl FAKE_RUNS="11" step baseline >"$t/said"
 is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base-run/merge-base.sonde"
 is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge-base [0-9a-f]\{7\} of main, recorded in this job' "$t/said")" 1
-is "recorded from the merge-base's code (not the base branch's newest)" "$(cat "$t/sonde.code")" base
+is "of a branch: recorded from where it left the base" "$(cat "$t/sonde.code")" base
+is "not from the base branch's newest" "$(grep -c '^later$' "$t/sonde.ls")" 0
 is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
 is "the same command and name" "$(tail -n 5 "$t/sonde.run" | paste -sd'|')" "etl|--|bash|-c|python3 etl.py"
 is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
@@ -158,6 +161,24 @@ is "it says why, and what to set" "$(grep -c "the merge-base's program exited 3:
 # a push is no pull request: no merge-base
 GITHUB_BASE_REF="" GITHUB_REF_NAME=main SONDE_RUN="python3 etl.py" step baseline >"$t/said"
 is "a push with none kept: no merge-base" "$(grep -c 'merge-base' "$t/said")" 0
+# actions/checkout's default: the pull request merged into its base
+# (refs/pull/7/merge, depth 1), whose merge-base is the base branch's commit
+# it was merged into, its newest when the merge was made
+(
+  cd "$t/src"
+  git checkout -q --detach main && git merge -q --no-ff pr -m merge
+  git push -q "$t/origin.git" HEAD:refs/pull/7/merge && git checkout -q main
+)
+git init -q "$t/merged"
+cd "$t/merged"
+git remote add origin "file://$t/origin.git"
+git fetch -q --no-tags --depth=1 origin +refs/pull/7/merge:refs/remotes/pull/7/merge
+git checkout -q --detach refs/remotes/pull/7/merge
+cd job
+SONDE_RUN="python3 etl.py" FAKE_RUNS="" step baseline >"$t/said"
+is "of the merge: the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base-run/merge-base.sonde"
+is "recorded from the base branch's commit it was merged into" "$(cat "$t/sonde.code")/$(grep -c '^later$' "$t/sonde.ls")" base/1
+is "which is the merge's first parent" "$(grep -c "^::notice title=sonde::baseline: the merge-base $(git rev-parse --short=7 HEAD^1) of main" "$t/said")" 1
 cd "$t/nogit"
 SONDE_BASELINE=none step baseline
 is "none asked: none" "$(output baseline)" ""

@@ -29,14 +29,15 @@ in the contract ([contract](contract.md)).
 | | Linux | macOS |
 |---|---|---|
 | Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` |
-| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
+| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `$XDG_DATA_HOME/sonde`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
 | Exports | `<data>/exports` unless `exports-dir` | same |
 | Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
 
 The CLI also takes `--config-dir` and `--data-dir`.
 
 - Written atomically, mode `0600` on Unix (it may hold static keys).
-- Unknown or duplicate endpoint ids and bad URLs are refused on load; other unknown keys are passed over.
+- Unknown or duplicate endpoint ids, bad URLs and an endpoint's `ca-file` that does not exist are refused on load;
+  other unknown keys are passed over.
 - A file that does not load is never overwritten: the app starts with no endpoints, shows why, and refuses saves
   until the file is fixed and reloaded.
 - A save rereads the file and applies only what changed, so edits made meanwhile (by hand or `sonde endpoints`) are

@@ -78,9 +78,12 @@ record() {
 }
 
 # The pull request's merge-base, recorded here: the base branch's code at
-# the commit the pull request starts from, checked out beside this one (a
-# git worktree), `setup` run in it, then the same command, on the same
-# runner (so its times compare). Its run in $work/merge-base-run/, a
+# `git merge-base origin/BASE HEAD`, checked out beside this one (a git
+# worktree). Of actions/checkout's default checkout, the pull request merged
+# into its base (refs/pull/N/merge), that is the merge's first parent: the
+# base branch's newest when GitHub made the merge; of the pull request's
+# branch checked out, where it left the base. Then `setup` run in it, and
+# the same command, on the same runner (so its times compare). Its run in $work/merge-base-run/, a
 # folder of its own, as its data is: it is never "the run before" this
 # run's program (`sonde run` says what changed since the run before it in
 # the same folder), nor in the runner's history. On failure, why in WHY.
@@ -165,9 +168,11 @@ baseline() {
     if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$dir" >/dev/null 2>&1; then
       local file
       file="$(find "$dir" -name '*.sonde' | head -n 1)"
-      # (a run an earlier major wrote is not read: the next one back, else none)
+      # (a run of a format this sonde cannot read is skipped: the next one
+      # back, else none; one an earlier major wrote that it reads is a
+      # baseline as any is)
       if [ -n "$file" ] && ! sonde show "$file" -f json >/dev/null 2>&1; then
-        note "baseline: the run kept by run $id is not one this sonde reads (an earlier version's); looking further back"
+        note "baseline: the run kept by run $id is not one this sonde reads (an older format's); looking further back"
         continue
       fi
       if [ -n "$file" ]; then
