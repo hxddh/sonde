@@ -111,6 +111,7 @@ runs:
     - name: Report
       id: report
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         SONDE_FILE: ${{ steps.record.outputs.file }}
         SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}

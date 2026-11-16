@@ -199,6 +199,14 @@ FAKE_CHECK=1 step check >/dev/null
 is "a check that failed" "$(output passed)" false
 if FAKE_CHECK=64 step check >/dev/null; then is "a check that could not run fails the step" 0 1; fi
 
+# every step given a path by the inputs (a baseline: baseline/main.sonde)
+# runs where the command does
+for s in record baseline check report comment; do
+  is "the $s step runs in working-directory" "$(awk -v s="$s" '/^    - name:/ { wd = 0 }
+    /working-directory: \$\{\{ inputs.working-directory \}\}/ { wd = 1 }
+    $0 ~ ("sonde-action.sh\" " s "$") { print wd }' "$here/../action.yml")" 1
+done
+
 # the report: against a baseline file, never `auto`
 step report >/dev/null
 is "a report" "$(output file)" "$t/runner/sonde/report/sonde-report.html"
