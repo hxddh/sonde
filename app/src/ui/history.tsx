@@ -323,7 +323,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -414,7 +414,8 @@ export function HistoryPane(props: { path: string; /** whether the pane is scrol
                 />
               </If>
               {/* one button, its words the action: set, or (already the baseline) clear */}
-              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />
+              {/* a run written elsewhere (`-o`) cannot be one: the button stays, and says why */}
+              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : props.elsewhere ? t("history.elsewhere") : undefined} disabled={props.elsewhere && !isBase()} onPress={toggle} testID="history-baseline" />
             </PageHeader>
             <If when={x().check}>
               <Verdicts h={x()} />

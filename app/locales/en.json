@@ -489,6 +489,7 @@
  "history.makeBaseline": "Set as baseline",
  "history.clearBaseline": "Clear baseline",
  "history.isBaseline": "This run is the baseline its program's runs are held to",
+ "history.elsewhere": "Written outside sonde's runs folder (-o): only a run in it can be the baseline",
  "history.passed": "Within the baseline: requests, waiting and cost inside its limits, no new warning",
  "history.failed": "Past the baseline",
  "trial.title": "Under faults",

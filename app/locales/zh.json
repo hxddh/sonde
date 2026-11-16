@@ -489,6 +489,7 @@
  "history.makeBaseline": "设为基线",
  "history.clearBaseline": "取消基线",
  "history.isBaseline": "此次运行是该程序各次运行所对照的基线",
+ "history.elsewhere": "写在 sonde 的运行文件夹之外 (-o)：只有文件夹里的运行能作基线",
  "history.passed": "未超出基线：请求数、等待和费用都在限额内，没有新警告",
  "history.failed": "超出基线",
  "trial.title": "故障演练",

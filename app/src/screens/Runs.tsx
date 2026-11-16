@@ -366,7 +366,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
               .catch(report);
         },
       },
-      ...(me ? ([{ type: "separator" }, { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeRun(me) }] as MenuItem[]) : []),
+      // a run written elsewhere (`-o`) is listed and opened here, never renamed or removed: its file is its writer's
+      ...(me && !me.elsewhere ? ([{ type: "separator" }, { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeRun(me) }] as MenuItem[]) : []),
     ], moreButton);
   };
 
@@ -453,7 +454,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   );
   const body = (v: () => RunView) => {
     if (pane() === "time") return <TimePane onScrolled={scrolled} view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane onScrolled={scrolled} path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -864,9 +865,14 @@ export function Runs() {
         { label: t("runs.window"), icon: iconSvg("app-window"), onSelect: () => openInWindow(s.path) },
         { label: t("runs.share"), icon: iconSvg("share-2"), onSelect: () => void shareRun(s.path) },
         { label: t("runs.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(s.path) },
-        { type: "separator" },
-        { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(s) },
-        { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: s.live, onSelect: () => void remove(s) },
+        // a run written elsewhere (`-o`) is listed and opened here, never renamed or removed: its file is its writer's
+        ...(s.elsewhere
+          ? []
+          : ([
+              { type: "separator" },
+              { label: t("runs.rename"), icon: iconSvg("pencil"), onSelect: () => rename(s) },
+              { label: t("runs.removeMenu"), icon: iconSvg("trash"), disabled: s.live, onSelect: () => void remove(s) },
+            ] as MenuItem[])),
       ],
       at,
     );
@@ -894,8 +900,8 @@ export function Runs() {
             actions={(s) => [
               { name: "window", label: t("runs.window"), run: () => openInWindow(s.path) },
               { name: "share", label: t("runs.share"), run: () => void shareRun(s.path) },
-              { name: "rename", label: t("runs.rename"), run: () => rename(s) },
-              ...(s.live ? [] : [{ name: "delete", label: t("runs.removeMenu"), run: () => void remove(s) }]),
+              ...(s.elsewhere ? [] : [{ name: "rename", label: t("runs.rename"), run: () => rename(s) }]),
+              ...(s.live || s.elsewhere ? [] : [{ name: "delete", label: t("runs.removeMenu"), run: () => void remove(s) }]),
             ]}
           />
           </View>

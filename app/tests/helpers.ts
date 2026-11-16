@@ -143,3 +143,12 @@ export async function importRun(app: App, name: string, text: string) {
   await app.waitFor("id:run-pane", { timeout: 10000 });
   await app.waitFor("id:run-summary", { timeout: 10000 });
 }
+
+/** A shell command for Run that writes a run outside the runs folder and lists it there as `sonde run -o` does (the
+ * runs folder's index names it, `elsewhere`), then sends the demo one request, so the run it is ends and is kept. */
+export function elsewhereCommand(command: string): string {
+  const head = JSON.stringify({ format: "sonde-run", version: 2, created: "2026-01-02T08:00:00Z", endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/agent" });
+  const rec = JSON.stringify({ id: 1, time: "2026-01-02T08:00:00.005Z", endpoint: "demo", kind: "GetObject", method: "GET", url: "http://127.0.0.1:1/demo/a.txt", bucket: "demo", key: "a.txt", query: [], status: 200, latencyMs: 2, retries: 0, requestId: "R1", hostId: "h", requestHeaders: [], responseHeaders: [], requestBytes: 0, responseBytes: 10 });
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md";
+  return `d="$SONDE_DATA_DIR/out" && mkdir -p "$d" "$SONDE_DATA_DIR/runs" && printf '%s\\n' '${head}' '${rec}' > "$d/agent.sonde" && printf '{"name":"%s","set":"elsewhere","value":true}\\n' "$(cd "$d" && pwd -P)/agent.sonde" >> "$SONDE_DATA_DIR/runs/.index.jsonl" && ${get}`;
+}

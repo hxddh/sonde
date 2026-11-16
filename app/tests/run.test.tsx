@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { importRun, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
+import { elsewhereCommand, importRun, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -598,6 +598,41 @@ test("a program's newest run past its baseline says so in the sidebar", async ()
   expect(app.shows("id:run-0 >> text:past its baseline")).toBe(true);
   // the run before it is the baseline: within, no mark
   expect(app.shows("id:run-1 >> id:run-past")).toBe(false);
+}, 120000);
+
+test("a run written with -o is listed and opened, and never offered Rename, Delete or Set as baseline", async () => {
+  const app = await demo();
+  await app.clear("id:run-command");
+  await app.type("id:run-command", elsewhereCommand("python agent_elsewhere.py"));
+  await runCommand(app);
+  await runView(app);
+  await place(app, "runs");
+  await app.waitFor("text:agent_elsewhere.py", { timeout: 10000 });
+  // its row's menu: opened, shared, its path copied; nothing that would fail on a file that is not sonde's
+  await app.rightClick("text:agent_elsewhere.py");
+  const row = app.menu()!.map((m) => m.label);
+  await app.closeMenu();
+  expect(row).toContain("Copy file path");
+  expect(row).not.toContain("Rename…");
+  expect(row).not.toContain("Delete…");
+  // its own ⋯ the same
+  await app.press("text:agent_elsewhere.py");
+  await app.waitFor("text:$ python agent_elsewhere.py", { timeout: 10000 });
+  const more = await runMenu(app);
+  expect(more).toContain("Copy file path");
+  expect(more).not.toContain("Rename…");
+  expect(more).not.toContain("Delete…");
+  // History's baseline stays, and says why it cannot be pressed
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:history-baseline", { timeout: 10000 });
+  expect(app.enabled("id:history-baseline")).toBe(false);
+  expect(app.shows("label:/^Set as baseline, Written outside sonde's runs folder \\(-o\\)/")).toBe(true);
+  // a run of the runs folder still has all three
+  await app.rightClick("id:run-0");
+  const own = app.menu()!.map((m) => m.label);
+  await app.closeMenu();
+  expect(own).toContain("Rename…");
+  expect(own).toContain("Delete…");
 }, 120000);
 
 test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
