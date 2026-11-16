@@ -837,7 +837,7 @@ export function OperationsTable(props: {
 }
 
 /** The program's output, one timed line per row. */
-export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[] }) {
+export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[]; /** whether the table is scrolled from its top (the run's header folds while it is), as the operations' */ onScrolled?: (away: boolean) => void }) {
   return (
     <DataTable
       ref={props.ref}
@@ -850,6 +850,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       ]}
       renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, {}])}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
+      onVisibleRowsChange={({ range }) => props.onScrolled?.(range.start > 0)}
       fontSize={TYPE.small}
       fontFamily={terminal() ? undefined : token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}

@@ -388,10 +388,10 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => RunView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} source={source} onScrolled={scrolled} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
+    <OperationsTable view={v()} source={source} onScrolled={scrolledBy("operations")} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
-  const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
+  const output = () => <OutputTable lines={lines()} onSelect={chooseLine} onScrolled={scrolledBy("output")} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
 
   const v0 = () => view();
   // a run of a program has runs (a trial is no run of its own: its verdict is on the run it is a trial of)
@@ -601,6 +601,15 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const scrolled = (away: boolean) => {
     const want = away ? untracked(pane) : null;
     if (untracked(foldedOn) !== want) foldedOn.set(want);
+  };
+  // Output beside the operations: each table says whether it is scrolled from its top, and the header folds while
+  // either is (the operations' table, at its top, telling of its rows again as the header folds does not open it)
+  let awayOn = { pane: "", operations: false, output: false };
+  const scrolledBy = (table: "operations" | "output") => (away: boolean) => {
+    const p = untracked(pane);
+    if (awayOn.pane !== p) awayOn = { pane: p, operations: false, output: false };
+    awayOn[table] = away;
+    scrolled(awayOn.operations || awayOn.output);
   };
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;

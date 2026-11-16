@@ -609,3 +609,17 @@ test("a count of thousands is grouped in the sidebar, in English and Chinese (1,
   await zh.press("id:nav-runs");
   await zh.waitFor("text:· 1,500 个请求", { timeout: 10000 });
 }, 120000);
+
+test("scrolling the Output pane folds the run header, as the operations do", async () => {
+  const app = await open("../App.tsx", desktop);
+  await importRun(app, "printed.sonde", runText(400, "python printed_lines.py", "2026-01-04T09:00:00Z"));
+  await app.press("id:run-pane-mode-aligned");
+  await app.waitFor("id:output", { timeout: 5000 });
+  await app.wait(300);
+  expect(app.shows("id:run-folded")).toBe(false);
+  await app.scroll("id:output", 1500);
+  await app.waitFor("id:run-folded", { timeout: 3000 });
+  // back at its top, open again
+  await app.scroll("id:output", -100000);
+  await app.waitFor("id:run-folded", { state: "gone", timeout: 3000 });
+}, 120000);
