@@ -86,7 +86,7 @@ jobs:
         if: steps.released.outputs.ok == 'true' && !inputs.after-release
         env:
           GH_TOKEN: ${{ github.token }}
-          SONDE_RUN: ${{ steps.sonde.outputs.file }}
+          SONDE_FILE: ${{ steps.sonde.outputs.file }}
           SONDE_REPORT_URL: ${{ steps.sonde.outputs.report-url }}
           SONDE_ARTIFACT: sonde-live
           SONDE_COMMENT: "true"
