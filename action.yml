@@ -7,7 +7,7 @@ branding:
 
 inputs:
   run:
-    description: "The program's command, as you would type it, run by bash in the working directory (`python etl.py --day 2`, `python etl.py && python report.py`): all of it is recorded, and the program is named by what it runs (`etl`). A folder goes in working-directory, not `cd`."
+    description: "The program's command, as you would type it, in the working directory (`python etl.py --day 2`; with shell syntax, `python etl.py && python report.py`, it is run by bash): all of it is recorded, and the program is named by what it runs (`etl`). A folder goes in working-directory, not `cd`."
     required: true
   run-args:
     description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`).

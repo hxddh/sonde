@@ -54,15 +54,21 @@ install() {
 }
 
 # `sonde run -o FILE` of the program, as the inputs give it, in this
-# folder: its exit status. The command is bash's, as typed (`cd job &&
-# make`, `etl | tee log`, `etl > out`), all of it under sonde; the program
-# is named by what bash is given to run (`etl` of `python3 etl.py`).
+# folder: its exit status. A command with shell syntax (`cd job && make`,
+# `etl | tee log`, `etl > out`) is bash's, as typed, all of it under sonde,
+# the program named by what bash is given to run; a plain command (`docker
+# run …`, `spark-submit …`) is run itself, so sonde sets up what it knows
+# (a container's network, a JVM engine's endpoint).
 run_to() {
-  local file="$1" args=() status=0
+  local file="$1" args=() cmd=() status=0
   eval "args=(${SONDE_RUN_ARGS:-})"
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
+  case "$SONDE_RUN" in
+    *[\;\&\|\<\>\(\)\$\`]* | *$'\n'* | cd\ *) cmd=(bash -c "$SONDE_RUN") ;;
+    *) eval "cmd=($SONDE_RUN)" ;;
+  esac
   rm -f "$file"
-  sonde run -o "$file" ${args[@]+"${args[@]}"} -- bash -c "$SONDE_RUN" || status=$?
+  sonde run -o "$file" ${args[@]+"${args[@]}"} -- "${cmd[@]}" || status=$?
   return "$status"
 }
 

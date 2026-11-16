@@ -145,7 +145,7 @@ is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge
 is "of a branch: recorded from where it left the base" "$(cat "$t/sonde.code")" base
 is "not from the base branch's newest" "$(grep -c '^later$' "$t/sonde.ls")" 0
 is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
-is "the same command and name" "$(tail -n 5 "$t/sonde.run" | paste -sd'|')" "etl|--|bash|-c|python3 etl.py"
+is "the same command and name" "$(tail -n 4 "$t/sonde.run" | paste -sd'|')" "etl|--|python3|etl.py"
 is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
 is "in a data folder of its own, not the runner's" "$(cat "$t/sonde.data")" "$t/runner/sonde/merge-base-data"
 is "in a folder of its own, not the run's (never its run before)" "$(dirname "$(sed -n '/^-o$/{n;p;}' "$t/sonde.run")")" "$t/runner/sonde/merge-base-run"
@@ -204,6 +204,9 @@ is "record writes a run" "$(output file)" "$t/runner/sonde/run.sonde"
 is "in the runner's data folder" "$(cat "$t/sonde.data")" ""
 is "the command as typed, run by bash" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 -c 'print(1)'"
 is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
+# a plain command is run itself, so sonde sets up what it knows (a container's network, a JVM engine's endpoint)
+SONDE_RUN="docker run --rm 'amazon/aws-cli' s3 ls" step record >/dev/null
+is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t/sonde.run" | tail -n +2 | paste -sd'|')" "docker|run|--rm|amazon/aws-cli|s3|ls"
 # each shell operator as typed, all of it under sonde, none of it before
 # shellcheck disable=SC2016 # (expanded by the program's bash, under sonde)
 {
