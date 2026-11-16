@@ -286,7 +286,14 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: app, save-if: "${{ github.ref == 'refs/heads/main' && matrix.part == '1' }}", workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
       - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang xvfb openbox fonts-noto-cjk
+        run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang xvfb openbox fonts-noto-cjk mesa-utils
+      # the machine that draws, beside the tour (the Capacity screen drew a blank on some runners only)
+      - if: runner.os == 'Linux'
+        name: The machine that draws
+        run: |
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
+          grep -qw avx512f /proc/cpuinfo && echo "avx512: yes" || echo "avx512: no"
+          xvfb-run -a glxinfo -B | grep -E 'OpenGL (renderer|version)' || true
       - uses: ./.github/actions/nsh
       - name: Screenshots
         # the macOS runner's screen is 1024×768 (a menu bar above): a larger
