@@ -1,8 +1,7 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at commit `32f1635` (all still stand: none of its 17 commits since `e4749c9` touches them). sonde works around them in its own code
-(FINDINGS 18, 19) and does not patch Native Shell. The three Plot requests together would remove about 90 lines and
-seven casts (measured).
+Drafts for `longbridge/nsh`, last checked at commit `32f1635`: all still stand (`32f1635` narrowed the GTK focus
+one, below). sonde works around them in its own code (FINDINGS 18, 19, 22, 23) and does not patch Native Shell.
 
 ## A theme font token keeps only the first family of its list
 
@@ -39,13 +38,14 @@ seven casts (measured).
 - **Expected**: `onPress` with the row, `selectedIndex`, a brush reporting a range.
 - **sonde today**: five charts in a `Button` acting on the last hovered row; selection drawn by the app (`dim`); zoom
   as two presses in the Time pane.
-- **Would remove**: about 70 lines (49 in `app/src/ui/plots.tsx`, about 20 in `profile.tsx` `pick`, `zoomFrom`).
+- **Would remove**: the chart buttons' last-hovered-row bookkeeping in `app/src/ui/plots/`, and `profile.tsx`'s `pick`
+  and `zoomFrom`.
 
 ## A Plot's value function cannot say "no value"
 
 - **What**: marks are `(d, i) => number`; no value needs `undefined as unknown as number`.
 - **Expected**: `number | null | undefined`.
-- **Would remove**: seven casts in `app/src/ui/plots.tsx`.
+- **Would remove**: nine casts in `app/src/ui/plots/`.
 
 ## Plot has no log scale, and no horizontal rule
 
@@ -54,7 +54,8 @@ seven casts (measured).
 - **Expected**: `{ type: "log" }` for x and y; a labelled horizontal `Rule` (or `Grid`).
 - **sonde today**: the scatter and distribution comparison take `log10` of every value, compute decades, format ticks
   as `10 ** v`.
-- **Would remove**: about 17 lines of `app/src/ui/plots.tsx`, and the tooltip's copy of the raw value.
+- **Would remove**: the `log10` and `decades` helpers of `app/src/ui/plots/system.tsx` and their callers, and the
+  tooltip's copy of the raw value.
 
 ## A Plot's tooltip is kept inside the plot
 
@@ -114,14 +115,6 @@ seven casts (measured).
 - **Expected**: the same two on `DataTable`: open at and follow the end; a viewport start (`{ row, offset }`) that
   `scrollToRow` can restore.
 - **Would remove**: `OperationsTable`'s `follow` bookkeeping.
-
-## Icons in a Sheet in a second window do not paint
-
-- **What**: a `Sheet` in a non-main window (Settings) draws text and controls but no SVG icons (no close button, no
-  `Select` chevrons).
-- **Expected**: icons paint as in the window; and a way to place the sheet below the window's bar.
-- **Not re-checked** at `e4749c9`, where a Sheet became a dialog's modal root: sonde opens no Sheet in a second window
-  any more.
 
 ## On GTK, a programmatic unfocus focuses the first text field
 

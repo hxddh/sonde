@@ -2,7 +2,7 @@
 
 `sonde run --trial` runs a program once normally (the **clean run**), then once per fault scenario, with sonde
 answering chosen requests in the store's place. From the requests that follow it judges each scenario
-**survived**, **degraded**, **broke** or **untested**.
+**survived**, **degraded**, **broke** or **untested**, or leaves it unjudged as **refused**.
 
 ```sh
 sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'
@@ -31,8 +31,11 @@ Trial: the command runs 3 more times, each under one scenario.
   the terminal's group, to read the keyboard.)
 - Every `sonde run` to a path that holds a run first removes that run's verdicts and trial runs. The program's
   verdict history is kept.
-- A trial records under `no-delete` unless `--policy` or `[record] policy` says otherwise: every run may remove what it or the clean run made and what is under its `{trial}` places, its
-  own uploads included ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
+- A trial records under `no-delete` (a plain run's default is `allow`) unless `--policy` or `[record] policy` says
+  otherwise: sonde's faults could push a program down a path it would not take. Every run may still remove what it
+  or the clean run made and what is under its `{trial}` places, its own uploads included, so a trial can be run
+  again as it is; a program that deletes what it did not make needs `--policy allow`
+  ([recording](recording.md#what-a-recorded-program-may-do)).
 
 **Matching a trial's requests to the clean run's**: they match when they differ only by the scenario's name in place
 of `clean`, as a whole word (no letter or digit beside it), in bucket, key, query values or control body.
@@ -173,14 +176,14 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | History | Each verdict is added to its program's in its runs folder's index: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
 | `--again` | `sonde run --again -- CMD` (`--trial` implied): a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
-| App | `Runs.trialAgain(path, …)`: the same, from a run of the program. |
+| App | *Try again what broke*, on a trial's result and in a program's history: the same. |
 
 ## Where the results go
 
 | | |
 |---|---|
 | Trial runs | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the run says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs of the program: excluded from "newest", trend, baseline. |
-| Verdicts | in the runs folder's `.index.jsonl`; runs named by file name, never path. `where` (`kind`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Verdicts | in the runs folder's index ([run format](dev/run-format.md#versions)); runs named by file name, never path. |
 | `sonde check` | each trial by its standing, as `run` says it; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde runs` | each run's worst verdict |
@@ -213,10 +216,7 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 ## Limits
 
 - Only traffic through the proxy is tried.
-- A trial's own default policy is `no-delete` (a plain run's is `allow`): sonde's faults could push a program down a
-  path it would not take. A program that deletes what it did not make needs `--policy allow`
-  ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no place sonde can read: use
-  `{trial}`.
+- `SONDE_TRIAL` names no place sonde can read: use `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.
 - **lost-race**: no other writer exists; with `If-None-Match: *` the store holds the program's write. Commit contents

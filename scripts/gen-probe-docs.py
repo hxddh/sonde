@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Writes docs/probes.md from `sonde probe list --format json` (the catalog
-is the source of truth: each probe's description and AWS reference)."""
-import json, subprocess, sys
-sonde = sys.argv[1] if len(sys.argv) > 1 else "target/debug/sonde"
+is the source of truth: each probe's description and AWS reference).
+`--check` writes nothing and fails when docs/probes.md is not what it would write.
+
+    python3 scripts/gen-probe-docs.py [--check] [path/to/sonde]"""
+import difflib, json, subprocess, sys
+args = [a for a in sys.argv[1:] if a != "--check"]
+check = len(args) < len(sys.argv) - 1
+sonde = args[0] if args else "target/debug/sonde"
 catalog = json.loads(subprocess.check_output([sonde, "probe", "list", "--format", "json"]))
 out = ["# Compatibility probes", "",
        "Generated from the probe catalog (`sonde probe list --format json`) by `scripts/gen-probe-docs.py`.", "",
@@ -27,5 +32,16 @@ for cat, ms in cats.items():
     for m in ms:
         needs = f" Needs: {', '.join(m['needs'])}." if m["needs"] else ""
         out += ["", f"### `{m['id']}`", "", f"**{m['title']}.** {m['description']}{needs}", "", f"**AWS behavior:** {m['awsBehavior']}"]
-open("docs/probes.md", "w").write("\n".join(out) + "\n")
-print(f"{len(catalog)} probes")
+text = "\n".join(out) + "\n"
+if check:
+    with open("docs/probes.md") as f:
+        now = f.read()
+    if now != text:
+        sys.stdout.writelines(difflib.unified_diff(now.splitlines(True), text.splitlines(True), "docs/probes.md", "generated", n=1))
+        print(f"probes: docs/probes.md is not what the catalog of {len(catalog)} makes (run scripts/gen-probe-docs.py, commit it): failed")
+        sys.exit(1)
+    print(f"probes: docs/probes.md is what the catalog of {len(catalog)} makes: ok")
+else:
+    with open("docs/probes.md", "w") as f:
+        f.write(text)
+    print(f"{len(catalog)} probes")

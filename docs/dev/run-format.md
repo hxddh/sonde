@@ -70,14 +70,21 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 
 "Optional" fields may be missing and "null" fields may be `null`; both mean "not known".
 
-Response headers sonde adds are part of the format:
+Headers sonde adds to a record are part of the format:
 
-| Header | Meaning |
-|---|---|
-| `x-sonde-proxy: refused` | the policy refused the request |
-| `x-sonde-fault` | a trial scenario acted on it |
-| `x-sonde-store-status` | what the store answered under a fault or refusal |
-| `x-sonde-cut-at` | where a cut body stopped |
+| Header | Of the | Meaning |
+|---|---|---|
+| `x-sonde-proxy: refused` | response | sonde refused the request (the policy, or one it cannot record) |
+| `x-sonde-policy` | response | the policy that refused it (`no-delete`, `read-only`) |
+| `x-sonde-fault` | response | the trial scenario that acted on it |
+| `x-sonde-store-status` | response | what the store answered under a fault |
+| `x-sonde-cut-at` | response | where a cut body stopped, in bytes |
+| `x-sonde-hidden` | response | a key a stale listing left out, once per key |
+| `x-sonde-given-up` | response | the program stopped waiting for an answer a fault held (closed its connection) |
+| `x-sonde-keys` | response | how many keys a listing listed (its body is not kept) |
+| `x-sonde-note` | request | what sonde did to it (`presigned URL, re-signed by sonde`) |
+| `x-sonde-body-sha256` | request | the hash of a control request's body as sent (the kept body is cut and redacted) |
+| `x-sonde-caller` | request | the place in the program's code that sent it (`file:line function`), from the program or sonde's hook |
 
 ## A log line
 
@@ -97,5 +104,6 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - A sonde reads its own version only and refuses any other by name, never partially:
   `written by sonde 25.0.0, format 3; this sonde (24.0.0) reads format 2: update sonde to read it`
   (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).
-- A runs folder's `.index.jsonl` (each run's counts, trial verdicts, exit code) is sonde's cache and state,
-  not part of this contract; an unreadable cache is rebuilt.
+- A runs folder's `.index.jsonl` (each run's counts, exit code, trial verdicts with where each broke, `where`: `kind`,
+  `key`, `caller`, and its `advice`: `key`, `args`) is sonde's cache and state, not part of this contract; an
+  unreadable cache is rebuilt.

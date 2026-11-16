@@ -1,7 +1,8 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (now pinned at its main, commit `32f1635`, after `v0.5.1`, see `Cargo.toml`), without changing it. These are the gaps it
-met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
+sonde was written against Native Shell as it is (pinned at its main, commit `32f1635`, after `v0.5.1`, see
+`Cargo.toml`), without changing it. These are the gaps it met, each with what sonde does instead. Those Native Shell
+has since fixed, and what sonde took from 0.5.0: [history](../history/findings-resolved.md).
 
 ## Open
 
@@ -13,7 +14,6 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 5 | Components | A component body runs once, so a `switch` on a prop inside a component picks one screen forever; an `effect` that reads a signal inside a helper it calls (here `loading()` in `load()`) re-runs on that signal and disposed the Rust `Listing` it had created. Nothing reports either. | Section views are a plain function called in a binding (`{screen(section())}`); the load runs `untracked`. `Listing::load_more` checks `is_disposed()` so a late call rejects instead of panicking. |
 | 6 | Text | `numberOfLines` is a style key and `selectable` a `View` prop; the TSX types say so, but both read like `Text` props from other frameworks. | `line-clamp-N` classes; selection on views where wanted. |
 | 7 | Generated workspace | The runner workspace `nsh test` writes (`.nsh/rust`) keeps its own Cargo profiles, so the app workspace's `[profile.dev] debug` does not shrink it: debug runners and hosts took 16 GB. | `CARGO_PROFILE_DEV_DEBUG=0` in `scripts/ui-tests.sh` and CI. |
-
 | 8 | Components | A `Tree` item is a folder only while it has children, so a folder whose children load when it opens shows no chevron until they do. | Each unloaded folder carries one disabled placeholder child ("Loading…"), replaced by its prefixes once `onExpand` has fetched them. |
 | 9 | Desktop (Linux) | The tray needs a D-Bus session bus (StatusNotifierItem); without one (a bare X server, CI) `Tray.set` warns and shows nothing. | Nothing to do: the tray is a convenience; the toolbar's running pill and the toast say the same. |
 | 10 | Desktop | `windowSize()` follows the window with the focus: with a second window (Settings) focused, the main window's layout read the second one's width and folded its sidebar. | The main window's shell measures itself (`onLayout`) and its layout reads that (`shellWidth`). |
@@ -27,26 +27,13 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 19 | Window (macOS) | `setColorScheme` gives its appearance to the main window's root view and to windows opened later, not to the main NSWindow: the window's backdrop (`"backdrop": "sidebar"`, a sibling of the root) keeps the system's. App dark on a light system: a light sidebar under light text. | While the app's scheme is its own (not System), the shell and sidebar are opaque (`windowMaterial()`); the material shows only when it matches. |
 | 20 | Testing | A UI test cannot act on a row of a `Plot`: `app.hover` goes to the plot's middle, where a scatter or the lanes may have no mark, and the plot's keys move no hover under `nsh test`. `open`'s `modules` stands in for a module's functions and a class's static methods, not for a method of an instance (`Listing.loadMore`). | A chart's press is tested through what it calls; the tour's pictures show the charts. A listing that fails is a real one: `Sonde.buckets` is stood in for with a bucket the store does not have. |
 | 21 | Components | A conditional in an `If`'s `else` (`else={reading() ? <A /> : <B />}`) is read once: the branch does not change with the signal. An unreadable run stayed an outline for ever. | An `If` inside the `else`. |
-| 22 | Desktop (Linux) | On GTK, when the text field that has the focus is unfocused by the program (a dialog opens after another window of the app closed, `Keyboard.dismiss()`, `focus()` on a view, the field's page goes), the window gives its *first* text field the focus, selected whole. The toolbar's endpoint (a `Combobox`) stood ringed with its name selected in every picture after Settings had been open; Settings' and Compatibility's first fields likewise. `focus()` on a focusable `View` does not take the focus away from it: it lands there too. Still so at `v0.5.0`. `32f1635` drops the focus of a removed view on Linux (pages and dialogs already did), not the triggers here: a refocused window, `Keyboard.dismiss()`, `focus()` on a view. | Each window's first text field is one nobody sees (`FocusRest` in the kit: read-only, a point wide, hidden from screen readers), on Linux only: the keyboard rests there. It is one silent stop in the Tab order. |
-| 23 | Components | `DataTable` has no way to open at its end or to tell where its viewport starts: `initialScrollAtEnd` and `measureScrollPosition()` (0.5.0) are a `List`'s. sonde's operations and output are tables. | A live table follows its end with what `DataTableRef` has: `onVisibleRowsChange` says where the view ended, `scrollToRow` takes it to the newest row while it was at the end (`OperationsTable`'s `follow`). A page read again keeps its rows' indices, so the table keeps its place by itself. |
+| 22 | Desktop (Linux) | On GTK, a text field the program unfocuses (`Keyboard.dismiss()`, `focus()` on a view, a dialog after another window closed) gives the focus to the window's first text field, selected whole: the toolbar's endpoint stood ringed in every picture after Settings had been open ([nsh-issues](nsh-issues.md#on-gtk-a-programmatic-unfocus-focuses-the-first-text-field)). | Each window's first text field is one nobody sees (`FocusRest` in the kit: read-only, a point wide, hidden from screen readers), on Linux only: the keyboard rests there. It is one silent stop in the Tab order. |
+| 23 | Components | `DataTable` cannot open at its end or tell where its viewport starts ([nsh-issues](nsh-issues.md#datatable-cannot-open-at-its-end-or-tell-where-its-viewport-starts)); sonde's operations and output are tables. | A live table follows its end with what `DataTableRef` has: `onVisibleRowsChange` says where the view ended, `scrollToRow` takes it to the newest row while it was at the end (`OperationsTable`'s `follow`). A page read again keeps its rows' indices, so the table keeps its place by itself. |
 | 24 | Text (Linux) | A text cut in its middle (`textOverflow: "ellipsis-middle"`) on GTK leaves a gap of a few characters between its head and its tail (`slate/db/wal/0000…   0000000000000001.sst`, `GetBucketLif…  Configuration`): the two halves are laid out at the ends of the box as measured, and the text is measured wider than it is drawn (the converse of 15). A cut at the end has no gap. | None that keeps the middle: a cut by a count of characters would need the box's width, and a text sized by its content measures what it holds, so a cut made from it shrinks the box again. sonde keeps the platform's middle cut (both ends of a key or a name tell two apart) and accepts the gap. |
 | 25 | Charts | A `Bar` row whose value is 0 showed no `label` in 17.0's tour: a "0" beside a bar of a pair with a count was not there. | A bar of none that is said is drawn `ZERO_SLIVER` (0.6%) of the scale's top, a sliver on the baseline for its "0" to stand on (the sizes' pairs, the latency histogram's inner buckets). |
 | 26 | Testing | Since `e4749c9` a `Sheet` is a modal dialog: Escape closes it through the modal root's cancel. Under `nsh test` it does for a sheet opened from a button (Activity), not for one opened by a press on a `DataTable` row (a narrow pane's inspector): its `onCancel` is never heard, even after Tab or a press inside it. Not checked on a real desktop. | The inspector's Close (and the pane's own presses) close it; the test checks the dialog's name and Close. |
 
 18, 19, 22 and 23 are drafted as issues for Native Shell in [docs/dev/nsh-issues.md](nsh-issues.md).
-
-## Taken from Native Shell 0.5.0 (sonde 16.0)
-
-| What 0.5.0 added | What sonde does with it |
-|---|---|
-| `fileTypes` in `nsh.json`, `Application.on("openFiles")` | A `.sonde` file opens from the system (a double click, Open With, a drop on the app's icon), as one dropped on the window does. `.sonde.gz` is not declared: a type is its last extension, and sonde does not claim every `.gz`. |
-| `Application.on("quit")` | The program being recorded and a running trial are ended, and the recording is written as a finished run, within the 200 ms the system waits (`Runs.quit`). |
-| `terminal:` as a class variant | 14 `terminal()` conditionals that only chose class strings say it in the class (39 → 25 class picks; those left choose between no classes at all and a set, or change what is drawn). |
-| `accessibilityState.invalid`, `accessibilityDescription` | The kit's `Field` has an error state (a refused endpoint id, URL or profile; a confirmation typed wrong): its edge, the reason under it, and both told to a screen reader. A dialog's message is its description (`Modal`'s `describe`). |
-| Per-platform icons | `icon` is an object: macOS artwork inset (824 of 1024), Windows and Linux edge to edge; both made from the one drawing by `scripts/icons.py`. |
-| `initialScrollAtEnd`, `measureScrollPosition()` | Not usable: they are a `List`'s, and what follows its end in sonde is a `DataTable` (finding 23). |
-| Views out of sight made over frames | Nothing to adopt; measured on the Time pane (docs/dev/performance.md). |
-| `onWheel`, `onMouseUp` | Not taken, on purpose (D-123). |
 
 ## By design
 
@@ -54,12 +41,3 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
   look on `nsh/base` behavior (`app/src/ui/kit.tsx`), with theme tokens (`app/theme.json`).
 - Charts are Native Shell's `Plot` in windows (one chart system, `app/src/ui/plots/` by family; Capacity's three in
   `app/src/ui/charts.tsx`); in a terminal, as the TUI guide says, the same data is a table and a sentence.
-
-## Fixed
-
-Fixed in Native Shell itself (sonde follows upstream; it does not change Native Shell's source):
-
-| # | Area | What it was | Fixed in |
-|---|---|---|---|
-| 3 | Desktop (Linux) | Under X11 (Xvfb with openbox), the GTK runner opened the window at 390×844 — a phone's size — not at `nsh.json`'s `window.defaultSize`; sonde set its bounds itself on a first launch. | Native Shell 744d950 (sonde 15.0.0): Linux and Windows packages carry `nsh.json`'s `window`, and the window has it from its first frame. sonde sets no bounds of its own (that code went in 9.1, when the main window's settings moved to `nsh.json`); re-checked at this commit, nothing is left to remove. |
-| 17 | Testing | `nsh test` of an app with a Rust crate dropped every `sonde://` link (`app.openWithUrl`, `open`'s `urlScheme`): the headless runner's bundle was built without the app's `schemes`. | Native Shell 1662115 (sonde 8.0.0); `screens.test.tsx` opens a bucket's folder by link again. |
