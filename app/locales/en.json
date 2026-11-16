@@ -28,6 +28,7 @@
  "run.killed": "stopped",
  "run.lineUp": "See the whole run",
  "run.chooseEndpoint": "Choose an endpoint to send the requests to",
+ "run.needCommand": "Type the command to run",
  "run.waiting": "Requests appear here as the program makes them.",
  "run.notifyTitle": "%{command} finished",
  "runs.output": "Output",

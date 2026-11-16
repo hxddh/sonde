@@ -28,6 +28,7 @@
  "run.killed": "已停止",
  "run.lineUp": "查看完整运行",
  "run.chooseEndpoint": "选择请求要发往的端点",
+ "run.needCommand": "输入要运行的命令",
  "run.waiting": "程序发出请求时，它们会出现在这里。",
  "run.notifyTitle": "%{command} 已结束",
  "runs.output": "输出",

@@ -635,6 +635,15 @@ test("a run written with -o is listed and opened, and never offered Rename, Dele
   expect(own).toContain("Delete…");
 }, 120000);
 
+test("Run with no command says why on press", async () => {
+  const app = await demo();
+  await app.clear("id:run-command");
+  expect(app.enabled("id:run-start")).toBe(true);
+  await app.press("id:run-start");
+  await app.waitFor("text:Type the command to run", { timeout: 3000 });
+  expect(app.shows("id:run-pane")).toBe(false);
+});
+
 test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
   const app = await open("../App.tsx", desktop);
   await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));

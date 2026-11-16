@@ -7,6 +7,8 @@ export { Listing, Runs, Sonde };
 
 /** The structured error sonde/native rejects or throws with. */
 export function asError(e: unknown): T.SondeError {
+  // one of ours already (a press that says why: `report({ kind: "config", message })`), not "[object Object]"
+  if (e && typeof e === "object" && !(e instanceof Error) && typeof (e as { message?: unknown }).message === "string") return e as T.SondeError;
   const message = e instanceof Error ? e.message : String(e);
   try {
     const v = JSON.parse(message);
