@@ -44,7 +44,7 @@ EOF
 chmod +x "$t/bin/gh" "$t/bin/sonde"
 
 # (none of the runner's own: CI runs this in a workflow of its own)
-unset GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_NAME GITHUB_RUN_ID GITHUB_ACTION_REF SONDE_VERSION
+unset GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_NAME GITHUB_RUN_ID GITHUB_ACTION_REF SONDE_VERSION SONDE_DATA_DIR
 export PATH="$t/bin:$PATH" FAKE="$t" RUNNER_TEMP="$t/runner" GITHUB_OUTPUT="$t/out"
 export GITHUB_REPOSITORY=o/r GITHUB_WORKFLOW_REF="o/r/.github/workflows/ci.yml@refs/pull/7/merge"
 export GITHUB_STEP_SUMMARY="$t/summary"
@@ -132,12 +132,14 @@ git clone -q --depth 1 --branch pr "file://$t/origin.git" "$t/repo"
 cd "$t/repo/job"
 rm -f "$t/sonde.pwd"
 SONDE_RUN="python3 etl.py" SONDE_NAME=etl FAKE_RUNS="11" step baseline >"$t/said"
-is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base.sonde"
+is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base-run/merge-base.sonde"
 is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge-base [0-9a-f]\{7\} of main, recorded in this job' "$t/said")" 1
 is "recorded from the merge-base's code (not the base branch's newest)" "$(cat "$t/sonde.code")" base
 is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
 is "the same command and name" "$(tail -n 5 "$t/sonde.run" | paste -sd'|')" "etl|--|bash|-c|python3 etl.py"
 is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
+is "in a data folder of its own, not the runner's" "$(cat "$t/sonde.data")" "$t/runner/sonde/merge-base-data"
+is "in a folder of its own, not the run's (never its run before)" "$(dirname "$(sed -n '/^-o$/{n;p;}' "$t/sonde.run")")" "$t/runner/sonde/merge-base-run"
 # shellcheck disable=SC2016 # (expanded by setup, in its folder)
 SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
 is "setup runs first, in the same folder" "$(cat "$t/setup.pwd")" "$(cat "$t/sonde.pwd")"
@@ -172,6 +174,7 @@ is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/g
 SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --policy allow" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
 is "record writes a run" "$(output file)" "$t/runner/sonde/run.sonde"
+is "in the runner's data folder" "$(cat "$t/sonde.data")" ""
 is "the command as typed, run by bash" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 -c 'print(1)'"
 is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
 # each shell operator as typed, all of it under sonde, none of it before
