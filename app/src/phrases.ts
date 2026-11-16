@@ -4,14 +4,11 @@
 // `core.<key>` (decoders, sonde-core, probes); Rust reads the English ones too. A phrase with no words in the
 // locale falls back to the English text, whole.
 
-import { count } from "./format";
-import { type Key, t, words } from "./i18n";
+import { grouped, type Key, t, words } from "./i18n";
 import type { CorePhrase, EpisodeRow, Observation, Phrase } from "./types";
 
-/** The arguments that are counts: a figure of four digits or more among them is grouped as every count is
- * ("listed 87,139 times", beside "87,139 requests"); ids, years and keys are other arguments, left as written. */
-const COUNTS = new Set(["n", "of", "count", "requests", "reads", "writes", "objects", "total", "was", "clean"]);
-const said = (k: string, v: string) => (COUNTS.has(k) && /^\d{4,}$/.test(v) ? count(Number(v)) : v);
+/** An argument as said: its counts grouped as the app's own words group theirs ([`grouped`](./i18n.ts)). */
+const said = (k: string, v: string) => `${grouped(k, v)}`;
 
 /** `text` said from the locale's `<family>.<key>` words, each phrase filled with its arguments in one pass (an
  * argument's own `%{n}` is not read as a placeholder); `fallback` where a phrase has no words. */

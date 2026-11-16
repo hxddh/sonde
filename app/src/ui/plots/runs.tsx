@@ -175,7 +175,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.name, lines: [t("profile.beforeAfter", { a: r.before, b: r.after })] } : null;
+    return r ? { title: r.name, lines: [t("profile.beforeAfter", { a: count(r.before), b: count(r.after) })] } : null;
   };
   return (
     <If

@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, desktop, place, runCommand, runView, runAction, runMenu } from "./helpers";
+import { importRun, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -598,4 +598,14 @@ test("a program's newest run past its baseline says so in the sidebar", async ()
   expect(app.shows("id:run-0 >> text:past its baseline")).toBe(true);
   // the run before it is the baseline: within, no mark
   expect(app.shows("id:run-1 >> id:run-past")).toBe(false);
+}, 120000);
+
+test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
+  const app = await open("../App.tsx", desktop);
+  await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));
+  await app.waitFor("text:· 1,500 requests", { timeout: 10000 });
+  expect(app.shows("text:· 1500 requests")).toBe(false);
+  const zh = await open("../App.tsx", { ...desktop, locale: "zh-CN" });
+  await zh.press("id:nav-runs");
+  await zh.waitFor("text:· 1,500 个请求", { timeout: 10000 });
 }, 120000);

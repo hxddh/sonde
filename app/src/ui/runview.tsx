@@ -349,8 +349,8 @@ export function whatIfText(v: RunView): string | null {
   // the cost as what changes: amounts of thousandths of a cent read as nothing
   const cut = w.cost[0] > 0 ? change(w.cost[0], w.cost[1]) : "—";
   // a log without times says nothing of waiting
-  if (!timed(v.profile) || !w.waitingMs) return t("whatIf.untimed", { n: w.findings, a: w.requests[0], b: w.requests[1], cut });
-  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
+  if (!timed(v.profile) || !w.waitingMs) return t("whatIf.untimed", { n: w.findings, a: count(w.requests[0]), b: count(w.requests[1]), cut });
+  return t("whatIf.text", { n: w.findings, a: count(w.requests[0]), b: count(w.requests[1]), wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
 }
 
 /** What stands out in a run — its core result. Each finding says what

@@ -162,6 +162,29 @@ test("money under a millionth is written out, never in exponent form (2.6e-7 USD
   for (const s of [money(1e-12, "USD"), costParts(1e-15, "USD").figure, ...costColumn([1e-15, 0.001], "USD").figures]) expect(s).not.toMatch(/e/);
 });
 
+test("every count in the app's words is grouped (1,500 requests); ids, exit codes and versions are not", async () => {
+  const { language, t } = await import("../src/i18n");
+  const { say } = await import("../src/phrases");
+  expect(t("runs.requestsN", { n: 1500 })).toBe("1,500 requests");
+  expect(t("run.bandRequests", { n: 87139 })).toBe("87,139 requests");
+  expect(t("runs.requestsN", { n: 999 })).toBe("999 requests");
+  // a figure written by the caller stays as written
+  expect(t("runs.requestsN", { n: "1,500" })).toBe("1,500 requests");
+  // what is no count: a chain's number, a program's exit, a version
+  expect(t("chains.row", { i: 1234, n: 1500 })).toBe("Chain 1234 · 1,500 requests");
+  expect(t("run.exited", { code: 3221 })).toBe("exited with 3221");
+  expect(t("updates.found", { version: "2026" })).toBe("sonde 2026 is out.");
+  // Rust's phrases as before
+  expect(say([{ key: "obs.hot", args: { n: "87139" } }], "x")).not.toMatch(/87139/);
+  // and in Chinese
+  language.set("zh");
+  try {
+    expect(t("runs.requestsN", { n: 1500 })).toBe("1,500 个请求");
+  } finally {
+    language.set("auto");
+  }
+});
+
 test("a lane's cell shows the worst of the requests it holds, and says how many", async () => {
   const { laneCells } = await import("../src/ui/plots");
   // 96 slices of 10 ms: three short requests share the first cell of lane 0, the failure not the last of them

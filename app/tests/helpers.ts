@@ -110,3 +110,36 @@ export async function openDemo(app: App) {
   await app.wait(300);
   if (app.shows("id:palette-command")) await app.keyboard.press("escape");
 }
+
+/** A run's file, made up: `n` reads of 50 keys by boto3 on the demo, 5 ms apart from `created`, one in 97 not found,
+ * and a line of output every fifth (`processed part 5`, …) — the text of a `.sonde` file, for `importRun`. With
+ * `throttled`, every fifth read is refused 503 SlowDown instead (a warning: as many throttles as a check lets a run grow). */
+export function runText(n: number, command: string, created: string, throttled = false): string {
+  const t0 = Date.parse(created);
+  const ua = "Boto3/1.34.0 md/Botocore#1.34.0 ua/2.0 os/linux lang/python#3.12";
+  const lines = [JSON.stringify({ format: "sonde-run", version: 2, created, endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/job" })];
+  for (let i = 1; i <= n; i++) {
+    const time = new Date(t0 + 5 * i).toISOString();
+    const key = `data/part-${`${i % 50}`.padStart(4, "0")}.parquet`;
+    const miss = i % 97 === 0;
+    const slow = throttled && i % 5 === 0;
+    lines.push(
+      JSON.stringify({
+        id: i, time, endpoint: "demo", kind: "GetObject", method: "GET", url: `http://127.0.0.1:1/demo/${key}`, bucket: "demo", key, query: [], status: slow ? 503 : miss ? 404 : 200,
+        latencyMs: 2 + (i % 13) * 0.7, retries: 0, requestId: `R${i}`, hostId: "h", requestHeaders: [{ name: "user-agent", value: ua }],
+        responseHeaders: [{ name: "content-length", value: miss ? "0" : "4096" }], requestBytes: 0, responseBytes: miss ? 0 : 4096, firstByteMs: 1,
+      }),
+    );
+    if (i % 5 === 0) lines.push(JSON.stringify({ log: { time, text: `processed part ${i}\r\n` } }));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Opens a run's text as a file picked in Runs (⌘O) is opened: it joins the runs folder, and its pane shows. */
+export async function importRun(app: App, name: string, text: string) {
+  if (!app.shows("id:screen-runs")) await app.press("id:nav-runs");
+  app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name, data: new TextEncoder().encode(text) }] : null));
+  await app.keyboard.press("mod+o");
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+}
