@@ -667,3 +667,28 @@ test("scrolling the Output pane folds the run header, as the operations do", asy
   await app.scroll("id:output", -100000);
   await app.waitFor("id:run-folded", { state: "gone", timeout: 3000 });
 }, 120000);
+
+test("History in Chinese: the check's new warnings and where the runs went past the baseline, in its words", async () => {
+  const app = await open("../App.tsx", { ...desktop, locale: "zh-CN" });
+  // a few reads, then many, a fifth of them throttled: the second run is past the first, and warns of what the first did not
+  await importRun(app, "warn1.sonde", runText(100, "python warn_twice.py", "2026-01-05T09:00:00Z"));
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:history-baseline", { timeout: 10000 });
+  await app.press("id:history-baseline");
+  await app.waitFor("label:取消基线");
+  await importRun(app, "warn2.sonde", runText(1000, "python warn_twice.py", "2026-01-06T09:00:00Z", true));
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:history-check", { timeout: 10000 });
+  await app.waitFor("id:history-since", { timeout: 10000 });
+  const texts = app.texts();
+  // no run here has a commit: each is named by its time, never "无提交"
+  const since = texts.find((t) => t.startsWith("最新一次运行"))!;
+  expect(since).toBeDefined();
+  expect(since).not.toMatch(/无提交/);
+  expect(since).toMatch(/最后一次在基线内是 \S/);
+  // the new warnings in Chinese, as the run's own findings are
+  const check = texts.find((t) => t.includes(" > "))!;
+  expect(check).toBeDefined();
+  expect(check).toMatch(/503/);
+  expect(check).not.toMatch(/throttled|requests/);
+}, 120000);

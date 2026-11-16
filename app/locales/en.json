@@ -699,7 +699,7 @@
  "expect.reason": "why it is kept",
  "history.since": "Past the baseline for the last %{n} runs, since %{commit}; last within at %{last}",
  "history.since.one": "Past the baseline in the newest run (%{commit}); last within at %{last}",
- "history.noCommit": "no commit",
+ "history.noCommit": "an earlier run",
  "history.codeChange": "Code change",
  "history.codeChangeOpen": "Show code change",
  "history.noCodeChange": "No file changed between the two commits.",
