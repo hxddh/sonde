@@ -122,7 +122,26 @@ impl EndpointConfig {
         }
     }
 
+    /// An endpoint as it is added or changed: [`Self::validate_shape`], and
+    /// its CA file exists.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_shape()?;
+        if let Some(ca) = &self.ca_file
+            && !ca.exists()
+        {
+            return Err(format!(
+                "endpoint {}: CA file {} does not exist",
+                self.id,
+                ca.display()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Its id and URL, what `config.toml` is refused on load for. A CA file
+    /// that has gone is not: it is said when the endpoint is used (its
+    /// client is not made), so one endpoint's never stops every command.
+    pub fn validate_shape(&self) -> Result<(), String> {
         if self.id.is_empty()
             || !self
                 .id
@@ -138,15 +157,6 @@ impl EndpointConfig {
             .map_err(|e| format!("endpoint {}: URL {:?}: {e}", self.id, self.url))?;
         if !matches!(u.scheme(), "http" | "https") {
             return Err(format!("endpoint {}: URL must be http or https", self.id));
-        }
-        if let Some(ca) = &self.ca_file
-            && !ca.exists()
-        {
-            return Err(format!(
-                "endpoint {}: CA file {} does not exist",
-                self.id,
-                ca.display()
-            ));
         }
         Ok(())
     }
@@ -269,10 +279,12 @@ impl Config {
         Ok(c)
     }
 
+    /// What `config.toml` is refused on load (and save) for: each
+    /// endpoint's shape ([`EndpointConfig::validate_shape`]), not its files.
     pub fn validate(&self) -> Result<(), String> {
         let mut ids = std::collections::HashSet::new();
         for e in &self.endpoints {
-            e.validate()?;
+            e.validate_shape()?;
             if !ids.insert(&e.id) {
                 return Err(format!("endpoint id {:?} appears twice", e.id));
             }
@@ -401,6 +413,27 @@ credentials = { kind = "profile", name = "prod" }
         assert_eq!(c.settings.rate_limit, Some(50.0));
         assert_eq!(c.endpoints.len(), 2);
         assert!(!c.endpoints[1].buckets.is_empty());
+    }
+
+    /// One endpoint's CA file gone stops that endpoint, not the file: it
+    /// loads and saves, and the endpoint is refused as it is added.
+    #[test]
+    fn a_missing_ca_file_is_the_endpoints_not_the_files() {
+        let text = "[[endpoint]]\nid='lab'\nname='Lab'\nurl='https://minio.lab:9000'\nca-file='/nonexistent/lab-ca.pem'\n";
+        let c = Config::parse(text).unwrap();
+        assert_eq!(
+            c.endpoints[0].ca_file.as_deref(),
+            Some(Path::new("/nonexistent/lab-ca.pem"))
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        c.save(&p).unwrap();
+        assert_eq!(Config::load(&p).unwrap(), c);
+        let err = c.endpoints[0].validate().unwrap_err();
+        assert!(
+            err.contains("CA file /nonexistent/lab-ca.pem does not exist"),
+            "{err}"
+        );
     }
 
     #[test]
