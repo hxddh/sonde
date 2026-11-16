@@ -194,15 +194,20 @@ pub(super) async fn start_under(
 /// Who sent a run's requests, as its head line says it: the SDK most did
 /// (" from boto3 1.34"); an import (or a recording with no command) from
 /// several callers (an import's principals) says how many (the profile keeps
-/// the busiest 12).
-pub(super) fn from_whom(sdk: Option<&str>, header: &RunHeader, callers: usize) -> String {
+/// the busiest 12: `12+` when it left some out, `cut`).
+pub(super) fn from_whom(
+    sdk: Option<&str>,
+    header: &RunHeader,
+    callers: usize,
+    cut: bool,
+) -> String {
     let no_program = header
         .command
         .as_deref()
         .is_none_or(|c| c.starts_with("imported from "));
     if no_program && callers > 1 {
-        let n = if callers >= 12 {
-            "12+".to_string()
+        let n = if cut {
+            format!("{callers}+")
         } else {
             callers.to_string()
         };
@@ -432,7 +437,8 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
             if more == 1 { "kind" } else { "kinds" }
         ));
     }
-    if mark {
+    // said only of a star the table shows: no times (CloudTrail), none
+    if mark && timed && p.groups.iter().take(shown).any(few) {
         out.push(format!("  * of fewer than {FEW} requests"));
     }
     out
@@ -489,6 +495,7 @@ pub(super) fn print_summary_of(
         a.sdk.as_deref(),
         header,
         a.profile.callers.len(),
+        a.profile.callers_cut,
     ));
     head.push_str(&format!(
         " to {} in {}",
@@ -773,6 +780,54 @@ pub fn project_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 24.0 said `from 12+ callers` of exactly 12.
+    #[test]
+    fn an_import_s_callers_are_12_plus_only_when_the_profile_left_some_out() {
+        let h = RunHeader::new("aws", "", "", Some("imported from access.log".into()));
+        assert_eq!(from_whom(None, &h, 12, false), " from 12 callers");
+        assert_eq!(from_whom(None, &h, 12, true), " from 12+ callers");
+        assert_eq!(from_whom(None, &h, 3, false), " from 3 callers");
+    }
+
+    /// 24.0 footnoted a star of fewer than 20 requests under a CloudTrail
+    /// import's table, whose times are not known and show no star.
+    #[test]
+    fn the_footnote_of_a_star_is_said_only_with_a_star() {
+        use sonde_analysis::profile::{RequestPrices, profile};
+        let rec = |id: u64, kind: &str, latency_ms: f64| Record {
+            id,
+            time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 20)
+                .unwrap(),
+            method: if kind == "PutObject" { "PUT" } else { "GET" }.into(),
+            kind: kind.into(),
+            bucket: Some("b".into()),
+            key: Some(format!("k{id}").into()),
+            status: Some(200),
+            latency_ms,
+            ..Default::default()
+        };
+        let of = |latency_ms: f64| -> Vec<Record> {
+            (0..30)
+                .map(|i| {
+                    rec(
+                        i + 1,
+                        if i < 27 { "GetObject" } else { "PutObject" },
+                        latency_ms,
+                    )
+                })
+                .collect()
+        };
+        let timed = kinds_table(&profile(&of(5.0), &RequestPrices::default()), false, false);
+        assert!(timed.iter().any(|l| l.contains('*')), "{timed:?}");
+        assert!(timed.last().unwrap().contains("of fewer than"));
+        // no times: every p95 is —, no star, no footnote
+        let untimed = kinds_table(&profile(&of(0.0), &RequestPrices::default()), false, false);
+        assert!(
+            untimed.iter().all(|l| !l.contains("of fewer than")),
+            "{untimed:?}"
+        );
+    }
 
     /// 20.0 said `1 × refused by sonde` and nothing of what, why or how to
     /// let it through; 21.0 blamed an S3 Express refusal on the policy.

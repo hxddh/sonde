@@ -105,6 +105,13 @@ pub fn duration(ms: f64) -> String {
 
 /// Prints rows as an aligned table (wide characters counted as two).
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    // a cell is one line: a key's newline or tab is written out, never a
+    // row of its own (sonde's colours stay)
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| r.iter().map(|c| one_line(c)).collect())
+        .collect();
+    let rows = &rows[..];
     let width = sonde_fmt::width;
     let mut w: Vec<usize> = headers.iter().map(|h| width(h)).collect();
     for r in rows {
@@ -142,6 +149,17 @@ pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out.join("\n")
 }
 
+/// A table's cell on one line: its newlines, returns and tabs written out
+/// (`\n`), what else it holds as it is.
+fn one_line(c: &str) -> String {
+    if !c.contains(['\n', '\r', '\t']) {
+        return c.to_string();
+    }
+    c.replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 /// `label  value` lines, aligned.
 pub fn kv(rows: &[(String, String)]) -> String {
     let w = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -166,6 +184,17 @@ pub fn bytes(b: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 24.0 broke a `--by key` row at a key's newline.
+    #[test]
+    fn a_key_s_newline_is_written_out_in_a_table() {
+        let t = super::table(
+            &["key", "requests"],
+            &[vec!["b/cfg/x\nbreak.json".into(), "12".into()]],
+        );
+        assert_eq!(t.lines().count(), 3, "{t}");
+        assert!(t.contains("b/cfg/x\\nbreak.json  12"), "{t}");
+    }
+
     #[test]
     fn a_dash_takes_one_column() {
         let t = super::table(

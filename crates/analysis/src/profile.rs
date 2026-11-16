@@ -258,8 +258,12 @@ pub struct Profile {
     pub p99_ms: f64,
     /// The latencies over time, every request counted (not a sample).
     pub latency_heat: Vec<LatencyCell>,
-    /// The places in the program's code that sent requests, most waiting first.
+    /// The places in the program's code that sent requests, most waiting
+    /// first: the busiest [`CALLERS`].
     pub callers: Vec<CallerStat>,
+    /// Whether more places sent requests than `callers` keeps: then there
+    /// were more than [`CALLERS`] (`12+`), else exactly as many as it has.
+    pub callers_cut: bool,
     /// Whether the requests' times are known: a CloudTrail file has none, and
     /// what took how long is not said of it.
     pub timed: bool,
@@ -281,6 +285,9 @@ pub struct Chain {
     /// them are the program's own work, which running them at once keeps).
     pub waiting_ms: f64,
 }
+
+/// The most places in the program's code a profile keeps ([`Profile::callers`]).
+pub const CALLERS: usize = 12;
 
 /// The requests at once a chain is weighed with: what SDKs default to, or near.
 pub const CHAIN_CONCURRENCY: usize = 8;
@@ -1000,6 +1007,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         p99_ms: 0.0,
         latency_heat: Vec::new(),
         callers: Vec::new(),
+        callers_cut: false,
         timed: false,
     };
     let Some(tl) = Timeline::from_origin(records, origin_us) else {
@@ -1247,7 +1255,8 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             .total_cmp(&a.waited_ms)
             .then(b.requests.cmp(&a.requests))
     });
-    callers.truncate(12);
+    let callers_cut = callers.len() > CALLERS;
+    callers.truncate(CALLERS);
 
     let count = |c: Class| {
         records
@@ -1379,6 +1388,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             Vec::new()
         },
         callers,
+        callers_cut,
         cost,
         prices: prices.clone(),
         prefixes,
@@ -2523,6 +2533,44 @@ mod tests {
         // each sample says its answer; every request is drawn in a run this small
         assert_eq!(p.samples.len(), 6);
         assert!(p.samples.iter().all(|s| s.status == Some(200)));
+        assert!(!p.callers_cut);
+    }
+
+    /// 24.0 said `12+` of exactly 12 callers: the profile says when it left
+    /// some out.
+    #[test]
+    fn a_profile_says_whether_it_left_callers_out() {
+        use reqlog::Header;
+        let of = |places: u64| -> Vec<Record> {
+            (0..places)
+                .map(|i| Record {
+                    id: i + 1,
+                    time: chrono::DateTime::from_timestamp_millis(
+                        1_700_000_000_000 + i as i64 * 20,
+                    )
+                    .unwrap(),
+                    method: "GET".into(),
+                    kind: "GetObject".into(),
+                    status: Some(200),
+                    latency_ms: 10.0,
+                    lists: reqlog::Lists {
+                        request_headers: vec![Header::new(
+                            sonde_proxy::callers::CALLER_HEADER,
+                            format!("etl/load.py:{i} read"),
+                        )],
+                        ..Default::default()
+                    }
+                    .into(),
+                    ..Default::default()
+                })
+                .collect()
+        };
+        let p = profile(&of(12), &RequestPrices::default());
+        assert_eq!((p.callers.len(), p.callers_cut), (12, false));
+        let p = profile(&of(13), &RequestPrices::default());
+        assert_eq!((p.callers.len(), p.callers_cut), (12, true));
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["callersCut"], true);
     }
 
     #[test]
