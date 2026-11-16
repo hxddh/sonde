@@ -185,6 +185,16 @@ test("every count in the app's words is grouped (1,500 requests); ids, exit code
   }
 });
 
+test("an import's callers: as many as the profile kept, \"12+\" only when it kept the busiest of more", async () => {
+  const { fromWhom } = await import("../src/ui/runview");
+  const callers = (k: number) => Array.from({ length: k }, (_, i) => ({ place: `arn:aws:iam::1:user/u${i}`, requests: 1, waitedMs: 0, errors: 0, cost: 0 }));
+  const view = (k: number, callersCut?: boolean) => ({ header: { endpoint: "demo", url: "", region: "", created: "", command: "imported from CloudTrail" }, sdk: null, profile: { callers: callers(k), callersCut } }) as never;
+  expect(fromWhom(view(12))).toBe("from 12 callers");
+  expect(fromWhom(view(12, false))).toBe("from 12 callers");
+  expect(fromWhom(view(12, true))).toBe("from 12+ callers");
+  expect(fromWhom(view(3))).toBe("from 3 callers");
+});
+
 test("a lane's cell shows the worst of the requests it holds, and says how many", async () => {
   const { laneCells } = await import("../src/ui/plots");
   // 96 slices of 10 ms: three short requests share the first cell of lane 0, the failure not the last of them
