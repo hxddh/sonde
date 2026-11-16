@@ -481,9 +481,14 @@ for (const v of variants) {
     await app.wait(600);
     await charts("04g-capacity");
     // a table format's layout, decoded (the bucket that holds some, then its Layouts section)
-    await app.press("id:store-section-browse");
-    if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
-    await app.press("id:bucket-demo-layouts");
+    // asked again if a press is lost while Capacity's charts settle (seen once on CI: neither press reached it)
+    for (let n = 0; n < 3 && !app.shows("text:slatedb/"); n++) {
+      await app.press("id:store-section-browse");
+      await app.waitFor("id:du-findings", { state: "gone", timeout: 5000 }).catch(() => {});
+      if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
+      await app.press("id:bucket-demo-layouts");
+      await app.waitFor("text:slatedb/", { timeout: 5000 }).catch(() => {});
+    }
     await app.waitFor("text:slatedb/", { timeout: 15000 });
     await app.press("id:store-section-layouts");
     await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
