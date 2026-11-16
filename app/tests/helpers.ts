@@ -150,5 +150,17 @@ export function elsewhereCommand(command: string): string {
   const head = JSON.stringify({ format: "sonde-run", version: 2, created: "2026-01-02T08:00:00Z", endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/agent" });
   const rec = JSON.stringify({ id: 1, time: "2026-01-02T08:00:00.005Z", endpoint: "demo", kind: "GetObject", method: "GET", url: "http://127.0.0.1:1/demo/a.txt", bucket: "demo", key: "a.txt", query: [], status: 200, latencyMs: 2, retries: 0, requestId: "R1", hostId: "h", requestHeaders: [], responseHeaders: [], requestBytes: 0, responseBytes: 10 });
   const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md";
-  return `d="$SONDE_DATA_DIR/out" && mkdir -p "$d" "$SONDE_DATA_DIR/runs" && printf '%s\\n' '${head}' '${rec}' > "$d/agent.sonde" && printf '{"name":"%s","set":"elsewhere","value":true}\\n' "$(cd "$d" && pwd -P)/agent.sonde" >> "$SONDE_DATA_DIR/runs/.index.jsonl" && ${get}`;
+  // a file of its own for each command (the tests share one data folder)
+  const file = `${command.replace(/[^A-Za-z0-9]+/g, "-")}.sonde`;
+  return `d="$SONDE_DATA_DIR/out" && mkdir -p "$d" "$SONDE_DATA_DIR/runs" && printf '%s\\n' '${head}' '${rec}' > "$d/${file}" && printf '{"name":"%s","set":"elsewhere","value":true}\\n' "$(cd "$d" && pwd -P)/${file}" >> "$SONDE_DATA_DIR/runs/.index.jsonl" && ${get}`;
+}
+
+/** The app's language, chosen in Settings (the setting outlives a test: a test that chooses Chinese chooses English
+ * again before it ends). */
+export async function language(app: App, to: "zh" | "en") {
+  await place(app, "settings");
+  await app.press(to === "zh" ? "label:Language" : "label:语言");
+  await app.press(to === "zh" ? "text:中文" : "text:English");
+  await app.waitFor(to === "zh" ? "text:通用" : "text:General");
+  await app.keyboard.press("mod+w");
 }

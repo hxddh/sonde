@@ -128,14 +128,13 @@ test("a run written with -o: a terminal's row menu opens and shares it, never re
   await app.waitFor("id:run-summary", { timeout: 25000 });
   await place(app, "runs");
   await app.waitFor("text:agent_terminal.py", { timeout: 10000 });
-  // (its row: the command run above it is the newest)
-  await app.rightClick("id:run-1");
+  await app.rightClick("text:agent_terminal.py");
   const labels = app.menu()!.map((m) => m.label);
   await app.keyboard.press("escape");
   expect(labels).toContain("Share as a web page");
   expect(labels).not.toContain("Rename…");
   expect(labels).not.toContain("Delete…");
-  // the command's own run, in the runs folder, has both
+  // the command's own run, the newest, in the runs folder, has both
   await app.rightClick("id:run-0");
   const own = app.menu()!.map((m) => m.label);
   await app.keyboard.press("escape");

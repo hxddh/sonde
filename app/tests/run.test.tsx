@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { elsewhereCommand, importRun, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
+import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -647,11 +647,19 @@ test("Run with no command says why on press", async () => {
 test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
   const app = await open("../App.tsx", desktop);
   await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));
+  // (its row, among however many runs the tests before made)
+  await app.type("id:run-search", "grouped_counts");
   await app.waitFor("text:· 1,500 requests", { timeout: 10000 });
   expect(app.shows("text:· 1500 requests")).toBe(false);
-  const zh = await open("../App.tsx", { ...desktop, locale: "zh-CN" });
-  await zh.press("id:nav-runs");
-  await zh.waitFor("text:· 1,500 个请求", { timeout: 10000 });
+  await language(app, "zh");
+  try {
+    await app.press("id:nav-runs");
+    await app.clear("id:run-search");
+    await app.type("id:run-search", "grouped_counts");
+    await app.waitFor("text:· 1,500 个请求", { timeout: 10000 });
+  } finally {
+    await language(app, "en");
+  }
 }, 120000);
 
 test("scrolling the Output pane folds the run header, as the operations do", async () => {
@@ -669,26 +677,32 @@ test("scrolling the Output pane folds the run header, as the operations do", asy
 }, 120000);
 
 test("History in Chinese: the check's new warnings and where the runs went past the baseline, in its words", async () => {
-  const app = await open("../App.tsx", { ...desktop, locale: "zh-CN" });
-  // a few reads, then many, a fifth of them throttled: the second run is past the first, and warns of what the first did not
-  await importRun(app, "warn1.sonde", runText(100, "python warn_twice.py", "2026-01-05T09:00:00Z"));
-  await app.press("id:run-pane-mode-runs");
-  await app.waitFor("id:history-baseline", { timeout: 10000 });
-  await app.press("id:history-baseline");
-  await app.waitFor("label:取消基线");
-  await importRun(app, "warn2.sonde", runText(1000, "python warn_twice.py", "2026-01-06T09:00:00Z", true));
-  await app.press("id:run-pane-mode-runs");
-  await app.waitFor("id:history-check", { timeout: 10000 });
-  await app.waitFor("id:history-since", { timeout: 10000 });
-  const texts = app.texts();
-  // no run here has a commit: each is named by its time, never "无提交"
-  const since = texts.find((t) => t.startsWith("最新一次运行"))!;
-  expect(since).toBeDefined();
-  expect(since).not.toMatch(/无提交/);
-  expect(since).toMatch(/最后一次在基线内是 \S/);
-  // the new warnings in Chinese, as the run's own findings are
-  const check = texts.find((t) => t.includes(" > "))!;
-  expect(check).toBeDefined();
-  expect(check).toMatch(/503/);
-  expect(check).not.toMatch(/throttled|requests/);
+  const app = await open("../App.tsx", desktop);
+  await language(app, "zh");
+  try {
+    // a few reads, then many, a fifth of them throttled: the second run is past the first, and warns of what the first did not
+    await importRun(app, "warn1.sonde", runText(100, "python warn_twice.py", "2026-01-05T09:00:00Z"));
+    await app.press("id:run-pane-mode-runs");
+    await app.waitFor("id:history-baseline", { timeout: 10000 });
+    await app.press("id:history-baseline");
+    await app.waitFor("label:取消基线");
+    await importRun(app, "warn2.sonde", runText(1000, "python warn_twice.py", "2026-01-06T09:00:00Z", true));
+    await app.press("id:run-pane-mode-runs");
+    await app.waitFor("id:history-check", { timeout: 10000 });
+    await app.waitFor("id:history-since", { timeout: 10000 });
+    const texts = app.texts();
+    // no run here has a commit: each is named by its time, never "无提交"
+    const since = texts.find((t) => t.startsWith("最新一次运行"))!;
+    expect(since).toBeDefined();
+    expect(since).not.toMatch(/无提交/);
+    expect(since).toMatch(/最后一次在基线内是 \S/);
+    // the new warnings in Chinese, as the run's own findings are
+    // (its figures first: requests past the baseline's, then the warnings that are new)
+    const check = texts.find((t) => t.startsWith("请求数: ") && t.includes(" > "))!;
+    expect(check).toBeDefined();
+    expect(check).toMatch(/503/);
+    expect(check).not.toMatch(/throttled|requests/);
+  } finally {
+    await language(app, "en");
+  }
 }, 120000);
