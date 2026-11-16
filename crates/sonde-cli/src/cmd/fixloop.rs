@@ -120,10 +120,13 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
 }
 
 /// The findings of a change worth a line (fixed, less, more, new, back),
-/// then those still open as they were, each named.
+/// then those still open as they were, counted: `as above` when the run's
+/// findings are `listed` above (`run`, `show`), not by `compare`, which
+/// lists none.
 pub(super) fn change_lines(
     findings: &[FindingChange],
     uncounted: Option<&str>,
+    listed: bool,
     color: bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = findings
@@ -134,8 +137,9 @@ pub(super) fn change_lines(
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
     // (each is listed above, with its line and fix: counted here)
     if !open.is_empty() && !out.is_empty() {
+        let above = if listed { ", as above" } else { "" };
         out.push(paint(
-            &format!("  {} still open, as above", open.len()),
+            &format!("  {} still open{above}", open.len()),
             "2",
             color,
         ));
@@ -207,6 +211,17 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         ));
         return out;
     }
+    if since.empty {
+        out.push(paint(
+            &format!(
+                "{}: the run recorded no request; not compared",
+                sonde_analysis::program::NOTHING_REACHED
+            ),
+            "33",
+            color,
+        ));
+        return out;
+    }
     let (Some(c), Some(previous)) = (&since.change, &since.previous) else {
         return out;
     };
@@ -220,7 +235,12 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         out.push(paint(&format!("  {}", uncounted_line(&why)), "33", color));
     }
     out.push(format!("  {}", figures_line(c)));
-    out.extend(change_lines(&since.findings, uncounted.as_deref(), color));
+    out.extend(change_lines(
+        &since.findings,
+        uncounted.as_deref(),
+        true,
+        color,
+    ));
     out
 }
 
@@ -288,6 +308,7 @@ mod tests {
                 change(State::Open, "hot key", None),
             ],
             None,
+            true,
             false,
         );
         assert_eq!(
@@ -301,7 +322,20 @@ mod tests {
             ]
         );
         // nothing moved: no "still open" alone
-        assert!(change_lines(&[change(State::Open, "x", None)], None, false).is_empty());
+        assert!(change_lines(&[change(State::Open, "x", None)], None, true, false).is_empty());
+        // compare lists no findings: nothing is above
+        assert_eq!(
+            change_lines(
+                &[
+                    change(State::Less, "41 one after another", None),
+                    change(State::Open, "hot key", None),
+                ],
+                None,
+                false,
+                false,
+            ),
+            ["  ↓ less   41 one after another", "  1 still open"]
+        );
     }
 
     #[test]

@@ -1469,10 +1469,28 @@ pub fn judge(
             .find(|r| faulted(r) || r.is_error() || r.rare().transport_error.is_some())
             .copied()
     };
+    // the request of the first reason that names one, in the reasons'
+    // order: "gave up on 7 failed reads" is at a read, not at the write
+    // before it
+    let at_reason = |key: &str| match key {
+        "trial.why.reads" => at_read,
+        "trial.why.waited" => at_wait,
+        "trial.why.rewrote" | "trial.why.missed" => at_stale,
+        "trial.why.lost" | "trial.why.writes" => at_write,
+        "trial.why.taken" | "trial.why.holes" => at_cut,
+        "trial.why.orphans" | "trial.why.blind" | "trial.why.unrun" | "trial.why.overwrote" => {
+            at_race
+        }
+        _ => None,
+    };
+    let first_reason = why
+        .iter()
+        .find_map(|r| r.first().and_then(|s| at_reason(&s.key)));
     let turned_on = match standing {
         Standing::Survived | Standing::Untested => None,
         Standing::Refused => first_blocked,
-        _ => at_write
+        _ => first_reason
+            .or(at_write)
             .or(at_cut)
             .or(at_race)
             .or(at_stale)
@@ -2326,6 +2344,14 @@ mod tests {
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!((t.faults, t.retried), (2, 0), "{}", t.line());
         assert_eq!((t.dropped_writes, t.dropped_reads), (1, 1));
+        // where is the first reason's request: 24.0 said "gave up on 1
+        // failed read … at PutObject b/state"
+        assert!(
+            t.reasons[0].starts_with("gave up on 1 failed read"),
+            "{:?}",
+            t.reasons
+        );
+        assert_eq!(t.at.as_ref().unwrap().kind, "GetObject");
         assert_eq!(t.backoff_ms, None, "its own sleep is no backoff");
         assert_eq!(t.standing, Standing::Broke);
         // the same program, retrying: three answers for the two it means
@@ -3966,12 +3992,14 @@ mod tests {
         ];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Broke);
-        // the write, though the read failed first
+        // the first reason's request: the read given up on is said first
+        // (24.0 said the write's place after the read's reason)
+        assert!(t.reasons[0].starts_with("gave up on 1 failed read"));
         assert_eq!(
             t.at,
             Some(Where {
-                kind: "PutObject".into(),
-                key: "b/state".into(),
+                kind: "GetObject".into(),
+                key: "b/job".into(),
                 caller: Some("/home/me/job/etl.py:12 in save".into()),
             })
         );
@@ -3982,14 +4010,14 @@ mod tests {
         let line = t.line();
         assert!(
             line.ends_with(&format!(
-                " · at PutObject b/state (etl.py:12 in save) · boto3 1.34 did not send it again: turn its retries on ({})",
+                " · at GetObject b/job (etl.py:12 in save) · boto3 1.34 did not send it again: turn its retries on ({})",
                 a.args["setting"]
             )),
             "{line}"
         );
         // as JSON, for the app
         let j = serde_json::to_value(&t).unwrap();
-        assert_eq!(j["where"]["kind"], "PutObject");
+        assert_eq!(j["where"]["kind"], "GetObject");
         assert_eq!(j["where"]["caller"], "/home/me/job/etl.py:12 in save");
         assert_eq!(j["advice"]["key"], "trial.advice.retries");
         let back: Trial = serde_json::from_value(j).unwrap();

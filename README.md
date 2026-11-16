@@ -48,7 +48,8 @@ program ──(AWS_ENDPOINT_URL, a key of sonde's)──▶ sonde on 127.0.0.1 �
   credentials never reach the program.
 - A run keeps each request's method, key, headers, status, timing and size — never object data.
 - Analysis is in Rust and reads a run as a stream. In a trial, sonde answers chosen requests itself.
-- **Depends on**: nothing at run time (one static binary). The program needs an S3 client that honours
+- **Depends on**: nothing at run time but the C library: one binary (on Linux, glibc 2.35 or newer; the static x86_64
+  build runs on musl and older glibc, and `install.sh` takes it there). The program needs an S3 client that honours
   `AWS_ENDPOINT_URL` (current AWS SDKs and CLI do; Spark, Flink and containers are configured by sonde; others are
   said when nothing reaches sonde, [recording](docs/recording.md#what-the-program-is-given)). The app is built on
   [Native Shell](https://github.com/longbridge/nsh).

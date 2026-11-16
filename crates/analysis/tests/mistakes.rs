@@ -187,7 +187,8 @@ fn deletes_one_at_a_time_are_found_and_fixed_by_delete_objects() {
     );
     // one request for all 300
     assert_eq!(del[0].saves_requests, 299);
-    assert_eq!(del[0].identity, "obs.deletes|data/job/events/");
+    // about its bucket: the folder its keys share moves with its counts
+    assert_eq!(del[0].identity, "obs.deletes|data");
     has_every_fix(&del[0]);
     let mut fixed = Job::new();
     fixed.other(300);
@@ -357,4 +358,156 @@ fn a_key_read_again_between_its_writes_is_judged_stretch_by_stretch_with_a_floor
         }
     }
     assert_eq!(state(&job.0, &cached.0, "obs.hot"), State::Fixed);
+}
+
+/// 24.0 named a read written back by its key with the most cycles, and
+/// deletes and small writes by the folder all their keys share: fixed in
+/// part, each read fixed and new. One finding a run, about its bucket.
+#[test]
+fn a_finding_fixed_in_part_reads_less_whatever_its_text_names_now() {
+    // read-modify-write: a.json 5 times, b.json 3; then a.json 2 times
+    let rmw = |a: usize, b: usize| {
+        let mut job = Job::new();
+        job.other(20);
+        for (key, n) in [("a.json", a), ("b.json", b)] {
+            for _ in 0..n {
+                job.add("GetObject", key, 200);
+                job.add("PutObject", key, 200);
+            }
+        }
+        job.0
+    };
+    let (before, after) = (rmw(5, 3), rmw(2, 3));
+    assert!(
+        found(&before, "obs.rmw")[0]
+            .text
+            .contains("data/a.json the most")
+    );
+    assert!(
+        found(&after, "obs.rmw")[0]
+            .text
+            .contains("data/b.json the most")
+    );
+    assert_eq!(state(&before, &after, "obs.rmw"), State::Less);
+    // deletes under out/a/, then a delete under tmp/ too: data/ is named
+    let deletes = |tmp: bool| {
+        let mut job = Job::new();
+        job.other(100);
+        for i in 0..60 {
+            job.add("DeleteObject", &format!("out/a/{i}"), 204);
+        }
+        if tmp {
+            job.add("DeleteObject", "tmp/x", 204);
+        }
+        job.0
+    };
+    let (one, two) = (deletes(false), deletes(true));
+    let t = &found(&two, "obs.deletes")[0].text;
+    assert!(t.starts_with("61 objects under data/ were"), "{t}");
+    let (a, b) = (run(&one, None), run(&two, None));
+    let c = compare_runs(&a, &b);
+    let del: Vec<_> = c
+        .findings
+        .iter()
+        .filter(|f| f.identity.starts_with("obs.deletes"))
+        .collect();
+    assert_eq!(del.len(), 1, "{del:#?}");
+    assert_eq!(del[0].state, State::More);
+    // small writes to out/, then fewer, and two to tmp/ besides: less
+    let small = |n: usize, tmp: bool| {
+        let mut job = Job::new();
+        for i in 0..n {
+            job.add("PutObject", &format!("out/{i}.json"), 200);
+        }
+        if tmp {
+            job.add("PutObject", "tmp/1.json", 200);
+            job.add("PutObject", "tmp/2.json", 200);
+        }
+        job.other(20);
+        job.0
+    };
+    let (before, after) = (small(200, false), small(100, true));
+    assert!(
+        found(&after, "obs.small")[0]
+            .text
+            .contains("written to data/,")
+    );
+    assert_eq!(state(&before, &after, "obs.small"), State::Less);
+}
+
+/// Identities kept under the rules of 24.0 (4) are made again by these: a
+/// read written back is about its bucket, and stays the one finding.
+#[test]
+fn a_kept_finding_of_a_bucket_s_kind_is_made_again_by_the_rules_of_now() {
+    use sonde_analysis::fixloop::Program;
+    let kept = serde_json::json!({
+        "rules": 4,
+        "findings": {
+            "obs.rmw|data/a.json": {"kind": "obs.rmw", "text": "", "state": "open", "since": "r1", "predicted": {"requests": 0, "ms": 0.0}},
+            "obs.hot|data/k": {"kind": "obs.hot", "text": "", "state": "open", "since": "r1", "predicted": {"requests": 0, "ms": 0.0}}
+        }
+    });
+    let mut p: Program = serde_json::from_value(kept).unwrap();
+    assert_eq!(p.rekey(), 0);
+    let ids: Vec<&str> = p.findings.keys().map(String::as_str).collect();
+    assert_eq!(ids, ["obs.hot|data/k", "obs.rmw|data"]);
+}
+
+/// 24.0 counted a key written 6 times as 6 small objects.
+#[test]
+fn small_writes_count_objects_and_leave_a_key_s_rewrites_out() {
+    let mut job = Job::new();
+    for i in 0..61 {
+        job.add("PutObject", &format!("out/{i}.json"), 200);
+    }
+    for _ in 0..6 {
+        job.add("PutObject", "out/state.json", 200);
+    }
+    job.other(20);
+    let o = &found(&job.0, "obs.small")[0];
+    assert!(
+        o.text.starts_with("62 objects of less than 64 KiB"),
+        "{}",
+        o.text
+    );
+    // one object for all 62: 61 PUTs go, none of the rewrites counted
+    assert_eq!(o.saves_requests, 61);
+}
+
+/// 24.0 took every read of a key away when a cache and HEAD-before-GET
+/// were both acted on: `61 → 1`. The cache keeps one read.
+#[test]
+fn acting_on_a_cache_and_get_alone_keeps_one_read_of_the_key() {
+    let mut job = Job::new();
+    job.add("PutObject", "cfg/x.json", 200);
+    for _ in 0..30 {
+        job.add("HeadObject", "cfg/x.json", 200);
+        job.add("GetObject", "cfg/x.json", 200);
+    }
+    let rs = &job.0;
+    let os = observations_of(&header(false), rs, &episodes(rs));
+    assert!(os.iter().any(|o| o.kind == "obs.hot"), "{os:#?}");
+    assert!(os.iter().any(|o| o.kind == "obs.headget"), "{os:#?}");
+    let p = sonde_analysis::profile::profile(rs, &RequestPrices::default());
+    let w = sonde_analysis::fixes::what_if(rs, &p, &os, true).unwrap();
+    assert_eq!(w.requests, (61, 2));
+}
+
+/// 24.0 said a saving of 29 of 1,500 requests was 1% of the run, beside
+/// the 30 reads it is of said as 2%.
+#[test]
+fn a_saving_s_share_of_the_run_is_rounded_as_the_reads_it_is_of() {
+    let mut job = Job::new();
+    job.add("PutObject", "cfg/x.json", 200);
+    for _ in 0..30 {
+        job.add("GetObject", "cfg/x.json", 200);
+    }
+    job.other(1469);
+    assert_eq!(job.0.len(), 1500);
+    let o = &found(&job.0, "obs.hot")[0];
+    assert!(o.text.contains("(2% of all requests)"), "{}", o.text);
+    assert_eq!(
+        o.saving_text.as_deref(),
+        Some("29 fewer requests (2% of the run)")
+    );
 }

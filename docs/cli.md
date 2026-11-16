@@ -12,7 +12,7 @@
 | Confirmation | What changes a store or deletes runs (`runs prune`, `bucket abort-uploads`, `bucket lifecycle`, `compare --replay`) is a dry run, exit 4; `--yes` does it. |
 | Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. |
 | A run argument | A path or a name, resolved in order: a file; `runs/<name>[.sonde]`; `runs/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
-| Which run | When none is named, `show`, `compare`, `share` and `check` take the same: the newest run of `[program] name` (none: an error), else the newest recorded in this folder (the run's `cwd`), else the newest of any; runs from `run` or `proxy` only (never a replay, import or trial). `check` says which it took. A `sonde.toml` is applied only to its own program's runs (by its name, else recorded in its folder or below): `check` of another's says so and leaves its `[check]` out (one given with `--config` is applied). |
+| Which run | When none is named, `show`, `compare`, `share` and `check` take the same: the newest run of `[program] name` (none: an error), else the newest recorded in this folder (the run's `cwd`), else the newest of any; runs from `run` or `proxy` only (never a replay, import or trial), in the runs folder or written elsewhere with `-o` (as `sonde runs` lists them). `check` says which it took. A `sonde.toml` is applied only to its own program's runs (by its name, else recorded in its folder or below): `check` of another's says so and leaves its `[check]` out (one given with `--config` is applied). |
 | A program | `--name`, else `sonde.toml`'s `[program] name` for the program it `runs`, else what the command runs: the script an interpreter runs (`etl` for `python3 etl.py 5`), a module (`pytest` for `python -m pytest`), the command a shell is given (`aws` for `sh -c 'aws s3 cp …'`), a container's image (`aws-cli` for `docker run amazon/aws-cli …`), else the program (`load` for `./load --all`; `python3` for inline code, `python3 -c …`). Its arguments are not part of it: a run with others is another run of it, and the [fix loop](#the-fix-loop) says the command changed. Runs, baselines and trial verdicts go by it. |
 | Size | Runs are streamed and analysed once; `compare` reads one run at a time, so two cost what one does. Memory grows with the requests ([what a million cost](dev/performance.md#large-runs)). |
 | `.index.jsonl` | All that is kept beside the runs, one file per runs folder under one lock: each run's counts (requests, time, errors, program, figures once checked), its trials' verdicts, its exit code and title; each program's baseline, findings and trial history; the files imported in the app; where each `import s3://` got to. Counts are reckoned again when missing, when the run's length or mtime (ns) changed, or the analysis changed; a run's entry goes with it. A run with a bad middle line is listed with `!` (`unreadable` in JSON). |
@@ -72,7 +72,7 @@
 - Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `over its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`. A program that failed comes first: `the program failed (exit 3); within budget`. A run of no request fails as `nothing reached sonde`, against a budget or a baseline (its client went around sonde; `run` says so too).
 - No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. A baseline of another program is named on stderr.
 - Over a baseline for several runs: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once (`over the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6`; this run the first past: `the run before, at 9f8e7d6, was within it`).
-- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
+- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `ok`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
 - `--baseline auto` with none set and no budget: nothing checked, exit 0. Usage error (64): nothing to check (no
   budget, baseline or trials); `--tolerance` without a baseline; a `sonde.toml` that does not parse or has an unknown key.
 
@@ -180,11 +180,11 @@ money a month), the line that sent it and the fix for the SDK that sent it (boto
 | `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
 | `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
 | `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
-| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (`obs.small.parts`) | batch into fewer, larger objects; one PUT |
+| `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 files under 5 MiB uploaded in parts (one finding of the run, `obs.small|`) | batch into fewer, larger objects; one PUT |
 | `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
-| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (an import: not known whether, `obs.rmw.log`) | a conditional write |
+| `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (of an import, said as not known whether) | a conditional write |
 | `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
-| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for one (`obs.prefixrate.reads`, `.writes`) | adaptive retries; keys spread over prefixes |
+| `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for reads or writes | adaptive retries; keys spread over prefixes |
 | `obs.serial` | requests one after another (none reading or listing what the one before wrote) that 8 at once would finish 100 ms sooner | at once |
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
@@ -198,30 +198,33 @@ never what changes from run to run in a key: the value of a `name=value` folder 
 of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot|b/in/year={v}/month={v}/day={v}/hour={v}/conf.json`,
 `part-00000-<uuid>-c000.snappy.parquet` is `part-{n}-{uuid}-c{n}.snappy.parquet`, `job-3fa2b1c9` is `job-{id}`.
 Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
-HEAD-then-GET is about the folder its objects are in.
+HEAD-then-GET is about the folder its objects are in. A read written back, deletes one at a time and small writes are
+about their bucket (`obs.rmw|data`): one finding a run, whatever key or folder its text names as its counts move.
 
-These rules have a version (4: a prefix near its rate is `obs.throttled`), kept with each program's findings: findings kept under older rules are
+These rules have a version (5: a read written back, single deletes and small writes are about their bucket), kept with each program's findings: findings kept under older rules are
 made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
 
 Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):
 
 | State | When | Says |
 |---|---|---|
-| fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
+| fixed | gone at any threshold (over it in the run before, or under it and kept as less) | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
 | less | still there (at any threshold), fewer | what it saved so far, `· 92 → 41` |
 | more | still there (at any threshold), more | `↑ more … · 92 → 216` |
 | back | under its threshold in the run before, or fixed by it or an earlier run; over it now | |
 | new | in neither run before, at any threshold; every finding of a program's first run | |
-| open | as much in both, over its threshold or not | counted, `N still open, as above` (each is listed with its line and fix above) |
+| open | as much in both, over its threshold or not | counted, `N still open, as above` (each is listed with its line and fix above; `compare` lists none: `N still open`) |
 
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A program whose command changed between the two runs (beyond a trial's place) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`): a fix that read all 400 files, not 30, is not counted.
+A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`): a fix that read all 400 files, not 30, is not counted.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
-not compared`, and nothing kept changes; the next run is compared with the last that did not. Runs that end out of
+not compared`, and nothing kept changes; the next run is compared with the last that did not. Nor is a run that recorded
+no request (`nothing reached sonde: the run recorded no request; not compared`, `since.empty` in JSON): what did not reach
+sonde is not fixed, and it is never the run before. Runs that end out of
 order (several at once) each add their findings; an older run changes nothing a newer one said.
 
 Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding

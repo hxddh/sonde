@@ -256,7 +256,7 @@ pub const COUNTED_VERSION: u32 = 4;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+6");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+7");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a run's counts: when the run is removed or replaced.

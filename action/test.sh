@@ -31,7 +31,12 @@ case "$1" in
     # where it ran, and the code there
     pwd >"$FAKE/sonde.pwd"
     cat etl.py >"$FAKE/sonde.code" 2>/dev/null || true
-    while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done; exit "${FAKE_RUN_EXIT:-0}" ;;
+    ls >"$FAKE/sonde.ls"
+    # where it wrote, and its data folder; with FAKE_EXEC, the program, under it
+    printf '%s\n' "${SONDE_DATA_DIR:-}" >"$FAKE/sonde.data"
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do [ "$1" = -o ] && touch "$2"; shift; done
+    [ -z "${FAKE_EXEC:-}" ] || { shift; SONDE_UNDER=1 "$@" || true; }
+    exit "${FAKE_RUN_EXIT:-0}" ;;
   check) echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
   show) exit "${FAKE_SHOW:-0}" ;;
   share) while [ $# -gt 0 ]; do [ "$1" = -o ] && echo page >"$2"; shift; done ;;
@@ -40,7 +45,7 @@ EOF
 chmod +x "$t/bin/gh" "$t/bin/sonde"
 
 # (none of the runner's own: CI runs this in a workflow of its own)
-unset GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_NAME GITHUB_RUN_ID GITHUB_ACTION_REF SONDE_VERSION
+unset GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_NAME GITHUB_RUN_ID GITHUB_ACTION_REF SONDE_VERSION SONDE_DATA_DIR
 export PATH="$t/bin:$PATH" FAKE="$t" RUNNER_TEMP="$t/runner" GITHUB_OUTPUT="$t/out"
 export GITHUB_REPOSITORY=o/r GITHUB_WORKFLOW_REF="o/r/.github/workflows/ci.yml@refs/pull/7/merge"
 export GITHUB_STEP_SUMMARY="$t/summary"
@@ -86,6 +91,12 @@ is "install @v18: the newest 18.x" "$(fetched v18)" download/v18.4.0
 is "install @v19.0.0: that release" "$(fetched v19.0.0)" download/v19.0.0
 is "install @v19 with a version: that version" "$(fetched v19 19.0.0)" download/v19.0.0
 is "install @v19 with latest: the latest" "$(fetched v19 latest)" latest/download
+is "install @v19.2: the newest 19.2.x" "$(fetched v19.2)" download/v19.2.10
+is "install @v19 with 19.0: the newest 19.0.x" "$(fetched v19 19.0)" download/v19.0.0
+is "install @v19.3 (a prerelease alone) fails before downloading" "$(fetched v19.3)" ""
+is "it says so" "$(grep -c 'no release of sonde 19.3 found' "$t/said")" 1
+is "install with a version that is none fails before downloading" "$(fetched v19 19.x)" ""
+is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (24.0.1), a major (24)' "$t/said")" 1
 is "install of a major with no release fails before downloading" "$(fetched v7)" ""
 # a branch, a commit, a local checkout: the newest release of its own major, never `latest`
 is "install @main of 19.1.0: the newest 19.x" "$(fetched main)" download/v19.2.10
@@ -114,7 +125,8 @@ is "it says why no merge-base was recorded" "$(grep -c 'its merge-base could not
 is "and nothing was run" "$([ -f "$t/sonde.pwd" ] && echo ran || echo none)" none
 
 # none kept, in a checkout: the pull request's merge-base, recorded in this job
-# (a shallow clone of the pull request, as actions/checkout makes one)
+# (`git merge-base origin/BASE HEAD`), first of a shallow clone of the pull
+# request's branch (actions/checkout with `ref: head_ref`): where it left the base
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_NOSYSTEM=1 HOME="$t"
 git init -q -b main "$t/src"
 (
@@ -128,12 +140,15 @@ git clone -q --depth 1 --branch pr "file://$t/origin.git" "$t/repo"
 cd "$t/repo/job"
 rm -f "$t/sonde.pwd"
 SONDE_RUN="python3 etl.py" SONDE_NAME=etl FAKE_RUNS="11" step baseline >"$t/said"
-is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base.sonde"
+is "the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base-run/merge-base.sonde"
 is "it says which commit" "$(grep -c '^::notice title=sonde::baseline: the merge-base [0-9a-f]\{7\} of main, recorded in this job' "$t/said")" 1
-is "recorded from the merge-base's code (not the base branch's newest)" "$(cat "$t/sonde.code")" base
+is "of a branch: recorded from where it left the base" "$(cat "$t/sonde.code")" base
+is "not from the base branch's newest" "$(grep -c '^later$' "$t/sonde.ls")" 0
 is "in the working directory of its checkout" "$(basename "$(cat "$t/sonde.pwd")")/$(basename "$(dirname "$(cat "$t/sonde.pwd")")")" job/merge-base
-is "the same command and name" "$(tail -n 4 "$t/sonde.run" | paste -sd'|')" "etl|--|python3|etl.py"
+is "the same command and name" "$(tail -n 5 "$t/sonde.run" | paste -sd'|')" "etl|--|bash|-c|python3 etl.py"
 is "its checkout is gone after" "$(git worktree list | wc -l | tr -d ' ')" 1
+is "in a data folder of its own, not the runner's" "$(cat "$t/sonde.data")" "$t/runner/sonde/merge-base-data"
+is "in a folder of its own, not the run's (never its run before)" "$(dirname "$(sed -n '/^-o$/{n;p;}' "$t/sonde.run")")" "$t/runner/sonde/merge-base-run"
 # shellcheck disable=SC2016 # (expanded by setup, in its folder)
 SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
 is "setup runs first, in the same folder" "$(cat "$t/setup.pwd")" "$(cat "$t/sonde.pwd")"
@@ -146,6 +161,24 @@ is "it says why, and what to set" "$(grep -c "the merge-base's program exited 3:
 # a push is no pull request: no merge-base
 GITHUB_BASE_REF="" GITHUB_REF_NAME=main SONDE_RUN="python3 etl.py" step baseline >"$t/said"
 is "a push with none kept: no merge-base" "$(grep -c 'merge-base' "$t/said")" 0
+# actions/checkout's default: the pull request merged into its base
+# (refs/pull/7/merge, depth 1), whose merge-base is the base branch's commit
+# it was merged into, its newest when the merge was made
+(
+  cd "$t/src"
+  git checkout -q --detach main && git merge -q --no-ff pr -m merge
+  git push -q "$t/origin.git" HEAD:refs/pull/7/merge && git checkout -q main
+)
+git init -q "$t/merged"
+cd "$t/merged"
+git remote add origin "file://$t/origin.git"
+git fetch -q --no-tags --depth=1 origin +refs/pull/7/merge:refs/remotes/pull/7/merge
+git checkout -q --detach refs/remotes/pull/7/merge
+cd job
+SONDE_RUN="python3 etl.py" FAKE_RUNS="" step baseline >"$t/said"
+is "of the merge: the merge-base is the baseline" "$(output baseline)" "$t/runner/sonde/merge-base-run/merge-base.sonde"
+is "recorded from the base branch's commit it was merged into" "$(cat "$t/sonde.code")/$(grep -c '^later$' "$t/sonde.ls")" base/1
+is "which is the merge's first parent" "$(grep -c "^::notice title=sonde::baseline: the merge-base $(git rev-parse --short=7 HEAD^1) of main" "$t/said")" 1
 cd "$t/nogit"
 SONDE_BASELINE=none step baseline
 is "none asked: none" "$(output baseline)" ""
@@ -164,12 +197,28 @@ GITHUB_EVENT_NAME=schedule GITHUB_REF_NAME=main GITHUB_RUN_ID=11 FAKE_RUNS="11 2
 is "a scheduled run takes the schedule's run before it" "$(output baseline)" "$t/runner/sonde/baseline/run.sonde"
 is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/gh.log")" 1
 
-# the program's command as typed; its status kept for the verdict
+# the program's command as typed, bash's; its status kept for the verdict
 SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --policy allow" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
 is "record writes a run" "$(output file)" "$t/runner/sonde/run.sonde"
-is "the command's words as typed" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|-c|print(1)"
+is "in the runner's data folder" "$(cat "$t/sonde.data")" ""
+is "the command as typed, run by bash" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 -c 'print(1)'"
 is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
+# each shell operator as typed, all of it under sonde, none of it before
+# shellcheck disable=SC2016 # (expanded by the program's bash, under sonde)
+{
+  said() { : >"$t/ran"; SONDE_RUN="$1" FAKE_EXEC=1 step record >/dev/null; cat "$t/ran"; }
+  mkdir -p sub
+  is "cd x && runs both under sonde" "$(said 'cd sub && echo "$SONDE_UNDER ${PWD##*/}" >>"$FAKE/ran"')" "1 sub"
+  is "&& runs both under sonde" "$(said 'echo "a$SONDE_UNDER" >>"$FAKE/ran" && echo "b$SONDE_UNDER" >>"$FAKE/ran"' | paste -sd' ')" "a1 b1"
+  is "| pipes under sonde" "$(said 'echo "x$SONDE_UNDER" | tr x y >>"$FAKE/ran"')" y1
+  is "| is not sonde's command" "$(grep -c 'run.sonde$' "$t/sonde.run")" 1
+  is "> redirects the program's output" "$(said 'echo "out$SONDE_UNDER" >"$FAKE/ran"')" out1
+  is "; runs both under sonde" "$(said 'echo "a$SONDE_UNDER" >>"$FAKE/ran"; echo "b$SONDE_UNDER" >>"$FAKE/ran"' | paste -sd' ')" "a1 b1"
+  : >"$t/ran"
+  SONDE_RUN='true && echo outside >"$FAKE/ran"' step record >/dev/null || true
+  is "nothing runs outside sonde" "$(cat "$t/ran")" ""
+}
 
 # check: passed or not; anything else is the step's failure
 export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto
@@ -179,6 +228,14 @@ is "check's flags" "$(paste -sd' ' "$t/sonde.check")" "check $SONDE_FILE --basel
 FAKE_CHECK=1 step check >/dev/null
 is "a check that failed" "$(output passed)" false
 if FAKE_CHECK=64 step check >/dev/null; then is "a check that could not run fails the step" 0 1; fi
+
+# every step given a path by the inputs (a baseline: baseline/main.sonde)
+# runs where the command does
+for s in record baseline check report comment; do
+  is "the $s step runs in working-directory" "$(awk -v s="$s" '/^    - name:/ { wd = 0 }
+    /working-directory: \$\{\{ inputs.working-directory \}\}/ { wd = 1 }
+    $0 ~ ("sonde-action.sh\" " s "$") { print wd }' "$here/../action.yml")" 1
+done
 
 # the report: against a baseline file, never `auto`
 step report >/dev/null
