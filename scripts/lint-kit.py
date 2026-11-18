@@ -62,7 +62,9 @@ RULES = [
     ("threshold", r"<ResizablePanel\b[^>]*\b(?:minSize|maxSize|size)=\{\d", "a pane's size of its own: the kit's PANE"),
     ("press", r"<(?:Text|View)\b[^>]*\brole=\"button\"", "a pressable text or view by hand (no focus ring): use Button, ListRow or Back"),
     # 21.0: motion, shadows and type are tokens
-    ("motion", r"(?<![\w-])duration-(?:\d|\[)", "a duration of its own: the kit's TIMING (TRANSITION, GLIDE, PRESS, POPUP_MOTION)"),
+    # 25.0: one spring, the kit's
+    ("motion", r"(?<![\w-])(?:duration-(?:\d|\[)|ease-(?:standard|linear|in|out|in-out|spring|\[))", "motion of its own: the kit's one spring (TRANSITION, GLIDE, PRESS, POPUP_MOTION, TOAST_MOTION)"),
+    ("motion", r"\bLayoutAnimation\.|\banimateLayout\(", "a layout animation of its own: the kit's glideLayout(), on its spring"),
     ("shadow", r"(?<![\w-])shadow-(?:2xs|xs|sm|md|lg|xl|2xl|inner|none|control|popup|modal|\[)", "a shadow of its own: the kit's SHADOW (or POPUP, Modal, SidePanel)"),
     ("type", r"(?<![\w-])text-caption(?![\w-])", "the caption by hand: a TEXT role (TEXT.meta, .caption, .code, .captionSize), which sets Chinese at 12 pt"),
     ("tone", r"\b(?:TONE_TEXT|TONE_BAR)\b\s*(?::|=)|\b(?:toneClass|tint)\s*=\s*\(\)\s*=>\s*\(\{", "a tone table of its own: the kit's TONE"),
@@ -144,6 +146,19 @@ for path, where, rel in files:
         # weight outside a heading: allowed through the kit's constant, with its reason
         if "EMPHASIS" in line and not line.lstrip().startswith("import") and "emphasis:" not in near:
             say(where, n, "heading", "EMPHASIS without an `emphasis:` comment saying why it is not a heading")
+
+# the kit's motion is one spring: SPRING, and the curve its classes give it, the same; no length, no other ease
+kit_text = (app / "ui" / "kit.tsx").read_text()
+spring = re.search(r"export const SPRING = \{ stiffness: (\d+), damping: (\d+) \}", kit_text)
+if not spring:
+    say("app/src/ui/kit.tsx", 1, "motion", "no SPRING: the kit's one spring")
+else:
+    for n, line in enumerate(kit_text.splitlines(), 1):
+        for k, c in re.findall(r"ease-spring-\[(\d+),(\d+)\]", line):
+            if (k, c) != spring.groups():
+                say("app/src/ui/kit.tsx", n, "motion", f"a second spring ({k}, {c}): the kit's is SPRING")
+        if re.search(r"(?<![\w-])(?:duration-(?:\d|\[)|ease-(?:standard|linear|in|out|in-out|\[))", line):
+            say("app/src/ui/kit.tsx", n, "motion", "a length or an ease in the kit: its motion is SPRING")
 
 # every threshold BREAK names is used, and by its name
 kit = (app / "ui" / "kit.tsx").read_text()

@@ -4,7 +4,7 @@
 // over a band of live figures. When it ends, the run's own view takes the
 // place (its header and panes, opened on its Output), as Runs shows it.
 
-import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, untracked, View } from "nsh";
+import { cleanup, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
@@ -15,7 +15,7 @@ import { command, cwd, history, input, lastRun, onOutput, output, policy, resize
 import { away, endpoint, endpoints, go, openRun, report, runsTick, showInSidebar } from "../store";
 import type { RunInfo, RunView, Stretch } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Card, CARD, IconButton, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
+import { Button, Card, CARD, IconButton, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT, glideLayout } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/runview";
 import { type Policy, OperationsTable, RecordPanel } from "../ui/runparts";
 import { Chart, focusOf, LatencyBand, liveSaid, RunShape, STRIP } from "../ui/plots";
@@ -224,7 +224,7 @@ function LiveOperations() {
     now.set(Date.now());
     if (running()) {
       // operations arriving slide in rather than jump
-      if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
+      glideLayout();
       tick.set(tick() + 1);
     }
   }, 500);
