@@ -387,6 +387,15 @@ for (const v of variants) {
     await charts("03j-spent");
     await app.scroll("id:time-pane", 400);
     await charts("03k-prefixes");
+    // what the run cost, and when, the chart whole at every size. A hover brings a view into view, a gesture of up to
+    // four tenths of the pane at a time, until it is clear of the pane's edges: from the board's end the chart's title
+    // comes in at the pane's upper half. A few lines more give the chart's foot its room in the least window
+    await app.waitFor("id:cost-time-chart");
+    await app.scroll("id:time-pane", 10000);
+    await app.wait(500);
+    await app.hover("id:cost-time-chart >> role:header");
+    await app.scroll("id:time-pane", 60);
+    await charts("03ka-cost");
     // to the board's end: where requests went
     await app.scroll("id:time-pane", 4000);
     await app.waitFor("id:flows-chart");

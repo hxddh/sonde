@@ -549,6 +549,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "costTime",
       group: "where",
       zooms: true,
+      testID: "cost-time-chart",
       when: () => overTime() && p().rate.some((b) => (b.requestsCost ?? 0) + (b.transferCost ?? 0) + (b.storageCost ?? 0) > 0),
       title: () => t("costTime.title"),
       text: () => costTimeSaid(zp(), zr()),
