@@ -37,9 +37,10 @@ python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog
 # ui
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own
 # action (then the action itself, with this commit's sonde)
-shellcheck action/*.sh install.sh scripts/release-wait*.sh && actionlint
+shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh && actionlint
 bash action/test.sh                      # the GitHub Action's scripts
 bash scripts/release-wait.test.sh
+bash scripts/changelog-section.test.sh   # the release notes, English and Chinese
 # integration
 scripts/integration.sh ceph rustfs       # against Ceph RGW and RustFS in Docker
 ```
