@@ -333,6 +333,10 @@ pub async fn start() -> std::io::Result<DemoServer> {
     Ok(DemoServer { addr, _task: task })
 }
 
+/// The tour's job's wait for a HEAD or a LIST, and for an object's GET or PUT.
+pub(crate) const BRIEF: std::time::Duration = std::time::Duration::from_millis(20);
+pub(crate) const LONG: std::time::Duration = std::time::Duration::from_millis(40);
+
 /// How long the tour's job waits for this answer (None: any other caller).
 fn tour_time(line: &str, headers: &[(String, String)]) -> Option<std::time::Duration> {
     let tour = headers
@@ -350,12 +354,11 @@ fn tour_time(line: &str, headers: &[(String, String)]) -> Option<std::time::Dura
         .trim_start_matches('/')
         .split_once('/')
         .is_some_and(|(_, k)| !k.is_empty());
-    let ms = if object && matches!(method, "GET" | "PUT") {
-        40
+    Some(if object && matches!(method, "GET" | "PUT") {
+        LONG
     } else {
-        20
-    };
-    Some(std::time::Duration::from_millis(ms))
+        BRIEF
+    })
 }
 
 /// Waits until `at`, to the millisecond on every system: a timer to near it

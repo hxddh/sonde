@@ -99,18 +99,18 @@ pub async fn play(
 ) {
     let at = |mark: &str| caller(job, file, mark);
     // each request starts on the job's own beat, not when the one before
-    // answered: the run's timeline is the same picture each time it is played
-    let start = tokio::time::Instant::now();
+    // answered: the run's timeline is the same picture each time it is played.
+    // The beats count from the first request's start as the store saw it (its
+    // answer, less the store's wait): not from before it, when its connection
+    // was still being made, a time no two machines take alike
+    let mut start: Option<tokio::time::Instant> = None;
     let mut beat = 0u32;
     let mut send = async |r: S3Request, mark: &str| {
-        // (after the first, half a slice past the beat: mid-slice in the run's
-        // timeline, a timer's millisecond either side the same slice)
-        let off = if beat == 0 {
-            std::time::Duration::ZERO
-        } else {
-            HALF_SLICE
-        };
-        crate::demo::until(start + BEAT * beat + off).await;
+        // (half a slice past the beat: mid-slice in the run's timeline, a
+        // millisecond either side the same slice)
+        if let Some(start) = start {
+            crate::demo::until(start + BEAT * beat + HALF_SLICE).await;
+        }
         beat += 1;
         let place = at(mark);
         let target = r.key.clone().unwrap_or_else(|| {
@@ -125,6 +125,11 @@ pub async fn play(
                 .status
                 .map_or_else(|| "no answer".into(), |s| s.to_string()),
         };
+        if start.is_none() {
+            // the first request is a HEAD (the job's settings)
+            let now = tokio::time::Instant::now();
+            start = Some(now.checked_sub(crate::demo::BRIEF).unwrap_or(now));
+        }
         say(format!("{place}  {what} → {status}"));
         got.ok()
     };
