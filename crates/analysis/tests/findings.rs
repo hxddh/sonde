@@ -226,7 +226,8 @@ fn concurrent_uploads_to_one_key_each_get_their_own_create() {
 
 #[test]
 fn a_prefix_near_s3s_rate_per_prefix_is_named() {
-    // 3,000 reads of one folder in a second: 54% of 5,500, no finding
+    // 3,000 reads of one folder in a second: 54% of 5,500, no finding of its
+    // rate (of so many small objects read one GET each, `obs.smallreads` alone)
     let reads = |n: u64| -> Vec<Record> {
         (0..n)
             .map(|i| {
@@ -241,7 +242,9 @@ fn a_prefix_near_s3s_rate_per_prefix_is_named() {
             })
             .collect()
     };
-    assert!(findings(&reads(3000)).is_empty());
+    let quiet = findings(&reads(3000));
+    let kinds: Vec<&str> = quiet.iter().map(key).collect();
+    assert_eq!(kinds, ["obs.smallreads"]);
     // 4,500: 81%, a warning
     let obs = findings(&reads(4500));
     let f = obs

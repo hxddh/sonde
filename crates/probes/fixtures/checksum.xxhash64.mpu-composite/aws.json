@@ -1,0 +1,96 @@
+{
+  "probe": "checksum.xxhash64.mpu-composite",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-algorithm",
+          "XXHASH64"
+        ],
+        [
+          "x-amz-checksum-type",
+          "COMPOSITE"
+        ]
+      ],
+      "body": "<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-xxhash64",
+          "+dJpr1W+Dp4="
+        ],
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-xxhash64",
+          "xcJnbErzCJw="
+        ],
+        [
+          "etag",
+          "\"d36bb53847fbe3fce38a08155054ecb3\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<CompleteMultipartUploadResult></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-xxhash64",
+          "P/lGLZiARAY=-2"
+        ],
+        [
+          "x-amz-checksum-type",
+          "COMPOSITE"
+        ],
+        [
+          "content-length",
+          "5243904"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "P/lGLZiARAY=-2",
+      "recordId": null
+    }
+  ]
+}

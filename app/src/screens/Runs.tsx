@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // run, and opens in a window of its own. In a terminal the levels stack.
 
-import { batch, cleanup, computed, effect, type JSX, LayoutAnimation, reduceMotion, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, type JSX, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
@@ -15,11 +15,12 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, crumbBack, endpoint, endpoints, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import { applyDemoFix, isDemoJob } from "../demo";
+import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, crumbBack, endpoint, endpoints, findingOnOpen, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace, glideLayout } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { ShowSidebar } from "../ui/shell";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
@@ -119,6 +120,13 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const o = paneOnOpen();
     if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
   });
+  // the demo's run: its first finding open, its line of code and its fix in view
+  effect(() => {
+    const o = findingOnOpen();
+    const v = view();
+    // (once the run is read: a run with no finding there opens on all its operations)
+    if (o && v && o.path === props.path) untracked(() => batch(() => (o.index < v.observations.length && filter.set(o.index), findingOnOpen.set(null))));
+  });
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);
   effect(() => {
@@ -195,7 +203,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
 
   const chooseOperation = (i: number) => {
     // the inspector opening moves the table over, smoothly
-    if (op() === null && !reduceMotion()) LayoutAnimation.easeInEaseOut();
+    if (op() === null) glideLayout();
     op.set(i);
     rec.set(null);
     opHighlight.set([i]);
@@ -241,7 +249,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     showOperation();
   };
   const closeInspector = () => {
-    if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
+    glideLayout();
     // at once: the inspector goes whole, not its request first and then what held it
     batch(() => {
       op.set(null);
@@ -438,6 +446,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       onFilter={(f) => filter.set(f)}
       states={statesOf(since())}
       onOpenCode={(place) => api.runs.openCode(props.path, place).catch(report)}
+      // the demo's job: its fix applied to its code, and run again
+      onApply={isDemoJob(v().header) ? () => void applyDemoFix(v().header.cwd) : undefined}
       // a short window keeps two findings in view (the rest scroll): the operations need their rows;
       // a finding chosen there gets the room to read what to change
       // (a finding chosen there opens its advice in what the pane's body has left once the operations

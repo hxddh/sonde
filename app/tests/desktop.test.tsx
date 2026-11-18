@@ -4,14 +4,26 @@ import { expect, open, test } from "nsh/test";
 import { openDemo, openExample, desktop, place } from "./helpers";
 import type { Signals } from "../src/types";
 
-test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
+test("a first launch welcomes; its demo runs, opens on its finding, and the fix applied says what it saved", async () => {
   const app = await open("../App.tsx", desktop);
   expect(app.shows("id:welcome")).toBe(true);
-  await app.press("id:welcome-demo");
-  await app.waitFor("id:screen-run", { timeout: 10000 });
-  await app.waitFor("text:/^The demo is ready/");
-  // Run has a command ready on the demo: the first result is a press away
-  expect(app.shows("text:/curl -s --aws-sigv4/")).toBe(true);
+  // (on Windows the real cursor moves on a focus change and can cancel a simulated press: pressed again only while
+  // the welcome is still there and its button is not at work)
+  const took = () => !app.shows("id:welcome") || !app.enabled("id:welcome-demo");
+  for (let n = 0; n < 4 && !took(); n++) {
+    await app.press("id:welcome-demo");
+    await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
+  }
+  // one press: the job ran, and its run is open on its finding — the line that sent it and the fix
+  await app.waitFor("id:screen-runs", { timeout: 20000 });
+  await app.waitFor("id:finding-advice", { timeout: 20000 });
+  await app.waitFor("id:fix-callers >> text:/^export\\.py:\\d+ read_reports/");
+  // the fix applied and the job run again: the finding fixed, its saving measured beside the predicted one
+  await app.press("id:finding-apply");
+  await app.waitFor("text:/^Since the run before: 1 fixed: .*, saved 3 requests \\(predicted 3\\)/", { timeout: 20000 });
+  // (no finding left: its operations all shown, none narrowed away)
+  expect(app.shows("text:Nothing here yet")).toBe(false);
+  expect(app.shows("id:finding-advice")).toBe(false);
   expect(app.shows("id:sidebar")).toBe(true);
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:sidebar")).toBe(false);
@@ -83,6 +95,16 @@ test("updates: asking is the user's move; a development run is up to date", asyn
   await app.waitFor("text:/^sonde \\d+\\.\\d+\\.\\d+ \\(development run\\) · Native Shell /");
   await app.press("id:updates-check");
   await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
+});
+
+test("updates: a shell-only update is no new sonde; a recording or a job puts installing on quit first", async () => {
+  const { foundWords, installFirst } = await import("../src/ui/updates");
+  expect(foundWords({ version: "25.1.0" })).toBe("sonde 25.1.0 is out.");
+  // checkForUpdate's `shell`: this sonde is already that version, only the app around it is behind
+  expect(foundWords({ version: "25.1.0", shell: true })).not.toMatch(/25\.1\.0/);
+  expect(foundWords({ version: "25.1.0", shell: true })).toBe("An update to the app around sonde is out: sonde itself is up to date.");
+  expect(installFirst(true)).toBe("quit");
+  expect(installFirst(false)).toBe("restart");
 });
 
 test("a run file opens from Runs: a picked .sonde, and a refusal for anything else", async () => {

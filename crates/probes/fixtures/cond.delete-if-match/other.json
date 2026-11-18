@@ -1,0 +1,77 @@
+{
+  "probe": "cond.delete-if-match",
+  "vendor": "other",
+  "expect": "fail",
+  "note": "written, not recorded: a store that ignores an If-Match it does not know",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6d5f3e1b5c8f2a0d4e9b7c1a2f3e4d5c\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "stale",
+      "status": 204,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "kept",
+      "status": 404,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "current",
+      "status": 204,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "gone",
+      "status": 404,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "batch-create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "batch-stale",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<DeleteResult><Deleted><Key>k</Key></Deleted></DeleteResult>",
+      "recordId": null
+    },
+    {
+      "label": "batch-kept",
+      "status": 404,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

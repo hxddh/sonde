@@ -144,36 +144,92 @@ pub fn asked(r: &Record) -> String {
 /// identity, `(asked, of them saved, of them in the run)`.
 pub type Asks = BTreeMap<String, Vec<(String, usize, usize)>>;
 
-/// The asks of the findings that name the requests they save.
+/// The asks of the findings that name the requests they save. Each ask is
+/// made once, its text kept once and its requests by index (a finding of
+/// small reads names a request of each of a run's objects).
 pub fn asks_of(records: &[Record], findings: &[Observation]) -> Asks {
-    let saved: HashSet<u64> = findings
+    let mut saved: Vec<u64> = findings
         .iter()
         .flat_map(|o| o.saved_ids.iter().copied())
         .collect();
     if saved.is_empty() {
         return Asks::new();
     }
-    let by_id: HashMap<u64, String> = records
+    saved.sort_unstable();
+    saved.dedup();
+    // what each saved request asked: an index into `names`
+    let mut names: HashMap<String, u32> = HashMap::new();
+    let mut of_id: Vec<(u64, u32)> = Vec::new();
+    for r in records
         .iter()
-        .filter(|r| saved.contains(&r.id))
-        .map(|r| (r.id, asked(r)))
-        .collect();
-    let wanted: HashSet<&str> = by_id.values().map(String::as_str).collect();
-    let all = count(records, &wanted);
-    let mut out = Asks::new();
-    for o in findings.iter().filter(|o| !o.saved_ids.is_empty()) {
-        let mut of: BTreeMap<&str, usize> = BTreeMap::new();
-        for id in &o.saved_ids {
-            if let Some(a) = by_id.get(id) {
-                *of.entry(a.as_str()).or_default() += 1;
+        .filter(|r| saved.binary_search(&r.id).is_ok())
+    {
+        let next = names.len() as u32;
+        of_id.push((r.id, *names.entry(asked(r)).or_insert(next)));
+    }
+    drop(saved);
+    // (a request's id twice: its last record's ask, as a map would keep)
+    of_id.reverse();
+    of_id.sort_by_key(|&(id, _)| id);
+    of_id.dedup_by_key(|&mut (id, _)| id);
+    // how many of the run's requests asked each
+    let mut all = vec![0usize; names.len()];
+    {
+        let ops: HashSet<&str> = names
+            .keys()
+            .filter_map(|a| a.split_once(' ').map(|(op, _)| op))
+            .collect();
+        for r in records.iter().filter(|r| ops.contains(r.kind.as_str())) {
+            if let Some(&i) = names.get(asked(r).as_str()) {
+                all[i as usize] += 1;
             }
         }
-        out.insert(
-            o.identity.clone(),
-            of.into_iter()
-                .map(|(a, n)| (a.to_string(), n, all.get(a).copied().unwrap_or(n)))
-                .collect(),
-        );
+    }
+    let mut texts = vec![String::new(); names.len()];
+    for (a, i) in names {
+        texts[i as usize] = a;
+    }
+    // each finding's asks, in their order, each with how many it saves
+    let mut uses = vec![0u32; texts.len()];
+    let mut each: Vec<(&Observation, Vec<(u32, usize)>)> = Vec::new();
+    for o in findings.iter().filter(|o| !o.saved_ids.is_empty()) {
+        let mut of: Vec<u32> = o
+            .saved_ids
+            .iter()
+            .filter_map(|id| {
+                let at = of_id.binary_search_by_key(id, |&(id, _)| id).ok()?;
+                Some(of_id[at].1)
+            })
+            .collect();
+        of.sort_unstable();
+        let mut counted: Vec<(u32, usize)> = of
+            .chunk_by(|a, b| a == b)
+            .map(|c| (c[0], c.len()))
+            .collect();
+        drop(of);
+        counted.sort_unstable_by(|a, b| texts[a.0 as usize].cmp(&texts[b.0 as usize]));
+        for &(i, _) in &counted {
+            uses[i as usize] += 1;
+        }
+        each.push((o, counted));
+    }
+    drop(of_id);
+    let mut out = Asks::new();
+    for (o, counted) in each {
+        let asks = counted
+            .into_iter()
+            .map(|(i, n)| {
+                let i = i as usize;
+                uses[i] -= 1;
+                let a = if uses[i] == 0 {
+                    std::mem::take(&mut texts[i])
+                } else {
+                    texts[i].clone()
+                };
+                (a, n, if all[i] == 0 { n } else { all[i] })
+            })
+            .collect();
+        out.insert(o.identity.clone(), asks);
     }
     out
 }

@@ -1,0 +1,62 @@
+{
+  "probe": "checksum.sha512.single",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-sha512",
+          "DYSSlOE6rYtba5NCHzXm/Pd/OngsrMK6+Ow4306PDLp1K3Of4a2DEufLoX1gMEj0dn2d/Db1wjWVaQjm8vUxzw=="
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-sha512",
+          "DYSSlOE6rYtba5NCHzXm/Pd/OngsrMK6+Ow4306PDLp1K3Of4a2DEufLoX1gMEj0dn2d/Db1wjWVaQjm8vUxzw=="
+        ],
+        [
+          "x-amz-checksum-type",
+          "FULL_OBJECT"
+        ],
+        [
+          "content-length",
+          "1000"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 400,
+      "code": "BadDigest",
+      "headers": [],
+      "body": "<Error><Code>BadDigest</Code></Error>",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "DYSSlOE6rYtba5NCHzXm/Pd/OngsrMK6+Ow4306PDLp1K3Of4a2DEufLoX1gMEj0dn2d/Db1wjWVaQjm8vUxzw==",
+      "recordId": null
+    }
+  ]
+}

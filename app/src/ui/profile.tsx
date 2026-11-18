@@ -17,7 +17,7 @@ import type { ChartRows } from "../csv";
 import type { ProjectBudget, RunView, Signals, Split, SplitBy, Stretch } from "../types";
 import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./runview";
-import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid, KindsOverTime, kindRates, kindsLegend, kindsSaid } from "./plots";
+import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, costTimeSaid, costTimeLegend, CostOverTime, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid, KindsOverTime, kindRates, kindsLegend, kindsSaid } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -543,6 +543,20 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       text: () => prefixSaid(pa()),
       how: () => t("prefixUse.hint"),
       body: () => <PrefixUse profile={pa()} rates={sa().prefixes} />,
+    },
+    {
+      // what the run cost, and when: its requests, its bytes out, what it left stored
+      id: "costTime",
+      group: "where",
+      zooms: true,
+      testID: "cost-time-chart",
+      when: () => overTime() && p().rate.some((b) => (b.requestsCost ?? 0) + (b.transferCost ?? 0) + (b.storageCost ?? 0) > 0),
+      title: () => t("costTime.title"),
+      text: () => costTimeSaid(zp(), zr()),
+      how: () => t("costTime.hint"),
+      legend: () => costTimeLegend(zp()),
+      rows: () => ({ columns: ["ms", "requests", "transfer", "storage_a_month"], rows: zp().rate.map((b, i) => [slotMs(zp(), i), b.requestsCost ?? 0, b.transferCost ?? 0, b.storageCost ?? 0]) }),
+      body: () => <CostOverTime profile={zp()} range={zr()} focus={focus} />,
     },
     { id: "cost", group: "where", stretched: true, when: () => sig().cost.kinds.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => costSaid(sa()), how: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
     { id: "heat", group: "where", zooms: true, when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => heatSaid(zp(), zr()), how: () => t("heat.hint"), legend: () => heatLegend(zp().heat.filter((c) => !zr() || (c.bin >= zr()![0] && c.bin <= zr()![1])).map((c) => c.n)), body: () => <Heat profile={zp()} range={zr()} /> },

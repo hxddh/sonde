@@ -116,6 +116,26 @@ fn a_probe_whose_setup_failed_is_an_error_not_a_verdict() {
             ]),
         ),
         (
+            "cond.copy-dest-if-match",
+            read_only_bucket(&[
+                ("source", 403),
+                ("dest", 403),
+                ("stale", 404),
+                ("current", 404),
+                ("missing", 404),
+            ]),
+        ),
+        (
+            "cond.delete-if-match",
+            read_only_bucket(&[
+                ("create", 403),
+                ("stale", 403),
+                ("kept", 404),
+                ("current", 403),
+                ("gone", 404),
+            ]),
+        ),
+        (
             "cond.complete-if-none-match",
             read_only_bucket(&[("create-upload", 403)]),
         ),

@@ -706,6 +706,21 @@ async fn run_once(
         }
         None => words,
     };
+    // the DuckDB CLI reads its endpoint from SQL: an init file of its own
+    // (removed with the run)
+    let duckdb_init = DuckdbInit::write(s, &words, &plain);
+    let words = match duckdb_init
+        .as_ref()
+        .and_then(|f| sonde_proxy::clients::duckdb_with_init(&words, &f.0.to_string_lossy()))
+    {
+        Some(argv) => {
+            if under.is_none() {
+                eprintln!("sonde: duckdb is given its endpoint with -init (SET s3_*)");
+            }
+            argv
+        }
+        None => words,
+    };
     // a container reaches sonde on the host's network
     let words =
         match sonde_proxy::container::with_settings(&words, &for_container.0, &for_container.1) {
@@ -979,6 +994,35 @@ fn engine_note(engine: sonde_proxy::jvm::Engine, command: &[String]) -> String {
     }
 }
 
+/// The init file a DuckDB CLI is given ([`sonde_proxy::clients`]): in
+/// sonde's data folder (one a run), removed when the run ends.
+struct DuckdbInit(PathBuf);
+
+impl DuckdbInit {
+    /// Written for a command that runs the DuckDB CLI with no init file of
+    /// its own; none otherwise, or when it cannot be written.
+    fn write(s: &Sonde, command: &[String], endpoint: &str) -> Option<Self> {
+        sonde_proxy::clients::duckdb_with_init(command, "")?;
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+        let rc =
+            home.and_then(|h| std::fs::read_to_string(PathBuf::from(h).join(".duckdbrc")).ok());
+        let sql = sonde_proxy::clients::duckdb_init(endpoint, rc.as_deref());
+        let dir = s.paths().data_dir.join("duckdb");
+        std::fs::create_dir_all(&dir).ok()?;
+        // (the port: one file a recording)
+        let port = endpoint.rsplit(':').next().unwrap_or("0");
+        let path = dir.join(format!("init-{port}.sql"));
+        std::fs::write(&path, sql).ok()?;
+        Some(Self(path))
+    }
+}
+
+impl Drop for DuckdbInit {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// What sonde added to a container's command line, and whether the
 /// command's own network keeps the container from reaching sonde.
 fn container_note(command: &[String]) -> String {
@@ -1043,11 +1087,11 @@ const POINTED: &[(&[&str], &str)] = &[
     ),
     (
         &["duckdb"],
-        "DuckDB              con.execute(f\"SET s3_endpoint='{urlparse(os.environ['AWS_ENDPOINT_URL']).netloc}'; SET s3_url_style='path'; SET s3_use_ssl=false\")",
+        "DuckDB              the CLI is given -init (SET s3_*); in a program: con.execute(f\"SET s3_endpoint='{urlparse(os.environ['AWS_ENDPOINT_URL']).netloc}'; SET s3_url_style='path'; SET s3_use_ssl=false\")",
     ),
     (
         &["rclone"],
-        "rclone              a remote of the environment's: rclone ls :s3,env_auth=true:bucket (a named remote keeps its own endpoint)",
+        "rclone              reads RCLONE_S3_* (sonde sets them; a remote's own connection string, remote,endpoint=…:, wins)",
     ),
     (
         &["pyarrow"],
@@ -1075,7 +1119,7 @@ const POINTED: &[(&[&str], &str)] = &[
     ),
     (
         &["trino"],
-        "Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)",
+        "Trino               the server reads S3, not the trino client: s3.endpoint=${ENV:AWS_ENDPOINT_URL} in the catalog, then sonde run -- bin/launcher run (docs/recording.md)",
     ),
     (
         &["node", "npx", "npm", "bun", "deno"],

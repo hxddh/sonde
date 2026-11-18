@@ -179,7 +179,11 @@ jobs:
         if: runner.os == 'Windows'
         run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
-        run: target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
+        # one file: its viewer, and Native Shell's linked stylesheet set in it
+        run: |
+          target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html
+          grep -q 'id="sonde-files"' share-check.html && grep -q '<style>' share-check.html
+          if grep -q '<link rel="stylesheet"' share-check.html; then echo "::error::the shared page links a stylesheet"; exit 1; fi
       # before it is zipped: the archive holds the signed sonde.exe
       - name: Sign sonde.exe (skipped without the signing secrets)
         if: runner.os == 'Windows'
@@ -197,14 +201,21 @@ jobs:
         run: |
           mkdir -p dist
           name=sonde-${{ matrix.name }}
+          # beside the binary: its completions, and (not on Windows) its manual pages
+          mkdir -p dist/completions
           if [ "$RUNNER_OS" = Windows ]; then
             cp target/${{ matrix.target }}/release/sonde.exe dist/sonde.exe
-            (cd dist && 7z a -tzip -bso0 $name.zip sonde.exe)
+            dist/sonde.exe completions powershell > dist/completions/sonde.ps1
+            (cd dist && 7z a -tzip -bso0 $name.zip sonde.exe completions)
             # "<sha>  <file>", as shasum writes it elsewhere (no "*" of binary mode)
             (cd dist && echo "$(sha256sum < $name.zip | cut -d' ' -f1)  $name.zip" > $name.zip.sha256)
           else
             cp target/${{ matrix.target }}/release/sonde dist/sonde
-            tar -C dist -czf dist/$name.tar.gz sonde
+            dist/sonde man dist/man/man1
+            dist/sonde completions bash > dist/completions/sonde.bash
+            dist/sonde completions zsh > dist/completions/_sonde
+            dist/sonde completions fish > dist/completions/sonde.fish
+            tar -C dist -czf dist/$name.tar.gz sonde man completions
             (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
           fi
           cat dist/$name.*.sha256

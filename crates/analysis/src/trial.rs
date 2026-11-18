@@ -240,8 +240,13 @@ pub struct Trial {
     /// exit differs) the last request that failed.
     #[serde(rename = "where", default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Where>,
-    /// What to change, where the requests say.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// What to change, where the requests say: written with its English
+    /// (`text`), so an agent needs no phrase looked up.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "with_text"
+    )]
     pub advice: Option<Said>,
     /// The trial's own run: its file's name in the clean run's `trials/`
     /// folder ([`run_path`] gives the path).
@@ -251,6 +256,20 @@ pub struct Trial {
     /// one ([`with_history`]): given when shown, not kept with the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<Seen>,
+}
+
+/// A phrase as JSON with its English beside it: `{key, args, text}`. Read
+/// back, `text` is left (it is made again from the key).
+fn with_text<S: serde::Serializer>(said: &Option<Said>, s: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeStruct;
+    let Some(said) = said else {
+        return s.serialize_none();
+    };
+    let mut st = s.serialize_struct("Said", 3)?;
+    st.serialize_field("key", &said.key)?;
+    st.serialize_field("args", &said.args)?;
+    st.serialize_field("text", &said.en())?;
+    st.end()
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -4020,6 +4039,16 @@ mod tests {
         assert_eq!(j["where"]["kind"], "GetObject");
         assert_eq!(j["where"]["caller"], "/home/me/job/etl.py:12 in save");
         assert_eq!(j["advice"]["key"], "trial.advice.retries");
+        // and in English, so an agent looks nothing up
+        assert_eq!(j["advice"]["text"], a.en());
+        assert!(
+            j["advice"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("boto3 1.34 did not send it again"),
+            "{}",
+            j["advice"]["text"]
+        );
         let back: Trial = serde_json::from_value(j).unwrap();
         assert_eq!(back, t);
         // a program that survived has neither

@@ -63,8 +63,8 @@ FAMILIES = {
     "settings.path.": "config exports downloads audit",
     "split.by.": "none kind prefix size caller sdk status key",
     "trial.": "survived degraded broke untested refused",
-    "verdict.": "pass fail differs unsupported error skipped requests waiting cost errors warnings p95",
-    "why.": "obs.unfinished obs.orphans obs.small obs.small.parts obs.hot obs.listed obs.headget obs.deletes obs.rmw obs.rmw.log obs.polled obs.throttled obs.throttled.rate obs.serial obs.prefixrate",
+    "verdict.": "pass fail differs unsupported error skipped requests waiting cost transfer errors warnings p95",
+    "why.": "obs.unfinished obs.orphans obs.small obs.small.parts obs.hot obs.rangeagain obs.wholeread obs.smallreads obs.listed obs.crawl obs.headget obs.deletes obs.rmw obs.rmw.log obs.polled obs.throttled obs.throttled.rate obs.serial obs.prefixrate",
 }
 
 # used: the key's own text in the source, or a member of a listed family
@@ -121,6 +121,7 @@ for k in en:
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
 GONE = {
+    "welcome.demoReady": "the welcome's demo no longer leaves a command to press Return on: it runs, and its run opens on its finding",
 }
 
 

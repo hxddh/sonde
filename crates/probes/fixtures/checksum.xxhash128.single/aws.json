@@ -1,0 +1,62 @@
+{
+  "probe": "checksum.xxhash128.single",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-xxhash128",
+          "YF3VUJoYUxfgHW/uaeaXUg=="
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-xxhash128",
+          "YF3VUJoYUxfgHW/uaeaXUg=="
+        ],
+        [
+          "x-amz-checksum-type",
+          "FULL_OBJECT"
+        ],
+        [
+          "content-length",
+          "1000"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 400,
+      "code": "BadDigest",
+      "headers": [],
+      "body": "<Error><Code>BadDigest</Code></Error>",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "YF3VUJoYUxfgHW/uaeaXUg==",
+      "recordId": null
+    }
+  ]
+}

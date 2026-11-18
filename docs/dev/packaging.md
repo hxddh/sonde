@@ -69,22 +69,23 @@ the viewer's web runtime is kept by that commit and Rust's version. `fuzz.yml` r
 
 ## Releasing
 
-1. Update `CHANGELOG.md` (`## [x.y.z] - date`) and the versions: `Cargo.toml` `workspace.package.version`,
+1. Update `CHANGELOG.md` (`## [x.y.z] - date`; a `### 中文` part at the section's end gives the Chinese notes the app
+   shows in Chinese, the English otherwise: `scripts/changelog-section.sh x.y.z zh`) and the versions: `Cargo.toml` `workspace.package.version`,
    `app/nsh.json` `version` and `build`, `viewer/nsh.json` `version`; a new major also the action's `@vN` in
    `README.md`, `docs/ci.md` and `action.yml`.
 2. Merge to `main`, then push tag `vx.y.z` on that commit, or run Actions › Release › Run workflow with `x.y.z` (it
    tags the chosen commit). `release.yml` builds nothing: it waits (up to two hours) for CI's run of that commit on
    `main` (its push, the nightly or one by hand; never a pull request's), refuses it unless it is green — every
    build, test and tour — and publishes that run's files (`scripts/release-wait.sh`). The release has the changelog
-   section, what it skipped for want of secrets (signing, notarization, Windows' Authenticode, the signed package),
+   section (`latest.json` carries its Chinese part as `notes.zh.md`), what it skipped for want of secrets (signing, notarization, Windows' Authenticode, the signed package),
    `SHA256SUMS` and a `.sha256` per file; each file is attested.
-3. `action-tag.yml` then moves the major tag (`v24`) to the release, so `uses: hxddh/sonde@v24` installs it (a
+3. `action-tag.yml` then moves the major tag (`v25`) to the release, so `uses: hxddh/sonde@v25` installs it (a
    pre-release does not move it; to repair one: Actions › Action tag › Run workflow with `x.y.z`), and
    `action-live.yml` runs the Action against it.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`24.0.1`; `24`: the newest 24.x; `24.0`: the newest 24.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`25.0.0`; `25`: the newest 25.x; `25.0`: the newest 25.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job, [the tour](../../CONTRIBUTING.md#the-tour-and-its-pictures). The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code

@@ -188,7 +188,12 @@ pub struct Scenario {
 pub const LISTINGS: [&str; 2] = ["ListObjects", "ListObjectsV2"];
 
 /// The writes after which a listing shows a key.
-pub const MAKES_KEY: &[&str] = &["PutObject", "CopyObject", "CompleteMultipartUpload"];
+pub const MAKES_KEY: &[&str] = &[
+    "PutObject",
+    "CopyObject",
+    "CompleteMultipartUpload",
+    "RenameObject",
+];
 
 const WRITES: &[&str] = &[
     "PutObject",
@@ -198,6 +203,7 @@ const WRITES: &[&str] = &[
     "UploadPart",
     "UploadPartCopy",
     "CompleteMultipartUpload",
+    "RenameObject",
 ];
 
 fn rule(on: &[&str], effect: Effect, times: u32) -> Rule {
@@ -1247,10 +1253,7 @@ mod tests {
         assert_eq!(stall_of(&s), Some(FIRST_BYTE_MS));
         assert_eq!(stall_of(&scenario("slow").unwrap()), None);
         let f = Faults::new(&s);
-        assert!(matches!(
-            decide(&f, "GET", "GetObject", "a"),
-            Some(Verdict::Wait(_))
-        ));
+        std::assert_matches!(decide(&f, "GET", "GetObject", "a"), Some(Verdict::Wait(_)));
         assert_eq!(decide(&f, "GET", "GetObject", "a"), None, "its retry");
         assert_eq!(
             decide(&f, "GET", "GetObject", "b"),
@@ -1357,7 +1360,7 @@ mod tests {
             })
         };
         let first = get("bytes=0-");
-        assert!(matches!(first, Some(Verdict::CutBody { .. })), "{first:?}");
+        std::assert_matches!(first, Some(Verdict::CutBody { .. }));
         assert_eq!(get("bytes=500-"), None, "the resume");
         // a cut that could not be made is taken back
         if let Some(Verdict::CutBody { met }) = first {

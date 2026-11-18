@@ -179,7 +179,7 @@ fn options(clipboard: &Arc<Osc52>, fps: bool) -> AppOptions {
     o.capabilities = capabilities();
     o.clipboard = Some(clipboard.clone());
     o.fps = fps;
-    o.data_dir = nsh_engine::data_dir();
+    // data_dir stays None: the app's storage is <system data dir>/<app id>, as before 0.6.
     o
 }
 

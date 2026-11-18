@@ -697,10 +697,10 @@ mod tests {
             Err(ManifestError::UnknownVersion(3))
         );
         assert_eq!(decode_manifest(&[0, 1]), Err(ManifestError::Empty));
-        assert!(matches!(
+        std::assert_matches!(
             decode_manifest(&[0, 2, 255, 255, 255, 0, 0, 0]),
             Err(ManifestError::Corrupt(_))
-        ));
+        );
     }
 
     #[test]

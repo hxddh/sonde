@@ -100,6 +100,12 @@ pub struct EndpointConfig {
     /// Hash payloads (`false`: `UNSIGNED-PAYLOAD`).
     #[serde(default = "yes")]
     pub sign_payload: bool,
+    /// Whether what is read from it leaves its region: `true`, read over
+    /// the internet or from another region (egress, charged); `false`,
+    /// read in its region or VPC (free). Unset: not known, and a run's
+    /// bytes out are said as what they would cost, not counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<bool>,
 }
 
 fn yes() -> bool {
@@ -119,6 +125,7 @@ impl EndpointConfig {
             credentials: CredentialSource::Default,
             buckets: Vec::new(),
             sign_payload: true,
+            egress: None,
         }
     }
 
@@ -178,6 +185,13 @@ pub struct Prices {
     /// Requests that read (GET, HEAD and the rest), per thousand.
     #[serde(default = "reads_per_1000")]
     pub per_1000_reads: f64,
+    /// Bytes sent out of the store to the internet (egress), per GiB.
+    #[serde(default = "out_per_gib")]
+    pub per_gib_out: f64,
+}
+
+fn out_per_gib() -> f64 {
+    0.09
 }
 
 fn writes_per_1000() -> f64 {
@@ -209,6 +223,7 @@ impl Default for Prices {
             currency: usd(),
             per_1000_writes: writes_per_1000(),
             per_1000_reads: reads_per_1000(),
+            per_gib_out: out_per_gib(),
         }
     }
 }
@@ -220,6 +235,22 @@ impl Prices {
             .copied()
             .unwrap_or(self.default_per_gib_month)
     }
+}
+
+/// What a run on one endpoint is priced at ([`crate::Sonde::prices_for`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunPrices {
+    pub per_1000_writes: f64,
+    pub per_1000_reads: f64,
+    /// Lists, when they cost other than a write (B2's class C).
+    pub per_1000_lists: Option<f64>,
+    /// Bytes out, per GiB, when they leave the region.
+    pub per_gib_out: f64,
+    /// Whether they do: the endpoint's `egress` (`None`: not known).
+    pub egress: Option<bool>,
+    /// Storage of what a run leaves (S3 Standard's class), per GiB-month.
+    pub per_gib_month: f64,
+    pub currency: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

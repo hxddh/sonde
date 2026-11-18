@@ -14,8 +14,9 @@ use serde::Serialize;
 use crate::episode::Observation;
 use crate::summary::is_miss;
 
-/// Request prices, per thousand (S3's classes: writes and listings, reads).
-/// Deletes are free.
+/// A run's prices: its requests, per thousand (S3's classes: writes and
+/// listings, reads; deletes are free), its bytes out, per GiB, and the
+/// storage it leaves, per GiB-month.
 #[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestPrices {
@@ -25,18 +26,79 @@ pub struct RequestPrices {
     /// Lists, when they cost other than a write (B2's class C).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_1000_lists: Option<f64>,
+    /// Bytes sent out of the store, per GiB, when they leave its region.
+    #[serde(default = "out_per_gib")]
+    pub per_gib_out: f64,
+    /// Whether they do: `Some(true)` read from outside the region (egress,
+    /// charged), `Some(false)` read in it (free), `None` not known: not
+    /// charged, and said as what it would be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<bool>,
+    /// Storage of what a run leaves, per GiB-month.
+    #[serde(default = "stored_per_gib_month")]
+    pub per_gib_month: f64,
+}
+
+fn out_per_gib() -> f64 {
+    0.09
+}
+
+fn stored_per_gib_month() -> f64 {
+    0.023
 }
 
 impl Default for RequestPrices {
-    /// S3 Standard in us-east-1.
+    /// S3 Standard in us-east-1, egress not known.
     fn default() -> Self {
         RequestPrices {
             per_1000_writes: 0.005,
             per_1000_reads: 0.0004,
             currency: "USD".into(),
             per_1000_lists: None,
+            per_gib_out: out_per_gib(),
+            egress: None,
+            per_gib_month: stored_per_gib_month(),
         }
     }
+}
+
+impl RequestPrices {
+    /// What is said of bytes out: [`Egress::Charged`] when they leave the
+    /// region and cost something, [`Egress::Free`] when they do not (read
+    /// in the region, or a store that charges none), else not known.
+    pub fn egress(&self) -> Egress {
+        match self.egress {
+            _ if self.per_gib_out <= 0.0 => Egress::Free,
+            Some(true) => Egress::Charged,
+            Some(false) => Egress::Free,
+            None => Egress::Unknown,
+        }
+    }
+
+    /// The price of `bytes` out at egress's price, charged or not.
+    pub fn out(&self, bytes: u64) -> f64 {
+        bytes as f64 / GIB * self.per_gib_out
+    }
+
+    /// The price of `bytes` stored a month.
+    pub fn stored(&self, bytes: u64) -> f64 {
+        bytes as f64 / GIB * self.per_gib_month
+    }
+}
+
+const GIB: f64 = (1u64 << 30) as f64;
+
+/// Whether a run's bytes out are on its bill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Egress {
+    /// Read from outside the store's region: charged.
+    Charged,
+    /// Read in its region, or a store with no egress fee.
+    Free,
+    /// Where it was read from is not known: not charged, said as "egress if
+    /// read from outside the region".
+    Unknown,
 }
 
 /// S3's price class of a request.
@@ -107,6 +169,12 @@ pub struct Bin {
     /// Bytes sent and received by them.
     pub bytes_up: u64,
     pub bytes_down: u64,
+    /// What they cost as requests, what their bytes out cost as egress
+    /// (none when free; when not known, what it would be), and what the
+    /// bytes they wrote and the run left stored cost a month.
+    pub requests_cost: f64,
+    pub transfer_cost: f64,
+    pub storage_cost: f64,
 }
 
 /// How many requests took up to `le_ms` (and more than the bucket before):
@@ -205,14 +273,135 @@ pub struct CallerStat {
     pub cost: f64,
 }
 
+/// What a run cost: its requests, its bytes out (charged when they leave
+/// the region) and, apart, what what it left stored costs a month.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cost {
     pub writes: usize,
     pub reads: usize,
     pub free: usize,
+    /// The run's money: its requests, and its bytes out when charged
+    /// ([`Transfer::egress`]). Storage is a month's, apart.
     pub amount: f64,
     pub currency: String,
+    /// Of `amount`, the requests'.
+    pub requests: f64,
+    pub transfer: Transfer,
+    pub storage: Storage,
+}
+
+/// The bytes a run read out of the store.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transfer {
+    /// Bytes the store sent (its answers' bodies).
+    pub bytes: u64,
+    /// Whether they are on the bill: `charged` (read from outside the
+    /// region), `free` (read in it, or a store with no egress fee),
+    /// `unknown` (not counted: `amount` is what it would be).
+    pub egress: Egress,
+    /// Their price as egress (in [`Cost::amount`] when `charged`).
+    pub amount: f64,
+    pub per_gib: f64,
+}
+
+/// What a run left stored, a month.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Storage {
+    /// Bytes it wrote and did not delete.
+    pub bytes: u64,
+    /// Their price a month (S3 Standard's class, or the settings').
+    pub per_month: f64,
+    /// A write's answer said the bucket keeps versions.
+    pub versioned: bool,
+    /// Versions its overwrites and deletes made noncurrent there …
+    pub noncurrent: usize,
+    /// … the bytes of those whose size it saw, and their price a month
+    /// (until a lifecycle rule expires them).
+    pub noncurrent_bytes: u64,
+    pub noncurrent_per_month: f64,
+}
+
+impl Cost {
+    /// What `show` and `run` say of the money past the requests: the bytes
+    /// out (charged, or what they would be if read from outside the region)
+    /// and what the run left stored, a month; none when neither comes to a
+    /// cent and no version was kept.
+    pub fn line(&self) -> Option<String> {
+        use crate::program::{CENT, money_text};
+        let money = |v: f64| money_text(v, &self.currency);
+        let size = sonde_fmt::bytes;
+        let mut parts = Vec::new();
+        let t = &self.transfer;
+        if t.bytes > 0 && t.amount >= CENT {
+            parts.push(match t.egress {
+                Egress::Charged => format!(
+                    "requests ≈ {} · read {} ≈ {} egress",
+                    money(self.requests),
+                    size(t.bytes),
+                    money(t.amount)
+                ),
+                _ => format!(
+                    "read {} ≈ {} egress if read from outside the region (not counted: set the endpoint's `egress` to say)",
+                    size(t.bytes),
+                    money(t.amount)
+                ),
+            });
+        }
+        let st = &self.storage;
+        if st.bytes > 0 && st.per_month >= CENT {
+            parts.push(format!(
+                "left {} stored ≈ {} a month",
+                size(st.bytes),
+                money(st.per_month)
+            ));
+        }
+        if st.versioned && st.noncurrent > 0 {
+            let s = if st.noncurrent == 1 { "" } else { "s" };
+            parts.push(if st.noncurrent_bytes > 0 {
+                format!(
+                    "the bucket keeps versions: {} noncurrent version{s} of {} ≈ {} a month until a lifecycle rule expires them",
+                    st.noncurrent,
+                    size(st.noncurrent_bytes),
+                    money(st.noncurrent_per_month)
+                )
+            } else {
+                format!(
+                    "the bucket keeps versions: {} noncurrent version{s} stay billed until a lifecycle rule expires them",
+                    st.noncurrent
+                )
+            });
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
+    /// A run that cost nothing, at `prices`.
+    pub fn none(prices: &RequestPrices) -> Cost {
+        Cost {
+            writes: 0,
+            reads: 0,
+            free: 0,
+            amount: 0.0,
+            currency: prices.currency.clone(),
+            requests: 0.0,
+            transfer: Transfer {
+                bytes: 0,
+                egress: prices.egress(),
+                amount: 0.0,
+                per_gib: prices.per_gib_out,
+            },
+            storage: Storage {
+                bytes: 0,
+                per_month: 0.0,
+                versioned: false,
+                noncurrent: 0,
+                noncurrent_bytes: 0,
+                noncurrent_per_month: 0.0,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -831,8 +1020,25 @@ pub fn reached_store(r: &Record) -> bool {
         && !(has("x-sonde-fault") && !has("x-sonde-store-status"))
 }
 
-/// What one request costs: nothing when it never reached the store.
+/// What one request costs: its price, and the bytes it read when they
+/// are charged ([`Egress::Charged`]); nothing when it never reached the
+/// store.
 pub fn price(r: &Record, prices: &RequestPrices) -> f64 {
+    let out = match prices.egress() {
+        Egress::Charged if reached_store(r) => out_bytes(r),
+        _ => 0,
+    };
+    request_price(r, prices) + prices.out(out)
+}
+
+/// The bytes a request read out of the store: its answer's body, when it
+/// reached the store.
+pub fn out_bytes(r: &Record) -> u64 {
+    r.response_bytes.get().unwrap_or(0)
+}
+
+/// What one request costs as a request, without its bytes.
+pub fn request_price(r: &Record, prices: &RequestPrices) -> f64 {
     match class(r) {
         _ if !reached_store(r) => 0.0,
         Class::Write if r.kind.starts_with("List") => {
@@ -970,6 +1176,39 @@ pub fn prefix_stats(
     (shown, prefixes, slots)
 }
 
+/// A run's [`Cost`]: its requests, its bytes out, and what it left
+/// stored ([`crate::stored`]).
+pub fn cost_of(records: &[Record], prices: &RequestPrices, stored: &crate::stored::Stored) -> Cost {
+    let mut c = Cost::none(prices);
+    let mut out = 0u64;
+    for r in records.iter().filter(|r| reached_store(r)) {
+        match class(r) {
+            Class::Write => c.writes += 1,
+            Class::Read => c.reads += 1,
+            Class::Free => c.free += 1,
+        }
+        c.requests += request_price(r, prices);
+        out += out_bytes(r);
+    }
+    c.transfer.bytes = out;
+    c.transfer.amount = match c.transfer.egress {
+        Egress::Free => 0.0,
+        _ => prices.out(out),
+    };
+    c.amount = c.requests
+        + match c.transfer.egress {
+            Egress::Charged => c.transfer.amount,
+            _ => 0.0,
+        };
+    c.storage.bytes = stored.bytes();
+    c.storage.per_month = prices.stored(c.storage.bytes);
+    c.storage.versioned = stored.versioned;
+    c.storage.noncurrent = stored.noncurrent;
+    c.storage.noncurrent_bytes = stored.noncurrent_bytes;
+    c.storage.noncurrent_per_month = prices.stored(stored.noncurrent_bytes);
+    c
+}
+
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     profile_from(records, prices, None)
 }
@@ -989,13 +1228,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         rate: Vec::new(),
         in_flight: Vec::new(),
         samples: Vec::new(),
-        cost: Cost {
-            writes: 0,
-            reads: 0,
-            free: 0,
-            amount: 0.0,
-            currency: prices.currency.clone(),
-        },
+        cost: Cost::none(prices),
         prices: prices.clone(),
         prefixes: Vec::new(),
         heat: Vec::new(),
@@ -1075,6 +1308,9 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             throttled: 0,
             bytes_up: 0,
             bytes_down: 0,
+            requests_cost: 0.0,
+            transfer_cost: 0.0,
+            storage_cost: 0.0,
         })
         .collect();
     // each slice's latencies side by side in one list, made at its size:
@@ -1090,6 +1326,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let mut filled = slice_at.clone();
     // the latencies' grid: every request in its slice and bucket
     let mut grid: BTreeMap<(usize, i32), usize> = BTreeMap::new();
+    let transfer_counts = prices.egress() != Egress::Free;
     for r in records {
         let i = tl.bin_of(r);
         took[filled[i]] = r.latency_ms;
@@ -1101,12 +1338,24 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         b.throttled += usize::from(throttled(r));
         b.bytes_up += r.request_bytes.get().unwrap_or(0);
         b.bytes_down += r.response_bytes.get().unwrap_or(0);
+        if reached_store(r) {
+            b.requests_cost += request_price(r, prices);
+            if transfer_counts {
+                b.transfer_cost += prices.out(out_bytes(r));
+            }
+        }
         match tone(r) {
             0 => b.ok += 1,
             1 => b.miss += 1,
             2 => b.client += 1,
             _ => b.server += 1,
         }
+    }
+
+    // what the run left stored, by the slice that wrote it
+    let stored = crate::stored::stored(records);
+    for (i, bytes) in &stored.left {
+        rate[tl.bin_of(&records[*i])].storage_cost += prices.stored(*bytes);
     }
 
     // how long requests took, slice by slice: the band the live view draws
@@ -1258,19 +1507,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let callers_cut = callers.len() > CALLERS;
     callers.truncate(CALLERS);
 
-    let count = |c: Class| {
-        records
-            .iter()
-            .filter(|r| reached_store(r) && class(r) == c)
-            .count()
-    };
-    let cost = Cost {
-        writes: count(Class::Write),
-        reads: count(Class::Read),
-        free: count(Class::Free),
-        amount: records.iter().map(&price).sum(),
-        currency: prices.currency.clone(),
-    };
+    let cost = cost_of(records, prices, &stored);
     let (_, prefixes, slots) = prefix_stats(records, prices);
     let mut cells: HashMap<(usize, usize), usize> = HashMap::new();
     for (r, slot) in records.iter().zip(&slots) {
@@ -1636,7 +1873,15 @@ fn identity_as(o: &Observation, literal: bool) -> String {
 /// their text names: each is one finding a run, and what it names (the key
 /// read and written back the most, the folder all its keys share) moves
 /// with its counts. Fixed in part, one reads less, not fixed and new.
-const OF_BUCKET: &[&str] = &["obs.rmw", "obs.deletes", "obs.small"];
+const OF_BUCKET: &[&str] = &[
+    "obs.rmw",
+    "obs.deletes",
+    "obs.small",
+    "obs.rangeagain",
+    "obs.wholeread",
+    "obs.smallreads",
+    "obs.crawl",
+];
 
 /// What a finding of `kind` is about, of the key or prefix `v` it names:
 /// its bucket for the kinds [`OF_BUCKET`] (`demo` of `demo/out/a/`; several
@@ -1715,7 +1960,11 @@ pub const FINDING_KINDS: &[&str] = &[
     "obs.orphans",
     "obs.small",
     "obs.hot",
+    "obs.rangeagain",
+    "obs.wholeread",
+    "obs.smallreads",
     "obs.listed",
+    "obs.crawl",
     "obs.headget",
     "obs.deletes",
     "obs.rmw",
@@ -1985,6 +2234,28 @@ impl Run {
         observations: Vec<Observation>,
         traces: Vec<Observation>,
     ) -> Run {
+        Run::reckoned(records, profile, observations, traces, true)
+    }
+
+    /// [`Run::with`] for a run only ever the later of two compared: what
+    /// its findings would save by what their requests asked ([`Run::asks`])
+    /// is read of the earlier run alone, and is not reckoned.
+    pub fn later(
+        records: &[Record],
+        profile: Profile,
+        observations: Vec<Observation>,
+        traces: Vec<Observation>,
+    ) -> Run {
+        Run::reckoned(records, profile, observations, traces, false)
+    }
+
+    fn reckoned(
+        records: &[Record],
+        profile: Profile,
+        observations: Vec<Observation>,
+        traces: Vec<Observation>,
+        asked: bool,
+    ) -> Run {
         let mut folders: HashMap<String, usize> = HashMap::new();
         let mut name = String::new();
         for r in records {
@@ -2014,7 +2285,11 @@ impl Run {
         let (mut observations, mut traces) = (observations, traces);
         name_findings(&mut traces, &observations);
         name_findings(&mut observations, &traces);
-        let asks = crate::fixloop::asks_of(records, &observations);
+        let asks = if asked {
+            crate::fixloop::asks_of(records, &observations)
+        } else {
+            crate::fixloop::Asks::new()
+        };
         let error_classes = error_classes(records);
         // (a trace is read for its counts and its words, not for the
         // operations and requests it names: a run of a million has tens of
@@ -2247,8 +2522,10 @@ mod tests {
             saving_text: None,
             saves_requests: 0,
             saves_ms: 0.0,
+            saves_bytes: 0,
             saved_ids: Vec::new(),
             kept_ids: Vec::new(),
+            keeps_bytes: false,
             timed_ids: Vec::new(),
             fixes: Vec::new(),
             callers: Vec::new(),
@@ -2290,8 +2567,10 @@ mod tests {
             saving_text: None,
             saves_requests: 0,
             saves_ms: 0.0,
+            saves_bytes: 0,
             saved_ids: Vec::new(),
             kept_ids: Vec::new(),
+            keeps_bytes: false,
             timed_ids: Vec::new(),
             fixes: Vec::new(),
             callers: Vec::new(),

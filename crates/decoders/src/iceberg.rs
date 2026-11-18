@@ -75,9 +75,15 @@ fn as_str(v: Option<&Avro>) -> Option<String> {
 /// a few bytes could ask for gigabytes (found by `fuzz/`, `iceberg_avro`).
 const AVRO_MAX_LEN: usize = 4 << 20;
 
+/// The deepest an Avro value may nest: a manifest's are a few records deep.
+/// A recursive schema lets each byte of a hostile file go one level deeper,
+/// which would overflow the stack (and abort sonde, past any `catch_unwind`).
+const AVRO_MAX_DEPTH: usize = 32;
+
 fn avro_records(bytes: &[u8]) -> Result<Vec<Avro>, String> {
-    // (the first call in the process sets it; every call sets the same)
+    // (the first call in the process sets them; every call sets the same)
     apache_avro::util::max_allocation_bytes(AVRO_MAX_LEN);
+    apache_avro::util::max_decode_recursion_depth(AVRO_MAX_DEPTH);
     // apache-avro panics on some malformed schemas (a name it cannot parse:
     // `fuzz/`, `iceberg_avro`): an unreadable file, not the end of sonde
     std::panic::catch_unwind(|| {
@@ -617,6 +623,51 @@ mod tests {
             0x65, 0x7b, 0xd2, 0x22, 0x74, 0x67, 0x22, 0x79,
         ];
         assert!(avro_records(file).is_err());
+    }
+
+    /// An Avro file of one value of a recursive schema, `depth` deep, one
+    /// byte a level.
+    fn nested(depth: usize) -> Vec<u8> {
+        fn long(out: &mut Vec<u8>, n: i64) {
+            let mut z = ((n << 1) ^ (n >> 63)) as u64;
+            while z >= 0x80 {
+                out.push((z as u8) | 0x80);
+                z >>= 7;
+            }
+            out.push(z as u8);
+        }
+        fn bytes(out: &mut Vec<u8>, b: &[u8]) {
+            long(out, b.len() as i64);
+            out.extend_from_slice(b);
+        }
+        let schema =
+            r#"{"type":"record","name":"Node","fields":[{"name":"next","type":["null","Node"]}]}"#;
+        let sync = [7u8; 16];
+        let mut file = b"Obj\x01".to_vec();
+        long(&mut file, 2);
+        bytes(&mut file, b"avro.schema");
+        bytes(&mut file, schema.as_bytes());
+        bytes(&mut file, b"avro.codec");
+        bytes(&mut file, b"null");
+        long(&mut file, 0);
+        file.extend_from_slice(&sync);
+        // "Node" chosen at each level, then null
+        let mut data = vec![0x02u8; depth];
+        data.push(0x00);
+        long(&mut file, 1);
+        bytes(&mut file, &data);
+        file.extend_from_slice(&sync);
+        file
+    }
+
+    /// Nested half a million deep: an error, where decoding it whole
+    /// overflows the stack and aborts.
+    #[test]
+    fn an_avro_value_nested_past_any_manifests_is_refused() {
+        let err = avro_records(&nested(500_000)).unwrap_err();
+        assert!(err.contains("ecursion"), "{err}");
+        // as deep as a manifest nests, it reads
+        assert_eq!(avro_records(&nested(4)).map(|r| r.len()), Ok(1));
     }
 
     /// A schema whose name apache-avro cannot parse, where it panics.

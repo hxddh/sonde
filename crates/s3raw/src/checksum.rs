@@ -13,14 +13,28 @@ pub enum Algorithm {
     Crc64nvme,
     Sha1,
     Sha256,
+    Sha512,
+    Md5,
+    /// XXH64, seed 0.
+    Xxhash64,
+    /// XXH3 (64-bit), seed 0.
+    Xxhash3,
+    /// XXH3 (128-bit), seed 0.
+    Xxhash128,
 }
 
-pub const ALL: [Algorithm; 5] = [
+/// Every algorithm S3's API names (botocore 1.42.94 added the last five).
+pub const ALL: [Algorithm; 10] = [
     Algorithm::Crc32,
     Algorithm::Crc32c,
     Algorithm::Crc64nvme,
     Algorithm::Sha1,
     Algorithm::Sha256,
+    Algorithm::Sha512,
+    Algorithm::Md5,
+    Algorithm::Xxhash64,
+    Algorithm::Xxhash3,
+    Algorithm::Xxhash128,
 ];
 
 impl Algorithm {
@@ -32,6 +46,11 @@ impl Algorithm {
             Algorithm::Crc64nvme => "CRC64NVME",
             Algorithm::Sha1 => "SHA1",
             Algorithm::Sha256 => "SHA256",
+            Algorithm::Sha512 => "SHA512",
+            Algorithm::Md5 => "MD5",
+            Algorithm::Xxhash64 => "XXHASH64",
+            Algorithm::Xxhash3 => "XXHASH3",
+            Algorithm::Xxhash128 => "XXHASH128",
         }
     }
     /// `x-amz-checksum-crc32`.
@@ -44,6 +63,26 @@ impl Algorithm {
     }
     pub fn from_name(s: &str) -> Option<Self> {
         ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(s))
+    }
+    /// By its header's name (`x-amz-checksum-crc32`, any case).
+    pub fn from_header(name: &str) -> Option<Self> {
+        let n = name.get(15..)?;
+        name[..15]
+            .eq_ignore_ascii_case("x-amz-checksum-")
+            .then(|| Self::from_name(n))
+            .flatten()
+    }
+    /// How long the header's value is: base64 of the digest.
+    pub fn header_len(self) -> usize {
+        let raw: usize = match self {
+            Algorithm::Crc32 | Algorithm::Crc32c => 4,
+            Algorithm::Crc64nvme | Algorithm::Xxhash64 | Algorithm::Xxhash3 => 8,
+            Algorithm::Md5 | Algorithm::Xxhash128 => 16,
+            Algorithm::Sha1 => 20,
+            Algorithm::Sha256 => 32,
+            Algorithm::Sha512 => 64,
+        };
+        raw.div_ceil(3) * 4
     }
     /// Whether S3 can store a full-object checksum of a multipart upload
     /// (CRCs only; SHA checksums of multipart uploads are composite).
@@ -65,6 +104,12 @@ impl Algorithm {
             }
             Algorithm::Sha1 => sha1::Sha1::digest(data).to_vec(),
             Algorithm::Sha256 => sha2::Sha256::digest(data).to_vec(),
+            Algorithm::Sha512 => sha2::Sha512::digest(data).to_vec(),
+            Algorithm::Md5 => md5::Md5::digest(data).to_vec(),
+            // the canonical (big-endian) form, as the CRT sends it
+            Algorithm::Xxhash64 => xxhash_rust::xxh64::xxh64(data, 0).to_be_bytes().to_vec(),
+            Algorithm::Xxhash3 => xxhash_rust::xxh3::xxh3_64(data).to_be_bytes().to_vec(),
+            Algorithm::Xxhash128 => xxhash_rust::xxh3::xxh3_128(data).to_be_bytes().to_vec(),
         }
     }
 
@@ -173,10 +218,57 @@ mod tests {
     }
 
     #[test]
+    fn known_values_of_the_newer_ones() {
+        // "hello world"
+        let d = b"hello world";
+        assert_eq!(
+            Algorithm::Md5.raw(d),
+            hex::decode("5eb63bbbe01eeed093cb22bb8f5acdc3").unwrap()
+        );
+        assert_eq!(Algorithm::Md5.compute(d), "XrY7u+Ae7tCTyyK7j1rNww==");
+        assert_eq!(
+            Algorithm::Sha512.raw(d),
+            hex::decode(
+                "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f\
+                 989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f"
+            )
+            .unwrap()
+        );
+        // the CRT's own vectors (aws-checksums' xxhash_test.c), which
+        // boto3 sends with: big-endian, the 128-bit high half first
+        let h = b"Hello world";
+        assert_eq!(
+            Algorithm::Xxhash64.raw(h),
+            hex::decode("c500b0c912b376d8").unwrap()
+        );
+        assert_eq!(
+            Algorithm::Xxhash3.raw(h),
+            hex::decode("b6acb9d84a38ff74").unwrap()
+        );
+        assert_eq!(
+            Algorithm::Xxhash128.raw(h),
+            hex::decode("7351f89812f97382b91d05b31e04dd7f").unwrap()
+        );
+        for a in ALL {
+            assert_eq!(a.compute(d).len(), a.header_len(), "{}", a.name());
+            assert_eq!(Algorithm::from_header(&a.header()), Some(a));
+        }
+    }
+
+    #[test]
     fn names() {
         assert_eq!(Algorithm::Crc64nvme.header(), "x-amz-checksum-crc64nvme");
         assert_eq!(Algorithm::Crc32c.element(), "ChecksumCRC32C");
         assert_eq!(Algorithm::from_name("sha256"), Some(Algorithm::Sha256));
+        assert_eq!(Algorithm::Xxhash128.header(), "x-amz-checksum-xxhash128");
+        assert_eq!(Algorithm::Xxhash3.element(), "ChecksumXXHASH3");
+        assert_eq!(Algorithm::Sha512.element(), "ChecksumSHA512");
+        assert_eq!(
+            Algorithm::from_header("X-Amz-Checksum-MD5"),
+            Some(Algorithm::Md5)
+        );
+        assert_eq!(Algorithm::from_header("x-amz-checksum-type"), None);
+        assert_eq!(Algorithm::from_header("x-amz"), None);
     }
 
     #[test]
@@ -197,5 +289,13 @@ mod tests {
         assert_eq!(s[0].kind, ChecksumType::FullObject);
         assert!(s[0].kind_from_header);
         assert!(Algorithm::Sha1.composite(&[b"a", b"b"]).ends_with("-2"));
+        // the newer ones are read as well
+        let h = vec![(
+            "x-amz-checksum-xxhash64".to_string(),
+            Algorithm::Xxhash64.compute(b"x"),
+        )];
+        let s = from_headers(&h);
+        assert_eq!(s[0].algorithm, Algorithm::Xxhash64);
+        assert_eq!(s[0].value, Algorithm::Xxhash64.compute(b"x"));
     }
 }

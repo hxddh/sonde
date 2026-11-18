@@ -184,6 +184,10 @@
         "currency": {
           "type": "string"
         },
+        "bytesOut": {
+          "type": "integer",
+          "description": "Bytes read out of the store: what `max-transfer` holds it to."
+        },
         "errors": {
           "type": "integer"
         },
@@ -202,6 +206,7 @@
         "wallMs",
         "cost",
         "currency",
+        "bytesOut",
         "errors",
         "warnings",
         "findings"
@@ -323,6 +328,7 @@
             "requests",
             "waiting",
             "cost",
+            "transfer",
             "errors",
             "p95",
             "warnings"

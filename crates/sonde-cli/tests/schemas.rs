@@ -405,15 +405,92 @@ async fn every_json_output_is_as_its_schema_says() {
     let t = &summary["trials"][0];
     assert_eq!(t["where"]["kind"], "PutObject", "{t}");
     assert_eq!(t["advice"]["key"], "trial.advice.retry", "{t}");
+    // with its English: an agent looks nothing up
+    assert!(
+        t["advice"]["text"]
+            .as_str()
+            .is_some_and(|x| x.starts_with("send a failed request again")),
+        "{t}"
+    );
     let props = &schema("show")["$defs"]["trial"]["properties"];
     assert_eq!(props["where"]["type"], "object", "{props}");
-    assert_eq!(props["advice"]["$ref"], "#/$defs/phrase", "{props}");
+    assert_eq!(
+        props["advice"]["required"],
+        serde_json::json!(["key", "args", "text"]),
+        "{props}"
+    );
+    // a finding an engine's setting acts on: the setting, and where the
+    // program's folder sets it (a SlateDB reader polling its manifest every
+    // 100 ms, from the recording in analysis' fixtures)
+    {
+        let fixture = sonde_analysis::run::RunFile::open(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../analysis/tests/fixtures/slatedb.sonde"),
+        )
+        .unwrap();
+        let list = fixture
+            .records
+            .iter()
+            .find(|r| r.kind == "ListObjectsV2")
+            .unwrap();
+        let mut reader = sonde_analysis::run::RunFile {
+            header: fixture.header.clone(),
+            records: Vec::new(),
+            logs: Vec::new(),
+        };
+        for i in 0..30u64 {
+            let mut r = list.clone();
+            r.id = i + 1;
+            r.time += chrono::Duration::milliseconds(i as i64 * 100);
+            reader.records.push(r);
+        }
+        let program = b.path("reader");
+        std::fs::create_dir_all(&program).unwrap();
+        std::fs::write(
+            program.join("main.rs"),
+            "// the reader\nlet o = DbReaderOptions { manifest_poll_interval: Duration::from_millis(100), ..Default::default() };\n",
+        )
+        .unwrap();
+        reader.header.cwd = Some(program.to_string_lossy().into_owned());
+        let file = b.path("reader.sonde");
+        sonde_analysis::import::save(&reader, &file).unwrap();
+        let shown = b
+            .json(&["show", file.to_str().unwrap(), "-f", "json"], 0)
+            .await;
+        let listed = shown["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["kind"] == "obs.listed")
+            .unwrap_or_else(|| panic!("{}", shown["findings"]));
+        let s = &listed["fixes"][0]["setting"];
+        assert_eq!(s["key"], "manifest_poll_interval", "{listed}");
+        assert_eq!(s["value"], "10s", "{listed}");
+        assert_eq!(s["engine"], "SlateDB DbReader", "{listed}");
+        assert_eq!(s["where"], "main.rs:2", "{listed}");
+        holds("show", &shown);
+    }
     for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
         );
     }
+    // the run's cost split: its requests, its bytes out (said, not counted, when
+    // where they were read from is not known) and what it left stored
+    let cost = &summary["cost"];
+    assert!(cost["requests"].is_number(), "{cost}");
+    assert!(
+        ["charged", "free", "unknown"].contains(&cost["transfer"]["egress"].as_str().unwrap()),
+        "{cost}"
+    );
+    assert!(cost["storage"]["perMonth"].is_number(), "{cost}");
+    // a budget on the bytes out: its own row, in bytes
+    let held = b
+        .json(&["check", s, "--max-transfer", "1B", "-f", "json"], 1)
+        .await;
+    assert_eq!(held["check"]["verdicts"][0]["what"], "transfer", "{held}");
+    assert!(held["run"]["bytesOut"].as_u64().unwrap() > 1, "{held}");
+    holds("check", &held);
     holds(
         "check",
         &b.json(&["check", s, "--max-requests", "1", "-f", "json"], 1)

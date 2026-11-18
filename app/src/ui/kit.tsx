@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { Animated, cleanup, Clipboard, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, windowSize, type InputRef, type ViewRef } from "nsh";
+import { Animated, cleanup, Clipboard, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, LayoutAnimation, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, windowSize, type InputRef, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
@@ -114,18 +114,29 @@ export function Prose(props: { text: string; class?: string; testID?: string }) 
   );
 }
 
-/** Motion: four lengths (ms) and one ease (nsh.json's `ease-standard`, a soft
- * settle), and no others; lint-kit fails a `duration-N` outside the kit.
- * `instant` a hover's wash, a colour; `fast` a press, a control's state;
- * `base` a thing moving into place (a selection sliding, a value gliding);
- * `slow` a reveal (a dialog or a popup opening). Leaving is a step faster than
- * entering. Under reduced motion none of it runs (`motion-safe:`). */
-export const TIMING = { instant: 120, fast: 180, base: 240, slow: 360 } as const;
-/** A control's states change over `TIMING.instant` on the one ease: colours,
- * opacity, shadows and transforms (Native Shell's `transition`). */
-export const TRANSITION = "motion-safe:transition motion-safe:duration-120 motion-safe:ease-standard";
-/** What moves into place (a selection sliding, a value gliding), over `TIMING.base`. */
-export const GLIDE = "motion-safe:transition-all motion-safe:duration-240 motion-safe:ease-standard";
+/** Motion: one spring, the house's, and no other (Native Shell's physical
+ * spring: stiffness 620, damping 45, mass 1, a damping ratio of 0.9: it
+ * settles in about 300 ms and passes its target by under half a percent).
+ * Every transition, glide, popup, toast, reveal and layout change moves on it,
+ * and it times itself: there are no lengths. lint-kit fails a `duration-N`, an
+ * ease or a spring outside the kit. Under reduced motion none of it runs
+ * (`motion-safe:`; a reveal and a layout change land at once). Charts take it
+ * for their hover (`MOTION` in plots/system.tsx). */
+export const SPRING = { stiffness: 620, damping: 45 } as const;
+/** The spring as a transition's curve (Tailwind's `ease-spring-[k,c]`). */
+const EASE = "motion-safe:ease-spring-[620,45]";
+/** A control's states change on the spring: colours, opacity, shadows and
+ * transforms (Native Shell's `transition`). */
+export const TRANSITION = `motion-safe:transition ${EASE}`;
+/** What moves into place (a selection sliding, a value gliding), on the spring. */
+export const GLIDE = `motion-safe:transition-all ${EASE}`;
+/** The next commit's layout changes (rows arriving, a pane opening) move on
+ * the spring: what comes and goes fades. Nothing under reduced motion. */
+export function glideLayout() {
+  if (reduceMotion()) return;
+  const spring = { type: "spring", ...SPRING } as const;
+  LayoutAnimation.configureNext({ duration: 300, create: { ...spring, property: "opacity" }, update: spring, delete: { ...spring, property: "opacity" } });
+}
 /** A press sinks a little, none under reduced motion: a button, an icon
  * button or a segment to 0.97; a row, a card or a place, wider, to 0.99. */
 export const PRESS = {
@@ -216,17 +227,17 @@ export const fill = (translucent: string, opaque: string) => (material ? translu
 export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 ${SHADOW.popup}`;
 /** How every popup comes and goes (a select's list, the endpoint switcher, a
  * figure's preview, a date picker): from just above its trigger, a little
- * small and clear, settling in over `TIMING.fast`; it leaves by fading. Give
+ * small and clear, settling in on the spring; it leaves by fading. Give
  * `class` with the popup's classes, `starting` and `ending` to its
  * `popupStartingClass` and `popupEndingClass`. Under reduced motion it is
  * there at once. */
 export const POPUP_MOTION = {
-  class: "motion-safe:transition motion-safe:duration-180 motion-safe:ease-standard",
+  class: TRANSITION,
   starting: "opacity-0 scale-97 -translate-y-1",
   ending: "opacity-0",
 } as const;
-/** How a toast comes in from the window's corner and goes, over `TIMING.base`. */
-export const TOAST_MOTION = "motion-safe:transition-all motion-safe:duration-240 motion-safe:ease-standard";
+/** How a toast comes in from the window's corner and goes, on the spring. */
+export const TOAST_MOTION = GLIDE;
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
 /** Where the keyboard is: one ring on every control that takes focus, shown
@@ -1179,7 +1190,7 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
           </AccordionTrigger>
           {props.trailing}
         </AccordionHeader>
-        <AccordionPanel reveal accessibilityLabel={props.title}>
+        <AccordionPanel reveal revealSpring={SPRING} accessibilityLabel={props.title}>
           {props.children}
         </AccordionPanel>
       </AccordionItem>
@@ -1560,7 +1571,7 @@ export function Section(props: { title?: string; description?: string; children:
 }
 
 /** How far something has got: `value` a fraction, 0–1, or `null` while how
- * much is not known. A known value glides to each new one (`TIMING.base`); an
+ * much is not known. A known value glides to each new one (`GLIDE`); an
  * unknown one is a segment sweeping along the track, still under reduced
  * motion. Screen readers hear a progress bar and its value (Native Shell's
  * Progress). Not a chart's bar: that is the plots' `Bar`. */

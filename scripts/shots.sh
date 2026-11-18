@@ -14,7 +14,7 @@ cleanup() {
   if [ -n "${SONDE_SHOTS_KEEP:-}" ]; then mkdir -p "$SONDE_SHOTS_KEEP" && cp -R "$tmp/data/runs/." "$SONDE_SHOTS_KEEP/" || true; fi
   rm -rf "$tmp"
   # (the file the tour was told this machine by goes back to its committed form)
-  printf '{ "max": "" }\n' > tests/shots.env.json
+  printf '{ "max": "", "os": "" }\n' > tests/shots.env.json
 }
 trap cleanup EXIT
 export SONDE_CONFIG_DIR="$tmp/config" SONDE_DATA_DIR="$tmp/data"
@@ -24,6 +24,8 @@ export SONDE_CONFIG_DIR="$tmp/config" SONDE_DATA_DIR="$tmp/data"
 mkdir -p "$SONDE_DATA_DIR/runs"
 cp -R tests/fixtures/runs/. "$SONDE_DATA_DIR/runs/"
 unset AWS_PROFILE AWS_SESSION_TOKEN AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
+# (a run the tour makes outside a repository would carry CI's commit: the same picture on every commit)
+unset GITHUB_SHA GITHUB_HEAD_REF GITHUB_REF_NAME
 export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-secret \
   AWS_CONFIG_FILE="$tmp/aws-config" AWS_SHARED_CREDENTIALS_FILE="$tmp/aws-credentials" \
   AWS_EC2_METADATA_DISABLED=true
@@ -60,8 +62,8 @@ if [ "$target" = linux ] && [ -z "${DISPLAY:-}" ]; then
   if command -v openbox >/dev/null; then openbox >/dev/null 2>&1 & wm=$!; fi
   sleep 1
 fi
-# what the tour is told of this machine: a file, as its VM has no environment
-printf '{ "max": "%s" }\n' "${SONDE_SHOT_MAX:-}" > tests/shots.env.json
+# what the tour is told of this machine (its largest window, its system): a file, as its VM has no environment
+printf '{ "max": "%s", "os": "%s" }\n' "${SONDE_SHOT_MAX:-}" "$target" > tests/shots.env.json
 mkdir -p shots
 nsh test tests/shots.test.tsx --target "$target" ${SHOTS_FILTER:+--filter "$SHOTS_FILTER"}
 if [ -n "${SONDE_SHOTS:-}" ]; then mkdir -p "$SONDE_SHOTS" && cp shots/*.png "$SONDE_SHOTS/"; fi
@@ -73,7 +75,9 @@ if [ -n "${SONDE_README:-}" ]; then
   while read -r shot name; do
     [ -f "$from/$shot.png" ] && cp "$from/$shot.png" "$to/$name.png" && echo "docs/images/$name.png <- $shot"
   done <<'MAP'
+wide-01a-demo fix
 wide-02b-ran run
+wide-03ka-cost cost
 wide-02e-trial-plan trial-plan
 wide-02g-trial-done trial
 wide-02j-trial-time trial-over-clean

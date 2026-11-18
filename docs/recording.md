@@ -18,7 +18,9 @@ The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credential
 through your shell in a pseudo-terminal (ConPTY on Windows), with
 operations beside it; Stop ends it, a notification says how, the run opens. Output is kept in the run with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
-highlights its lines and back. Output is kept as printed: do not print secrets.
+highlights its lines and back. Output is kept as printed: do not print secrets. With a folder chosen and the field
+empty, Run proposes what the folder runs: a Makefile's targets, `package.json`'s scripts, `pyproject.toml`'s entry
+points, Python programs (`spark-submit` for a Spark job), `go run .`, `cargo run`.
 
 ## What the program is given
 
@@ -30,6 +32,7 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 | `AWS_ALLOW_HTTP`, `AWS_S3_FORCE_PATH_STYLE` | `true` |
 | `AWS_VIRTUAL_HOSTED_STYLE_REQUEST` | `false` |
 | `AWS_EC2_METADATA_DISABLED` | `true` |
+| `RCLONE_S3_ENDPOINT`, `RCLONE_S3_ACCESS_KEY_ID`, `RCLONE_S3_SECRET_ACCESS_KEY`, `RCLONE_S3_REGION`, `RCLONE_S3_FORCE_PATH_STYLE`, `RCLONE_S3_ENV_AUTH` | the same, for rclone's S3 remotes (they win over its config file) |
 
 - Removed: `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_ROLE_ARN`,
   `AWS_WEB_IDENTITY_TOKEN_FILE`, the container-credential variables.
@@ -40,10 +43,10 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 
 | Client | How it reaches sonde |
 |---|---|
-| AWS CLI v1.29+ / v2.13+, s5cmd (`S3_ENDPOINT_URL`), pandas (s3fs), polars, pyarrow `FileSystem.from_uri`, Spark (below) | by itself |
+| AWS CLI v1.29+ / v2.13+, s5cmd (`S3_ENDPOINT_URL`), pandas (s3fs), polars, pyarrow `FileSystem.from_uri`, rclone (`RCLONE_S3_*`, every S3 remote), Spark (below) | by itself |
+| the DuckDB CLI | by itself under `sonde run -- duckdb …`: it is given `-init` with `SET s3_*` (after your `~/.duckdbrc`; a command with its own `-init` keeps it) |
 | pyarrow `S3FileSystem()` | `S3FileSystem(endpoint_override=os.environ["AWS_ENDPOINT_URL"])` |
-| DuckDB | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
-| rclone | a remote of the environment's: `rclone ls :s3,env_auth=true:bucket` (a named remote keeps its own endpoint) |
+| DuckDB in a program | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
 | a container | `sonde run -- docker run …` (or `podman run`) is given `--network host` (unless the command names a network) and `-e NAME` for each variable above, by name only; `--tls`'s certificate is mounted where it is. A network of its own cannot reach 127.0.0.1. Docker Desktop needs host networking turned on |
 
 Production that runs elsewhere (Kubernetes, serverless) is read from its logs: [`sonde import`](#production-traffic-access-logs-cloudtrail-har).
@@ -93,9 +96,17 @@ By hand, with what `sonde proxy` prints (`--listen 127.0.0.1:9000` fixes the por
   ```
 - **Flink** (`flink-conf.yaml` / `config.yaml`): `s3.endpoint`, `s3.path.style.access: true`, `s3.access-key`,
   `s3.secret-key` (or the environment).
-- **Trino** (start it after `sonde proxy`). Native S3 (`fs.native-s3.enabled=true`): `s3.endpoint`,
-  `s3.path-style-access=true`, `s3.region`, `s3.aws-access-key`, `s3.aws-secret-key`. Legacy: `hive.s3.endpoint`,
-  `hive.s3.path-style-access=true`, `hive.s3.ssl.enabled=false`, `hive.s3.aws-access-key`, `hive.s3.aws-secret-key`.
+- **Trino**: the server reads S3, from its catalogs' properties files, which no command line or `-D` reaches; sonde
+  cannot write them for it. Said once in the catalog, with Trino's `${ENV:…}`, every `sonde run -- bin/launcher run`
+  then goes through sonde (its keys come from the environment, new each run):
+
+  ```properties
+  fs.native-s3.enabled=true
+  s3.endpoint=${ENV:AWS_ENDPOINT_URL}
+  s3.region=${ENV:AWS_REGION}
+  s3.path-style-access=true
+  ```
+  The legacy file system: `hive.s3.endpoint`, `hive.s3.path-style-access=true`, `hive.s3.ssl.enabled=false`.
 
 Findings for s3a: FileOutputCommitter renames out of `_temporary/` (copy plus delete) get a warning with the S3A
 committer settings; empty `…/` directory markers are reported with their delete cost.

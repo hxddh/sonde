@@ -95,23 +95,23 @@ fn host_port(authority: &str, default: u16) -> Result<(String, u16), String> {
     }
 }
 
+/// The operating system verifies, as for sonde's other connections (D-227),
+/// with the endpoint's own authorities (`--ca-file`) beside its roots.
 fn client_config(ca_pem: Option<&[u8]>) -> Result<Arc<rustls::ClientConfig>, String> {
     use rustls::pki_types::CertificateDer;
     use rustls::pki_types::pem::PemObject;
-    let mut roots = rustls::RootCertStore::empty();
-    for c in rustls_native_certs::load_native_certs().certs {
-        let _ = roots.add(c);
-    }
-    if let Some(pem) = ca_pem {
-        for c in CertificateDer::pem_slice_iter(pem).flatten() {
-            let _ = roots.add(c);
-        }
-    }
+    let extra: Vec<CertificateDer<'static>> = ca_pem
+        .map(|pem| CertificateDer::pem_slice_iter(pem).flatten().collect())
+        .unwrap_or_default();
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier =
+        rustls_platform_verifier::Verifier::new_with_extra_roots(extra, provider.clone())
+            .map_err(|e| format!("the system's certificate verifier: {e}"))?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
-        .with_root_certificates(roots)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(Arc::new(config))
@@ -128,5 +128,53 @@ mod tests {
         assert_eq!(host_port("[::1]:9", 80).unwrap(), ("::1".into(), 9));
         assert_eq!(host_port("[::1]", 80).unwrap(), ("::1".into(), 80));
         assert!(host_port("s3:x", 80).is_err());
+    }
+
+    /// An endpoint with its own authority (`--ca-file`), here a proxy of
+    /// sonde's serving TLS: trusted with the file, beside the system's
+    /// roots, and refused without it.
+    #[tokio::test]
+    async fn a_key_sent_as_is_trusts_the_ca_file_beside_the_systems() {
+        let dir = tempfile::tempdir().unwrap();
+        let tls = crate::tls::Tls::load_or_make(&dir.path().join("tls")).unwrap();
+        let ca = std::fs::read(&tls.ca).unwrap();
+        let cfg = s3raw::ClientConfig::new("t", "http://127.0.0.1:9", "eu-west-1").unwrap();
+        let creds = s3raw::Credentials::new("k", "s", None);
+        let client = s3raw::S3Client::new(
+            cfg,
+            Arc::new(s3raw::StaticProvider(Some(creds))),
+            reqlog::RequestLog::default(),
+        )
+        .unwrap();
+        let proxy = crate::Proxy::start(
+            client,
+            reqlog::RequestLog::default(),
+            crate::ProxyConfig {
+                tls: Some(Arc::new(tls)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let url = format!("{}/b/a/../k", proxy.url());
+        let host = proxy.url().trim_start_matches("https://").to_string();
+        let get = |ca: Option<Vec<u8>>| {
+            let (url, host) = (url.clone(), host.clone());
+            async move {
+                let headers = [("host".to_string(), host)];
+                send(
+                    &http::Method::GET,
+                    &url,
+                    &headers,
+                    reqwest::Body::from(""),
+                    ca.as_deref(),
+                )
+                .await
+            }
+        };
+        // any answer: the handshake passed
+        assert!(get(Some(ca)).await.is_ok());
+        let e = get(None).await.unwrap_err();
+        assert!(e.starts_with("TLS with"), "{e}");
     }
 }

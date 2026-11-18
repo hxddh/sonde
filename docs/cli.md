@@ -37,7 +37,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | `sonde` | Three lines: the tour, a real run, where to read more. |
 | `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); when nothing was sent, how to point the program's own client at sonde, that client first. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). With no endpoint configured it goes where an AWS SDK would: the default credential chain and region (`AWS_REGION`, the profile's, else us-east-1; `AWS_ENDPOINT_URL` if set), said on stderr. An unknown option before `--`, or no endpoint and no AWS credentials, is a usage error (64); a command that cannot start leaves no run (70). |
 | ↳ `-o FILE` | Without it: `runs/<time>-<name>.sonde`, named by the program. With it: the run there. A file there is refused (64) unless `--force`. Recorded beside it and put in place at the end: two runs given one file each keep their own (the second under a fresh name, said). |
-| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`). |
+| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`). The app's welcome demo runs the same job (`sonde demo-job export.py`, played in the app), opens its run on the finding, and *Apply and run again* writes the fix into `export.py` and runs it again. |
 | ↳ `--policy allow\|no-delete\|read-only` | What the program may do: [what each refuses, and which applies](recording.md#what-a-recorded-program-may-do). |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
@@ -73,7 +73,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 
 | Option | |
 |---|---|
-| `--max-requests N`, `--max-waiting T`, `--max-errors N` | Budget. Times as `2s`, `250ms` or ms. An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
+| `--max-requests N`, `--max-waiting T`, `--max-errors N`, `--max-transfer SIZE` | Budget. Times as `2s`, `250ms` or ms; sizes as `10GiB`, `500MB` or bytes (the bytes the store sent). An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
 | `--baseline FILE\|auto\|https://…` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). |
 | `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10). |
@@ -115,6 +115,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | Command | Does |
 |---|---|
 | `sonde tui [--demo] [--no-mouse]` | The terminal UI: `--demo` starts on the built-in store; `--no-mouse` leaves the mouse to the terminal. |
+| `sonde completions SHELL` / `sonde man DIR` | Shell completions (`bash`, `zsh`, `fish`, `powershell`, `elvish`) to stdout; the manual pages (`sonde.1`, one per command) into `DIR`. Neither is listed in `--help`. The terminal archives carry both (`completions/`, `man/man1/`); `install.sh` puts the pages beside the binary (`share/man/man1`). |
 
 ## Exit codes
 
@@ -157,12 +158,17 @@ never load half of one.
 ## Findings
 
 Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names), with what it saves (requests, time,
-money a month), the line that sent it and the fix for the SDK that sent it (boto3, Java, Go, JavaScript):
+money a month), the line that sent it and the fix: the [engine's setting](#engine-settings) when an engine sent its
+requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript, Rust's object_store):
 
 | Kind | Found when | Fix |
 |---|---|---|
 | `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
 | `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
+| `obs.crawl` | 20 prefixes or more each listed fewer than 5 times (partition discovery, a tree walked folder by folder), saving 1% of the run's requests or cost (one finding of the run, `obs.crawl|`) | a manifest, or the table format's metadata |
+| `obs.rangeagain` | the same byte range of an object read 10 times or more past its first read with nothing written to it between (a Parquet footer read by each query), saving 1% of the run's requests or cost (one finding of the run) | keep each range once read |
+| `obs.wholeread` | objects of 1 MiB or more read whole that the run also reads by range (evidence it uses parts), what they read past their ranges 16 MiB or more and a tenth of the run's bytes out; saves bytes, and egress when charged (one finding of the run) | read the ranges used |
+| `obs.smallreads` | 500 objects or more under 1 MiB each read whole one GET each, a fifth of the run's requests; the saving is the GETs left once they are shards of 64 MiB, not their bytes, which the shards still read (one finding of the run) | shard into tar or WebDataset files |
 | `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
 | `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 multipart uploads completed with one part under 5 MiB, where a PUT would do (one finding of the run, `obs.small|`) | batch into fewer, larger objects; one PUT |
 | `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
@@ -173,6 +179,27 @@ money a month), the line that sent it and the fix for the SDK that sent it (boto
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
 | `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
+
+### Engine settings
+
+When a finding's requests are an engine's (its table format's files) or a tool's (its user agent), the fix is that
+engine's own setting, its value, and the `file:line` in the program's folder that sets it now (`where`, when sonde
+finds it there). No SDK code is offered for a program that does not call the SDK itself.
+
+| Engine | Finding | Setting |
+|---|---|---|
+| SlateDB (`Db`, a writer; `DbReader`) | the manifest listed or read again and again, more often than its default | `manifest_poll_interval`: `1s` (`Settings`, `SlateDb.toml`) or `10s` (`DbReaderOptions`), with the period seen |
+| SlateDB | small WAL files, flushed more often than every 500 ms | `flush_interval = 1s` (a write waits up to it to be durable) |
+| DuckDB | HEAD before GET | `SET enable_http_metadata_cache = true` |
+| DuckDB | a file read again and again | `SET enable_external_file_cache = true` (1.3+, on by default there) |
+| rclone | HEAD before GET; small files in parts; throttled | `--s3-no-head-object`; `--s3-upload-cutoff 200Mi`; `--tpslimit` half the peak a second |
+| s5cmd | throttled with many in flight | `--numworkers` under the count throttled |
+| Trino (`app/Trino` in its user agent) | throttled | `s3.retry-mode=ADAPTIVE` (native S3 file system) |
+| Hadoop s3a (Spark too) | commits by rename; markers deleted | `fs.s3a.committer.name = magic`; `fs.s3a.directory.marker.retention = keep` (the default from 3.4.0) |
+| Delta, Lance, Iceberg | orphans | `vacuum` (delta-rs; `VACUUM` in Spark), `cleanup_old_versions`, `remove_orphan_files`, on the table's own path |
+
+Polars, pyiceberg and delta-rs (besides its `vacuum`) have no setting that acts on these findings, so they get none;
+nor do Hudi and Paimon yet.
 
 ## The fix loop
 
@@ -217,9 +244,20 @@ its saving, back) are kept in its runs folder's index, brought up
 to date by `run`, `show` and the app when they read the program's newest run. `run`, `show` (`since` in JSON),
 `compare` and `check -f markdown` say a run's findings the same way.
 
+## Cost
+
+A run's cost is its requests and its bytes out at its endpoint's prices: the vendor's list prices (AWS, GCS, OSS,
+R2, B2, Wasabi, Tigris; a store of one's own is free) unless `[settings.prices]` says others ([configuration](configuration.md#configtoml)).
+Bytes out are billed as egress only when read from outside the store's region, which sonde cannot see: unless the
+endpoint says (`egress = true` or `false`), they are said and not counted (`read 12 GiB ≈ 1.08 USD egress if read
+from outside the region`). Apart, what the run wrote and left stored costs a month (`left 2.0 GiB stored ≈ 0.05 USD a
+month`), and on a bucket that keeps versions (a write's answer has a version id), the versions its overwrites and
+deletes made noncurrent, until a lifecycle rule expires them. JSON: `cost` (`requests`, `transfer`, `storage`); the
+Time pane's "What did the run cost, and when?" draws the three over time. `check --max-transfer` holds the bytes out.
+
 ## Money a month
 
-A run's cost is its requests at its endpoint's prices. An imported log's is also said a month at the rate of its own
+A run's cost is its requests and charged bytes out ([cost](#cost)). An imported log's is also said a month at the rate of its own
 span (a minute at least): `≈ 37.58 USD a month at this rate`. A program's run is said a month when its `sonde.toml`
 says how often it runs, `[program] runs-per-month = 200` (for the program `runs` names, or every program run in its
 folder): `≈ 4.10 USD a month at 200 runs a month`. Each finding's saving and the findings' total are then a month too.

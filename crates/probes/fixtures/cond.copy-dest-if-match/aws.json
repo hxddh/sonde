@@ -1,0 +1,58 @@
+{
+  "probe": "cond.copy-dest-if-match",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"a1\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "dest",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6d5f3e1b5c8f2a0d4e9b7c1a2f3e4d5c\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "stale",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [],
+      "body": "<Error><Code>PreconditionFailed</Code></Error>",
+      "recordId": null
+    },
+    {
+      "label": "current",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "missing",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

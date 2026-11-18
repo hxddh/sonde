@@ -27,9 +27,10 @@ test("home lists the places; digits open them", async () => {
   await app.keyboard.press("3");
   await app.wait(300);
   if (app.shows("id:welcome")) {
-    // the demo lands on Run with a command ready; Buckets is a place away
+    // the demo runs its job and lands on its run, on its finding; Buckets is a place away
     await app.press("id:welcome-demo");
-    await app.waitFor("id:screen-run", { timeout: 10000 });
+    await app.waitFor("id:screen-runs", { timeout: 20000 });
+    await app.waitFor("id:observation-0", { timeout: 20000 });
     await app.back();
     await app.keyboard.press("3");
   }
@@ -105,6 +106,19 @@ test("runs in a terminal: runs › operations › requests › request", async (
   await app.waitFor("id:operations");
   await app.press("id:runs-back");
   await app.waitFor("id:run-0");
+});
+
+test("a run's money in a terminal: said in a sentence, no chart", async () => {
+  const app = await open("../App.tsx", term);
+  await place(app, "runs");
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  await app.press("id:run-pane-mode-time");
+  await app.waitFor("id:time-pane");
+  // (the Where group is far down the pane: its words are there, scrolled to or not)
+  await app.waitUntil(() => app.texts().includes("What did the run cost, and when?"), { timeout: 10000 });
+  expect(app.texts().some((x) => /^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/.test(x))).toBe(true);
+  expect(app.shows("id:cost-over-time")).toBe(false);
 });
 
 test("run in a terminal: the program above, its operations below", async () => {

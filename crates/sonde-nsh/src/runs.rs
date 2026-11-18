@@ -253,6 +253,8 @@ async fn begin(
     let policy = run_policy(asked, cwd.as_deref())?;
     // the project's name for the program, when the command runs it (as the CLI)
     let program = match &command {
+        // the tour's job: its runs one program, whatever folder it ran in
+        Some(c) if demo_job(c, &endpoint) => Some(sonde_core::tour::PROGRAM.to_string()),
         Some(c) => project_in(cwd.as_deref())?.and_then(|p| p.file.program.name_for(c)),
         None => None,
     };
@@ -565,23 +567,6 @@ fn stretch_of(
     json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals) })
 }
 
-/// A file's `file://` address: its path with `/` between its parts (a
-/// Windows drive after a third slash), each other byte that is not plain
-/// written `%XX`.
-fn file_url(abs: &Path) -> String {
-    let text = abs.to_string_lossy().replace('\\', "/");
-    let lead = if text.starts_with('/') { "" } else { "/" };
-    let mut out = format!("file://{lead}");
-    for b in text.bytes() {
-        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
 /// What the live panel shows of a run: its last half minute.
 pub const LIVE_WINDOW_MS: f64 = 30_000.0;
 
@@ -888,7 +873,18 @@ async fn run_recorded(
     // the code that sent each request, unless its project says not
     let callers =
         project_in(dir.as_deref())?.is_none_or(|p| p.file.record.name_callers != Some(false));
-    let view = begin(endpoint, policy, Some(command.to_string()), dir, under).await?;
+    let demo = demo_job(command, &endpoint);
+    let view = begin(
+        endpoint,
+        policy,
+        Some(command.to_string()),
+        dir.clone(),
+        under,
+    )
+    .await?;
+    if demo {
+        return play_demo_job(view, dir.as_deref(), output, trial.as_deref()).await;
+    }
     let (env_set, env_unset, writer, path) = {
         let g = RECORDING.lock();
         let r = g.as_ref().expect("begin started a recording");
@@ -1015,6 +1011,104 @@ async fn run_recorded(
     {
         // said where the run's output is, as the CLI says it
         output.post(json!({ "data": format!("\r\nsonde: {lost}\r\n") }));
+    }
+    Ok((code, path))
+}
+
+/// Writes `job` as the tour's file in its folder (`<data>/tour`): the folder.
+fn write_tour(job: &str) -> Result<String, String> {
+    let dir = sonde().paths().data_dir.join("tour");
+    std::fs::create_dir_all(&dir).map_err(err_msg)?;
+    std::fs::write(dir.join(sonde_core::tour::FILE), job).map_err(err_msg)?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Whether `command` is the tour's job ([`sonde_core::tour::COMMAND`]) on
+/// the built-in demo store: the app plays it in-process (as the CLI's
+/// hidden `sonde demo-job` does), so the demo needs no program installed,
+/// on any system.
+fn demo_job(command: &str, endpoint: &str) -> bool {
+    endpoint == "demo" && command.trim() == sonde_core::tour::COMMAND
+}
+
+/// The tour's job in `dir` played through the recording [`begin`] started,
+/// each request said as output as it is answered: the exit code (1 when
+/// the job's file cannot be read) and the run's file, as a program's run.
+/// Under a trial's scenario too: the recording answers in the store's
+/// place, as for any program.
+async fn play_demo_job(
+    view: JsonValue,
+    dir: Option<&Path>,
+    output: &Callback<JsonValue>,
+    trial: Option<&str>,
+) -> Result<(Option<i32>, String), String> {
+    let post = |v: JsonValue| {
+        let mut v = v;
+        if let Some(t) = trial {
+            v["scenario"] = json!(t);
+        }
+        output.post(v);
+    };
+    let (url, keys, writer, path) = {
+        let g = RECORDING.lock();
+        let r = g.as_ref().expect("begin started a recording");
+        let (k, s) = r.proxy.client_keys();
+        (
+            r.proxy.url(),
+            (k.to_string(), s.to_string()),
+            r.writer.clone(),
+            r.path.to_string_lossy().into_owned(),
+        )
+    };
+    post(json!({ "started": view }));
+    let file = dir.unwrap_or(Path::new(".")).join(sonde_core::tour::FILE);
+    let code = match std::fs::read_to_string(&file) {
+        Ok(job) => {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let w = writer.clone();
+            let task = background(async move {
+                let app = sonde_core::tour::client(&url, &keys.0, &keys.1).map_err(err_msg)?;
+                sonde_core::tour::play(
+                    &app,
+                    &job,
+                    sonde_core::tour::FILE,
+                    sonde_proxy::callers::CALLER_HEADER,
+                    |line| {
+                        let line = format!("{line}\r\n");
+                        w.write_log(&line);
+                        let _ = tx.send(line);
+                    },
+                )
+                .await;
+                Ok::<_, String>(())
+            });
+            while let Some(line) = rx.recv().await {
+                post(json!({ "data": line }));
+            }
+            match task.await {
+                Ok(Ok(())) => Some(0),
+                Ok(Err(e)) => {
+                    let said = format!("sonde: {e}\r\n");
+                    writer.write_log(&said);
+                    post(json!({ "data": said }));
+                    Some(1)
+                }
+                Err(_) => Some(1),
+            }
+        }
+        Err(e) => {
+            let said = format!("{}: {e}\r\n", file.display());
+            writer.write_log(&said);
+            post(json!({ "data": said }));
+            Some(1)
+        }
+    };
+    let own = {
+        let mut g = RECORDING.lock();
+        g.take_if(|r| r.path == Path::new(&path))
+    };
+    if let Some(r) = own {
+        let _ = background(r.finish()).await;
     }
     Ok((code, path))
 }
@@ -2254,6 +2348,36 @@ impl Runs {
         })
     }
 
+    /// The demo's job, written afresh (any fix applied before undone) into
+    /// its folder: `{ command, cwd }`, which Run runs on the demo store.
+    pub fn demo_job() -> Result<JsonValue, String> {
+        let dir = write_tour(sonde_core::tour::JOB)?;
+        Ok(json!({ "command": sonde_core::tour::COMMAND, "cwd": dir }))
+    }
+
+    /// The demo job's finding fixed in its file (the HEAD before each GET
+    /// gone), as a person would change the code: run again, it sends what
+    /// the fixed code sends.
+    pub fn demo_fix() -> Result<bool, String> {
+        write_tour(&sonde_core::tour::fixed_job()).map(|_| true)
+    }
+
+    /// The commands `cwd` likely runs (a Makefile's targets, package.json's
+    /// scripts, pyproject's entry points, Python programs, `go run .`,
+    /// `cargo run`), the likeliest first: `[{ command, from }]`, none when
+    /// nothing is found.
+    pub async fn suggest(cwd: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let dir = Path::new(&cwd);
+            if cwd.trim().is_empty() || !dir.is_dir() {
+                return json!([]);
+            }
+            to_json(sonde_core::commands::suggested(dir, cfg!(windows)))
+        })
+        .await
+        .map_err(err_msg)
+    }
+
     /// Writes the example run (a real SlateDB run, recorded with
     /// `sonde run`) to the runs directory; its path.
     pub fn example() -> Result<String, String> {
@@ -2433,6 +2557,13 @@ impl Runs {
         }
     }
 
+    /// Opens a page sonde wrote ([`Runs::share`]) in the system's browser:
+    /// openUrl opens no `file:` address.
+    pub async fn open_page(path: String) -> Result<(), String> {
+        let abs = std::path::absolute(Path::new(&path)).map_err(err_msg)?;
+        nsh_core::element::open_path(abs).await
+    }
+
     /// Shows `path` (a run, or a folder sonde wrote) selected in the
     /// file manager.
     pub async fn reveal(path: String) -> Result<(), String> {
@@ -2441,8 +2572,7 @@ impl Runs {
     }
 
     /// Writes a run as one web page (what `sonde share` writes) under the
-    /// data directory: `{ file, url }`, the page and its `file://` address,
-    /// for the browser to open. The page is the same views as the app,
+    /// data directory: `{ file }`, the page, for [`Runs::open_page`] to open. The page is the same views as the app,
     /// read-only, for anyone it is sent to.
     pub async fn share(path: String) -> Result<JsonValue, String> {
         if !sonde_analysis::share::has_viewer() {
@@ -2482,8 +2612,7 @@ impl Runs {
         .map_err(err_msg)?
         .map_err(err_msg)?;
         let abs = std::path::absolute(&file).map_err(err_msg)?;
-        let url = file_url(&abs);
-        Ok(json!({ "file": abs.to_string_lossy(), "url": url }))
+        Ok(json!({ "file": abs.to_string_lossy() }))
     }
 
     /// The app is quitting: ends the program being recorded and a running
@@ -2513,6 +2642,18 @@ impl Runs {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_tours_job_is_played_only_on_the_demo_store() {
+        assert!(demo_job(sonde_core::tour::COMMAND, "demo"));
+        assert!(demo_job(
+            &format!(" {} ", sonde_core::tour::COMMAND),
+            "demo"
+        ));
+        // elsewhere it is a command like any: the shell runs it
+        assert!(!demo_job(sonde_core::tour::COMMAND, "minio"));
+        assert!(!demo_job("python3 export.py", "demo"));
+    }
 
     #[test]
     fn the_cursors_question_is_found_when_two_reads_split_it() {
@@ -3006,18 +3147,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(none, json!([]));
-    }
-
-    #[test]
-    fn a_page_is_opened_by_its_file_address() {
-        assert_eq!(
-            file_url(Path::new("/home/a b/run#1.html")),
-            "file:///home/a%20b/run%231.html"
-        );
-        assert_eq!(
-            file_url(Path::new("C:\\Users\\a\\run.html")),
-            "file:///C:/Users/a/run.html"
-        );
     }
 
     #[test]

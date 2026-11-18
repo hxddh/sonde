@@ -1,0 +1,71 @@
+{
+  "probe": "checksum.md5.mpu-composite",
+  "vendor": "other",
+  "expect": "differs",
+  "note": "written, not recorded: a store that ignores an x-amz-checksum header it does not know, as Ceph RGW does SHA1's",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"d36bb53847fbe3fce38a08155054ecb3\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<CompleteMultipartUploadResult></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5243904"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "27dN4d2qOhQohzncsbAvpw==-2",
+      "recordId": null
+    }
+  ]
+}

@@ -188,9 +188,9 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |
 | D-205 | Timed tests | nightly with a retry; every change, held | **Every change, held at peak memory with no retry** (each test optimised, in a process of its own); time is said, and held only past several times what it takes ([performance](performance.md)). Supersedes D-155. |
 | D-206 | Breaking a stable thing | announce one version ahead; break in the major that makes it | **In the major that makes it**, without notice, by the owner's decision (21.0): no aliases, shims or "deprecated". Supersedes D-197. |
-| D-207 | Native Shell's pin | a tag; its main | **Its main at 32f1635** (after v0.5.1): popups that come and go, quit requests, baselines, menus in the app's language; `"application"` granted. Supersedes D-002. |
+| D-207 | Native Shell's pin | a tag; its main | **Its tag v0.6.0 (5541637)**: spring motion, install on quit, notes per language, strict-CSP web pages; the apps require `>=0.6, <0.7`. Supersedes D-002. |
 | D-208 | Type | sizes; sizes with their lines | **Each size with its line** (11/16 … 20/28); Chinese captions 12 pt; pages write `TEXT` roles. |
-| D-209 | Motion and depth | per component; tokens | **`TIMING` 120/180/240/360, one ease, three shadows**; a press sinks; nothing moves under reduce-motion. |
+| D-209 | Motion and depth | per component; tokens; lengths and ease; one spring | **One spring, `SPRING` 620/45**, three shadows: no lengths; a press sinks; nothing moves under reduce-motion; chart draws keep Plot's own lengths. |
 | D-210 | Status colour | paints text and fills; marks | **Marks only**: a dot, an icon or a rule; one `TONE` table; verdicts are quiet words. |
 | D-211 | Surfaces | boxes in cards; bare | **No box inside a card**; row actions and sort arrows on hover or focus; one header (one primary and ⋯); dialogs 480 or 640, one size across states. |
 | D-212 | Charts | labels on the data; beside it | **Off the data** (headroom, scale gutters); legends list drawn marks only; chart icons on hover. |
@@ -238,3 +238,19 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-254 | Runs written elsewhere | unlisted; listed | **Listed by path** from the runs index, never pruned while the file is there. |
 | D-255 | Clock | 24-hour; the locale's | **The locale's hour cycle everywhere**, a day's group to the second when any row needs it. |
 | D-256 | A chart's CSV | a button on each chart; none | **None**: a button on every chart cluttered the cards; a run's data is `sonde show -f json`'s, and Capacity keeps its own export. Supersedes D-163. |
+| D-257 | Chinese release notes | a second file; a CHANGELOG part | **A `### 中文` part of the version's section**: one file to edit; the English shows when there is none. |
+| D-258 | A fix for an engine's requests | SDK code; the engine's setting | **The engine's setting first** (`fixes[].setting`), SDK code dropped when an engine sent the requests: a wrong fix is worse than none. |
+| D-259 | Spark or Hadoop key | both; one | **One Hadoop s3a key**, the Spark form in the code: the user agent cannot tell them apart. |
+| D-260 | Where a setting is set | engine parsers; a text search | **A bounded text search of the run's folder** at analysis time: no parser per engine; it may find a comment. |
+| D-261 | Trial advice's English | stored; added when written | **Added when written** (`advice.text`): right when the phrases change. |
+| D-262 | Egress by default | always charged; never; unknown | **Unknown: said, not counted**, charged when the endpoint says `egress = true`: sonde cannot see where the client runs. |
+| D-263 | Storage in a run's cost | in `amount`; apart | **Apart, a month**: it recurs, unlike a run's requests. |
+| D-264 | `max-transfer` | budget and baseline; budget | **A budget only**: data volume varies from run to run. |
+| D-265 | `obs.wholeread`'s evidence | the format; ranges of the same object | **Range reads of the same object in the run**: no guessing which formats are read in part. |
+| D-266 | The welcome's demo | a curl or python command; a job sonde plays | **A job the app plays** behind `sonde demo-job export.py`, which the CLI runs too: every system, nothing installed. |
+| D-267 | Where the demo lands | Run; Runs | **Runs, on its first finding**: Run's intro stays as a newcomer's own program finds it. |
+| D-268 | rclone and DuckDB | by hand; flags; variables; `-init` | **`RCLONE_S3_*` on every run; DuckDB's `-init` with `SET s3_*`** (no keys in it: DuckDB reads `AWS_*`). |
+| D-269 | An object request sonde cannot name | the method's operation; `Unknown`; `x-id` | **`x-id` when it names one, else `Unknown`**: an unknown write must not pass `no-delete` as PutObject. |
+| D-270 | RenameObject under `no-delete` | allow; refuse | **Refuse**: it removes its source key. |
+| D-271 | MinIO in CI | an image; built from source | **Built from source**: no image can be pulled. |
+| D-272 | Completions and man pages | visible commands; hidden; a parser apart | **A parser apart** (`sonde completions`, `sonde man`): clap_complete lists hidden subcommands. |

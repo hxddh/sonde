@@ -7,7 +7,7 @@ import { Grid, PlotAxis } from "nsh/base/plot";
 import { count, duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, terminal, TEXT, TIMING, TONE, TYPE, REVEAL } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, SPRING, terminal, TEXT, TONE, TYPE, REVEAL } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
@@ -21,13 +21,13 @@ export const pct = percent;
 /** The chart components: each draws its `Plot`s as the body of a `Chart`
  * frame. lint-charts fails a `Plot` outside these, and one of these used
  * outside a frame. */
-export const CHARTS = ["Lanes", "RunShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy", "KindsOverTime"] as const;
+export const CHARTS = ["Lanes", "RunShape", "LatencyBand", "Chains", "StoreLatency", "TimeSpent", "Waterfall", "RunBars", "Flows", "Heat", "Distribution", "PrefixUse", "PrefixChangeMap", "RunTrend", "RequestScatter", "DistributionCompare", "BarChart", "StackBar", "PrefixMap", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "LatencyHeat", "TrialOverClean", "FirstByte", "Sizes", "Throughput", "CostBy", "KindsOverTime", "CostOverTime"] as const;
 /** The charts drawn over time: each has the one time axis (`TimeAxis`), so
  * they name the same moments at the same places. lint-charts fails one
  * without it, and a time axis made any other way. */
-export const OVER_TIME = ["Lanes", "RunShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean", "KindsOverTime"] as const;
+export const OVER_TIME = ["Lanes", "RunShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean", "KindsOverTime", "CostOverTime"] as const;
 /** The charts of counts: each has the one value scale (`ValueAxis`: zero and the peak, with its unit). */
-export const COUNTS = ["RunShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
+export const COUNTS = ["RunShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean", "CostOverTime"] as const;
 /** Marks that are not charts and stand in no frame: a run's requests a
  * few points high in its row, and the shape of a run as the strip under
  * its header (`RunShape strip`). */
@@ -318,18 +318,18 @@ export function Budget(props: { value: number | null | undefined; say: (v: numbe
 /** A domain's top that leaves the budget's line (and its chip) in view: a fifth above the higher of the two. */
 export const budgetTop = (top: number, budget: number | null | undefined) => (budget != null && budget > 0 ? Math.max(top, budget * HEADROOM.plot) : top);
 
-/** The one ease of the kit's motion (nsh.json's `ease-standard`), for Plot's own timings. */
-const STANDARD: [number, number, number, number] = [0.22, 1, 0.36, 1];
-/** Every chart's motion, on the kit's lengths (`TIMING`) and its one ease: the marks draw in as a
- * reveal (`slow`) and glide to new values as a thing moving into place (`base`); the hover's wash
- * comes in a step slower than it goes. The keys and screen readers step the hover with a spring; the
- * pointer's own moves follow at once. Nothing moves under reduced motion (Native Shell's own rule). */
+/** A chart's draws, its own: Plot times them (it takes no spring for them), a soft settle over a
+ * length each: the marks draw in (360), glide to new values (240), and the hover's wash comes in
+ * (180) a step slower than it goes (120). The keys and screen readers step the hover on the kit's
+ * one spring; the pointer's own moves follow at once. Nothing moves under reduced motion (Native
+ * Shell's own rule). */
+const SETTLE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 export const MOTION = {
-  appear: { duration: TIMING.slow, easing: STANDARD },
-  update: { duration: TIMING.base, easing: STANDARD },
-  enter: { duration: TIMING.fast, easing: STANDARD },
-  exit: { duration: TIMING.instant, easing: STANDARD },
-  pointer: { stiffness: 420, damping: 36 },
+  appear: { duration: 360, easing: SETTLE },
+  update: { duration: 240, easing: SETTLE },
+  enter: { duration: 180, easing: SETTLE },
+  exit: { duration: 120, easing: SETTLE },
+  pointer: SPRING,
 };
 
 /** How thick a chart's lines are, by what they draw, and no other: a rule or

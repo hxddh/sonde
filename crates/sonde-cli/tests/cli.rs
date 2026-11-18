@@ -89,6 +89,51 @@ fn a_mistake_in_the_command_is_a_usage_error_and_help_is_not() {
 }
 
 #[test]
+fn completions_and_man_pages_are_written_and_never_listed() {
+    let t = tempfile::tempdir().unwrap();
+    for (shell, says) in [
+        ("bash", "_sonde()"),
+        ("zsh", "#compdef sonde"),
+        ("fish", "complete -c sonde"),
+        ("powershell", "Register-ArgumentCompleter"),
+    ] {
+        let o = sonde(t.path(), &["completions", shell]);
+        assert_eq!(o.status.code(), Some(0), "{shell}");
+        let text = stdout(&o);
+        assert!(text.contains(says), "{shell}: {text}");
+        assert!(text.contains("compare"), "{shell}");
+        // neither generator is a command they complete
+        for word in [
+            "'completions'",
+            "\"completions\"",
+            " completions ",
+            "'man'",
+            " man ",
+        ] {
+            assert!(!text.contains(word), "{shell} completes {word}");
+        }
+    }
+    assert_eq!(
+        sonde(t.path(), &["completions", "tcsh"]).status.code(),
+        Some(64)
+    );
+    let man = t.path().join("man/man1");
+    let o = sonde(t.path(), &["man", man.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0));
+    let page = std::fs::read_to_string(man.join("sonde.1")).unwrap();
+    assert!(page.starts_with(".ie \\n(.g .ds Aq"), "{page}");
+    assert!(page.contains("sonde\\-run(1)"), "{page}");
+    assert!(man.join("sonde-run.1").exists() && man.join("sonde-probe-list.1").exists());
+    assert!(!man.join("sonde-man.1").exists() && !man.join("sonde-completions.1").exists());
+    // neither is a command the help lists
+    let help = stdout(&sonde(t.path(), &["--help"]));
+    assert!(
+        !help.contains("completions") && !help.contains("  man "),
+        "{help}"
+    );
+}
+
+#[test]
 fn help_lists_the_commands_by_what_they_are_for() {
     let t = tempfile::tempdir().unwrap();
     let help = stdout(&sonde(t.path(), &["--help"]));

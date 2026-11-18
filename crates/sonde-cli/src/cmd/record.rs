@@ -349,14 +349,17 @@ fn visible_len(r: &Record, refused: bool) -> usize {
     }
 }
 
-/// The request prices of a run on `endpoint`: the ones the app shows.
+/// The prices of a run on `endpoint`: the ones the app shows.
 pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
-    let (w, r, l, currency) = s.request_prices_for(endpoint);
+    let p = s.prices_for(endpoint);
     RequestPrices {
-        per_1000_writes: w,
-        per_1000_reads: r,
-        per_1000_lists: l,
-        currency,
+        per_1000_writes: p.per_1000_writes,
+        per_1000_reads: p.per_1000_reads,
+        per_1000_lists: p.per_1000_lists,
+        currency: p.currency,
+        per_gib_out: p.per_gib_out,
+        egress: p.egress,
+        per_gib_month: p.per_gib_month,
     }
 }
 
@@ -539,6 +542,9 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
+    if let Some(line) = p.cost.line() {
+        say(format!("  {line}"));
+    }
     // a trial's faults are sonde's doing: said before the figures they are in
     if !a.injected.is_empty() {
         say(format!(

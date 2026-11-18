@@ -27,12 +27,51 @@ const BUCKET_SUBRESOURCES: &[(&str, &str)] = &[
     ),
 ];
 
+/// Object subresources that name an operation sonde knows.
+const OBJECT_SUBRESOURCES: &[&str] = &[
+    "uploadId",
+    "uploads",
+    "acl",
+    "tagging",
+    "attributes",
+    "retention",
+    "legal-hold",
+    "restore",
+    "select",
+    "renameObject",
+    "encryption",
+];
+
+/// Whether an object request's query holds only what an operation sonde
+/// knows carries: its subresource and parameters, a presigned URL's
+/// signature, the SDKs' `x-id` marker.
+fn plain_object<K: AsRef<str>, V>(query: &[(K, V)]) -> bool {
+    query.iter().all(|(k, _)| {
+        let k = k.as_ref();
+        OBJECT_SUBRESOURCES.contains(&k)
+            || matches!(
+                k,
+                "versionId"
+                    | "partNumber"
+                    | "max-parts"
+                    | "part-number-marker"
+                    | "select-type"
+                    | "x-id"
+                    | "AWSAccessKeyId"
+                    | "Signature"
+                    | "Expires"
+            )
+            || k.starts_with("response-")
+            || k.get(..6).is_some_and(|p| p.eq_ignore_ascii_case("x-amz-"))
+    })
+}
+
 fn has<K: AsRef<str>, V>(query: &[(K, V)], name: &str) -> bool {
     query.iter().any(|(k, _)| k.as_ref() == name)
 }
 
 /// The operation name, as the S3 API reference spells it.
-pub fn classify<K: AsRef<str>, V>(
+pub fn classify<K: AsRef<str>, V: AsRef<str>>(
     method: &str,
     bucket: Option<&str>,
     key: Option<&str>,
@@ -73,6 +112,17 @@ pub fn classify<K: AsRef<str>, V>(
                 _ => "Unknown",
             }
         }
+        (Some(_), Some(_)) if !plain_object(query) => {
+            // a subresource sonde does not know: the SDKs' own marker, when
+            // it names an operation sonde does, or none (never the plain
+            // read, write or delete it would otherwise look like)
+            let marked = query
+                .iter()
+                .find(|(k, _)| k.as_ref() == "x-id")
+                .map(|(_, v)| v.as_ref().to_string())
+                .filter(|n| operation_names().contains(n));
+            return marked.unwrap_or_else(|| "Unknown".to_string());
+        }
         (Some(_), Some(_)) => match method {
             "GET" if q("uploadId") => "ListParts",
             "GET" if q("acl") => "GetObjectAcl",
@@ -88,6 +138,8 @@ pub fn classify<K: AsRef<str>, V>(
             "PUT" if q("acl") => "PutObjectAcl",
             "PUT" if q("retention") => "PutObjectRetention",
             "PUT" if q("legal-hold") => "PutObjectLegalHold",
+            "PUT" if q("renameObject") => "RenameObject",
+            "PUT" if q("encryption") => "UpdateObjectEncryption",
             "PUT" if copy => "CopyObject",
             "PUT" => "PutObject",
             "POST" if q("uploads") => "CreateMultipartUpload",
@@ -130,6 +182,8 @@ const NAMED: &[&str] = &[
     "PutObjectAcl",
     "PutObjectRetention",
     "PutObjectLegalHold",
+    "RenameObject",
+    "UpdateObjectEncryption",
     "CopyObject",
     "PutObject",
     "CreateMultipartUpload",
@@ -154,9 +208,11 @@ pub fn operation_names() -> Vec<String> {
 }
 
 /// Whether an operation removes data (directly, or by a rule that will).
+/// A rename removes its source's key.
 pub fn is_destructive(op: &str) -> bool {
     op.starts_with("Delete")
         || op == "AbortMultipartUpload"
+        || op == "RenameObject"
         || op == "PutBucketLifecycleConfiguration"
 }
 
@@ -197,6 +253,11 @@ mod tests {
             "legal-hold",
             "restore",
             "select",
+            "renameObject",
+            "encryption",
+            "torrent",
+            "x-id=GetObjectTorrent",
+            "x-id=PutObject",
         ];
         for method in ["GET", "HEAD", "PUT", "POST", "DELETE"] {
             for (bucket, key) in [(None, None), (Some("b"), None), (Some("b"), Some("k"))] {
@@ -296,5 +357,65 @@ mod tests {
             classify("DELETE", Some("b"), None, none, none),
             "DeleteBucket"
         );
+    }
+
+    #[test]
+    fn an_object_subresource_sonde_does_not_know_is_never_a_read_write_or_delete() {
+        let none: &[(String, String)] = &[];
+        let k = Some("k");
+        for method in ["GET", "PUT", "DELETE", "POST"] {
+            for sub in ["torrent", "annotation", "unheard-of"] {
+                assert_eq!(
+                    classify(method, Some("b"), k, &q(&[sub]), none),
+                    "Unknown",
+                    "{method} ?{sub}"
+                );
+            }
+        }
+        // the SDKs' marker names it when sonde knows the name
+        assert_eq!(
+            classify("PUT", Some("b"), k, &q(&["fresh", "x-id=PutObject"]), none),
+            "PutObject"
+        );
+        assert_eq!(
+            classify("PUT", Some("b"), k, &q(&["fresh", "x-id=Made-up"]), none),
+            "Unknown"
+        );
+        // what plain requests carry changes nothing
+        for plain in [
+            vec!["versionId=1", "response-content-type=a"],
+            vec!["partNumber=2"],
+            vec!["x-id=GetObject"],
+            vec!["X-Amz-Algorithm=AWS4-HMAC-SHA256", "X-Amz-Signature=s"],
+            vec!["AWSAccessKeyId=a", "Signature=s", "Expires=1"],
+        ] {
+            assert_eq!(classify("GET", Some("b"), k, &q(&plain), none), "GetObject");
+        }
+        assert_eq!(
+            classify("DELETE", Some("b"), k, &q(&["versionId=1"]), none),
+            "DeleteObject"
+        );
+    }
+
+    #[test]
+    fn rename_and_encryption_update_are_named() {
+        let none: &[(String, String)] = &[];
+        let src = [("x-amz-rename-source".to_string(), "/b/a".to_string())];
+        assert_eq!(
+            classify("PUT", Some("b"), Some("k"), &q(&["renameObject"]), &src),
+            "RenameObject"
+        );
+        assert_eq!(
+            classify("PUT", Some("b"), Some("k"), &q(&["encryption"]), none),
+            "UpdateObjectEncryption"
+        );
+        // a bucket's encryption stays the bucket's
+        assert_eq!(
+            classify("PUT", Some("b"), None, &q(&["encryption"]), none),
+            "PutBucketEncryption"
+        );
+        // a rename takes its source's key away; re-encrypting keeps the data
+        assert!(is_destructive("RenameObject"));
+        assert!(!is_destructive("UpdateObjectEncryption"));
     }
 }

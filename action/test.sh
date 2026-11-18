@@ -96,7 +96,7 @@ is "install @v19 with 19.0: the newest 19.0.x" "$(fetched v19 19.0)" download/v1
 is "install @v19.3 (a prerelease alone) fails before downloading" "$(fetched v19.3)" ""
 is "it says so" "$(grep -c 'no release of sonde 19.3 found' "$t/said")" 1
 is "install with a version that is none fails before downloading" "$(fetched v19 19.x)" ""
-is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (24.0.1), a major (24)' "$t/said")" 1
+is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (25.0.0), a major (25)' "$t/said")" 1
 is "install of a major with no release fails before downloading" "$(fetched v7)" ""
 # a branch, a commit, a local checkout: the newest release of its own major, never `latest`
 is "install @main of 19.1.0: the newest 19.x" "$(fetched main)" download/v19.2.10
@@ -108,6 +108,32 @@ is "it says so" "$(grep -c '^::error title=sonde::sonde 21 could not be installe
 is "install @main with latest is refused" "$(fetched main latest)" ""
 is "it says what to set" "$(grep -c 'set version: 19, or use the action at a release.s tag (@v19)' "$t/said")" 1
 is "install @a-branch-like-v2-fix is a branch" "$(fetched v2-fix)" download/v19.2.10
+
+# install.sh unpacks a release's archive: the binary, and its manual pages
+# beside a bin folder (a stand-in curl serves one archive for any platform)
+mkdir -p "$t/rel/man/man1" "$t/serve"
+printf '#!/bin/sh\necho "sonde 99.0.0"\n' >"$t/rel/sonde" && chmod +x "$t/rel/sonde"
+echo ".TH sonde 1" >"$t/rel/man/man1/sonde.1"
+tar -C "$t/rel" -czf "$t/serve/a.tar.gz" sonde man
+(cd "$t/serve" && { sha256sum a.tar.gz 2>/dev/null || shasum -a 256 a.tar.gz; }) >"$t/serve/a.tar.gz.sha256"
+cat >"$t/serve/curl" <<'EOF'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; https://*) url="$1" ;; esac; shift; done
+case "$url" in
+  *.tar.gz) cp "$SERVE/a.tar.gz" "$out" ;;
+  *.tar.gz.sha256) cp "$SERVE/a.tar.gz.sha256" "$out" ;;
+  *) exit 22 ;;
+esac
+EOF
+chmod +x "$t/serve/curl"
+installs() { # into DIR, what install.sh says to $t/said
+  PATH="$t/serve:$PATH" SERVE="$t/serve" SONDE_VERSION=99.0.0 SONDE_VERIFY=0 SONDE_INSTALL_DIR="$1" sh "$here/../install.sh" >"$t/said" 2>&1
+}
+installs "$t/home/bin"
+is "install: the binary" "$("$t/home/bin/sonde" --version)" "sonde 99.0.0"
+is "install: its manual pages beside bin" "$(cat "$t/home/share/man/man1/sonde.1")" ".TH sonde 1"
+installs "$t/elsewhere"
+is "install: none beside a folder that is no bin" "$(find "$t" -maxdepth 1 -name share | wc -l | tr -d ' ')" 0
 
 # a pull request: the newest of the base branch's runs that kept the artifact
 export GITHUB_BASE_REF=main

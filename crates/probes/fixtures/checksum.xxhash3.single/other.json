@@ -1,0 +1,55 @@
+{
+  "probe": "checksum.xxhash3.single",
+  "vendor": "other",
+  "expect": "fail",
+  "note": "written, not recorded: a store that ignores an x-amz-checksum header it does not know, as Ceph RGW does SHA1's",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1000"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "L9zE0HxP67M=",
+      "recordId": null
+    }
+  ]
+}

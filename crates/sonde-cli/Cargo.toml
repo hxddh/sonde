@@ -34,6 +34,8 @@ futures.workspace = true
 reqwest.workspace = true
 sonde-nsh = { workspace = true, optional = true }
 clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

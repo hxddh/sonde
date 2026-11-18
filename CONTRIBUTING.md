@@ -30,6 +30,7 @@ cargo shear                              # no unused dependencies
 python3 scripts/fixtures.py --check      # run fixtures in the current format
 (cd app && nsh check)
 python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
+python3 scripts/check-readme-images.py   # docs/images are the tour's approved linux pictures (needs Pillow)
 (cd app && nsh build App.tsx 2>&1 | tee build.log; ! grep -E "^warn" build.log)   # no warnings
 # unit
 cargo test --workspace --locked
@@ -37,9 +38,10 @@ python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog
 # ui
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own
 # action (then the action itself, with this commit's sonde)
-shellcheck action/*.sh install.sh scripts/release-wait*.sh && actionlint
+shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh && actionlint
 bash action/test.sh                      # the GitHub Action's scripts
 bash scripts/release-wait.test.sh
+bash scripts/changelog-section.test.sh   # the release notes, English and Chinese
 # integration
 scripts/integration.sh ceph rustfs       # against Ceph RGW and RustFS in Docker
 ```
@@ -62,7 +64,8 @@ To approve a change: download the run's `sonde-shots-<platform>` artifact, then
 python3 scripts/shots-diff.py approve DIR app/shots.approved.json <platform>
 ```
 
-and commit `app/shots.approved.json`.
+and commit `app/shots.approved.json`. The README's pictures (`docs/images`) are then taken from the approved tour
+(`SONDE_README=1 sh scripts/shots.sh` copies them; `scripts/check-readme-images.py` fails until they are).
 
 ## Moving the Native Shell pin
 

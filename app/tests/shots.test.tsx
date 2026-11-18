@@ -167,13 +167,29 @@ for (const v of variants) {
     const fixture = () => openRow("nightly-report.sh", "./nightly-report.sh");
 
     await shot("01-welcome");
-    await app.press("id:welcome-demo");
+    // the demo, in one press: its job run, its run open on its finding (the line that sent it, the fix)
+    // (on Windows the real cursor moves on a focus change and can cancel a simulated press: pressed again only while
+    // the welcome is still there and its button is not at work, as openRow does)
+    const took = () => !app.shows("id:welcome") || !app.enabled("id:welcome-demo");
+    for (let n = 0; n < 4 && !took(); n++) {
+      await app.press("id:welcome-demo");
+      await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
+    }
+    await app.waitFor("id:finding-advice", { timeout: 30000 });
+    await app.waitFor("id:fix-callers");
+    await charts("01a-demo");
+    // the fix applied to the job's code and the job run again: the finding fixed, its saving measured and predicted
+    await app.press("id:finding-apply");
+    await app.waitFor("id:since-run", { timeout: 30000 });
+    await charts("01b-demo-fixed");
+    // Run, as the user's own program finds it
+    await go("run");
     await app.waitFor("id:screen-run", { timeout: 15000 });
     await shot("02-run");
     // recording a program started elsewhere: what it asks before it starts
     await app.press("id:record");
     await app.waitFor("id:record-start");
-    // (the demo's toast, shown in 02-run, closed: whether it was still up here was a race, run to run)
+    // (a toast closed, if one is up: whether it was still up here was a race, run to run)
     // (pressed if it is still up: it may close itself between the look and the press)
     for (let n = 0; n < 5 && app.shows("id:toast-close"); n++) await app.press("id:toast-close").catch(() => {});
     await app.waitUntil(() => !app.shows("id:toast"), { timeout: 3000 }).catch(() => {});
@@ -181,13 +197,12 @@ for (const v of variants) {
     await app.press("id:record-cancel");
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
     const env = (globalThis as any).process?.env ?? {};
-    // (asked of the app: the demo's own sample command, left in the field, is written for the shell Run uses;
-    // a test has no process to ask, and its own `platform` is not the window's)
-    const sample = String((await app.value("id:run-command")) ?? "");
-    const cmd = sample.includes("%AWS_ENDPOINT_URL%") || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
-    // the sample said which shell: no second guess is owed
-    const sure = sample.includes("AWS_ENDPOINT_URL");
-    // (the demo left its own first command in the field: typed after it, the two ran as one)
+    // (told by scripts/shots.sh, which knows the machine: a test has no process to ask, and its own `platform` is not
+    // the window's)
+    const os = String(here.os ?? "");
+    const cmd = os === "windows" || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // the script said which machine: no second guess is owed
+    const sure = os !== "";
     await app.clear("id:run-command");
     const marker = `sonde-tour-${v.name}-${Date.now()}`;
     await enter(app, "id:run-command", command(cmd, marker));
@@ -372,6 +387,15 @@ for (const v of variants) {
     await charts("03j-spent");
     await app.scroll("id:time-pane", 400);
     await charts("03k-prefixes");
+    // what the run cost, and when, the chart whole at every size. A hover brings a view into view, a gesture of up to
+    // four tenths of the pane at a time, until it is clear of the pane's edges: from the board's end the chart's title
+    // comes in at the pane's upper half. A few lines more give the chart's foot its room in the least window
+    await app.waitFor("id:cost-time-chart");
+    await app.scroll("id:time-pane", 10000);
+    await app.wait(500);
+    await app.hover("id:cost-time-chart >> role:header");
+    await app.scroll("id:time-pane", 60);
+    await charts("03ka-cost");
     // to the board's end: where requests went
     await app.scroll("id:time-pane", 4000);
     await app.waitFor("id:flows-chart");

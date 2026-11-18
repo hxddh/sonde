@@ -465,6 +465,9 @@ pub struct RunPoint {
     pub wall_ms: f64,
     pub cost: f64,
     pub currency: String,
+    /// Bytes read out of the store: what `max-transfer` holds a run to.
+    #[serde(default)]
+    pub bytes_out: u64,
     /// Requests that failed after their retries (a miss is no failure, and
     /// an attempt retried until it succeeded is none): what `max-errors`
     /// holds a run to ([`crate::signals::gave_up`]).
@@ -495,6 +498,7 @@ pub fn run_point(
         p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
         currency: profile.cost.currency.clone(),
+        bytes_out: profile.cost.transfer.bytes,
         errors: crate::signals::gave_up(records)
             .into_iter()
             .filter(|&g| g)
@@ -524,6 +528,7 @@ pub struct RunFigures {
     /// answered (µs). Counted in `errors` until their retry comes.
     owed: std::collections::HashMap<String, i64>,
     cost: f64,
+    bytes_out: u64,
     latencies: Vec<f64>,
     /// Disjoint stretches with a request in flight, start to end, in µs.
     busy: std::collections::BTreeMap<i64, i64>,
@@ -539,6 +544,7 @@ impl RunFigures {
             errors: 0,
             owed: Default::default(),
             cost: 0.0,
+            bytes_out: 0,
             latencies: Vec::new(),
             busy: Default::default(),
             span: None,
@@ -570,6 +576,9 @@ impl RunFigures {
             }
         }
         self.cost += crate::profile::price(r, &self.prices);
+        if crate::profile::reached_store(r) {
+            self.bytes_out += crate::profile::out_bytes(r);
+        }
         self.latencies.push(r.latency_ms.max(0.0));
         self.span = Some(match self.span {
             Some((s, e)) => (s.min(start), e.max(end)),
@@ -605,6 +614,7 @@ impl RunFigures {
             p95_ms: crate::profile::percentile(&sorted, 0.95),
             cost: self.cost,
             currency: self.prices.currency.clone(),
+            bytes_out: self.bytes_out,
             errors: self.errors,
             warnings: 0,
             findings: 0,
@@ -621,6 +631,8 @@ pub struct Budget {
     pub max_requests: Option<usize>,
     pub max_waiting_ms: Option<f64>,
     pub max_errors: Option<usize>,
+    /// Bytes read out of the store, at most.
+    pub max_transfer: Option<u64>,
     /// Against the baseline: requests, waiting and cost may grow this much.
     /// A baseline also holds the run to no warning it did not have.
     pub tolerance: Option<f64>,
@@ -634,7 +646,8 @@ pub struct Budget {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verdict {
-    /// `requests`, `waiting`, `cost`, `errors`, `p95` or `warnings`.
+    /// `requests`, `waiting`, `cost`, `transfer` (bytes out), `errors`,
+    /// `p95` or `warnings`.
     pub what: &'static str,
     pub value: f64,
     pub limit: f64,
@@ -899,6 +912,9 @@ pub fn check(
     }
     if let Some(n) = budget.max_errors {
         limit("errors", r.errors as f64, n as f64, "budget");
+    }
+    if let Some(n) = budget.max_transfer {
+        limit("transfer", r.bytes_out as f64, n as f64, "budget");
     }
     let mut new_warnings = Vec::new();
     if let Some(b) = baseline {
@@ -1257,6 +1273,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     let shown = |what: &str, v: f64| match what {
         "waiting" | "p95" => ms_text(v),
         "cost" => money_text(v, currency),
+        "transfer" => crate::episode::human_bytes(v as u64),
         _ => format!("{v:.0}"),
     };
     let mut md = format!(
@@ -1310,10 +1327,10 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         ));
     }
     let kept = |text: &str| c.expected.iter().any(|e| e.text == text);
+    // where a finding's requests came from, and its engine's setting to change
     let place = |text: &str| {
-        m.findings
-            .iter()
-            .find(|f| f.text == text)
+        let f = m.findings.iter().find(|f| f.text == text);
+        let mut out = f
             .and_then(|f| f.callers.first())
             .map(|c| {
                 format!(
@@ -1321,7 +1338,17 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                     c.place.replace('`', "'").replace(['\n', '\r'], " ")
                 )
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(s) = f
+            .and_then(|f| crate::fixes::for_sdk(&f.fixes, f.sdk.as_deref()))
+            .and_then(|x| x.setting.as_ref())
+        {
+            out.push_str(&format!(
+                " — set `{}`",
+                s.line().replace('`', "'").replace(['\n', '\r'], " ")
+            ));
+        }
+        out
     };
     if let Some(ch) = m.change {
         let row = |what: &str| {
@@ -1646,6 +1673,7 @@ mod tests {
             wall_ms: 1.0,
             cost,
             currency: "USD".into(),
+            bytes_out: 0,
             errors: 0,
             warnings: 0,
             findings: 0,
@@ -1669,6 +1697,7 @@ mod tests {
             wall_ms: 10.0,
             cost: 0.0,
             currency: "USD".into(),
+            bytes_out: 0,
             errors: 0,
             warnings: 0,
             findings: 0,
@@ -2276,6 +2305,43 @@ mod tests {
             md.contains(
                 "> ❌ **The program failed** (exit 1): sonde refused DeleteObject: no-delete mode"
             ),
+            "{md}"
+        );
+    }
+
+    /// A finding an engine's setting acts on says the setting in the
+    /// comment, where a reviewer reads it.
+    #[test]
+    fn a_pr_comment_names_the_engines_setting() {
+        let mut after = Vec::new();
+        for i in 0..6u64 {
+            let mut get = rec(i * 2 + 2, &format!("in/k{i}"));
+            get.time += chrono::Duration::milliseconds(i as i64 * 100);
+            let mut head = get.clone();
+            head.id = i * 2 + 1;
+            head.method = "HEAD".into();
+            head.kind = "HeadObject".into();
+            head.time -= chrono::Duration::milliseconds(5);
+            for r in [&mut head, &mut get] {
+                r.lists_mut()
+                    .request_headers
+                    .push(reqlog::Header::new("user-agent", "rclone/v1.68.2"));
+            }
+            after.extend([head, get]);
+        }
+        let (pa, pra, oa) = point(&after);
+        assert!(oa.iter().any(|o| o.kind == "obs.headget"), "{oa:#?}");
+        let c = check((&pa, &after, &pra, &oa), None, &Budget::default());
+        let md = check_comment(
+            &c,
+            &Comment {
+                currency: "USD",
+                findings: &oa,
+                ..Default::default()
+            },
+        );
+        assert!(
+            md.contains("— set `--s3-no-head-object = true (rclone)`"),
             "{md}"
         );
     }

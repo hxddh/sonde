@@ -4,7 +4,7 @@
 and reads them as operations — an Iceberg commit, a SlateDB manifest write, a multipart upload — with what stands
 out, what it cost, and whether the program survives when the store misbehaves.
 
-![Run: a program in its terminal, its S3 requests as operations beside it](docs/images/run.png)
+![A finding: the line of code that sent the requests, what to change, and Apply and run again](docs/images/fix.png)
 
 ## What it does
 
@@ -14,11 +14,11 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Read** | Requests become operations: multipart uploads, retries, listings, the commits of Iceberg, Delta, Hudi, Paimon, SlateDB and Lance. A table per operation (count, errors, p50/p95/p99) and charts over time. |
 | **Find and fix** | Hot keys, small files, deletes one at a time, writes back with no `If-Match`, a missing key polled, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a fix for your SDK and the line that sent it. Run again: each finding reads **fixed** (with the saving measured), **less**, **back** or **new**. |
 | **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--again` tries only what did not survive. |
-| **Gate CI** | `sonde check` fails a job over its budget or its baseline; the GitHub Action (`hxddh/sonde@v24`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
+| **Gate CI** | `sonde check` fails a job over its budget or its baseline; the GitHub Action (`hxddh/sonde@v25`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
 | **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|sdk\|status\|key` splits the table and says where the slow and costly requests are. |
 | **Compare and replay** | `compare` two runs, or a run replayed on another store (`--replay`) to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
-| **Look at stores** | Browse buckets, find incomplete uploads, run 40 compatibility probes across endpoints, decode table layouts. |
+| **Look at stores** | Browse buckets, find incomplete uploads, run 52 compatibility probes across endpoints, decode table layouts. |
 
 A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and Chinese.
 
@@ -26,6 +26,7 @@ A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and C
 |---|---|
 | ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial: what the program did under each fault](docs/images/trial.png) |
 | ![Time: one timeline, each chart in its frame](docs/images/time.png) | ![Buckets: objects and their details](docs/images/store.png) |
+| ![Run: a program in its terminal, its S3 requests as operations beside it](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
 
 ## Where it helps
 

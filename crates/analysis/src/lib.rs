@@ -10,6 +10,7 @@
 //! The recording itself, the endpoint, its policy, faults and TLS, are
 //! `sonde-proxy`'s.
 
+pub mod engines;
 pub mod episode;
 pub mod fixes;
 pub mod fixloop;
@@ -27,6 +28,7 @@ pub mod run;
 pub mod share;
 pub mod signals;
 pub mod split;
+pub mod stored;
 pub mod summary;
 pub mod trial;
 pub mod trial_plan;

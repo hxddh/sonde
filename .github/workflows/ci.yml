@@ -40,7 +40,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-shear@1.14.1 }
       - name: No unused dependencies
         run: cargo shear
@@ -49,11 +49,30 @@ jobs:
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
         run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
+      - name: The README's pictures are the tour's approved ones
+        run: |
+          python3 -m venv "$RUNNER_TEMP/img"
+          "$RUNNER_TEMP/img/bin/python" -m pip install -q pillow
+          "$RUNNER_TEMP/img/bin/python" scripts/check-readme-images.py
       - name: nsh build reports no warnings
         run: |
           set -o pipefail
           cd app && nsh build App.tsx 2>&1 | tee build.log
           ! grep -E "^warn" build.log
+
+  msrv:
+    # the oldest Rust sonde builds with: Cargo.toml's rust-version, exactly
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@766a42937d994bd78bb4591385445c188ccb3f09 # 1.97
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: msrv, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - name: The workspace builds with rust-version
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          rustc --version | grep -q "^rustc $msrv\." || { echo "::error title=MSRV::the job's Rust is not Cargo.toml's rust-version ($msrv): move the toolchain pin with it"; exit 1; }
+          cargo check --workspace --all-targets --locked
 
   unit:
     strategy:
@@ -151,7 +170,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-deny }
       - name: Licences, advisories, sources and bans (deny.toml)
         run: cargo deny --locked check
@@ -178,10 +197,11 @@ jobs:
         run: |
           pip install -r .github/requirements.txt
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
-          shellcheck action/*.sh install.sh scripts/release-wait*.sh
+          shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh
           actionlint
       - run: bash action/test.sh
       - run: bash scripts/release-wait.test.sh
+      - run: bash scripts/changelog-section.test.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: debug, save-if: false }
@@ -204,22 +224,28 @@ jobs:
         run: test "$PASSED" = true && test -f "$RUN" && test -n "$REPORT"
 
   integration:
+    # Ceph RGW and RustFS together; MinIO beside them (built from its source)
+    strategy:
+      fail-fast: false
+      matrix:
+        stores: ["ceph rustfs", "minio"]
+    name: integration (${{ matrix.stores }})
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: integration, save-if: "${{ github.ref == 'refs/heads/main' }}", workspaces: ". -> target\ntools/gen-slatedb -> target" }
+        with: { shared-key: integration, save-if: "${{ github.ref == 'refs/heads/main' && matrix.stores == 'ceph rustfs' }}", workspaces: ". -> target\ntools/gen-slatedb -> target" }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.14", cache: pip, cache-dependency-path: .github/requirements.txt }
       - run: pip install -r .github/requirements.txt
-      - run: scripts/integration.sh ceph rustfs
+      - run: scripts/integration.sh ${{ matrix.stores }}
       - if: failure()
         run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
 
   record:
     # sonde run with four AWS SDKs, the AWS CLI (the runner's v2, and its
-    # image through `run -- docker run`), polars and one --tls pass against
+    # image through `run -- docker run`), polars, DuckDB and one --tls pass against
     # RustFS, and the proxy's overhead
     runs-on: ubuntu-24.04
     env:
@@ -234,7 +260,7 @@ jobs:
         with: { python-version: "3.14", cache: pip, cache-dependency-path: .github/requirements.txt }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "24" }
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version-file: tools/sdk-smoke/go/go.mod, cache-dependency-path: tools/sdk-smoke/go/go.sum }
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with: { distribution: temurin, java-version: "17", cache: maven }

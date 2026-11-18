@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "24.0.2"
+version = "25.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
@@ -72,6 +72,7 @@ hmac = "0.13"
 sha2 = "0.11"
 sha1 = "0.11"
 md-5 = "0.11"
+xxhash-rust = { version = "0.8", features = ["xxh64", "xxh3"] }
 hex = "0.4"
 base64 = "0.23"
 crc32fast = "1"
@@ -81,20 +82,24 @@ dirs = "7"
 parking_lot = "0.12"
 tracing = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+clap_mangen = "0.3"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.10"
-flate2 = "1"
-apache-avro = { version = "0.22", default-features = false }
+# one compressor whatever else is built: Native Shell's tree turns zlib-rs on, a
+# crate alone would get miniz_oxide (and write run files byte-different)
+flate2 = { version = "1", features = ["zlib-rs"] }
+apache-avro = { version = "0.23", default-features = false }
 async-trait = "0.1"
 tempfile = "3"
 
-# Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its main
-# at 32f1635 (after v0.5.1). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "32f1635454cefe6fda14ca9d8b0bf3d1cc546a78" }
+# Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its tag
+# v0.6.0 (5541637). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "554163758e30d2f62f814096a6327937dcb4fe49" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "554163758e30d2f62f814096a6327937dcb4fe49" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "554163758e30d2f62f814096a6327937dcb4fe49" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "554163758e30d2f62f814096a6327937dcb4fe49" }
+nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "554163758e30d2f62f814096a6327937dcb4fe49" }
 
 [profile.release]
 lto = "thin"
