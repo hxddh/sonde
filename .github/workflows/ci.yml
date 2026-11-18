@@ -49,6 +49,11 @@ jobs:
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
         run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
+      - name: The README's pictures are the tour's approved ones
+        run: |
+          python3 -m venv "$RUNNER_TEMP/img"
+          "$RUNNER_TEMP/img/bin/python" -m pip install -q pillow
+          "$RUNNER_TEMP/img/bin/python" scripts/check-readme-images.py
       - name: nsh build reports no warnings
         run: |
           set -o pipefail

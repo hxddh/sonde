@@ -1022,3 +1022,9 @@ export interface RunResult {
 /** The requests that started in a stretch of a run, reckoned as a run of their own
  * (`runs.stretch`): its slices its own, its times the run's (`startMs`). */
 export type Stretch = Pick<RunView, "summary" | "profile"> & { signals: Signals };
+
+/** A command a folder likely runs (Run proposes it), and the file it was read from. */
+export interface SuggestedCommand {
+  command: string;
+  from: string;
+}

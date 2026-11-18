@@ -13,7 +13,7 @@ import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { away, endpoint, endpoints, go, openRun, report, runsTick, showInSidebar } from "../store";
-import type { RunInfo, RunView, Stretch } from "../types";
+import type { RunInfo, RunView, Stretch, SuggestedCommand } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Card, CARD, IconButton, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/runview";
@@ -52,6 +52,7 @@ function CommandBar() {
         <View class="flex-row">
           <Options value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
         </View>
+        <Suggestions />
       </View>
     );
   }
@@ -90,7 +91,33 @@ function CommandBar() {
         </View>
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
+      <Suggestions />
     </View>
+  );
+}
+
+/** What the chosen folder likely runs, while the field is empty: a press puts one in it (none found: nothing said). */
+function Suggestions() {
+  const asked = () => (running() || command().trim() ? null : cwd().trim() || null);
+  const found = resource(asked, async (dir): Promise<SuggestedCommand[]> => {
+    if (!dir) return [];
+    try {
+      return await api.runs.suggest(dir);
+    } catch {
+      return [];
+    }
+  });
+  return (
+    <If when={asked() && (found() ?? []).length > 0 ? found() : null}>
+      {(list) => (
+        <View testID="run-suggestions" class="flex-row flex-wrap items-center gap-2">
+          <Text class={TEXT.meta}>{t("run.suggested")}</Text>
+          <Each of={list()} key={(c) => c.command}>
+            {(c, i) => <Button small variant="outline" icon="square-terminal" label={c().command} tip={t("run.suggestedFrom", { file: c().from })} onPress={() => command.set(c().command)} testID={`run-suggest-${i()}`} />}
+          </Each>
+        </View>
+      )}
+    </If>
   );
 }
 

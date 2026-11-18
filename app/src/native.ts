@@ -103,6 +103,12 @@ export const api = {
     importPath: (path: string) => Runs.importPath(path) as string,
     pick: (runsKind: string, trafficKind: string) => Runs.pick(runsKind, trafficKind) as Promise<string | null>,
     pickFolder: () => Runs.pickFolder() as Promise<string | null>,
+    /** The demo's job, written afresh into its folder: the command that plays it on the demo store, and that folder. */
+    demoJob: () => Runs.demoJob() as { command: string; cwd: string },
+    /** The demo job's finding fixed in its file, as a person would change the code. */
+    demoFix: () => Runs.demoFix() as boolean,
+    /** The commands a folder likely runs, the likeliest first (none when nothing is found). */
+    suggest: async (cwd: string) => (await Runs.suggest(cwd)) as T.SuggestedCommand[],
     openCode: (run: string, place: string) => Runs.openCode(run, place) as Promise<void>,
     rename: (path: string, title: string) => Runs.rename(path, title) as boolean,
     /** To the system's trash (deleted where there is none). */

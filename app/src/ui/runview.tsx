@@ -301,7 +301,7 @@ function StoreFixButton(props: { o: Observation; onStore?: (o: Observation) => v
   );
 }
 
-function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; onStore?: (o: Observation) => void }) {
+function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; onStore?: (o: Observation) => void; /** the fix applied to the program's code, and the program run again (the demo's) */ onApply?: (o: Observation) => void }) {
   const fixSdk = props.sdk;
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
@@ -326,6 +326,10 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         {/* the store's side of the fix, where it has one; or no change: a habit kept on purpose, which sonde check then expects */}
         <StoreFixButton o={props.o} onStore={props.onStore} />
         <ExpectButton o={props.o} onExpect={props.onExpect} />
+        {/* the demo's: the fix made in its code, and the job run again — the loop in one press */}
+        <If when={props.onApply}>
+          <Button small variant="primary" icon="play" label={t("fix.apply")} onPress={() => props.onApply?.(props.o)} testID="finding-apply" />
+        </If>
       </View>
       {/* the engine's setting, the one edit to make: before why and the code */}
       <If when={shown()?.setting}>{(s) => <SettingPanel s={s()} onOpenCode={props.onOpenCode} />}</If>
@@ -392,7 +396,7 @@ export function whatIfText(v: RunView): string | null {
 /** What stands out in a run — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: RunView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
+export function Observations(props: { view: RunView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** a finding's fix applied to the program's code and the program run again (the demo's) */ onApply?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
   const about = (o: Observation) => o.operationsTotal ?? o.operations?.length ?? 0;
@@ -559,7 +563,7 @@ export function Observations(props: { view: RunView; filter?: number | null; onF
                     </View>
                   }
                 >
-                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} onStore={props.onStore} />
+                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} onStore={props.onStore} onApply={props.onApply} />
                 </If>
               </View>
             </If>

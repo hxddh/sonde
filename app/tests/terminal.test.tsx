@@ -27,9 +27,10 @@ test("home lists the places; digits open them", async () => {
   await app.keyboard.press("3");
   await app.wait(300);
   if (app.shows("id:welcome")) {
-    // the demo lands on Run with a command ready; Buckets is a place away
+    // the demo runs its job and lands on its run, on its finding; Buckets is a place away
     await app.press("id:welcome-demo");
-    await app.waitFor("id:screen-run", { timeout: 10000 });
+    await app.waitFor("id:screen-runs", { timeout: 20000 });
+    await app.waitFor("id:observation-0", { timeout: 20000 });
     await app.back();
     await app.keyboard.press("3");
   }

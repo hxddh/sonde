@@ -5,6 +5,7 @@
 //! The services ([`services`]) implement each diagnosis; `sonde-nsh`
 //! exports them to TSX and `sonde-cli` to scripts.
 
+pub mod commands;
 pub mod config;
 pub mod credentials;
 pub mod demo;
@@ -15,6 +16,7 @@ pub mod paths;
 pub use decoders::phrase;
 pub mod services;
 pub mod sonde;
+pub mod tour;
 pub mod vendor;
 
 pub use config::{Config, CredentialSource, EndpointConfig, Settings};
