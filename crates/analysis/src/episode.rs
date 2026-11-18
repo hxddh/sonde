@@ -1474,6 +1474,11 @@ pub struct Observation {
     /// them away too ([`crate::fixes::what_if`]).
     #[serde(skip)]
     pub kept_ids: Vec<u64>,
+    /// The requests it saves move their bytes still, in fewer and larger
+    /// ones (small objects read from shards): acting on it saves their
+    /// price as requests, not their bytes out nor its egress.
+    #[serde(skip)]
+    pub keeps_bytes: bool,
     /// The requests a saving of time alone is about (those sent one after
     /// another), by id.
     #[serde(skip)]
@@ -1538,6 +1543,12 @@ impl Observation {
     /// Names the requests acting on it keeps in their place.
     fn keeping(mut self, ids: Vec<u64>) -> Self {
         self.kept_ids = ids;
+        self
+    }
+
+    /// Says the requests it saves move their bytes still, in fewer ones.
+    fn keeping_bytes(mut self) -> Self {
+        self.keeps_bytes = true;
         self
     }
 
@@ -1814,6 +1825,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saves_bytes: 0,
         saved_ids: Vec::new(),
         kept_ids: Vec::new(),
+        keeps_bytes: false,
         timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
@@ -1836,6 +1848,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saves_bytes: 0,
         saved_ids: Vec::new(),
         kept_ids: Vec::new(),
+        keeps_bytes: false,
         timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
@@ -2396,7 +2409,9 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     of_records(&mut ids.iter().copied()),
                 )
                 .weigh(ids.len(), saved.len(), total)
-                .saving_of(saved),
+                .saving_of(saved)
+                // the shards hold every sample: as many bytes are read
+                .keeping_bytes(),
             );
         }
     }

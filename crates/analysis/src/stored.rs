@@ -7,7 +7,7 @@
 //! `x-amz-version-id` (other than `null`, which a bucket whose versioning is
 //! suspended answers) or `x-amz-delete-marker`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use reqlog::Record;
 
@@ -17,10 +17,10 @@ pub struct Stored {
     /// Bytes written and left (not deleted by the run), each by the place
     /// of the request that wrote them in the records.
     pub left: Vec<(usize, u64)>,
-    /// A write's answer said the bucket keeps versions.
+    /// A write's answer said a bucket keeps versions.
     pub versioned: bool,
-    /// Versions the run's overwrites and deletes made noncurrent, on a
-    /// bucket that keeps versions …
+    /// Versions the run's overwrites and deletes made noncurrent, on the
+    /// buckets that keep versions (each by its own answers) …
     pub noncurrent: usize,
     /// … and the bytes of those whose size the run saw (written or read whole
     /// in it before).
@@ -82,23 +82,32 @@ fn copy_source(r: &Record) -> Option<(String, String)> {
 pub fn stored(records: &[Record]) -> Stored {
     let ok = |r: &Record| !r.is_error() && r.status.is_some_and(|s| s < 300);
     let writes = |r: &Record| matches!(r.method.as_str(), "PUT" | "POST" | "DELETE");
-    let versioned = records
+    // the buckets whose writes' answers said they keep versions: an
+    // overwrite in another bucket of the run replaces what was there
+    let versioned: HashSet<&str> = records
         .iter()
-        .any(|r| writes(r) && ok(r) && says_versioned(r));
+        .filter(|r| writes(r) && ok(r) && says_versioned(r))
+        .filter_map(|r| r.bucket.as_deref())
+        .collect();
     let mut out = Stored {
-        versioned,
+        versioned: !versioned.is_empty(),
         ..Stored::default()
     };
     // each key the run wrote (or, on a versioned bucket, saw the size of):
     // its size when known, and the request that wrote it when the run did
     let mut keys: HashMap<(&str, &str), (Option<u64>, Option<usize>)> = HashMap::new();
-    let mut parts: HashMap<&str, u64> = HashMap::new();
+    // each upload's parts by number: a part sent again replaces the one
+    // before (a retry), as S3 keeps only the last
+    let mut parts: HashMap<&str, HashMap<&str, u64>> = HashMap::new();
     for (i, r) in records.iter().enumerate() {
         if r.kind == "UploadPart"
             && ok(r)
             && let Some(id) = query(r, "uploadId")
         {
-            *parts.entry(id).or_default() += r.request_bytes.get().unwrap_or(0);
+            parts.entry(id).or_default().insert(
+                query(r, "partNumber").unwrap_or(""),
+                r.request_bytes.get().unwrap_or(0),
+            );
             continue;
         }
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
@@ -107,13 +116,18 @@ pub fn stored(records: &[Record]) -> Stored {
         if !ok(r) || k.is_empty() {
             continue;
         }
+        let versioned = versioned.contains(b);
         let written = match r.kind.as_str() {
             "PutObject" => Some(r.request_bytes.get()),
             "CopyObject" => Some(copy_source(r).and_then(|(sb, sk)| {
                 keys.get(&(sb.as_str(), sk.as_str()))
                     .and_then(|(size, _)| *size)
             })),
-            "CompleteMultipartUpload" => Some(query(r, "uploadId").and_then(|id| parts.remove(id))),
+            "CompleteMultipartUpload" => Some(
+                query(r, "uploadId")
+                    .and_then(|id| parts.remove(id))
+                    .map(|p| p.values().sum()),
+            ),
             _ => None,
         };
         if let Some(size) = written {
@@ -243,5 +257,57 @@ mod tests {
             ),
         ];
         assert_eq!(stored(&records).noncurrent, 0);
+    }
+
+    #[test]
+    fn versions_are_kept_by_the_bucket_that_keeps_them_not_by_the_run() {
+        let in_bucket = |mut r: Record, b: &str| {
+            r.bucket = Some(b.into());
+            r
+        };
+        let records = [
+            // one bucket keeps versions …
+            answered(
+                in_bucket(rec(1, "PUT", "PutObject", "k", 100, 0), "kept"),
+                "x-amz-version-id",
+                "v1",
+            ),
+            // … another does not: its overwrite and delete leave nothing
+            in_bucket(rec(2, "PUT", "PutObject", "k", 500, 0), "plain"),
+            in_bucket(rec(3, "PUT", "PutObject", "k", 700, 0), "plain"),
+            in_bucket(rec(4, "PUT", "PutObject", "gone", 900, 0), "plain"),
+            in_bucket(rec(5, "DELETE", "DeleteObject", "gone", 0, 0), "plain"),
+            // (a read of it says no size worth keeping)
+            in_bucket(rec(6, "GET", "GetObject", "other", 0, 4096), "plain"),
+            in_bucket(rec(7, "PUT", "PutObject", "other", 10, 0), "plain"),
+        ];
+        let s = stored(&records);
+        assert!(s.versioned);
+        assert_eq!((s.noncurrent, s.noncurrent_bytes), (0, 0));
+        assert_eq!(s.left, vec![(0, 100), (2, 700), (6, 10)]);
+    }
+
+    #[test]
+    fn a_part_uploaded_again_replaces_the_one_before() {
+        let part = |id: u64, n: &str, size: u64| {
+            let mut r = rec(id, "PUT", "UploadPart", "big", size, 0);
+            r.lists_mut().query = vec![
+                ("partNumber".into(), n.into()),
+                ("uploadId".into(), "u1".into()),
+            ];
+            r
+        };
+        let mut done = rec(5, "POST", "CompleteMultipartUpload", "big", 200, 300);
+        done.lists_mut().query = vec![("uploadId".into(), "u1".into())];
+        let records = [
+            part(1, "1", 8 << 20),
+            part(2, "2", 8 << 20),
+            // part 2 sent again (a retry): S3 keeps this one alone
+            part(3, "2", 8 << 20),
+            part(4, "3", 1 << 20),
+            done,
+        ];
+        let s = stored(&records);
+        assert_eq!(s.left, vec![(4, (17 << 20))]);
     }
 }

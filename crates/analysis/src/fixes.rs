@@ -468,7 +468,11 @@ pub fn rank_by_saving(
                 .saved_ids
                 .iter()
                 .filter_map(|id| by_id.get(id))
-                .map(|r| crate::profile::price(r, prices))
+                .map(|r| match o.keeps_bytes {
+                    // its bytes are still read (and charged), in fewer requests
+                    true => crate::profile::request_price(r, prices),
+                    false => crate::profile::price(r, prices),
+                })
                 .sum::<f64>()
                 + bytes_only_cost(o, prices);
             // (a sum of small prices, without its float's noise)
@@ -508,7 +512,9 @@ fn bytes_only_cost(o: &Observation, prices: &crate::profile::RequestPrices) -> f
 /// saves is never taken away by another's ([`Observation::kept_ids`]). The cost is the price of those left. A finding that
 /// saves time without removing a request (requests sent at once) takes its
 /// own figure off, when none of its requests is among those removed. A
-/// finding that does not name its requests is not counted. A run whose
+/// finding whose requests' bytes are read still, in fewer requests
+/// ([`Observation::keeps_bytes`]), takes the requests away and not their
+/// bytes. A finding that does not name its requests is not counted. A run whose
 /// waiting is not known (`timed` false: an imported log's) says none, and
 /// counts no finding that saves only time.
 pub fn what_if(
@@ -538,9 +544,28 @@ pub fn what_if(
             gone.remove(id);
         }
     }
+    // the requests gone whose bytes are read still, in fewer requests (small
+    // objects read from shards): unless another finding takes them away
+    // with their bytes (a cache)
+    let with_bytes: std::collections::HashSet<u64> = counted
+        .iter()
+        .filter(|o| !o.keeps_bytes)
+        .flat_map(|o| o.saved_ids.iter().copied())
+        .collect();
+    let still_read: std::collections::HashSet<u64> = counted
+        .iter()
+        .filter(|o| o.keeps_bytes)
+        .flat_map(|o| o.saved_ids.iter().copied())
+        .filter(|id| gone.contains(id) && !with_bytes.contains(id))
+        .collect();
     // never the whole run: a request each finding keeps is among the ids
     // it does not name. Those left are added up where they are, not copied
     let left = || records.iter().filter(|r| !gone.contains(&r.id));
+    let moved = || {
+        records
+            .iter()
+            .filter(|r| still_read.contains(&r.id) && crate::profile::reached_store(r))
+    };
     let mut waiting = crate::profile::waiting_ms_of(left());
     for o in saving.iter().filter(|o| timed && o.saves_requests == 0) {
         // its figure was reckoned with every request there: with one of
@@ -570,9 +595,14 @@ pub fn what_if(
     }
     let cost: f64 = left()
         .map(|r| crate::profile::price(r, &profile.prices))
+        .chain(moved().map(|r| {
+            crate::profile::price(r, &profile.prices)
+                - crate::profile::request_price(r, &profile.prices)
+        }))
         .sum::<f64>()
         - fewer_cost;
     let bytes_left: u64 = left()
+        .chain(moved())
         .filter(|r| crate::profile::reached_store(r))
         .map(crate::profile::out_bytes)
         .sum();

@@ -272,6 +272,45 @@ fn many_small_objects_each_read_whole_are_a_storm_to_shard() {
     assert!(find(&findings(&big), "obs.smallreads").is_none());
 }
 
+/// Sharding small objects sends fewer requests, not fewer bytes: the
+/// shards hold every sample, and what they read out is as before.
+#[test]
+fn sharding_small_reads_saves_requests_and_keeps_their_bytes() {
+    let rs: Vec<Record> = (0..600u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                "GetObject",
+                &format!("train/img-{i:05}.jpg"),
+                110_000,
+            )
+        })
+        .collect();
+    let prices = charged();
+    let a = sonde_analysis::view::Analysis::of_records(&header(), &rs, &prices);
+    let o = find(&a.observations, "obs.smallreads").expect("small reads");
+    assert_eq!(o.saves_requests, 599);
+    assert_eq!(o.saves_bytes, 0);
+    let w = a.what_if.as_ref().expect("a what-if");
+    assert_eq!(w.requests, (600, 1));
+    assert_eq!(w.bytes_out, (600 * 110_000, 600 * 110_000));
+    // the requests' price, not their egress
+    let each = sonde_analysis::profile::request_price(&rs[0], &prices);
+    assert!(
+        (o.saves_cost - 599.0 * each).abs() < 1e-9,
+        "{} vs {}",
+        o.saves_cost,
+        599.0 * each
+    );
+    let egress = prices.out(600 * 110_000);
+    assert!(
+        (w.cost.1 - (egress + each)).abs() < 1e-9,
+        "{:?} vs {}",
+        w.cost,
+        egress + each
+    );
+}
+
 /// Partition discovery: each partition's folder listed once.
 #[test]
 fn many_prefixes_listed_one_by_one_are_a_crawl() {
