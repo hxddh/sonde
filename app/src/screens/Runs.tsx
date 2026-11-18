@@ -123,7 +123,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // the demo's run: its first finding open, its line of code and its fix in view
   effect(() => {
     const o = findingOnOpen();
-    if (o && o.path === props.path) untracked(() => batch(() => (filter.set(o.index), findingOnOpen.set(null))));
+    const v = view();
+    // (once the run is read: a run with no finding there opens on all its operations)
+    if (o && v && o.path === props.path) untracked(() => batch(() => (o.index < v.observations.length && filter.set(o.index), findingOnOpen.set(null))));
   });
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);

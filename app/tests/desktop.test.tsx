@@ -20,7 +20,9 @@ test("a first launch welcomes; its demo runs, opens on its finding, and the fix 
   await app.waitFor("id:fix-callers >> text:/^export\\.py:\\d+ read_reports/");
   // the fix applied and the job run again: the finding fixed, its saving measured beside the predicted one
   await app.press("id:finding-apply");
-  await app.waitFor("id:since-change >> text:/fixed.*saved 3 requests \\(predicted 3\\)/", { timeout: 20000 });
+  await app.waitFor("text:/^Since the run before: 1 fixed: .*, saved 3 requests \\(predicted 3\\)/", { timeout: 20000 });
+  // (no finding left: its operations all shown, none narrowed away)
+  expect(app.shows("text:Nothing here yet")).toBe(false);
   expect(app.shows("id:finding-advice")).toBe(false);
   expect(app.shows("id:sidebar")).toBe(true);
   await app.press("id:toggle-sidebar");
