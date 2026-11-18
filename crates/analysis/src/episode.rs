@@ -455,7 +455,7 @@ fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
-fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
+pub(crate) fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
     r.query()
         .iter()
         .find(|(k, _)| k == name)
@@ -2633,6 +2633,15 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id)))
             .collect();
         (o.callers, o.sdk) = sonde_proxy::callers::of(&rs);
+        // the engine's own setting, where its requests are an engine's
+        let formats: Vec<(Option<Format>, usize)> = o
+            .episodes
+            .iter()
+            .filter_map(|&i| episodes.get(i))
+            .map(|e| (e.format, e.records.len()))
+            .collect();
+        let engine = crate::engines::engine_of(&rs, &formats);
+        crate::engines::apply(o, engine, &rs, records);
     }
     out
 }
@@ -2833,6 +2842,8 @@ pub fn traces_of(
 }
 
 fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<Observation> {
+    // where the program's folder sets each engine setting now
+    crate::engines::locate_all(&mut out, header.cwd.as_deref());
     if !header.whole_seconds {
         return out;
     }
@@ -2862,7 +2873,7 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
             );
             o.text = phrase.en();
             o.phrases = vec![phrase];
-            o.fixes = crate::fixes::for_key("obs.throttled.rate");
+            o.fixes = crate::fixes::rekeyed(std::mem::take(&mut o.fixes), "obs.throttled.rate");
             o.identity = crate::profile::finding_identity(o);
             o.kind = crate::profile::kind_of(&o.identity).to_string();
         }
@@ -2877,7 +2888,7 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
             );
             o.text = phrase.en();
             o.phrases = vec![phrase];
-            o.fixes = crate::fixes::for_key("obs.rmw.log");
+            o.fixes = crate::fixes::rekeyed(std::mem::take(&mut o.fixes), "obs.rmw.log");
         }
     }
     out

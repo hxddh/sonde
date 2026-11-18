@@ -338,17 +338,44 @@
         },
         "fixes": {
           "type": "array",
-          "description": "How to fix it: the fix for the run's SDK, or a store's setting (each SDK's with `--all`, or when no SDK is known).",
+          "description": "How to fix it: the engine's setting where its requests are an engine's (SlateDB, DuckDB, rclone, …), else the fix for the run's SDK, or a store's setting (each SDK's with `--all`).",
           "items": {
             "type": "object",
             "properties": {
               "sdk": {
                 "type": "string",
-                "description": "`python`, `java`, `go`, `js`, or `config` for a store's setting."
+                "description": "`python`, `java`, `go`, `js`, `rust` (object_store), or `config` for a store's or an engine's setting."
               },
               "code": {
                 "type": "string",
-                "description": "The change, with placeholders (`b` the bucket, `k` the key)."
+                "description": "The change, its first line a comment that says it. An SDK's has placeholders (`b` the bucket, `k` the key); an engine's names the real ones."
+              },
+              "setting": {
+                "type": "object",
+                "description": "The engine's setting it changes: the one edit to make.",
+                "properties": {
+                  "engine": {
+                    "type": "string",
+                    "description": "The engine or tool: `SlateDB DbReader`, `DuckDB`, `rclone`, `Hadoop s3a`, …"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "The setting's own name: `manifest_poll_interval`, `--s3-no-head-object`, `fs.s3a.committer.name`."
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "The value to give it, as the engine reads it."
+                  },
+                  "where": {
+                    "type": "string",
+                    "description": "`file:line` (relative to `run.cwd`) where the program's folder sets it now; absent when sonde finds none."
+                  }
+                },
+                "required": [
+                  "engine",
+                  "key",
+                  "value"
+                ]
               }
             },
             "required": [
@@ -753,8 +780,30 @@
           ]
         },
         "advice": {
-          "$ref": "#/$defs/phrase",
-          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …) and its arguments."
+          "type": "object",
+          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …), its arguments, and its English.",
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "The phrase's key in the app's locales (en, zh)."
+            },
+            "args": {
+              "type": "object",
+              "description": "Its arguments, as text.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "text": {
+              "type": "string",
+              "description": "The advice in English: no lookup needed."
+            }
+          },
+          "required": [
+            "key",
+            "args",
+            "text"
+          ]
         },
         "history": {
           "type": "array",

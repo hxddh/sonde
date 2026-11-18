@@ -157,7 +157,8 @@ never load half of one.
 ## Findings
 
 Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names), with what it saves (requests, time,
-money a month), the line that sent it and the fix for the SDK that sent it (boto3, Java, Go, JavaScript):
+money a month), the line that sent it and the fix: the [engine's setting](#engine-settings) when an engine sent its
+requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript, Rust's object_store):
 
 | Kind | Found when | Fix |
 |---|---|---|
@@ -173,6 +174,27 @@ money a month), the line that sent it and the fix for the SDK that sent it (boto
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
 | `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
+
+### Engine settings
+
+When a finding's requests are an engine's (its table format's files) or a tool's (its user agent), the fix is that
+engine's own setting, its value, and the `file:line` in the program's folder that sets it now (`where`, when sonde
+finds it there). No SDK code is offered for a program that does not call the SDK itself.
+
+| Engine | Finding | Setting |
+|---|---|---|
+| SlateDB (`Db`, a writer; `DbReader`) | the manifest listed or read again and again, more often than its default | `manifest_poll_interval`: `1s` (`Settings`, `SlateDb.toml`) or `10s` (`DbReaderOptions`), with the period seen |
+| SlateDB | small WAL files, flushed more often than every 500 ms | `flush_interval = 1s` (a write waits up to it to be durable) |
+| DuckDB | HEAD before GET | `SET enable_http_metadata_cache = true` |
+| DuckDB | a file read again and again | `SET enable_external_file_cache = true` (1.3+, on by default there) |
+| rclone | HEAD before GET; small files in parts; throttled | `--s3-no-head-object`; `--s3-upload-cutoff 200Mi`; `--tpslimit` half the peak a second |
+| s5cmd | throttled with many in flight | `--numworkers` under the count throttled |
+| Trino (`app/Trino` in its user agent) | throttled | `s3.retry-mode=ADAPTIVE` (native S3 file system) |
+| Hadoop s3a (Spark too) | commits by rename; markers deleted | `fs.s3a.committer.name = magic`; `fs.s3a.directory.marker.retention = keep` (the default from 3.4.0) |
+| Delta, Lance, Iceberg | orphans | `vacuum` (delta-rs; `VACUUM` in Spark), `cleanup_old_versions`, `remove_orphan_files`, on the table's own path |
+
+Polars, pyiceberg and delta-rs (besides its `vacuum`) have no setting that acts on these findings, so they get none;
+nor do Hudi and Paimon yet.
 
 ## The fix loop
 

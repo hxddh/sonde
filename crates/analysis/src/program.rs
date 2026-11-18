@@ -1310,10 +1310,10 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         ));
     }
     let kept = |text: &str| c.expected.iter().any(|e| e.text == text);
+    // where a finding's requests came from, and its engine's setting to change
     let place = |text: &str| {
-        m.findings
-            .iter()
-            .find(|f| f.text == text)
+        let f = m.findings.iter().find(|f| f.text == text);
+        let mut out = f
             .and_then(|f| f.callers.first())
             .map(|c| {
                 format!(
@@ -1321,7 +1321,17 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                     c.place.replace('`', "'").replace(['\n', '\r'], " ")
                 )
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(s) = f
+            .and_then(|f| crate::fixes::for_sdk(&f.fixes, f.sdk.as_deref()))
+            .and_then(|x| x.setting.as_ref())
+        {
+            out.push_str(&format!(
+                " — set `{}`",
+                s.line().replace('`', "'").replace(['\n', '\r'], " ")
+            ));
+        }
+        out
     };
     if let Some(ch) = m.change {
         let row = |what: &str| {
@@ -2276,6 +2286,43 @@ mod tests {
             md.contains(
                 "> ❌ **The program failed** (exit 1): sonde refused DeleteObject: no-delete mode"
             ),
+            "{md}"
+        );
+    }
+
+    /// A finding an engine's setting acts on says the setting in the
+    /// comment, where a reviewer reads it.
+    #[test]
+    fn a_pr_comment_names_the_engines_setting() {
+        let mut after = Vec::new();
+        for i in 0..6u64 {
+            let mut get = rec(i * 2 + 2, &format!("in/k{i}"));
+            get.time += chrono::Duration::milliseconds(i as i64 * 100);
+            let mut head = get.clone();
+            head.id = i * 2 + 1;
+            head.method = "HEAD".into();
+            head.kind = "HeadObject".into();
+            head.time -= chrono::Duration::milliseconds(5);
+            for r in [&mut head, &mut get] {
+                r.lists_mut()
+                    .request_headers
+                    .push(reqlog::Header::new("user-agent", "rclone/v1.68.2"));
+            }
+            after.extend([head, get]);
+        }
+        let (pa, pra, oa) = point(&after);
+        assert!(oa.iter().any(|o| o.kind == "obs.headget"), "{oa:#?}");
+        let c = check((&pa, &after, &pra, &oa), None, &Budget::default());
+        let md = check_comment(
+            &c,
+            &Comment {
+                currency: "USD",
+                findings: &oa,
+                ..Default::default()
+            },
+        );
+        assert!(
+            md.contains("— set `--s3-no-head-object = true (rclone)`"),
             "{md}"
         );
     }

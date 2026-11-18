@@ -1,6 +1,9 @@
 //! What to change in the program, by SDK: each finding a few lines of code
 //! that act on it (the change, not a whole program), and what acting on
-//! every finding would leave of a run (`what_if`).
+//! every finding would leave of a run (`what_if`). An engine's own setting
+//! comes first where its requests are an engine's ([`crate::engines`]).
+
+use std::borrow::Cow;
 
 use reqlog::Record;
 use serde::Serialize;
@@ -10,13 +13,35 @@ use crate::profile::Profile;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Fix {
-    /// `python`, `java`, `go`, `js`, or `config` for a store's setting.
+    /// `python`, `java`, `go`, `js`, `rust` (object_store), or `config` for
+    /// a store's or an engine's setting.
     pub sdk: &'static str,
-    pub code: &'static str,
+    /// The change, its first line a comment that says it.
+    pub code: Cow<'static, str>,
+    /// The engine's setting it changes, when it is one: what an agent edits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setting: Option<crate::engines::Setting>,
 }
 
 const fn f(sdk: &'static str, code: &'static str) -> Fix {
-    Fix { sdk, code }
+    Fix {
+        sdk,
+        code: Cow::Borrowed(code),
+        setting: None,
+    }
+}
+
+/// A finding's fixes once it is said another way (`key`): its engine's
+/// kept, and the SDKs' only where it had them (its engine's requests had
+/// none).
+pub fn rekeyed(old: Vec<Fix>, key: &str) -> Vec<Fix> {
+    let sdks = old.iter().any(|f| f.sdk != "config");
+    let own: Vec<Fix> = old.into_iter().filter(|f| f.setting.is_some()).collect();
+    let engine = !own.is_empty();
+    let general = for_key(key)
+        .into_iter()
+        .filter(|f| (sdks || f.sdk == "config") && !(f.sdk == "config" && engine));
+    own.into_iter().chain(general).collect()
 }
 
 /// The SDK's own setting that turns its retries on, by language (`python`,
@@ -55,6 +80,10 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "js",
                 "// GET alone: its response carries what HEAD would\nconst obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nconst size = obj.ContentLength;",
+            ),
+            f(
+                "rust",
+                "// GET alone: its result carries what HEAD would (object_store)\nlet obj = store.get(&path).await?;\nlet (size, etag) = (obj.meta.size, obj.meta.e_tag.clone());",
             ),
         ],
         "obs.rename" => vec![f(
@@ -100,6 +129,10 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "js",
                 "// list the prefix once; look keys up in the result\nfor await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: p })) keys.push(...(page.Contents ?? []));",
             ),
+            f(
+                "rust",
+                "// list the prefix once; look keys up in the result (object_store)\nlet keys: HashSet<Path> = store.list(Some(&prefix)).map_ok(|m| m.location).try_collect().await?;",
+            ),
         ],
         "obs.small" => vec![
             f(
@@ -135,6 +168,10 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "js",
                 "// up to 1,000 keys a request\nfor (let i = 0; i < keys.length; i += 1000)\n  await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));",
+            ),
+            f(
+                "rust",
+                "// up to 1,000 keys a request: object_store's S3 sends delete_stream as DeleteObjects\nlet paths = futures::stream::iter(paths.into_iter().map(Ok)).boxed();\nstore.delete_stream(paths).try_collect::<Vec<_>>().await?;",
             ),
         ],
         "obs.rmw" | "obs.rmw.log" => vec![
@@ -208,6 +245,10 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "js",
                 "// eight at once instead of one after another\nconst limit = pLimit(8);\nconst bodies = await Promise.all(keys.map((k) => limit(() => get(k))));",
             ),
+            f(
+                "rust",
+                "// eight at once instead of one after another (object_store)\nlet bodies: Vec<Bytes> = futures::stream::iter(paths).map(|p| async move { store.get(&p).await?.bytes().await }).buffered(8).try_collect().await?;",
+            ),
         ],
         "obs.throttled" | "obs.throttled.rate" => vec![
             f(
@@ -272,13 +313,15 @@ pub fn language(sdk: &str) -> Option<&'static str> {
         "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
         "aws-sdk-go" | "aws-sdk-go-v2" => "go",
         "aws-sdk-js" => "js",
+        "object_store" => "rust",
         _ => return None,
     })
 }
 
-/// Of a finding's fixes, the one for the SDK that sent its requests: a
-/// store's or an engine's setting whatever the SDK; none for an SDK sonde
-/// has no fix in the language of.
+/// Of a finding's fixes, the one for the SDK that sent its requests: an
+/// engine's or a store's setting whatever the SDK (an engine's first, as
+/// [`crate::engines::apply`] puts it); none for an SDK sonde has no fix in
+/// the language of.
 pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
     let lang = sdk.and_then(language);
     fixes
@@ -499,8 +542,11 @@ mod tests {
         assert_eq!(pick(Some("aws-sdk-java 2.21")), Some("java"));
         assert_eq!(pick(Some("aws-sdk-go-v2 1.30")), Some("go"));
         assert_eq!(pick(Some("aws-sdk-js 3.600")), Some("js"));
+        // object_store, Rust's: its own calls (an engine on top of it, SlateDB
+        // or Lance, gets the engine's setting instead: tests/engines.rs)
+        assert_eq!(pick(Some("object_store 0.14")), Some("rust"));
         // an SDK with no fix in its language, or none detected: none shown
-        assert_eq!(pick(Some("object_store 0.14")), None);
+        assert_eq!(pick(Some("aws-sdk-cpp 1.11")), None);
         assert_eq!(pick(None), None);
         // an engine's setting, whatever sent it
         assert_eq!(

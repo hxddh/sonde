@@ -64,6 +64,10 @@ pub(super) fn finding_lines(
     }
     let sdk = o.sdk.as_deref().or(sdk);
     if let Some(fix) = sonde_analysis::fixes::for_sdk(&o.fixes, sdk) {
+        // the engine's setting first: the one edit to make
+        if let Some(s) = &fix.setting {
+            out.push(paint(&format!("    set: {}", s.line()), "36", color));
+        }
         let whose = match (fix.sdk, sdk) {
             ("config", _) | (_, None) => "fix:".to_string(),
             (_, Some(sdk)) => format!("fix for {}:", sdk.split(' ').next().unwrap_or(sdk)),
@@ -275,6 +279,40 @@ mod tests {
         // the same once written: 435.2 ms and 435.4 ms
         assert_eq!(moved(435.2, 435.4, ms_text), "435 ms (no change)");
         assert_eq!(moved(0.0, 3.0, n), "0 → 3");
+    }
+
+    #[test]
+    fn a_finding_an_engines_setting_acts_on_says_the_setting_before_the_code() {
+        use sonde_analysis::episode::{episodes, observations};
+        let ua = reqlog::Header::new("user-agent", "rclone/v1.68.2");
+        let rs: Vec<Record> = (0..12u64)
+            .map(|i| Record {
+                id: i + 1,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 50)
+                    .unwrap(),
+                method: if i % 2 == 0 { "HEAD" } else { "GET" }.into(),
+                kind: if i % 2 == 0 { "HeadObject" } else { "GetObject" }.into(),
+                bucket: Some("lake".into()),
+                key: Some(format!("in/{}.csv", i / 2).into()),
+                status: Some(200),
+                latency_ms: 5.0,
+                lists: reqlog::Lists {
+                    request_headers: vec![ua.clone()],
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            })
+            .collect();
+        let obs = observations(&rs, &episodes(&rs));
+        let o = obs.iter().find(|o| o.kind == "obs.headget").unwrap();
+        let lines = finding_lines(o, None, None, false);
+        let set = lines
+            .iter()
+            .position(|l| l == "    set: --s3-no-head-object = true (rclone)")
+            .unwrap_or_else(|| panic!("{lines:#?}"));
+        let fix = lines.iter().position(|l| l.trim() == "fix:").unwrap();
+        assert!(set < fix, "{lines:#?}");
     }
 
     fn change(state: State, text: &str, saved: Option<&str>) -> FindingChange {
