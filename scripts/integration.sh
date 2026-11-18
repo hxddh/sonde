@@ -3,8 +3,8 @@
 #
 #   scripts/integration.sh [ceph rustfs minio]     (default: ceph rustfs)
 #
-# MinIO no longer publishes public images (Docker Hub and Quay refuse anonymous
-# pulls): `minio` runs only with MINIO_IMAGE set to an image you can pull.
+# MinIO no longer publishes images anyone may pull: `minio` is built from its
+# source first (tests/integration/minio/Dockerfile, a few minutes).
 #
 # Starts them with docker compose, waits until they answer, writes the
 # scenarios (incomplete uploads, versions, delete markers, a real SlateDB
@@ -15,10 +15,7 @@ set -eu
 cd "$(dirname "$0")/.."
 services="${*:-ceph rustfs}"
 compose="docker compose -f tests/integration/docker-compose.yml"
-case " $services " in
-  *" minio "*) [ -n "${MINIO_IMAGE:-}" ] || { echo "minio: set MINIO_IMAGE to a MinIO image you can pull"; exit 64; } ;;
-esac
-for s in $services; do $compose --profile "$s" up -d "$s"; done
+for s in $services; do $compose --profile "$s" up -d --build "$s"; done
 targets=""
 wait_for() { # name url
   i=0

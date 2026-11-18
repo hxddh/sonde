@@ -1,7 +1,9 @@
 # S3 implementations for sonde's integration tests (scripts/integration.sh).
 services:
   minio:
-    image: ${MINIO_IMAGE:-}
+    # built from source (minio/Dockerfile): no MinIO image may be pulled
+    build: minio
+    image: sonde-minio
     command: server /data --address :9000
     environment:
       MINIO_ROOT_USER: sondeminio
