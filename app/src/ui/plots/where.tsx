@@ -2,14 +2,14 @@
 // busy, the map of prefixes, and what the requests cost.
 
 import { computed, signal, Text, token, View } from "nsh";
-import { Bar, Cell, Plot, PlotAxis, Sankey } from "nsh/base/plot";
+import { Bar, Cell, Grid, Plot, PlotAxis, Rule, Sankey } from "nsh/base/plot";
 import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP, slotMs } from "./system";
+import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP, slotMs, type Focus, type LegendItem, FOCUS_RULE, GRID, HEADROOM, PLOT, ValueAxis, nearest, stretch } from "./system";
 import { Options, terminal, textual, SimpleTable, TONE } from "../kit";
-import { prefixSaid } from "./answers";
+import { costTimeRows, costTimeSaid, prefixSaid } from "./answers";
 
 // --- prefixes, named ---------------------------------------------------------------
 
@@ -335,4 +335,72 @@ export function CostBy(props: { signals: Signals; max?: number }) {
       </View>
     </If>
   );
+}
+
+// --- what the run cost, over time ------------------------------------------------------
+
+/** What the run cost over time, slice by slice: its requests, its bytes out as egress (what they would be, when
+ * where they were read from is not known) and what it wrote and left stored, a month — stacked in that order. */
+export function CostOverTime(props: { profile: Profile; range?: [number, number] | null; focus?: Focus }) {
+  const p = () => props.profile;
+  const currency = () => p().cost.currency;
+  const rows = () => stretch(costTimeRows(p()), props.range);
+  const total = (r: { requests: number; transfer: number; storage: number }) => r.requests + r.transfer + r.storage;
+  const top = () => Math.max(1e-9, ...rows().map(total)) * HEADROOM.plot;
+  const hovered = signal<number | null>(null);
+  const label = () => costTimeSaid(p(), props.range);
+  const money = (v: number) => cost(v, currency());
+  const tip = () => {
+    const r = hovered() === null ? null : rows()[hovered()!];
+    return r ? { title: `+${duration(r.tMs)}`, lines: [`${t("costTime.requests")} ${money(r.requests)} · ${t(transferKey(p()))} ${money(r.transfer)}`, `${t("costTime.storage")} ${money(r.storage)}`] } : null;
+  };
+  const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
+  return (
+    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
+      <If when={rows().some((r) => total(r) > 0)} else={<NoneInStretch />}>
+        <Plot
+          testID="cost-over-time"
+          data={rows()}
+          xScale={{ type: "band", ...BARS.slices }}
+          yScale={{ type: "linear", domain: [0, top()] }}
+          accessibilityLabel={label()}
+          accessibilityValue={tipValue(tip())}
+          appearGeneration={1}
+          motion={MOTION}
+          crossLineClass={CROSS_BAND}
+          tooltipPlacement="pointer"
+          tooltipOffset={10}
+          tooltipContent={<ChartTip tip={tip()} />}
+          onHoverChange={({ index }) => {
+            hovered.set(index);
+            props.focus?.set(index === null ? null : rows()[index].tMs + p().binMs / 2);
+          }}
+          class={`${TICK_ROOM} ${PLOT} w-full`}
+        >
+          <Grid y={[0]} class={GRID} />
+          {/* one stem per slice: its requests, then its bytes out, then what it left stored */}
+          <Bar value="requests" stack="cost" class="fill-chart-1" inactiveOpacity={INACTIVE} />
+          <Bar value="transfer" stack="cost" class="fill-chart-4" inactiveOpacity={INACTIVE} />
+          <Bar value="storage" stack="cost" class="fill-chart-2" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={0} class={FOCUS_RULE} />
+          <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + p().binMs]} slices={rows().length} />
+          <ValueAxis peak={top() / HEADROOM.plot} say={money} />
+        </Plot>
+      </If>
+    </If>
+  );
+}
+
+/** What the run's bytes out are named: egress when charged, egress if read from outside the region when not known. */
+const transferKey = (p: Profile) => (p.cost.transfer?.egress === "unknown" ? "costTime.transferIf" : "costTime.transfer");
+
+/** What the cost chart draws: each part there is. */
+export function costTimeLegend(p: Profile): LegendItem[] {
+  const rows = costTimeRows(p);
+  const any = (k: "requests" | "transfer" | "storage") => rows.some((r) => r[k] > 0);
+  return [
+    ...(any("requests") ? [{ label: t("costTime.requests"), swatch: "bg-chart-1" }] : []),
+    ...(any("transfer") ? [{ label: t(transferKey(p)), swatch: "bg-chart-4" }] : []),
+    ...(any("storage") ? [{ label: t("costTime.storage"), swatch: "bg-chart-2" }] : []),
+  ];
 }

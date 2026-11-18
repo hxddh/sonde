@@ -557,6 +557,8 @@ export interface Observation {
   /** The saving, counted. */
   savesRequests?: number;
   savesMs?: number;
+  /** Bytes it would not read out of the store. */
+  savesBytes?: number;
   /** What the requests it would save cost, in the run's currency (times `month.times`: a month). */
   savesCost?: number;
   /** What to change in the program, by SDK. */
@@ -582,6 +584,8 @@ export interface Month {
 /** A run after acting on every finding that counts a saving: an estimate. */
 export interface WhatIf {
   requests: [number, number];
+  /** The bytes read out of the store (absent in older runs). */
+  bytesOut?: [number, number];
   waitingMs: [number, number] | null;
   cost: [number, number];
   currency: string;
@@ -631,7 +635,9 @@ export interface Profile {
   meanInFlight: number;
   groups: ProfileGroup[];
   binMs: number;
-  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled: number; bytesUp?: number; bytesDown?: number }[];
+  /** Each slice's requests by outcome, and its money: what its requests cost, its bytes out as egress (none when
+   * free; when not known, what it would be) and what it wrote and the run left stored, a month (absent in older runs). */
+  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled: number; bytesUp?: number; bytesDown?: number; requestsCost?: number; transferCost?: number; storageCost?: number }[];
   inFlight: { tMs: number; n: number }[];
   samples: { id: number; group: number; ms: number; tMs: number; status?: number | null; bytes?: number }[];
   /** The latencies over time, every request counted: a slice, a bucket on a log scale (three a decade: bucket `b`
@@ -643,8 +649,8 @@ export interface Profile {
   callersCut?: boolean;
   /** Whether the requests' times are known (a CloudTrail file has none); absent in older shares. */
   timed?: boolean;
-  cost: { writes: number; reads: number; free: number; amount: number; currency: string };
-  prices: { per1000Writes: number; per1000Reads: number; currency: string };
+  cost: RunCost;
+  prices: { per1000Writes: number; per1000Reads: number; currency: string; perGibOut?: number; egress?: boolean; perGibMonth?: number };
   prefixes: { prefix: string; /** Folders under it shown with it (absent: this folder alone). */ folders?: number; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
   heat: { prefix: number; bin: number; n: number }[];
   flows: { source: string; target: string; value: number }[];
@@ -683,6 +689,19 @@ export interface RunPoint {
   p95Ms: number;
 }
 
+/** What a run cost: its requests, its bytes out (in `amount` when `egress` is `charged`), and apart what it left
+ * stored a month. The split is absent in older runs. */
+export interface RunCost {
+  writes: number;
+  reads: number;
+  free: number;
+  amount: number;
+  currency: string;
+  requests?: number;
+  transfer?: { bytes: number; egress: "charged" | "free" | "unknown"; amount: number; perGib: number };
+  storage?: { bytes: number; perMonth: number; versioned: boolean; noncurrent: number; noncurrentBytes: number; noncurrentPerMonth: number };
+}
+
 /** What a project's `sonde.toml` `[check]` allows its program, drawn on the charts it is about (null: not given). */
 export interface ProjectBudget {
   maxErrors: number | null;
@@ -690,7 +709,7 @@ export interface ProjectBudget {
 }
 
 export interface BudgetVerdict {
-  what: "requests" | "waiting" | "cost" | "errors" | "warnings" | "p95";
+  what: "requests" | "waiting" | "cost" | "transfer" | "errors" | "warnings" | "p95";
   value: number;
   limit: number;
   against: "budget" | "baseline";

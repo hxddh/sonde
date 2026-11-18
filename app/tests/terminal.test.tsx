@@ -107,6 +107,19 @@ test("runs in a terminal: runs › operations › requests › request", async (
   await app.waitFor("id:run-0");
 });
 
+test("a run's money in a terminal: said in a sentence, no chart", async () => {
+  const app = await open("../App.tsx", term);
+  await place(app, "runs");
+  await openExample(app);
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  await app.press("id:run-pane-mode-time");
+  await app.waitFor("id:time-pane");
+  // (the Where group is far down the pane: its words are there, scrolled to or not)
+  await app.waitUntil(() => app.texts().includes("What did the run cost, and when?"), { timeout: 10000 });
+  expect(app.texts().some((x) => /^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/.test(x))).toBe(true);
+  expect(app.shows("id:cost-over-time")).toBe(false);
+});
+
 test("run in a terminal: the program above, its operations below", async () => {
   const app = await demo();
   await place(app, "run");

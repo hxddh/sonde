@@ -237,6 +237,11 @@ test("a run's time: where it went, and two runs before and after", async () => {
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
   expect(app.shows("id:profile-cost")).toBe(true);
+  // what the run cost over time: its requests, its bytes out (said as egress if read from outside the region, where
+  // that is not known) and what it left stored, stacked on the one time axis
+  await app.waitFor("text:What did the run cost, and when?");
+  expect(app.shows("id:cost-over-time")).toBe(true);
+  expect(app.shows("label:/^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/")).toBe(true);
   // no chart hides a view behind a switch: the latencies' grid, the requests by size, each a card of its own
   expect(app.shows("id:latency-heat-chart")).toBe(true);
   expect(app.shows("id:scatter-size-chart")).toBe(true);
