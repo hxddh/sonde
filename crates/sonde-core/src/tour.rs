@@ -82,7 +82,10 @@ pub fn caller(job: &str, file: &str, mark: &str) -> String {
 }
 
 /// The time between the starts of the job's requests.
-const BEAT: std::time::Duration = std::time::Duration::from_millis(20);
+const BEAT: std::time::Duration = std::time::Duration::from_millis(100);
+/// Half the slice (`profile::Timeline::bin_ms`, 20 ms for a run this long) a
+/// request after the first starts past its beat.
+const HALF_SLICE: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Plays `job` (from file `file`) with `app`, each request naming its
 /// line in `caller_header`; `say` is told each request as it is answered,
@@ -100,7 +103,14 @@ pub async fn play(
     let start = tokio::time::Instant::now();
     let mut beat = 0u32;
     let mut send = async |r: S3Request, mark: &str| {
-        tokio::time::sleep_until(start + BEAT * beat).await;
+        // (after the first, half a slice past the beat: mid-slice in the run's
+        // timeline, a timer's millisecond either side the same slice)
+        let off = if beat == 0 {
+            std::time::Duration::ZERO
+        } else {
+            HALF_SLICE
+        };
+        tokio::time::sleep_until(start + BEAT * beat + off).await;
         beat += 1;
         let place = at(mark);
         let target = r.key.clone().unwrap_or_else(|| {
