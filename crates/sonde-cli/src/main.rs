@@ -125,6 +125,12 @@ enum Command {
     /// The terminal UI.
     #[cfg(feature = "tui")]
     Tui(cmd::tui::TuiArgs),
+    /// The tour's job in FILE, played against AWS_ENDPOINT_URL (what the app's demo runs).
+    #[command(hide = true)]
+    DemoJob {
+        /// The job's file (`export.py`, as the tour writes it).
+        file: std::path::PathBuf,
+    },
 }
 
 /// The commands as `sonde --help` lists them: by what they are for, not in
@@ -271,6 +277,7 @@ fn main() -> ExitCode {
             Command::Bucket(a) => cmd::bucket::run(&sonde, &cli, a).await,
             Command::Layout(a) => cmd::layout::run(&sonde, &cli, a).await,
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
+            Command::DemoJob { file } => cmd::demo::job(file).await,
             #[cfg(feature = "tui")]
             Command::Tui(_) => unreachable!(),
         };

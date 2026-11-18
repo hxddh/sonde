@@ -121,6 +121,7 @@ for k in en:
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
 GONE = {
+    "welcome.demoReady": "the welcome's demo no longer leaves a command to press Return on: it runs, and its run opens on its finding",
 }
 
 

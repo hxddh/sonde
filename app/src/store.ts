@@ -88,8 +88,10 @@ export const reading = (path: string) => void read.add(path);
 export const wasRead = (path: string) => read.has(path) || openRun() === path;
 /** A comparison to open with a run: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
-/** A pane to show a run on when it opens: a trial tried again opens its fresh run on its runs. */
-export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
+/** A pane to show a run on when it opens: a trial tried again opens its fresh run on its runs; the demo's, on its operations. */
+export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations" } | null>(null);
+/** A finding to open with a run (its index): the demo's run opens on its first. */
+export const findingOnOpen = signal<{ path: string; index: number } | null>(null);
 /** What the current place shows, for the toolbar's breadcrumb (a run's command). */
 export const crumb = signal<string | null>(null);
 /** Where the breadcrumb's place goes back to its list (Runs: the run let go, its list the page), while it has one. */

@@ -15,7 +15,8 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, crumbBack, endpoint, endpoints, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import { applyDemoFix, isDemoJob } from "../demo";
+import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, crumbBack, endpoint, endpoints, findingOnOpen, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
@@ -118,6 +119,11 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   effect(() => {
     const o = paneOnOpen();
     if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
+  });
+  // the demo's run: its first finding open, its line of code and its fix in view
+  effect(() => {
+    const o = findingOnOpen();
+    if (o && o.path === props.path) untracked(() => batch(() => (filter.set(o.index), findingOnOpen.set(null))));
   });
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);
@@ -438,6 +444,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       onFilter={(f) => filter.set(f)}
       states={statesOf(since())}
       onOpenCode={(place) => api.runs.openCode(props.path, place).catch(report)}
+      // the demo's job: its fix applied to its code, and run again
+      onApply={isDemoJob(v().header) ? () => void applyDemoFix(v().header.cwd) : undefined}
       // a short window keeps two findings in view (the rest scroll): the operations need their rows;
       // a finding chosen there gets the room to read what to change
       // (a finding chosen there opens its advice in what the pane's body has left once the operations

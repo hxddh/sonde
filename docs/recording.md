@@ -18,7 +18,9 @@ The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credential
 through your shell in a pseudo-terminal (ConPTY on Windows), with
 operations beside it; Stop ends it, a notification says how, the run opens. Output is kept in the run with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
-highlights its lines and back. Output is kept as printed: do not print secrets.
+highlights its lines and back. Output is kept as printed: do not print secrets. With a folder chosen and the field
+empty, Run proposes what the folder runs: a Makefile's targets, `package.json`'s scripts, `pyproject.toml`'s entry
+points, Python programs (`spark-submit` for a Spark job), `go run .`, `cargo run`.
 
 ## What the program is given
 

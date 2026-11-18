@@ -1,26 +1,17 @@
 // The first launch: no endpoint yet, so nothing can run or be browsed. One
 // screen says what sonde does and offers one way in: the built-in demo,
-// which lands on Run with a command ready to press Return on. The AWS
-// profiles already on this machine, an endpoint by hand and the example
-// run are a line below, for those who know what they want.
+// which runs a small job on its own store and opens the run on its finding
+// (the line of code, the fix, and the fix applied and measured a press
+// later). The AWS profiles already on this machine, an endpoint by hand and
+// the example run are a line below, for those who know what they want.
 
-import { platform, signal, Text, View } from "nsh";
+import { signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
-import { command } from "../run";
-import { endpointsMode, go, notify, openExample, openRunFile, refreshEndpoints, report, startDemo } from "../store";
+import { runDemo } from "../demo";
+import { endpointsMode, go, notify, openExample, openRunFile, refreshEndpoints, report } from "../store";
 import type { EndpointView } from "../types";
 import { Actions, Button, Card, Check, Heading, READING, terminal, Title, TEXT } from "../ui/kit";
-
-/** A first command for the demo: two reads, one of a key that is not there,
- * signed with the keys sonde gives the program (cmd.exe on Windows). */
-export function sampleCommand(): string {
-  const win = platform.os === "windows";
-  const v = (n: string) => (win ? `%${n}%` : `$${n}`);
-  const sink = win ? "NUL" : "/dev/null";
-  const get = (k: string) => `curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u ${v("AWS_ACCESS_KEY_ID")}:${v("AWS_SECRET_ACCESS_KEY")} -o ${sink} ${v("AWS_ENDPOINT_URL")}/demo/${k}`;
-  return `${get("README.md")} && ${get("missing.txt")}`;
-}
 
 export function Welcome() {
   const profiles = (() => {
@@ -34,14 +25,10 @@ export function Welcome() {
   const chosen = signal<Record<string, boolean>>(Object.fromEntries(profiles.map((p) => [p.id, true])));
   const busy = signal(false);
 
-  // the one way in: the demo, and Run with a command ready
+  // the one way in: the demo's job run, its run open on its finding
   const demo = async () => {
     busy.set(true);
-    if (await startDemo()) {
-      command.set(sampleCommand());
-      go("run");
-      notify(t("welcome.demoReady"));
-    }
+    await runDemo();
     busy.set(false);
   };
   const importChosen = () => {
