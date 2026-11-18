@@ -97,6 +97,16 @@ test("updates: asking is the user's move; a development run is up to date", asyn
   await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
 });
 
+test("updates: a shell-only update is no new sonde; a recording or a job puts installing on quit first", async () => {
+  const { foundWords, installFirst } = await import("../src/ui/updates");
+  expect(foundWords({ version: "25.1.0" })).toBe("sonde 25.1.0 is out.");
+  // checkForUpdate's `shell`: this sonde is already that version, only the app around it is behind
+  expect(foundWords({ version: "25.1.0", shell: true })).not.toMatch(/25\.1\.0/);
+  expect(foundWords({ version: "25.1.0", shell: true })).toBe("An update to the app around sonde is out: sonde itself is up to date.");
+  expect(installFirst(true)).toBe("quit");
+  expect(installFirst(false)).toBe("restart");
+});
+
 test("a run file opens from Runs: a picked .sonde, and a refusal for anything else", async () => {
   const app = await open("../App.tsx", desktop);
   await app.press("id:nav-runs");

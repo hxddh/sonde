@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // run, and opens in a window of its own. In a terminal the levels stack.
 
-import { batch, cleanup, computed, effect, type JSX, LayoutAnimation, reduceMotion, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, type JSX, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
@@ -20,7 +20,7 @@ import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, co
 import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE, windowFace, glideLayout } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { ShowSidebar } from "../ui/shell";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
@@ -203,7 +203,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
 
   const chooseOperation = (i: number) => {
     // the inspector opening moves the table over, smoothly
-    if (op() === null && !reduceMotion()) LayoutAnimation.easeInEaseOut();
+    if (op() === null) glideLayout();
     op.set(i);
     rec.set(null);
     opHighlight.set([i]);
@@ -249,7 +249,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     showOperation();
   };
   const closeInspector = () => {
-    if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
+    glideLayout();
     // at once: the inspector goes whole, not its request first and then what held it
     batch(() => {
       op.set(null);

@@ -58,7 +58,7 @@ retry number.
 | A listing | `new Listing(endpoint, bucket, prefix, "/")` holds rows in Rust; TSX asks for the visible window (`rows(start, 400)`, on `onVisibleRowsChange`); `loadMore()` fetches the next ListObjectsV2 page (`onLoadMore`). |
 | Run | `Runs.run` starts an endpoint, then the command through the user's shell in a pty (`portable-pty`: openpty, ConPTY). A reader thread sends output to the engine (`{started}`, then `{data}`, UTF-8-safe) and appends `{"log": {time, text}}` lines; `Terminal` draws it and sends keys and resizes back (`Runs.input`, `Runs.resize`). Resolves with the exit status and run path. `sonde-analysis::logs` makes timed lines, lined up with operations by time. |
 | `sonde tui` | The embedded bundle on `nsh-platform-tui`, with its own event loop (crossterm via `nsh-tui-host::convert`) and an OSC 52 clipboard. |
-| The web viewer | `viewer/`, built with `--target web`: the app's pure views (`runview.tsx`, `record.tsx`) over a run's JSON computed in Rust; no Rust in the browser. `crates/analysis/build.rs` embeds it from `$SONDE_VIEWER_DIR` or `viewer/.nsh/out/sonde-viewer`; without it `sonde share` says so. |
+| The web viewer | `viewer/`, built with `--target web`: the app's pure views (`runview.tsx`, `record.tsx`) over a run's JSON computed in Rust; no Rust in the browser. `crates/analysis/build.rs` embeds it from `$SONDE_VIEWER_DIR` or `viewer/.nsh/out/sonde-viewer`; without it `sonde share` says so. Native Shell's page links everything (strict CSP since 0.6: styles in `nsh-page.<digest>.css`, modules importing each other's files, no import map); `share.rs` sets that stylesheet inline and its script points each file at a `blob:` URL, so the one file opens from a disk. |
 
 ## A recording, and what is read from it
 

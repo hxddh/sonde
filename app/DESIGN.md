@@ -154,7 +154,7 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Spacing | 4 inside a control, 8 between related controls, 12 inside a group, 16 between groups and as a page's gutter and a panel's padding (`p-4` everywhere), 24 between sections and around a centered introduction or a dialog's edge (`gap-1 2 3 4 6`, `p-`, `m-` alike), every value checked; in the kit an off-scale inset carries an `off-scale:` comment; widths off the scale belong to a component (`SidePanel`, the palette, a chart's `GUTTER`) | `[spacing]` |
 | Control heights | Two: `h-8` for a field, a choice, a button; `h-7` for a small button, an icon button, a picker's trigger and a row of segments (each segment `h-6` in its track); a button inside a field is `IconButton inField` (as high as the field) | `[control]`, `[control-height]` |
 | Icons | Three sizes (`ICON.small` 12, default 16, `ICON.large` 20), by name, never a number; one tile (`IconTile`); an `<Icon` is written on one line, so the size rule reads it | `[icon-size]`, `[icon-tile]`, `[icon]` |
-| Motion, shadows, type, tones | No `duration-N` (`TIMING` and the kit's transitions), no `shadow-*` (`SHADOW`), no `text-caption` (a `TEXT` role), no tone table of a page's own (`TONE`) | `[motion]`, `[shadow]`, `[type]`, `[tone]` |
+| Motion, shadows, type, tones | No `duration-N`, ease or layout animation of a page's own (`SPRING` and the kit's transitions), no `shadow-*` (`SHADOW`), no `text-caption` (a `TEXT` role), no tone table of a page's own (`TONE`) | `[motion]`, `[shadow]`, `[type]`, `[tone]` |
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
 | Words | Every key in every language with the same placeholders, and every key used: named whole, or a member of a family a template builds (`t(\`trial.${standing}\`)`), the family listed in the lint with its members, key by key — a prefix alone passes nothing | `check-locales.py` |
 | Charts | One frame, one left edge, one row pitch, one legend, one tooltip, one fade, one outline, one time axis, one value scale; bar thickness, tips and heights each a named small set (see Charts) | `lint-charts.py` |
@@ -445,20 +445,22 @@ the same code: they are reported with their difference images, not held (`LIVE` 
 
 ## Motion
 
-Short, and only to explain a change; nothing moves with reduced motion (`motion-safe:`). Four lengths and one ease,
-the kit's and no one else's (`TIMING`: 120 a hover's wash, 180 a press or a popup, 240 a thing moving into place, 360
-a reveal; `ease-standard`, a soft settle):
+Short, and only to explain a change; nothing moves with reduced motion (`motion-safe:`). One spring, the kit's and no
+one else's (`SPRING`: stiffness 620, damping 45, a damping ratio of 0.9: it settles in about 300 ms and passes its
+target by under half a percent). It times itself: there are no lengths and no other ease.
 
 | Change | Motion |
 |---|---|
-| Hover, a state's colour | `TRANSITION`, 120 |
+| Hover, a state's colour | `TRANSITION` |
 | Press (Button, IconButton, a segment; ListRow, Card, a place) | `PRESS`: sinks to 0.97 (0.99 for what is wide) |
-| A popup opens (select, combobox, date picker, a figure's preview) | `POPUP_MOTION`: from just above, 0.97 and clear, 180; leaves by fading |
+| A popup opens (select, combobox, date picker, a figure's preview) | `POPUP_MOTION`: from just above, 0.97 and clear; leaves by fading |
 | A dialog opens | `Modal`: the palette's fade |
-| A selection moves (a segment, a switch) | `GLIDE`, 240 |
-| A progress value changes; one unknown | `ProgressBar` glides, 240; sweeps (still under reduced motion) |
-| A toast comes and goes | `TOAST_MOTION`, 240, from its corner |
-| A run's operations, cards | slide into the live list, rise in (layout animations) |
+| A selection moves (a segment, a switch) | `GLIDE` |
+| A section opens (`Disclosure`) | the reveal, on `SPRING` |
+| A progress value changes; one unknown | `ProgressBar` glides; sweeps (still under reduced motion) |
+| A toast comes and goes | `TOAST_MOTION`, from its corner |
+| A run's operations, the inspector, cards | `glideLayout()`: move into place, what comes and goes fades |
+| A chart | draws in and glides on Plot's own lengths (`MOTION`); the keys step its hover on `SPRING` |
 
 ## Words
 

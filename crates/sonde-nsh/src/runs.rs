@@ -567,23 +567,6 @@ fn stretch_of(
     json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals) })
 }
 
-/// A file's `file://` address: its path with `/` between its parts (a
-/// Windows drive after a third slash), each other byte that is not plain
-/// written `%XX`.
-fn file_url(abs: &Path) -> String {
-    let text = abs.to_string_lossy().replace('\\', "/");
-    let lead = if text.starts_with('/') { "" } else { "/" };
-    let mut out = format!("file://{lead}");
-    for b in text.bytes() {
-        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
 /// What the live panel shows of a run: its last half minute.
 pub const LIVE_WINDOW_MS: f64 = 30_000.0;
 
@@ -2574,6 +2557,13 @@ impl Runs {
         }
     }
 
+    /// Opens a page sonde wrote ([`Runs::share`]) in the system's browser:
+    /// openUrl opens no `file:` address.
+    pub async fn open_page(path: String) -> Result<(), String> {
+        let abs = std::path::absolute(Path::new(&path)).map_err(err_msg)?;
+        nsh_core::element::open_path(abs).await
+    }
+
     /// Shows `path` (a run, or a folder sonde wrote) selected in the
     /// file manager.
     pub async fn reveal(path: String) -> Result<(), String> {
@@ -2582,8 +2572,7 @@ impl Runs {
     }
 
     /// Writes a run as one web page (what `sonde share` writes) under the
-    /// data directory: `{ file, url }`, the page and its `file://` address,
-    /// for the browser to open. The page is the same views as the app,
+    /// data directory: `{ file }`, the page, for [`Runs::open_page`] to open. The page is the same views as the app,
     /// read-only, for anyone it is sent to.
     pub async fn share(path: String) -> Result<JsonValue, String> {
         if !sonde_analysis::share::has_viewer() {
@@ -2623,8 +2612,7 @@ impl Runs {
         .map_err(err_msg)?
         .map_err(err_msg)?;
         let abs = std::path::absolute(&file).map_err(err_msg)?;
-        let url = file_url(&abs);
-        Ok(json!({ "file": abs.to_string_lossy(), "url": url }))
+        Ok(json!({ "file": abs.to_string_lossy() }))
     }
 
     /// The app is quitting: ends the program being recorded and a running
@@ -3159,18 +3147,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(none, json!([]));
-    }
-
-    #[test]
-    fn a_page_is_opened_by_its_file_address() {
-        assert_eq!(
-            file_url(Path::new("/home/a b/run#1.html")),
-            "file:///home/a%20b/run%231.html"
-        );
-        assert_eq!(
-            file_url(Path::new("C:\\Users\\a\\run.html")),
-            "file:///C:/Users/a/run.html"
-        );
     }
 
     #[test]

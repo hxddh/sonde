@@ -68,8 +68,13 @@ jobs:
           [ ${#app[@]} -gt 0 ] || { echo "::error::the macOS app's updater archive is missing"; exit 1; }
       - name: Checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS && cat SHA256SUMS
+      # English, and Chinese where the version's section has a `### 中文` part
+      # (the updater shows the English when there is none)
       - name: Release notes from CHANGELOG.md
-        run: scripts/changelog-section.sh "$VERSION" > notes.md
+        run: |
+          scripts/changelog-section.sh "$VERSION" > notes.md
+          scripts/changelog-section.sh "$VERSION" zh > notes.zh.md
+          [ -s notes.zh.md ] || rm notes.zh.md
       # what the owner's secrets would add, said on the release page too
       - name: What this release skipped
         env:
@@ -114,9 +119,11 @@ jobs:
           shopt -s nullglob
           cd app
           pkg=(../dist/sonde-*.nshpkg)
+          zh=(../notes.zh.md)
+          # each language's notes are written beside latest.json (notes.zh.md), their SHA-256 in it
           nsh update-manifest ../dist/sonde-[0-9]*.tar.gz ../dist/sonde-[0-9]*.zip \
             ${pkg:+--package "${pkg[0]}"} \
-            --notes ../notes.md \
+            --notes ../notes.md ${zh:+--notes "zh=${zh[0]}"} \
             --base-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION" \
             -o ../dist
           cat ../dist/latest.json
@@ -141,6 +148,7 @@ jobs:
             dist/*.zip
             dist/*.dmg
             dist/latest.json
+            dist/notes.*.md
             dist/*.nshpkg
             dist/*.sha256
             dist/SHA256SUMS

@@ -327,7 +327,8 @@ fn esc(s: &str) -> String {
 /// The files of the viewer the page carries, by path, as `[how, base64]`:
 /// `"g"` gzipped (decompressed in the browser), `"r"` as they are. Native
 /// Shell's page, manifest and prefetch script are the page's own business,
-/// and its formula renderer is never used by the viewer: none is carried.
+/// and its formula renderer is never used by the viewer: none is carried; its
+/// page's styles are in the page ([`page_parts`]).
 fn files_json() -> String {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut out = String::from("{");
@@ -336,6 +337,7 @@ fn files_json() -> String {
             || path.ends_with(".webmanifest")
             || path.ends_with("LICENSES.txt")
             || path.starts_with("nsh-prefetch.")
+            || path.starts_with("nsh-page.")
             || path.starts_with("nsh-math.");
         if skip {
             continue;
@@ -403,7 +405,6 @@ const BOOT: &str = r#"(async () => {
   for (const k of ["wasm", "glue", "code", "host", "runtime"]) if (app[k]) app[k] = blob(app[k]);
   each(app.assets); each(app.data); each(app.chunks);
   for (const name in app.sides ?? {}) app.sides[name].url = blob(app.sides[name].url);
-  if (app.importMap) { const m = JSON.parse(app.importMap); each(m.imports); app.importMap = JSON.stringify(m); }
   node.textContent = JSON.stringify(app);
   // nothing was requested ahead: Native Shell's start script takes what it asks for
   window.fetches = new Map();
@@ -416,6 +417,49 @@ const BOOT: &str = r#"(async () => {
   s.className = "failed";
   s.textContent = `This page could not start: ${e?.message ?? e}`;
 });"#;
+
+/// A file of the embedded viewer, unpacked.
+fn viewer_file(path: &str) -> Option<Vec<u8>> {
+    let (_, gz, bytes) = embedded::VIEWER.iter().find(|(p, _, _)| *p == path)?;
+    if !gz {
+        return Some(bytes.to_vec());
+    }
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(*bytes), &mut out).ok()?;
+    Some(out)
+}
+
+/// What the page takes from Native Shell's (`index`): its look while the
+/// viewer loads, the stylesheet it links (`nsh-page.<digest>.css`, read with
+/// `file`) set inline, so the one file needs no other; and its description
+/// of the app. The app's modules import one another by their files' names
+/// (`linked`), which the page's script points at its `blob:` URLs ([`BOOT`]).
+fn page_parts(
+    index: &str,
+    file: impl Fn(&str) -> Option<Vec<u8>>,
+) -> std::io::Result<(String, String)> {
+    let between = |a: &str, b: &str| -> std::io::Result<(usize, usize)> {
+        let i = index
+            .find(a)
+            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {a}")))?;
+        let j = index[i + a.len()..]
+            .find(b)
+            .map(|j| i + a.len() + j)
+            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {b}")))?;
+        Ok((i + a.len(), j))
+    };
+    let (i, j) = between("<link rel=\"stylesheet\" href=\"", "\"")?;
+    let css = &index[i..j];
+    let css = file(css)
+        .ok_or_else(|| std::io::Error::other(format!("the viewer has no {css}")))
+        .map(|b| String::from_utf8_lossy(&b).replace("</", "<\\/"))?;
+    let open = "<script type=\"application/json\" id=\"nsh-app\">";
+    let (i, j) = between(open, "</script>")?;
+    Ok((
+        format!("<style>\n{}\n</style>", css.trim_end()),
+        format!("{open}{}</script>", &index[i..j]),
+    ))
+}
 
 /// Writes the page: one HTML file holding the viewer and the run
 /// ([`write_run_json`], given to the viewer as its parameters), titled
@@ -436,22 +480,7 @@ pub fn write_page(
                 "this build of sonde has no web viewer: build it first (`cd viewer && nsh package App.tsx --target web`), or write the run as data with `sonde show FILE -f json`",
             )
         })?;
-    // Native Shell's page as it made it: its look while the viewer loads, and its description of the app
-    let between = |a: &str, b: &str| -> std::io::Result<String> {
-        let i = index
-            .find(a)
-            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {a}")))?;
-        let j = index[i..]
-            .find(b)
-            .map(|j| i + j + b.len())
-            .ok_or_else(|| std::io::Error::other(format!("the viewer's page has no {b}")))?;
-        Ok(index[i..j].to_string())
-    };
-    let style = between("<style>", "</style>")?;
-    let app = between(
-        "<script type=\"application/json\" id=\"nsh-app\">",
-        "</script>",
-    )?;
+    let (style, app) = page_parts(&index, viewer_file)?;
     let title = crate::program::key_of(&s.header).unwrap_or_else(|| "run".into());
     let mut out = std::io::BufWriter::new(out);
     write!(
@@ -477,6 +506,25 @@ pub fn write_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_page_sets_the_viewers_linked_stylesheet_inline() {
+        // the page as Native Shell 0.6 makes it: its styles a file of their own, linked
+        let index = "<head>\n<link rel=\"modulepreload\" href=\"nsh.1.js\">\n<link rel=\"stylesheet\" href=\"nsh-page.2.css\">\n</head><body>\n<script type=\"application/json\" id=\"nsh-app\">{\"code\":\"app.3.js\",\"linked\":true}</script>\n</body>";
+        let file = |p: &str| (p == "nsh-page.2.css").then(|| b"#status{color:red}\n".to_vec());
+        let (style, app) = page_parts(index, file).unwrap();
+        assert_eq!(style, "<style>\n#status{color:red}\n</style>");
+        assert_eq!(
+            app,
+            "<script type=\"application/json\" id=\"nsh-app\">{\"code\":\"app.3.js\",\"linked\":true}</script>"
+        );
+        // a stylesheet that is not there, or a page that links none, is said
+        assert!(page_parts(index, |_| None).is_err());
+        assert!(page_parts("<style>x</style>", file).is_err());
+        // what would end the style element early cannot
+        let (style, _) = page_parts(index, |_| Some(b"a{}</style><b>".to_vec())).unwrap();
+        assert!(!style[7..style.len() - 8].contains("</"), "{style}");
+    }
 
     #[test]
     fn a_document_written_as_it_is_made_reads_as_one_built_whole() {

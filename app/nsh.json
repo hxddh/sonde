@@ -3,6 +3,7 @@
   "id": "dev.sonde.app",
   "version": "24.0.2",
   "build": 28,
+  "nsh": ">=0.6, <0.7",
   "icon": {
     "macos": "assets/icon-macos.png",
     "windows": "assets/icon-fill.png",
@@ -34,9 +35,6 @@
       "control": "0 1px 2px rgb(0 0 0 / 0.10)",
       "popup": "0 0 0 0.5px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.10), 0 1px 3px rgb(0 0 0 / 0.06)",
       "modal": "0 0 0 0.5px rgb(0 0 0 / 0.05), 0 16px 48px rgb(0 0 0 / 0.20), 0 2px 8px rgb(0 0 0 / 0.08)"
-    },
-    "ease": {
-      "standard": [0.22, 1, 0.36, 1]
     },
     "fontFamily": {
       "sc": "system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', 'Noto Sans SC', 'WenQuanYi Micro Hei'"
