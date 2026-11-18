@@ -115,4 +115,11 @@ version_said="$("$bin" --version 2>&1)" || fail "$asset cannot start here: ${ver
 mkdir -p "$dir"
 install -m 0755 "$bin" "$dir/sonde"
 echo "installed $version_said to $dir/sonde"
+# the manual pages beside a bin folder, where man looks for a PATH entry's
+# (~/.local/bin: ~/.local/share/man); completions: sonde completions <shell>
+pages="$(dirname "$bin")/man/man1"
+if [ "$(basename "$dir")" = bin ] && [ -d "$pages" ]; then
+  man1="$(dirname "$dir")/share/man/man1"
+  mkdir -p "$man1" && cp "$pages"/*.1 "$man1"/ && echo "manual pages in $man1 (man sonde)"
+fi
 case ":$PATH:" in *":$dir:"*) ;; *) echo "add $dir to your PATH" ;; esac

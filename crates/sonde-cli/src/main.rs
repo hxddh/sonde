@@ -127,6 +127,48 @@ enum Command {
     Tui(cmd::tui::TuiArgs),
 }
 
+/// `sonde completions <shell>` and `sonde man <dir>`: what a release
+/// archive carries (docs/cli.md). Commands of their own, outside [`Cli`]: no
+/// help, completion or page lists them.
+#[derive(Parser)]
+#[command(name = "sonde", bin_name = "sonde")]
+enum Generate {
+    /// A shell's completions, to standard output.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// The manual pages, sonde.1 and one per command, written to a folder.
+    Man { dir: std::path::PathBuf },
+}
+
+fn generate() -> ExitCode {
+    let what = match Generate::try_parse() {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = e.print();
+            return ExitCode::from(if e.use_stderr() { 64 } else { 0 });
+        }
+    };
+    match what {
+        Generate::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "sonde", &mut std::io::stdout());
+            ExitCode::SUCCESS
+        }
+        Generate::Man { dir } => {
+            let made = std::fs::create_dir_all(&dir)
+                .and_then(|()| clap_mangen::generate_to(Cli::command(), &dir));
+            match made {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("sonde: {}: {e}", dir.display());
+                    ExitCode::from(70)
+                }
+            }
+        }
+    }
+}
+
 /// The commands as `sonde --help` lists them: by what they are for, not in
 /// one list of fourteen.
 const GROUPS: &[(&str, &[&str])] = &[
@@ -230,6 +272,12 @@ fn main() -> ExitCode {
     if std::env::args_os().len() == 1 {
         print!("{START}");
         return ExitCode::SUCCESS;
+    }
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("completions" | "man")
+    ) {
+        return generate();
     }
     // a mistake in the command is a usage error (64), as docs/cli.md says; help and --version are not
     let parsed = grouped(Cli::command())

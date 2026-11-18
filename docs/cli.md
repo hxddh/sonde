@@ -115,6 +115,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | Command | Does |
 |---|---|
 | `sonde tui [--demo] [--no-mouse]` | The terminal UI: `--demo` starts on the built-in store; `--no-mouse` leaves the mouse to the terminal. |
+| `sonde completions SHELL` / `sonde man DIR` | Shell completions (`bash`, `zsh`, `fish`, `powershell`, `elvish`) to stdout; the manual pages (`sonde.1`, one per command) into `DIR`. Neither is listed in `--help`. The terminal archives carry both (`completions/`, `man/man1/`); `install.sh` puts the pages beside the binary (`share/man/man1`). |
 
 ## Exit codes
 
