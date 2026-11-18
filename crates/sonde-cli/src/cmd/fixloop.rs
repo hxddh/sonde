@@ -291,7 +291,12 @@ mod tests {
                 time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 50)
                     .unwrap(),
                 method: if i % 2 == 0 { "HEAD" } else { "GET" }.into(),
-                kind: if i % 2 == 0 { "HeadObject" } else { "GetObject" }.into(),
+                kind: if i % 2 == 0 {
+                    "HeadObject"
+                } else {
+                    "GetObject"
+                }
+                .into(),
                 bucket: Some("lake".into()),
                 key: Some(format!("in/{}.csv", i / 2).into()),
                 status: Some(200),
