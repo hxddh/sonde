@@ -55,8 +55,6 @@ fn has_query(r: &Record, name: &str) -> bool {
     r.query().iter().any(|(k, _)| k.eq_ignore_ascii_case(name))
 }
 
-const ALGORITHMS: [&str; 5] = ["crc32", "crc32c", "crc64nvme", "sha1", "sha256"];
-
 /// The probes `r` calls for, each with what showed it.
 fn features(r: &Record) -> Vec<(String, Phrase)> {
     let mut out: Vec<(String, Phrase)> = Vec::new();
@@ -71,9 +69,10 @@ fn features(r: &Record) -> Vec<(String, Phrase)> {
                 raw(format!("x-amz-trailer: {t}")),
             );
         } else if kind == "PutObject" {
-            for a in ALGORITHMS {
-                let name = format!("x-amz-checksum-{a}");
+            for a in s3raw::checksum::ALL {
+                let name = a.header();
                 if header(r, &name).is_some() {
+                    let a = a.name().to_ascii_lowercase();
                     add(format!("checksum.{a}.single"), raw(name));
                 }
             }
@@ -113,6 +112,26 @@ fn features(r: &Record) -> Vec<(String, Phrase)> {
             if let Some(s) = said("x-amz-copy-source-if-match") {
                 add("cond.copy-if-match".into(), s);
             }
+            // on the destination: If-None-Match is the copy probe's too
+            if let Some(s) = said("if-none-match") {
+                add("cond.copy-if-match".into(), s);
+            }
+            if let Some(s) = said("if-match") {
+                add("cond.copy-dest-if-match".into(), s);
+            }
+        }
+        "DeleteObject" => {
+            if let Some(s) = said("if-match") {
+                add("cond.delete-if-match".into(), s);
+            }
+        }
+        "DeleteObjects"
+            if r.rare()
+                .request_body
+                .as_deref()
+                .is_some_and(|b| b.contains("<ETag>")) =>
+        {
+            add("cond.delete-if-match".into(), raw("<ETag>"));
         }
         "CompleteMultipartUpload" => {
             if let Some(s) = said("if-none-match") {
@@ -330,5 +349,52 @@ mod tests {
         assert_eq!(r[0].requests, 2);
         assert_eq!(r[3].seen, "2 keys in one DeleteObjects at most");
         assert!(relied_on(&[rec("GetObject", &[])]).is_empty());
+    }
+
+    #[test]
+    fn the_newer_checksums_rely_on_their_probes() {
+        let runs = [
+            rec("PutObject", &[("x-amz-checksum-xxhash64", "AAAAAAAAAAA=")]),
+            rec(
+                "CreateMultipartUpload",
+                &[("x-amz-checksum-algorithm", "XXHASH3")],
+            ),
+        ];
+        let ids: Vec<String> = relied_on(&runs).into_iter().map(|x| x.probe).collect();
+        assert!(
+            ids.contains(&"checksum.xxhash64.single".to_string()),
+            "{ids:?}"
+        );
+        assert!(
+            ids.contains(&"checksum.xxhash3.mpu-composite".to_string()),
+            "{ids:?}"
+        );
+    }
+
+    #[test]
+    fn a_conditional_delete_and_a_copy_on_its_destination_rely_on_their_probes() {
+        let mut batch = rec("DeleteObjects", &[]);
+        batch.rare_mut().request_body =
+            Some("<Delete><Object><Key>a</Key><ETag>\"e\"</ETag></Object></Delete>".into());
+        let runs = [
+            rec("DeleteObject", &[("if-match", "\"e\"")]),
+            rec("CopyObject", &[("if-match", "\"e\"")]),
+            rec("CopyObject", &[("if-none-match", "*")]),
+            batch,
+        ];
+        let r = relied_on(&runs);
+        let by = |id: &str| r.iter().find(|x| x.probe == id).map(|x| x.requests);
+        assert_eq!(by("cond.delete-if-match"), Some(2));
+        assert_eq!(by("cond.copy-dest-if-match"), Some(1));
+        assert_eq!(by("cond.copy-if-match"), Some(1));
+        // a batch without ETags relies on none of them
+        let mut plain = rec("DeleteObjects", &[]);
+        plain.rare_mut().request_body =
+            Some("<Delete><Object><Key>a</Key></Object></Delete>".into());
+        assert!(
+            relied_on(&[plain])
+                .iter()
+                .all(|x| x.probe != "cond.delete-if-match")
+        );
     }
 }

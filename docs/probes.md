@@ -22,7 +22,9 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 | [`cond.put-if-none-match`](#condput-if-none-match) | conditionalWrites | PUT If-None-Match: * |
 | [`cond.put-if-match`](#condput-if-match) | conditionalWrites | PUT If-Match |
 | [`cond.copy-if-match`](#condcopy-if-match) | conditionalWrites | Conditional CopyObject |
+| [`cond.copy-dest-if-match`](#condcopy-dest-if-match) | conditionalWrites | Conditional CopyObject destination |
 | [`cond.complete-if-none-match`](#condcomplete-if-none-match) | conditionalWrites | Conditional CompleteMultipartUpload |
+| [`cond.delete-if-match`](#conddelete-if-match) | conditionalWrites | Conditional delete |
 | [`consistency.list-after-write`](#consistencylist-after-write) | consistency | List after write |
 | [`consistency.read-after-overwrite`](#consistencyread-after-overwrite) | consistency | Read after overwrite |
 | [`consistency.read-after-delete`](#consistencyread-after-delete) | consistency | Read after delete |
@@ -39,6 +41,16 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 | [`checksum.sha1.mpu-composite`](#checksumsha1mpu-composite) | checksums | SHA1 multipart, composite |
 | [`checksum.sha256.single`](#checksumsha256single) | checksums | SHA256 on PutObject |
 | [`checksum.sha256.mpu-composite`](#checksumsha256mpu-composite) | checksums | SHA256 multipart, composite |
+| [`checksum.sha512.single`](#checksumsha512single) | checksums | SHA512 on PutObject |
+| [`checksum.sha512.mpu-composite`](#checksumsha512mpu-composite) | checksums | SHA512 multipart, composite |
+| [`checksum.md5.single`](#checksummd5single) | checksums | MD5 on PutObject |
+| [`checksum.md5.mpu-composite`](#checksummd5mpu-composite) | checksums | MD5 multipart, composite |
+| [`checksum.xxhash64.single`](#checksumxxhash64single) | checksums | XXHASH64 on PutObject |
+| [`checksum.xxhash64.mpu-composite`](#checksumxxhash64mpu-composite) | checksums | XXHASH64 multipart, composite |
+| [`checksum.xxhash3.single`](#checksumxxhash3single) | checksums | XXHASH3 on PutObject |
+| [`checksum.xxhash3.mpu-composite`](#checksumxxhash3mpu-composite) | checksums | XXHASH3 multipart, composite |
+| [`checksum.xxhash128.single`](#checksumxxhash128single) | checksums | XXHASH128 on PutObject |
+| [`checksum.xxhash128.mpu-composite`](#checksumxxhash128mpu-composite) | checksums | XXHASH128 multipart, composite |
 | [`checksum.trailing`](#checksumtrailing) | checksums | Trailing checksum (aws-chunked) |
 | [`mpu.min-part-size`](#mpumin-part-size) | multipart | Minimum part size |
 | [`mpu.out-of-order`](#mpuout-of-order) | multipart | Parts out of order |
@@ -80,11 +92,23 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 
 **AWS behavior:** Wrong source ETag: 412; destination exists with If-None-Match: *: 412; otherwise 200.
 
+### `cond.copy-dest-if-match`
+
+**Conditional CopyObject destination.** CopyObject with If-Match on the destination: a stale ETag, the current one, and a destination that does not exist.
+
+**AWS behavior:** Stale ETag: 412 PreconditionFailed, the destination unchanged; current ETag: 200; missing destination: 404.
+
 ### `cond.complete-if-none-match`
 
 **Conditional CompleteMultipartUpload.** CompleteMultipartUpload with If-None-Match: * when the key was created in the meantime.
 
 **AWS behavior:** 412 PreconditionFailed; the existing object is kept. The upload can still be aborted.
+
+### `cond.delete-if-match`
+
+**Conditional delete.** DeleteObject with If-Match (a stale ETag, then the current one), and a DeleteObjects whose object carries a stale ETag.
+
+**AWS behavior:** Stale ETag: 412 PreconditionFailed, the object kept; current ETag: 204, the object gone. DeleteObjects: 200 with a PreconditionFailed error for the object, which is kept.
 
 ## consistency
 
@@ -183,6 +207,66 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 ### `checksum.sha256.mpu-composite`
 
 **SHA256 multipart, composite.** A two-part upload with SHA256 part checksums, completed in composite mode.
+
+**AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
+
+### `checksum.sha512.single`
+
+**SHA512 on PutObject.** PUT with x-amz-checksum-sha512: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.
+
+**AWS behavior:** Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.
+
+### `checksum.sha512.mpu-composite`
+
+**SHA512 multipart, composite.** A two-part upload with SHA512 part checksums, completed in composite mode.
+
+**AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
+
+### `checksum.md5.single`
+
+**MD5 on PutObject.** PUT with x-amz-checksum-md5: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.
+
+**AWS behavior:** Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.
+
+### `checksum.md5.mpu-composite`
+
+**MD5 multipart, composite.** A two-part upload with MD5 part checksums, completed in composite mode.
+
+**AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
+
+### `checksum.xxhash64.single`
+
+**XXHASH64 on PutObject.** PUT with x-amz-checksum-xxhash64: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.
+
+**AWS behavior:** Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.
+
+### `checksum.xxhash64.mpu-composite`
+
+**XXHASH64 multipart, composite.** A two-part upload with XXHASH64 part checksums, completed in composite mode.
+
+**AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
+
+### `checksum.xxhash3.single`
+
+**XXHASH3 on PutObject.** PUT with x-amz-checksum-xxhash3: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.
+
+**AWS behavior:** Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.
+
+### `checksum.xxhash3.mpu-composite`
+
+**XXHASH3 multipart, composite.** A two-part upload with XXHASH3 part checksums, completed in composite mode.
+
+**AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
+
+### `checksum.xxhash128.single`
+
+**XXHASH128 on PutObject.** PUT with x-amz-checksum-xxhash128: the right value is stored and returned by HEAD (checksum mode); a wrong value is refused.
+
+**AWS behavior:** Right value: 200, echoed in the response and in HEAD with x-amz-checksum-mode: ENABLED (type FULL_OBJECT). Wrong value: 400 BadDigest, nothing stored.
+
+### `checksum.xxhash128.mpu-composite`
+
+**XXHASH128 multipart, composite.** A two-part upload with XXHASH128 part checksums, completed in composite mode.
 
 **AWS behavior:** CreateMultipartUpload with x-amz-checksum-type: COMPOSITE; HEAD returns the checksum of the parts' checksums with a -N suffix, type COMPOSITE.
 

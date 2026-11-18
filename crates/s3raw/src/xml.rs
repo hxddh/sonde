@@ -291,6 +291,16 @@ pub struct Part {
     pub checksum_sha1: Option<String>,
     #[serde(rename = "ChecksumSHA256")]
     pub checksum_sha256: Option<String>,
+    #[serde(rename = "ChecksumSHA512")]
+    pub checksum_sha512: Option<String>,
+    #[serde(rename = "ChecksumMD5")]
+    pub checksum_md5: Option<String>,
+    #[serde(rename = "ChecksumXXHASH64")]
+    pub checksum_xxhash64: Option<String>,
+    #[serde(rename = "ChecksumXXHASH3")]
+    pub checksum_xxhash3: Option<String>,
+    #[serde(rename = "ChecksumXXHASH128")]
+    pub checksum_xxhash128: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -347,6 +357,16 @@ pub struct CompleteMultipartUploadResult {
     pub checksum_sha1: Option<String>,
     #[serde(rename = "ChecksumSHA256")]
     pub checksum_sha256: Option<String>,
+    #[serde(rename = "ChecksumSHA512")]
+    pub checksum_sha512: Option<String>,
+    #[serde(rename = "ChecksumMD5")]
+    pub checksum_md5: Option<String>,
+    #[serde(rename = "ChecksumXXHASH64")]
+    pub checksum_xxhash64: Option<String>,
+    #[serde(rename = "ChecksumXXHASH3")]
+    pub checksum_xxhash3: Option<String>,
+    #[serde(rename = "ChecksumXXHASH128")]
+    pub checksum_xxhash128: Option<String>,
     pub checksum_type: Option<String>,
 }
 

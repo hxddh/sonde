@@ -220,13 +220,7 @@ impl Encoder {
 /// How long a checksum header's value is (base64 of the digest), by its
 /// name: what an [`Encoder`]'s length needs before the value arrives.
 pub fn checksum_len(name: &str) -> Option<usize> {
-    match name.to_ascii_lowercase().as_str() {
-        "x-amz-checksum-crc32" | "x-amz-checksum-crc32c" => Some(8),
-        "x-amz-checksum-crc64nvme" => Some(12),
-        "x-amz-checksum-sha1" => Some(28),
-        "x-amz-checksum-sha256" => Some(44),
-        _ => None,
-    }
+    s3raw::checksum::Algorithm::from_header(name).map(|a| a.header_len())
 }
 
 #[cfg(test)]
@@ -323,6 +317,10 @@ mod tests {
             assert_eq!((d.payload, d.trailers), (payload.clone(), trailers.clone()));
         }
         assert_eq!(checksum_len("x-amz-checksum-crc64nvme"), Some(12));
+        assert_eq!(checksum_len("x-amz-checksum-sha256"), Some(44));
+        // the newer ones, which boto3 sends as trailers too
+        assert_eq!(checksum_len("x-amz-checksum-xxhash128"), Some(24));
+        assert_eq!(checksum_len("x-amz-checksum-sha512"), Some(88));
         assert_eq!(checksum_len("x-amz-meta-other"), None);
     }
 

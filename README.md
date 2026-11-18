@@ -18,7 +18,7 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|sdk\|status\|key` splits the table and says where the slow and costly requests are. |
 | **Compare and replay** | `compare` two runs, or a run replayed on another store (`--replay`) to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
-| **Look at stores** | Browse buckets, find incomplete uploads, run 40 compatibility probes across endpoints, decode table layouts. |
+| **Look at stores** | Browse buckets, find incomplete uploads, run 52 compatibility probes across endpoints, decode table layouts. |
 
 A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and Chinese.
 
