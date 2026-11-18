@@ -119,7 +119,15 @@ async fn browse_mpu_versions_du() {
         assert!(plan.typed);
         assert!(exec::execute(s, &plan.id, "wrong").await.is_err());
         let o = exec::execute(s, &plan.id, &b).await.unwrap();
-        assert_eq!(o.succeeded, 1, "{}: {:?}", t.name, o.errors);
+        if t.name == "minio" {
+            // MinIO takes no AbortIncompleteMultipartUpload in a lifecycle
+            // (its internal/bucket/lifecycle/rule.go): the store's refusal is
+            // the outcome, said, and the bucket is left as it was
+            assert_eq!(o.succeeded, 0, "{}: {o:?}", t.name);
+            assert!(!o.errors.is_empty(), "{}: {o:?}", t.name);
+        } else {
+            assert_eq!(o.succeeded, 1, "{}: {:?}", t.name, o.errors);
+        }
         // each run is on record twice: before its first request, then its outcome
         let audit = s.guard().audit_entries(10);
         assert_eq!(audit.len(), 6);

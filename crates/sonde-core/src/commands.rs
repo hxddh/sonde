@@ -86,8 +86,18 @@ const NOT_A_RUN: &[&str] = &[
 
 /// `make <target>` for a Makefile's targets, in its order.
 fn make_targets(dir: &Path) -> Vec<(String, String)> {
+    // the names as the folder spells them: on a file system that ignores case
+    // (macOS, Windows) `makefile` would open a `Makefile` and be named wrong
+    let names: Vec<String> = std::fs::read_dir(dir)
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
     let Some((name, text)) = ["GNUmakefile", "makefile", "Makefile"]
         .iter()
+        .filter(|n| names.iter().any(|x| x == *n))
         .find_map(|n| read(dir, n).map(|t| (*n, t)))
     else {
         return vec![];

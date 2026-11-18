@@ -24,6 +24,8 @@ export SONDE_CONFIG_DIR="$tmp/config" SONDE_DATA_DIR="$tmp/data"
 mkdir -p "$SONDE_DATA_DIR/runs"
 cp -R tests/fixtures/runs/. "$SONDE_DATA_DIR/runs/"
 unset AWS_PROFILE AWS_SESSION_TOKEN AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
+# (a run the tour makes outside a repository would carry CI's commit: the same picture on every commit)
+unset GITHUB_SHA GITHUB_HEAD_REF GITHUB_REF_NAME
 export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-secret \
   AWS_CONFIG_FILE="$tmp/aws-config" AWS_SHARED_CREDENTIALS_FILE="$tmp/aws-credentials" \
   AWS_EC2_METADATA_DISABLED=true
