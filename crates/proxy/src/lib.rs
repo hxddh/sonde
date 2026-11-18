@@ -119,7 +119,10 @@ impl Policy {
 
 /// Whether `op` writes an object whole at its key.
 pub fn writes_object(op: &str) -> bool {
-    matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
+    matches!(
+        op,
+        "PutObject" | "CompleteMultipartUpload" | "CopyObject" | "RenameObject"
+    )
 }
 
 /// What a recording made itself, which no-delete lets it remove: objects
@@ -2572,6 +2575,20 @@ mod tests {
             Some("read-only")
         );
         assert_eq!(Policy::ReadOnly.refuses("GET", "GetObject", &[]), None);
+        // a rename takes its source away; re-encrypting keeps every byte
+        assert_eq!(
+            Policy::NoDelete.refuses("PUT", "RenameObject", &[]),
+            Some("no-delete")
+        );
+        assert!(!Made::default().may_remove("RenameObject", Some("b"), Some("k"), &[], None));
+        assert_eq!(
+            Policy::NoDelete.refuses("PUT", "UpdateObjectEncryption", &[]),
+            None
+        );
+        assert_eq!(
+            Policy::ReadOnly.refuses("PUT", "UpdateObjectEncryption", &[]),
+            Some("read-only")
+        );
     }
 
     #[test]
