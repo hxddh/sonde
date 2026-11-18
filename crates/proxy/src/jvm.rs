@@ -141,7 +141,10 @@ mod tests {
         );
         assert_eq!(engine("./bin/flink"), Some(Engine::Flink));
         assert_eq!(engine("python"), None);
+        // Trino's server reads S3 from its catalogs' files, which no command
+        // line reaches, and its client reads none (docs/recording.md)
         assert_eq!(engine("trino"), None);
+        assert_eq!(engine("launcher"), None);
     }
 
     #[test]

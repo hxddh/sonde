@@ -93,9 +93,17 @@ By hand, with what `sonde proxy` prints (`--listen 127.0.0.1:9000` fixes the por
   ```
 - **Flink** (`flink-conf.yaml` / `config.yaml`): `s3.endpoint`, `s3.path.style.access: true`, `s3.access-key`,
   `s3.secret-key` (or the environment).
-- **Trino** (start it after `sonde proxy`). Native S3 (`fs.native-s3.enabled=true`): `s3.endpoint`,
-  `s3.path-style-access=true`, `s3.region`, `s3.aws-access-key`, `s3.aws-secret-key`. Legacy: `hive.s3.endpoint`,
-  `hive.s3.path-style-access=true`, `hive.s3.ssl.enabled=false`, `hive.s3.aws-access-key`, `hive.s3.aws-secret-key`.
+- **Trino**: the server reads S3, from its catalogs' properties files, which no command line or `-D` reaches; sonde
+  cannot write them for it. Said once in the catalog, with Trino's `${ENV:…}`, every `sonde run -- bin/launcher run`
+  then goes through sonde (its keys come from the environment, new each run):
+
+  ```properties
+  fs.native-s3.enabled=true
+  s3.endpoint=${ENV:AWS_ENDPOINT_URL}
+  s3.region=${ENV:AWS_REGION}
+  s3.path-style-access=true
+  ```
+  The legacy file system: `hive.s3.endpoint`, `hive.s3.path-style-access=true`, `hive.s3.ssl.enabled=false`.
 
 Findings for s3a: FileOutputCommitter renames out of `_temporary/` (copy plus delete) get a warning with the S3A
 committer settings; empty `…/` directory markers are reported with their delete cost.

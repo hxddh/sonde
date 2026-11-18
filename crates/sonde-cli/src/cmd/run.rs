@@ -1075,7 +1075,7 @@ const POINTED: &[(&[&str], &str)] = &[
     ),
     (
         &["trino"],
-        "Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)",
+        "Trino               the server reads S3, not the trino client: s3.endpoint=${ENV:AWS_ENDPOINT_URL} in the catalog, then sonde run -- bin/launcher run (docs/recording.md)",
     ),
     (
         &["node", "npx", "npm", "bun", "deno"],
