@@ -1462,6 +1462,9 @@ pub struct Observation {
     /// … and time the program would not wait, in ms.
     #[serde(default, skip_serializing_if = "is_zero_ms")]
     pub saves_ms: f64,
+    /// … and bytes it would not read out of the store.
+    #[serde(default, skip_serializing_if = "is_zero_bytes")]
+    pub saves_bytes: u64,
     /// The requests acting on it would not send, by id: what "acting on N
     /// findings" takes away (their own waiting, their own price).
     #[serde(skip)]
@@ -1514,6 +1517,10 @@ fn share_pct(n: usize, total: usize) -> usize {
 }
 
 fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+fn is_zero_bytes(n: &u64) -> bool {
     *n == 0
 }
 
@@ -1708,6 +1715,21 @@ pub const THROTTLED_SHARE: f64 = crate::program::DEFAULT_TOLERANCE;
 /// together, 64 KiB or more is what one PUT's price is worth.
 pub const SMALL: u64 = 64 * 1024;
 
+/// The size under which an object read whole is a small read: an image, a
+/// sample, a record (`obs.smallreads`).
+pub const SMALL_READ: u64 = 1024 * 1024;
+
+/// The size small objects are sharded into (a tar, a WebDataset shard):
+/// what reading them takes, one read a shard.
+pub const SHARD: u64 = 64 * 1024 * 1024;
+
+/// The size from which an object read whole that is also read by range
+/// is a whole read (`obs.wholeread`); 16 of it saved is a finding.
+pub const WHOLE_READ: u64 = 1024 * 1024;
+
+/// The prefixes listed one by one that are a crawl (`obs.crawl`).
+pub const CRAWL: usize = 20;
+
 /// A key's folder: all of it to its last `/` (`""` at the top).
 fn folder_of(key: &str) -> &str {
     &key[..key.rfind('/').map_or(0, |i| i + 1)]
@@ -1789,6 +1811,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saving_text: None,
         saves_requests: 0,
         saves_ms: 0.0,
+        saves_bytes: 0,
         saved_ids: Vec::new(),
         kept_ids: Vec::new(),
         timed_ids: Vec::new(),
@@ -1810,6 +1833,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         saving_text: None,
         saves_requests: 0,
         saves_ms: 0.0,
+        saves_bytes: 0,
         saved_ids: Vec::new(),
         kept_ids: Vec::new(),
         timed_ids: Vec::new(),
@@ -2158,6 +2182,292 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .weigh(n, n - 1, total)
             .saving_of(again),
         );
+    }
+    // reads of bytes: a range read again, objects read whole that the
+    // program also reads by range, a storm of small objects, prefixes
+    // listed one by one
+    {
+        let ok = |r: &Record| r.status.is_some_and(|s| (200..300).contains(&s));
+        let ranged = |r: &Record| header(r, "range").is_some();
+        let gets = || {
+            records.iter().enumerate().filter(|(_, r)| {
+                r.kind == "GetObject" && ok(r) && r.bucket.is_some() && r.key.is_some()
+            })
+        };
+        fn place_of(r: &Record) -> (&str, &str) {
+            (
+                r.bucket.as_deref().unwrap_or(""),
+                r.key.as_deref().unwrap_or(""),
+            )
+        }
+        // the same range of the same object read again with nothing written
+        // to it between: a Parquet footer read by each query, an index read
+        // by each lookup
+        let mut ranges: Vec<(&str, &str, &str, u32)> = gets()
+            .filter(|(_, r)| ranged(r))
+            .map(|(i, r)| {
+                let (b, k) = place_of(r);
+                (b, k, header(r, "range").unwrap_or(""), i as u32)
+            })
+            .collect();
+        ranges.sort_unstable();
+        let (mut again, mut firsts) = (Vec::new(), Vec::new());
+        let (mut again_bytes, mut objects) = (0u64, 0usize);
+        let mut under: Option<String> = None;
+        for object in ranges.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+            let mut read_again = false;
+            for range in object.chunk_by(|a, b| a.2 == b.2) {
+                let mut first: Option<&Record> = None;
+                for (b, k, _, i) in range {
+                    let r = &records[*i as usize];
+                    let changed = first.is_some_and(|f| {
+                        writes.get(b).is_some_and(|w| {
+                            written_between(w, order_of(f), order_of(r), |x| x == *k)
+                        })
+                    });
+                    match first {
+                        Some(_) if !changed => {
+                            again.push(r.id);
+                            again_bytes += r.response_bytes.get().unwrap_or(0);
+                            read_again = true;
+                        }
+                        _ => {
+                            first = Some(r);
+                            firsts.push(r.id);
+                        }
+                    }
+                }
+            }
+            if read_again {
+                objects += 1;
+                under = Some(common_folder(
+                    under,
+                    &format!("{}/{}", object[0].0, object[0].1),
+                ));
+            }
+        }
+        let found = if any {
+            !again.is_empty()
+        } else {
+            again.len() >= 10 && worth(&again)
+        };
+        if found {
+            again.sort_unstable();
+            let n = again.len();
+            let mut o = info(
+                p(
+                    "obs.rangeagain",
+                    &[
+                        ("n", n.to_string()),
+                        ("m", objects.to_string()),
+                        ("size", human(again_bytes)),
+                        (
+                            "prefix",
+                            under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                        ),
+                    ],
+                ),
+                of_records(&mut again.iter().copied()),
+            )
+            .weigh(n, n, total)
+            .saving_of(again)
+            .keeping(firsts);
+            o.saves_bytes = again_bytes;
+            out.push(o);
+        }
+        drop(ranges);
+        // objects read whole and by range both: the program reads only parts
+        // of them elsewhere, so a whole read fetches what it does not use
+        // (each read whole saves what it read past the ranges read of it)
+        let mut by_range: HashMap<(&str, &str), (BTreeSet<&str>, u64)> = HashMap::new();
+        for (_, r) in gets().filter(|(_, r)| ranged(r)) {
+            let e = by_range.entry(place_of(r)).or_default();
+            if e.0.insert(header(r, "range").unwrap_or("")) {
+                e.1 += r.response_bytes.get().unwrap_or(0);
+            }
+        }
+        let (mut whole, mut whole_bytes, mut saved_bytes) = (Vec::new(), 0u64, 0u64);
+        let mut whole_objects: BTreeSet<(&str, &str)> = BTreeSet::new();
+        let mut under: Option<String> = None;
+        for (_, r) in gets().filter(|(_, r)| !ranged(r) && query(r, "partNumber").is_none()) {
+            let bytes = r.response_bytes.get().unwrap_or(0);
+            let Some((_, parts)) = by_range.get(&place_of(r)) else {
+                continue;
+            };
+            if bytes < WHOLE_READ || bytes <= *parts {
+                continue;
+            }
+            whole.push(r.id);
+            whole_bytes += bytes;
+            saved_bytes += bytes - parts;
+            let (b, k) = place_of(r);
+            if whole_objects.insert((b, k)) {
+                under = Some(common_folder(under, &format!("{b}/{k}")));
+            }
+        }
+        drop(by_range);
+        let bytes_out: u64 = records
+            .iter()
+            .map(|r| r.response_bytes.get().unwrap_or(0))
+            .sum();
+        let found = if any {
+            saved_bytes > 0
+        } else {
+            saved_bytes >= 16 * WHOLE_READ && saved_bytes * 10 >= bytes_out
+        };
+        if found {
+            let mut o = info(
+                p(
+                    "obs.wholeread",
+                    &[
+                        ("n", whole.len().to_string()),
+                        ("m", whole_objects.len().to_string()),
+                        ("size", human(whole_bytes)),
+                        (
+                            "prefix",
+                            under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                        ),
+                    ],
+                ),
+                of_records(&mut whole.iter().copied()),
+            );
+            o.impact = whole.len();
+            o.saves_bytes = saved_bytes;
+            let s = p(
+                "obs.savesBytes",
+                &[
+                    ("size", human(saved_bytes)),
+                    (
+                        "pct",
+                        share_pct(saved_bytes as usize, bytes_out as usize).to_string(),
+                    ),
+                ],
+            );
+            o.saving_text = Some(s.en());
+            o.saving = Some(s);
+            out.push(o);
+        }
+        // many small objects each read whole: an ML loader over images, one
+        // GET a sample. Sharded into files of [`SHARD`], as many reads as
+        // their bytes fill (a key read again is `obs.hot`'s: each key once)
+        let mut small: Vec<(&str, &str, u32)> = gets()
+            .filter(|(_, r)| {
+                !ranged(r)
+                    && query(r, "partNumber").is_none()
+                    && r.response_bytes.get().is_some_and(|b| b < SMALL_READ)
+            })
+            .map(|(i, r)| {
+                let (b, k) = place_of(r);
+                (b, k, i as u32)
+            })
+            .collect();
+        small.sort_unstable();
+        small.dedup_by(|a, b| (a.0, a.1) == (b.0, b.1));
+        let small_bytes: u64 = small
+            .iter()
+            .map(|s| records[s.2 as usize].response_bytes.get().unwrap_or(0))
+            .sum();
+        let keep = (small_bytes.div_ceil(SHARD) as usize).max(1);
+        let found = if any {
+            small.len() > keep
+        } else {
+            small.len() >= 500 && small.len() * 5 >= total && small.len() > keep
+        };
+        if found {
+            let mut ids: Vec<u64> = small.iter().map(|s| records[s.2 as usize].id).collect();
+            ids.sort_unstable();
+            let saved = ids[keep..].to_vec();
+            let under = small.iter().fold(None, |u, s| {
+                Some(common_folder(u, &format!("{}/{}", s.0, s.1)))
+            });
+            out.push(
+                info(
+                    p(
+                        "obs.smallreads",
+                        &[
+                            ("n", small.len().to_string()),
+                            ("size", human(small_bytes)),
+                            (
+                                "prefix",
+                                under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                            ),
+                        ],
+                    ),
+                    of_records(&mut ids.iter().copied()),
+                )
+                .weigh(ids.len(), saved.len(), total)
+                .saving_of(saved),
+            );
+        }
+    }
+    // many prefixes listed, each once or a few times: discovering a
+    // table's partitions (Hive, Spark), a tree walked folder by folder
+    // (`rclone ls`). A manifest, or the table format's own metadata, says
+    // what is there in one read (a prefix listed again and again is
+    // `obs.listed`'s)
+    {
+        let mut by_prefix: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
+        for r in records
+            .iter()
+            .filter(|r| r.kind.starts_with("ListObjects") && !r.is_error())
+        {
+            by_prefix
+                .entry((
+                    r.bucket.as_deref().unwrap_or(""),
+                    query(r, "prefix").unwrap_or(""),
+                ))
+                .or_default()
+                .push(r.id);
+        }
+        let first_pages = |ids: &[u64]| {
+            ids.iter()
+                .filter_map(|id| by_id.get(id))
+                .filter(|r| {
+                    query(r, "continuation-token").is_none()
+                        && query(r, "marker").is_none_or(str::is_empty)
+                })
+                .count()
+        };
+        let mut crawled: Vec<(&(&str, &str), &Vec<u64>)> = by_prefix
+            .iter()
+            .filter(|(_, ids)| first_pages(ids) < 5)
+            .collect();
+        crawled.sort_unstable();
+        let found = if any {
+            crawled.len() >= 2
+        } else {
+            crawled.len() >= CRAWL
+        };
+        let mut ids: Vec<u64> = crawled
+            .iter()
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
+        ids.sort_unstable();
+        if found && (any || worth(&ids[1..])) {
+            let under = crawled.iter().fold(None, |u, ((b, prefix), _)| {
+                Some(common_folder(u, &format!("{b}/{prefix}")))
+            });
+            let saved = ids[1..].to_vec();
+            out.push(
+                info(
+                    p(
+                        "obs.crawl",
+                        &[
+                            ("n", crawled.len().to_string()),
+                            ("m", ids.len().to_string()),
+                            (
+                                "prefix",
+                                under.filter(|u| !u.is_empty()).unwrap_or("/".into()),
+                            ),
+                        ],
+                    ),
+                    of_records(&mut ids.iter().copied()),
+                )
+                .weigh(ids.len(), saved.len(), total)
+                .saving_of(saved)
+                .keeping(vec![ids[0]]),
+            );
+        }
     }
     // HEAD, then GET of the same object: the GET's answer has the HEAD's
     let mut headed: HashMap<(&str, &str), (u64, chrono::DateTime<chrono::Utc>)> = HashMap::new();

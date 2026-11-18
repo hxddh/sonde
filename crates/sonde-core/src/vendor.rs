@@ -36,6 +36,36 @@ impl Vendor {
             _ => None,
         }
     }
+
+    /// The vendor's list price per GiB sent out of the store to the
+    /// internet (egress), in USD, where it differs from S3's: the first
+    /// tier, past any monthly allowance. Read from the vendors' pricing
+    /// pages on 2026-11-18:
+    /// - AWS: $0.09/GB, first 10 TB a month, past 100 GB free a month
+    ///   across AWS (the AWS price list, us-east-1);
+    /// - GCS: $0.12/GiB to worldwide destinations but Asia and Australia,
+    ///   0 to 10 TiB (Premium tier);
+    /// - Alibaba Cloud OSS: $0.076 to $0.080/GB past 100 GB free in its
+    ///   regions outside the Chinese mainland ($0.118 in Hong Kong): $0.08;
+    /// - R2, Tigris, Wasabi: none; B2: none up to three times what is
+    ///   stored, $0.01/GB past it (none here); a store of one's own: none.
+    ///
+    /// Tencent COS publishes no figure sonde could read (its pages answer
+    /// a browser's script): S3's, until set.
+    /// `None`: S3's (AWS, COS and the rest).
+    pub fn transfer_price(self) -> Option<f64> {
+        match self {
+            Vendor::GcsXml => Some(0.12),
+            Vendor::AliyunOss => Some(0.08),
+            Vendor::R2
+            | Vendor::Tigris
+            | Vendor::Wasabi
+            | Vendor::BackblazeB2
+            | Vendor::Minio
+            | Vendor::CephRgw => Some(0.0),
+            _ => None,
+        }
+    }
 }
 
 pub const ALL: [Vendor; 11] = [

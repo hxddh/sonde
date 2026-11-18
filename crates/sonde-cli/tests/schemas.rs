@@ -414,6 +414,22 @@ async fn every_json_output_is_as_its_schema_says() {
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
         );
     }
+    // the run's cost split: its requests, its bytes out (said, not counted, when
+    // where they were read from is not known) and what it left stored
+    let cost = &summary["cost"];
+    assert!(cost["requests"].is_number(), "{cost}");
+    assert!(
+        ["charged", "free", "unknown"].contains(&cost["transfer"]["egress"].as_str().unwrap()),
+        "{cost}"
+    );
+    assert!(cost["storage"]["perMonth"].is_number(), "{cost}");
+    // a budget on the bytes out: its own row, in bytes
+    let held = b
+        .json(&["check", s, "--max-transfer", "1B", "-f", "json"], 1)
+        .await;
+    assert_eq!(held["check"]["verdicts"][0]["what"], "transfer", "{held}");
+    assert!(held["run"]["bytesOut"].as_u64().unwrap() > 1, "{held}");
+    holds("check", &held);
     holds(
         "check",
         &b.json(&["check", s, "--max-requests", "1", "-f", "json"], 1)

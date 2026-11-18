@@ -44,6 +44,10 @@ pub struct CheckArgs {
     /// is no failure).
     #[arg(long)]
     max_errors: Option<usize>,
+    /// At most this many bytes read out of the store: bytes, or as
+    /// sonde.toml writes it (`10GiB`, `500MB`).
+    #[arg(long, value_parser = size_arg, value_name = "SIZE")]
+    max_transfer: Option<u64>,
     /// Against the baseline: requests, waiting and cost may grow this many
     /// percent (10 unless sonde.toml says).
     #[arg(long)]
@@ -95,6 +99,11 @@ type Checked = (
 
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
 /// A duration on the command line, as `sonde.toml` writes one.
+fn size_arg(text: &str) -> Result<u64, String> {
+    sonde_analysis::project::size_text(text)
+        .ok_or_else(|| format!("{text:?} is not a size (10GiB, 500MB, or bytes as a number)"))
+}
+
 fn duration_arg(text: &str) -> Result<f64, String> {
     sonde_analysis::project::duration_text(text)
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
@@ -624,6 +633,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             None => project.max_waiting_ms().map_err(in_project)?,
         },
         max_errors: a.max_errors.or(project.max_errors),
+        max_transfer: match a.max_transfer {
+            Some(v) => Some(v),
+            None => project.max_transfer_bytes().map_err(in_project)?,
+        },
         tolerance: base
             .as_ref()
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
@@ -688,7 +701,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         if no_baseline.is_none() && !waived {
             eprintln!(
-                "nothing to check: give a budget (--max-requests, --max-waiting, --max-errors, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
+                "nothing to check: give a budget (--max-requests, --max-waiting, --max-errors, --max-transfer, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
             );
             return Ok(64);
         }
@@ -756,6 +769,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let shown = |what: &str, v: f64| match what {
         "waiting" => ms_text(v),
         "cost" => money_text(v, &run.0.currency),
+        "transfer" => sonde_fmt::bytes(v as u64),
         _ => format!("{v:.0}"),
     };
     // GitHub Actions: each verdict that failed on the run, each finding on

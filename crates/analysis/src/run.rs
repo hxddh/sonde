@@ -794,7 +794,14 @@ pub enum Keep {
 /// fields or no finding looks at, and checksums and metadata no list could
 /// foresee.
 pub fn read_by_analysis(name: &str) -> bool {
-    const READ: &[&str] = &["user-agent", "range", "content-range", "traceparent"];
+    const READ: &[&str] = &[
+        "user-agent",
+        "range",
+        "content-range",
+        "traceparent",
+        "x-amz-version-id",
+        "x-amz-delete-marker",
+    ];
     let has = |p: &str| {
         name.get(..p.len())
             .is_some_and(|n| n.eq_ignore_ascii_case(p))
@@ -808,6 +815,19 @@ pub fn read_by_analysis(name: &str) -> bool {
 /// A record as [`Keep::Analysis`] keeps it.
 pub fn lean(r: &mut Record) {
     r.lean(&read_by_analysis);
+    lean_read(r);
+}
+
+/// A read's version id is the version it read, one of its own each: kept,
+/// no two reads would share their headers. Only a write's says what a run
+/// leaves ([`crate::stored`]).
+fn lean_read(r: &mut Record) {
+    let version = |n: &str| n.eq_ignore_ascii_case("x-amz-version-id");
+    if matches!(r.method.as_str(), "GET" | "HEAD")
+        && r.response_headers().iter().any(|h| version(&h.name))
+    {
+        r.lean(&|n| read_by_analysis(n) && !version(n));
+    }
 }
 
 /// A block of a run's lines, read.
@@ -854,7 +874,12 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
         }
         let lean: &dyn Fn(&str) -> bool = &read_by_analysis;
         match Record::from_line(l, (keep == Keep::Analysis).then_some(lean)) {
-            Ok(r) => out.records.push(r),
+            Ok(mut r) => {
+                if keep == Keep::Analysis {
+                    lean_read(&mut r);
+                }
+                out.records.push(r)
+            }
             Err(e) => out.bad = Some((i, e.to_string())),
         }
     }
@@ -1458,6 +1483,45 @@ mod tests {
         // (one each in each batch, on each core it was made on)
         assert!(targets.len() < 100, "{}", targets.len());
         assert_eq!(eps[0].title(), format!("GetObject b/{long}0"));
+    }
+
+    /// A write's version id says the bucket keeps versions (what a run's
+    /// overwrites leave); a read's is dropped, one of its own on each read.
+    #[test]
+    fn a_lean_reading_keeps_a_writes_version_id_and_not_a_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("versions.sonde");
+        let w = RunWriter::create(&path, &RunHeader::new("e", "https://e", "r", None)).unwrap();
+        for (id, method, kind) in [(1, "PUT", "PutObject"), (2, "GET", "GetObject")] {
+            let mut r = Record {
+                id,
+                time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + id as i64).unwrap(),
+                kind: kind.into(),
+                method: method.into(),
+                bucket: Some("b".into()),
+                key: Some("k".into()),
+                status: Some(200),
+                ..Default::default()
+            };
+            r.lists_mut().response_headers = vec![
+                reqlog::Header::new("x-amz-version-id", format!("v{id}")),
+                reqlog::Header::new("etag", "\"e\""),
+            ];
+            w.write(&r);
+        }
+        w.flush().unwrap();
+        let s = RunFile::open_lean(&path).unwrap();
+        let names = |r: &Record| -> Vec<String> {
+            r.response_headers()
+                .iter()
+                .map(|h| h.name.to_string())
+                .collect()
+        };
+        assert_eq!(names(&s.records[0]), ["x-amz-version-id"]);
+        assert!(names(&s.records[1]).is_empty());
+        let mut again = RunFile::open(&path).unwrap().records.remove(1);
+        super::lean(&mut again);
+        assert_eq!(again, s.records[1]);
     }
 
     #[test]
