@@ -75,7 +75,9 @@ if [ -n "${SONDE_README:-}" ]; then
   while read -r shot name; do
     [ -f "$from/$shot.png" ] && cp "$from/$shot.png" "$to/$name.png" && echo "docs/images/$name.png <- $shot"
   done <<'MAP'
+wide-01a-demo fix
 wide-02b-ran run
+wide-03ka-cost cost
 wide-02e-trial-plan trial-plan
 wide-02g-trial-done trial
 wide-02j-trial-time trial-over-clean
