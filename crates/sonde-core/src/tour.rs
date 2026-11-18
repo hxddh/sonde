@@ -81,6 +81,9 @@ pub fn caller(job: &str, file: &str, mark: &str) -> String {
     format!("{file}:? <module>")
 }
 
+/// The time between the starts of the job's requests.
+const BEAT: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// Plays `job` (from file `file`) with `app`, each request naming its
 /// line in `caller_header`; `say` is told each request as it is answered,
 /// a line each (`export.py:18 read_reports  HEAD demo/reports/2026-q1.csv → 200`).
@@ -92,7 +95,13 @@ pub async fn play(
     mut say: impl FnMut(String),
 ) {
     let at = |mark: &str| caller(job, file, mark);
+    // each request starts on the job's own beat, not when the one before
+    // answered: the run's timeline is the same picture each time it is played
+    let start = tokio::time::Instant::now();
+    let mut beat = 0u32;
     let mut send = async |r: S3Request, mark: &str| {
+        tokio::time::sleep_until(start + BEAT * beat).await;
+        beat += 1;
         let place = at(mark);
         let target = r.key.clone().unwrap_or_else(|| {
             let prefix = r.query.iter().find(|(k, _)| k == "prefix");
