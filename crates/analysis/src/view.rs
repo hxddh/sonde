@@ -130,7 +130,8 @@ impl Analysis {
             Some(_) => crate::episode::traces_of(header, records, &self.episodes),
             None => Vec::new(),
         };
-        let run = crate::profile::Run::with(
+        // (only ever the later run compared: its asks are not read)
+        let run = crate::profile::Run::later(
             records,
             self.profile.clone(),
             self.observations.clone(),

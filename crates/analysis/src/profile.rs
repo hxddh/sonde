@@ -2234,6 +2234,28 @@ impl Run {
         observations: Vec<Observation>,
         traces: Vec<Observation>,
     ) -> Run {
+        Run::reckoned(records, profile, observations, traces, true)
+    }
+
+    /// [`Run::with`] for a run only ever the later of two compared: what
+    /// its findings would save by what their requests asked ([`Run::asks`])
+    /// is read of the earlier run alone, and is not reckoned.
+    pub fn later(
+        records: &[Record],
+        profile: Profile,
+        observations: Vec<Observation>,
+        traces: Vec<Observation>,
+    ) -> Run {
+        Run::reckoned(records, profile, observations, traces, false)
+    }
+
+    fn reckoned(
+        records: &[Record],
+        profile: Profile,
+        observations: Vec<Observation>,
+        traces: Vec<Observation>,
+        asked: bool,
+    ) -> Run {
         let mut folders: HashMap<String, usize> = HashMap::new();
         let mut name = String::new();
         for r in records {
@@ -2263,7 +2285,11 @@ impl Run {
         let (mut observations, mut traces) = (observations, traces);
         name_findings(&mut traces, &observations);
         name_findings(&mut observations, &traces);
-        let asks = crate::fixloop::asks_of(records, &observations);
+        let asks = if asked {
+            crate::fixloop::asks_of(records, &observations)
+        } else {
+            crate::fixloop::Asks::new()
+        };
         let error_classes = error_classes(records);
         // (a trace is read for its counts and its words, not for the
         // operations and requests it names: a run of a million has tens of

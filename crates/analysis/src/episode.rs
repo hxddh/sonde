@@ -2350,22 +2350,21 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         // many small objects each read whole: an ML loader over images, one
         // GET a sample. Sharded into files of [`SHARD`], as many reads as
         // their bytes fill (a key read again is `obs.hot`'s: each key once)
-        let mut small: Vec<(&str, &str, u32)> = gets()
+        // (by index: a run's objects each read once are as many reads)
+        let place = |i: &u32| place_of(&records[*i as usize]);
+        let mut small: Vec<u32> = gets()
             .filter(|(_, r)| {
                 !ranged(r)
                     && query(r, "partNumber").is_none()
                     && r.response_bytes.get().is_some_and(|b| b < SMALL_READ)
             })
-            .map(|(i, r)| {
-                let (b, k) = place_of(r);
-                (b, k, i as u32)
-            })
+            .map(|(i, _)| i as u32)
             .collect();
-        small.sort_unstable();
-        small.dedup_by(|a, b| (a.0, a.1) == (b.0, b.1));
+        small.sort_unstable_by_key(|i| (place(i), *i));
+        small.dedup_by(|a, b| place(a) == place(b));
         let small_bytes: u64 = small
             .iter()
-            .map(|s| records[s.2 as usize].response_bytes.get().unwrap_or(0))
+            .map(|&i| records[i as usize].response_bytes.get().unwrap_or(0))
             .sum();
         let keep = (small_bytes.div_ceil(SHARD) as usize).max(1);
         let found = if any {
@@ -2374,11 +2373,12 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             small.len() >= 500 && small.len() * 5 >= total && small.len() > keep
         };
         if found {
-            let mut ids: Vec<u64> = small.iter().map(|s| records[s.2 as usize].id).collect();
+            let mut ids: Vec<u64> = small.iter().map(|&i| records[i as usize].id).collect();
             ids.sort_unstable();
             let saved = ids[keep..].to_vec();
-            let under = small.iter().fold(None, |u, s| {
-                Some(common_folder(u, &format!("{}/{}", s.0, s.1)))
+            let under = small.iter().fold(None, |u, i| {
+                let (b, k) = place(i);
+                Some(common_folder(u, &format!("{b}/{k}")))
             });
             out.push(
                 info(

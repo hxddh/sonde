@@ -65,11 +65,11 @@ moves with a shared runner: it is said in the job's summary and fails only past 
 | --- | --- | --- | --- |
 | a million read and analysed (`show`) | 333–368 MiB, 8.4–9.1 s | 400 MiB | 45 s |
 | two runs of a million compared | 490–548 MiB, 20–21 s | 560 MiB | 120 s |
-| an outage of 300 thousand | 199–211 MiB, 1.8–1.9 s | 240 MiB | 30 s |
-| small multipart uploads, 300 thousand | 234–235 MiB, 2.8 s | 270 MiB | 30 s |
+| an outage of 300 thousand | 198–216 MiB, 1.7–2.0 s | 240 MiB | 30 s |
+| small multipart uploads, 300 thousand | 195–199 MiB, 1.9–2.0 s | 270 MiB | 30 s |
 | the app's first view of 100 thousand (records whole) | 217–221 MiB, 1.0–1.1 s | 250 MiB | 6 s |
 | a sorted page of operations | 48–57 ms | | 1.5 s |
-| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 270–272 MiB, 4.9 s | 310 MiB | 45 s |
+| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 274–282 MiB, 3.5–3.9 s | 310 MiB | 45 s |
 
 How:
 - **The record** (`reqlog::Record`, 96 bytes): its kind, method and bucket are interned `Name`s (2 bytes each); a
