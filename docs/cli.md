@@ -73,7 +73,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 
 | Option | |
 |---|---|
-| `--max-requests N`, `--max-waiting T`, `--max-errors N` | Budget. Times as `2s`, `250ms` or ms. An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
+| `--max-requests N`, `--max-waiting T`, `--max-errors N`, `--max-transfer SIZE` | Budget. Times as `2s`, `250ms` or ms; sizes as `10GiB`, `500MB` or bytes (the bytes the store sent). An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
 | `--baseline FILE\|auto\|https://…` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). |
 | `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10). |
@@ -163,6 +163,10 @@ money a month), the line that sent it and the fix for the SDK that sent it (boto
 |---|---|---|
 | `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
 | `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
+| `obs.crawl` | 20 prefixes or more each listed fewer than 5 times (partition discovery, a tree walked folder by folder), saving 1% of the run's requests or cost (one finding of the run, `obs.crawl|`) | a manifest, or the table format's metadata |
+| `obs.rangeagain` | the same byte range of an object read 10 times or more past its first read with nothing written to it between (a Parquet footer read by each query), saving 1% of the run's requests or cost (one finding of the run) | keep each range once read |
+| `obs.wholeread` | objects of 1 MiB or more read whole that the run also reads by range (evidence it uses parts), what they read past their ranges 16 MiB or more and a tenth of the run's bytes out; saves bytes, and egress when charged (one finding of the run) | read the ranges used |
+| `obs.smallreads` | 500 objects or more under 1 MiB each read whole one GET each, a fifth of the run's requests; the saving is the GETs left once they are shards of 64 MiB (one finding of the run) | shard into tar or WebDataset files |
 | `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |
 | `obs.small` | 50 objects or more under 64 KiB written one PUT each, to folders of two or more, a fifth of the run's cost; or 3 multipart uploads completed with one part under 5 MiB, where a PUT would do (one finding of the run, `obs.small|`) | batch into fewer, larger objects; one PUT |
 | `obs.deletes` | 20 objects or more deleted one request each, saving 1% of the run's requests | `DeleteObjects` (1,000 a request) |
@@ -217,9 +221,20 @@ its saving, back) are kept in its runs folder's index, brought up
 to date by `run`, `show` and the app when they read the program's newest run. `run`, `show` (`since` in JSON),
 `compare` and `check -f markdown` say a run's findings the same way.
 
+## Cost
+
+A run's cost is its requests and its bytes out at its endpoint's prices: the vendor's list prices (AWS, GCS, OSS,
+R2, B2, Wasabi, Tigris; a store of one's own is free) unless `[settings.prices]` says others ([configuration](configuration.md#configtoml)).
+Bytes out are billed as egress only when read from outside the store's region, which sonde cannot see: unless the
+endpoint says (`egress = true` or `false`), they are said and not counted (`read 12 GiB ≈ 1.08 USD egress if read
+from outside the region`). Apart, what the run wrote and left stored costs a month (`left 2.0 GiB stored ≈ 0.05 USD a
+month`), and on a bucket that keeps versions (a write's answer has a version id), the versions its overwrites and
+deletes made noncurrent, until a lifecycle rule expires them. JSON: `cost` (`requests`, `transfer`, `storage`); the
+Time pane's "What did the run cost, and when?" draws the three over time. `check --max-transfer` holds the bytes out.
+
 ## Money a month
 
-A run's cost is its requests at its endpoint's prices. An imported log's is also said a month at the rate of its own
+A run's cost is its requests and charged bytes out ([cost](#cost)). An imported log's is also said a month at the rate of its own
 span (a minute at least): `≈ 37.58 USD a month at this rate`. A program's run is said a month when its `sonde.toml`
 says how often it runs, `[program] runs-per-month = 200` (for the program `runs` names, or every program run in its
 folder): `≈ 4.10 USD a month at 200 runs a month`. Each finding's saving and the findings' total are then a month too.
