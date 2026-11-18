@@ -395,6 +395,28 @@ test("a run of a hundred thousand operations opens on its totals and first page,
   // (scrolling a table row by row takes the headless window a while)
 }, 120000);
 
+test("a finding an engine's setting acts on shows the setting first: what, to what, where, to copy", async () => {
+  const run = bigRun(50);
+  const view = run.modules["Runs.view"];
+  const finding = {
+    level: "info", text: "slate/db/manifest/ was listed 30 times", phrases: [{ key: "obs.listed", args: { prefix: "slate/db/manifest/", n: "30" } }],
+    operations: [0, 1], operationsTotal: 2, firstStart: "2026-11-07T00:00:00Z", sdk: "object_store 0.14",
+    fixes: [{ sdk: "config", code: "// SlateDB DbReader polls the manifest every 100ms: raise manifest_poll_interval (10s is its default)\nlet options = DbReaderOptions { manifest_poll_interval: Duration::from_secs(10), ..Default::default() };", setting: { engine: "SlateDB DbReader", key: "manifest_poll_interval", value: "10s", where: "src/main.rs:4" } }],
+  };
+  const modules = { ...run.modules, "Runs.view": async (path: string) => ({ ...(await view(path)), observations: [finding] }) };
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: modules } });
+  await openExample(app);
+  await app.waitFor("id:observation-0", { timeout: 10000 });
+  await app.press("id:observation-0");
+  await app.waitFor("id:fix-setting", { timeout: 10000 });
+  expect(app.shows("id:fix-setting >> text:manifest_poll_interval")).toBe(true);
+  expect(app.shows("id:fix-setting >> text:10s")).toBe(true);
+  expect(app.shows("id:fix-setting >> text:src/main.rs:4")).toBe(true);
+  expect(app.shows("id:fix-setting-copy")).toBe(true);
+  // its tab is the engine's, not "Bucket"
+  expect(app.shows("id:fix-sdk >> text:SlateDB DbReader")).toBe(true);
+});
+
 test("a run's row says what sent its requests, before where they went and how many", async () => {
   const run = (name: string, clients?: string[]) => ({ path: `/nowhere/${name}.sonde`, name, created: "2026-11-15T09:00:00Z", endpoint: "demo", command: `python ${name}.py`, requests: 100, live: false, clients });
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.list": [run("load", ["boto3"]), run("lake", ["Lance", "boto3"]), run("plain")] } } });
