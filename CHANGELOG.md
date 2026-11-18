@@ -2,6 +2,92 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [25.0.0] - 2026-11-18
+
+sonde now names the setting to change and what it saves, in money too.
+
+### Added
+
+- **Fixes in the engine's own words:**
+  - A finding names the engine's setting, its value and where the program sets it: SlateDB
+    (`manifest_poll_interval`, `flush_interval`), DuckDB, rclone, s5cmd, Trino and Hadoop s3a. Delta, Lance and
+    Iceberg cleanups name the table's real path.
+  - `show -f json` gives it as `fixes[].setting` (`engine`, `key`, `value`, `where`), an edit an agent can apply.
+  - A program an engine drove gets no SDK code that does not fit it. `object_store` programs get Rust fixes.
+  - The app's fix shows the setting first, with Copy and a press that opens the file that sets it.
+  - Text, markdown and the TUI say the setting too.
+- **Bytes and money, made whole:**
+  - A run's cost is split into requests, transfer (egress) and the storage it leaves a month, with noncurrent
+    versions in a versioned bucket.
+  - Egress is priced per vendor (AWS, GCS, OSS; R2, Wasabi, B2, MinIO and Ceph at 0) and charged when the endpoint
+    says `egress = true`. Until then it is said, not counted.
+  - `check --max-transfer` (or `[check] max-transfer`) holds the bytes a run may send out.
+  - Four findings:
+    - `obs.rangeagain`: the same range read again;
+    - `obs.wholeread`: large objects read whole and in ranges;
+    - `obs.smallreads`: a storm of small reads;
+    - `obs.crawl`: many prefixes listed once each.
+  - Time: "What did the run cost, and when?", requests, transfer and storage stacked.
+- **The first minute:**
+  - The welcome's demo runs a small job and opens its run on the finding, with the line of code that sent it.
+  - "Apply and run again" applies the fix and says what it saved, measured beside the prediction. It works on every
+    system with nothing installed.
+  - Run proposes the commands a chosen folder runs: Makefile, package.json, pyproject, Python and Spark programs,
+    `go run .`, `cargo run`.
+  - rclone (`RCLONE_S3_*`) and the DuckDB CLI (`-init` with `SET s3_*`) go through sonde by themselves.
+- **S3 coverage:**
+  - RenameObject (refused under `no-delete`, as it removes its source) and UpdateObjectEncryption are named.
+  - The checksums SHA512, MD5, XXHASH64, XXHASH3 and XXHASH128 are read, verified and probed.
+  - New probes: `cond.delete-if-match` and `cond.copy-dest-if-match`. There are 52 probes in all.
+- `sonde completions <shell>` and `sonde man <dir>`. The terminal archives carry both.
+- Settings › Updates: **Install when sonde quits**, offered first while a recording or a job runs.
+- Release notes in Chinese, when a release writes them.
+
+### Changed
+
+- **Native Shell v0.6.0.** The apps require `>=0.6, <0.7`.
+- Motion moves on one spring, and nothing moves under reduced motion.
+- An object request sonde cannot name is `Unknown`, not GetObject, PutObject or DeleteObject (by `x-id` when it
+  names one).
+- An Iceberg manifest nested more than 32 deep is an error, not a crash (apache-avro 0.23).
+- **Breaks** in `show -f json` and `check -f json`:
+  - `cost` requires `requests`, `transfer` and `storage`; `cost.amount` (and each kind's, prefix's and caller's)
+    includes egress when it is charged.
+  - `whatIf` and `runPoint` carry `bytesOut`.
+  - The verdict gains `transfer`.
+  - A trial's `advice` also carries its English (`text`).
+  - `fixes[]` puts an engine's setting first and drops SDK code when an engine sent the requests.
+- CI checks Rust 1.97 (the declared minimum), runs MinIO, checks DuckDB through sonde, and checks that the README's
+  pictures are the approved tour's.
+
+### Fixed
+
+- Share in the app opens the page in the browser. Before, it said so and opened nothing.
+- `sonde share` works with Native Shell 0.6's page, whose stylesheet is linked.
+- An update of the app around sonde no longer announces the running version as new.
+
+### Removed
+
+- The welcome's "The demo is ready: press Return" (`welcome.demoReady`): the demo runs, and its run opens on its
+  finding.
+
+### 中文
+
+sonde 现在会指出该改哪个设置，以及能省多少，包括省多少钱。
+
+- **用引擎自己的设置给出修复：**SlateDB、DuckDB、rclone、s5cmd、Trino、Hadoop s3a 的修复直接写出设置名、取值和程序里
+  设置它的位置（`fixes[].setting`），应用里可一键复制；`object_store` 程序也有修复建议。
+- **字节和费用算完整：**费用拆成请求费、出网费、每月存储费（含版本桶里的旧版本）；出网费按厂商定价，端点设置
+  `egress = true` 后计入；`check --max-transfer` 限制出网流量；新增四类发现：重复读取同一范围、整读大对象、小对象读
+  风暴、遍历大量前缀；时间页新增"这次运行花了多少钱、花在什么时候"。
+- **首分钟：**欢迎页的演示跑一个小任务并停在发现上，"应用并重跑"后显示实测节省和预测；运行页根据文件夹推荐命令；
+  rclone 和 DuckDB 自动连到 sonde。
+- **S3 覆盖：**识别 RenameObject、UpdateObjectEncryption；支持 SHA512、MD5、XXHash 校验；新增条件删除、复制目标
+  条件两项探测，共 52 项。
+- 新增 `sonde completions`、`sonde man`；设置 › 更新新增"sonde 退出时安装"；Native Shell 升级到 v0.6.0，动效统一
+  为一套弹簧。
+- 修复：应用里的"分享"现在会真的打开页面。
+
 ## [24.0.2] - 2026-11-16
 
 ### Fixed

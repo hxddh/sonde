@@ -3,7 +3,7 @@
 # SHA-256 and, where gh is installed, its build provenance.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
-#   SONDE_VERSION=24.0.1 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=25.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
 #   SONDE_VERSION=23 sh install.sh    # the newest 23.x (23.1: the newest 23.1.x)
 #   SONDE_STATIC=1 sh install.sh    # Linux x86_64: the static (musl) build
 #   SONDE_VERIFY=1 sh install.sh    # fail unless gh confirms the provenance
@@ -43,14 +43,14 @@ if [ -n "$musl" ]; then
   libc=-musl
 fi
 asset="sonde-$os-$arch$libc.tar.gz"
-# A major alone (24) is its newest release (24.x.y), a major and minor (24.0)
-# the newest 24.0.y; prereleases left out
+# A major alone (25) is its newest release (25.x.y), a major and minor (25.0)
+# the newest 25.0.y; prereleases left out
 case "$version" in
   latest | *.*.*) ;;
   *)
     want="${version#v}"
     case "$want" in
-      *[!0-9.]* | *..* | .* | *.) fail "SONDE_VERSION=$version: a version (24.0.1), a major (24), a major and minor (24.0), or latest" ;;
+      *[!0-9.]* | *..* | .* | *.) fail "SONDE_VERSION=$version: a version (25.0.0), a major (25), a major and minor (25.0), or latest" ;;
       *.*) pattern="^$(echo "$want" | sed 's/\./\\./')\.[0-9]*$" ;;
       *) pattern="^$want\.[0-9]*\.[0-9]*$" ;;
     esac

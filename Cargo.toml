@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "24.0.2"
+version = "25.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
