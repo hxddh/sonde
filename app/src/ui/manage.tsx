@@ -1,7 +1,7 @@
 // Looking after runs: a title of the user's, removing one, sharing one
 // as a web page. Each is in the run's context menu and its ⋯ menu.
 
-import { effect, openUrl, signal, untracked } from "nsh";
+import { effect, signal, untracked } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { forgetRun } from "../run";
@@ -81,7 +81,8 @@ export async function removeRun(s: RunInfo, removed?: () => void): Promise<boole
 export async function shareRun(path: string) {
   try {
     const r = await api.runs.share(path);
-    void openUrl(r.url);
+    // the system opens it (openUrl opens no file: address)
+    api.runs.openPage(r.file).catch(report);
     toast({
       id: "shared",
       kind: "success",

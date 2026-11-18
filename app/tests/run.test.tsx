@@ -298,22 +298,27 @@ test("a program over its runs: history, a baseline, and the flows of its request
 });
 
 
-test("a shared run opens in the browser, on a local address", async () => {
-  const app = await open("../App.tsx", desktop);
+test("a shared run is one file, opened by the system, never as a file: address", async () => {
+  // the system's opener stood in for: what sonde asks it to open
+  const opened: string[] = [];
+  const app = await open("../App.tsx", { ...desktop, modules: { "sonde/native": { "Runs.openPage": async (path: string) => void opened.push(path) } } });
   await openExample(app);
   await app.waitFor("id:run-summary", { timeout: 10000 });
   await app.press("id:run-more");
   await app.chooseMenuItem("Share as a web page");
   const noViewer = "text:Copied the command that makes the web page";
-  await app.waitUntil(() => app.openedUrls().length > 0 || app.shows(noViewer), { timeout: 10000 });
+  const shared = "text:The run is open in your browser";
+  await app.waitUntil(() => app.shows(shared) || app.shows(noViewer), { timeout: 10000 });
+  // never openUrl: it opens no file: address (Native Shell refuses it)
+  expect(app.openedUrls()).toEqual([]);
   if (app.shows(noViewer)) {
     // a build without the viewer (CI's test job) copies the command that makes the page instead
-    expect(app.openedUrls()).toEqual([]);
     expect(app.clipboard()).toContain("sonde share");
     return;
   }
-  // the openUrl capability lets the app open its own page (http) and nothing else
-  expect(app.openedUrls()[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+  await app.waitFor("text:/^The page is one file, .*\\.html: send it as you would the run\\.$/");
+  expect(opened).toHaveLength(1);
+  expect(opened[0]).toMatch(/\.html$/);
 });
 
 test("relative times read in the app's language", async () => {

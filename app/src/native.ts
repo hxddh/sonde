@@ -109,7 +109,8 @@ export const api = {
     remove: (path: string) => Runs.remove(path) as Promise<boolean>,
     /** Shows a file or folder in the file manager. */
     reveal: (path: string) => Runs.reveal(path) as Promise<void>,
-    share: async (path: string) => (await Runs.share(path)) as { file: string; url: string },
+    share: async (path: string) => (await Runs.share(path)) as { file: string },
+    openPage: (path: string) => Runs.openPage(path) as Promise<void>,
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Runs.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
     input: (data: string) => Runs.input(data),
