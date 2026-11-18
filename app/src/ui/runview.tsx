@@ -12,9 +12,9 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { Chart, runStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
-import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
+import type { EngineSetting, EpisodeRow, Fix, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
-import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, Strong, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -233,18 +233,47 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
 /** The signals in rank order (the least width a tile of one reads in is the kit's `SIZES.signalTile`). */
 const SIGNALS: SignalId[] = ["rate", "errors", "latency", "bytes", "inFlight"];
 
-const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3" } as const;
+const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", rust: "Rust · object_store" } as const;
 type Sdk = keyof typeof SDKS | "config";
-/** A fix's tab: the SDK's own name, or (a change to the bucket, not the program) "Bucket" in the reader's language. */
-const sdkTitle = (sdk: Sdk) => (sdk === "config" ? t("fix.bucket") : SDKS[sdk]);
-const LANG = { python: "python", java: "java", go: "go", js: "javascript", config: "xml" } as const;
+/** A fix's tab: the engine whose setting it is, the SDK's own name, or (a change to the bucket, not the program) "Bucket" in the reader's language. */
+const fixTitle = (f: Fix) => f.setting?.engine ?? (f.sdk === "config" ? t("fix.bucket") : SDKS[f.sdk]);
+const LANG = { python: "python", java: "java", go: "go", js: "javascript", rust: "rust", config: "xml" } as const;
+/** A fix's language for its highlighting: an engine's by how its comment begins (Rust's `//`, SQL's `--`). */
+const langOf = (f: Fix) => (f.sdk !== "config" ? LANG[f.sdk] : f.code.startsWith("//") ? "rust" : f.code.startsWith("--") ? "sql" : f.setting ? "bash" : LANG.config);
+/** An engine's setting as one line to paste: a flag with its value (alone when it is `true`), else `key = value`. */
+export const settingLine = (s: EngineSetting) => (s.key.startsWith("-") ? (s.value === "true" ? s.key : `${s.key} ${s.value}`) : `${s.key} = ${s.value}`);
+
+/** The setting a fix changes, first and plainest: what, to what, and where the program sets it now (a press opens it). */
+function SettingPanel(props: { s: EngineSetting; onOpenCode?: (place: string) => void }) {
+  return (
+    <View testID="fix-setting" class="gap-1">
+      <View class="flex-row flex-wrap items-center gap-2">
+        <Strong class="min-w-0 flex-1">{t("fix.setting", { engine: props.s.engine })}</Strong>
+        <If when={!terminal()}>
+          <Button small variant="outline" icon="copy" label={t("fix.copySetting")} onPress={() => void Clipboard.writeText(settingLine(props.s)).catch(() => {})} testID="fix-setting-copy" />
+        </If>
+      </View>
+      <KeyValue mono rows={[[t("fix.settingKey"), props.s.key], [t("fix.settingValue"), props.s.value], ...(props.s.where ? [[t("fix.settingWhere"), props.s.where] as [string, string]] : [])]} />
+      <If when={props.s.where} else={<Text class={TEXT.meta}>{t("fix.settingUnset", { engine: props.s.engine })}</Text>}>
+        {(at) => (
+          <If when={props.onOpenCode}>
+            <ListRow label={t("fix.openCode", { place: at() })} onPress={() => props.onOpenCode?.(at())} testID="fix-setting-open">
+              <Icon name="file" size={ICON.small} />
+              <Text class="min-w-0 flex-1 font-mono text-small text-primary line-clamp-1">{at()}</Text>
+            </ListRow>
+          </If>
+        )}
+      </If>
+    </View>
+  );
+}
 
 /** What to change for a finding: its fix in each SDK, one shown. */
 /** The fix's SDK for the program's own: its user agent named it. */
 const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   if (!sdk) return null;
   const s = sdk.toLowerCase();
-  return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
+  return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : s.startsWith("object_store") ? "rust" : null;
 };
 
 /** "Expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
@@ -277,7 +306,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
   const own = () => sdkOfAgent(props.o.sdk);
-  const shown = () => fixes().find((f) => f.sdk === fixSdk()) ?? fixes().find((f) => f.sdk === own()) ?? fixes()[0];
+  // an engine's setting first: what sent the requests is the engine, not an SDK the program calls
+  const shown = () => fixes().find((f) => f.setting) ?? fixes().find((f) => f.sdk === fixSdk()) ?? fixes().find((f) => f.sdk === own()) ?? fixes()[0];
   effect(() => {
     const o = own();
     if (o && fixes().some((f) => f.sdk === o)) untracked(() => fixSdk.set(o));
@@ -289,7 +319,7 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         {/* the heading keeps its words: what does not fit beside it goes to the next line, never into it */}
         <Heading class="shrink-0">{t("fix.title")}</Heading>
         <View class="flex-1" />
-        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: sdkTitle(f.sdk) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
+        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: fixTitle(f) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
         <If when={shown() && !terminal()}>
           <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
         </If>
@@ -297,6 +327,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         <StoreFixButton o={props.o} onStore={props.onStore} />
         <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
+      {/* the engine's setting, the one edit to make: before why and the code */}
+      <If when={shown()?.setting}>{(s) => <SettingPanel s={s()} onOpenCode={props.onOpenCode} />}</If>
       {/* why it matters and what it saves, written out */}
       <If when={observationWhy(props.o)}>
         {(why) => (
@@ -330,7 +362,7 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
             <TextView
               testID="fix-code"
               // (the sample as written, without the blank lines around it)
-              markdown={`\`\`\`${LANG[f().sdk]}\n${sample(f().code)}\n\`\`\``}
+              markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
               classes={{ codeBlock: "rounded-(--radius) bg-muted/60 p-2 font-mono text-small" }}
             />
           </If>

@@ -532,6 +532,22 @@ export interface EpisodeQuery {
   kind?: string;
 }
 
+/** The one setting of an engine to change (SlateDB's `manifest_poll_interval`, rclone's `--s3-no-head-object`). */
+export interface EngineSetting {
+  engine: string;
+  key: string;
+  value: string;
+  /** `file:line` in the program's folder that sets it now, when sonde found one. */
+  where?: string;
+}
+
+/** A finding's fix: code for an SDK, or (`config`) a store's or an engine's setting. */
+export interface Fix {
+  sdk: "python" | "java" | "go" | "js" | "rust" | "config";
+  code: string;
+  setting?: EngineSetting;
+}
+
 /** A range of a run's operations: `rows[i]` is the table's row `offset + i`, of `total` that match. */
 export interface EpisodePage {
   total: number;
@@ -559,8 +575,8 @@ export interface Observation {
   savesMs?: number;
   /** What the requests it would save cost, in the run's currency (times `month.times`: a month). */
   savesCost?: number;
-  /** What to change in the program, by SDK. */
-  fixes?: { sdk: "python" | "java" | "go" | "js" | "config"; code: string }[];
+  /** What to change in the program, by SDK; an engine's own setting first, when an engine sent its requests. */
+  fixes?: Fix[];
   /** Where in the program its requests came from (`x-sonde-caller`), most first; an imported log's: who sent them (an IAM principal). `file`, `line` and `function` when `place` is a place in code. */
   callers?: { place: string; file?: string; line?: number; function?: string; requests: number }[];
   /** The SDK that sent them, from their user agent ("boto3 1.34"). */
