@@ -5,7 +5,7 @@
 #
 #   scripts/sdk-smoke.sh [sonde options, e.g. --url http://127.0.0.1:9100] [-- sdk...]
 #
-# SDKs: python node go java aws polars, tls (boto3 again, through `run
+# SDKs: python node go java aws polars duckdb, tls (boto3 again, through `run
 # --tls`: https and the unsigned streaming trailer) and docker (the AWS CLI in
 # a container: `run -- docker run …` gives it the host's network and the
 # variables). Default: every one whose toolchain is installed. Runs go to $SMOKE_RUNS (default: a temporary
@@ -17,7 +17,7 @@ opts=()
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do opts+=("$1"); shift; done
 [ "${1:-}" = "--" ] && shift
 sdks=("$@")
-[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars tls docker)
+[ ${#sdks[@]} -eq 0 ] && sdks=(python node go java aws polars duckdb tls docker)
 out="${SMOKE_RUNS:-$(mktemp -d)}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"   # the builds below change directory
@@ -34,6 +34,9 @@ for sdk in "${sdks[@]}"; do
     polars)
       "$py" -c "import boto3, polars" 2>/dev/null || { echo "skip polars (no polars for $py)"; continue; }
       cmd=("$py" "$smoke/polars/smoke.py") ;;
+    duckdb)
+      "$py" -c "import boto3, duckdb" 2>/dev/null || { echo "skip duckdb (no duckdb for $py)"; continue; }
+      cmd=("$py" "$smoke/duckdb/smoke.py") ;;
     aws)
       command -v aws >/dev/null || { echo "skip aws"; continue; }
       cmd=(bash "$smoke/aws/smoke.sh") ;;
