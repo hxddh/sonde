@@ -259,6 +259,104 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "// files no commit names: the table's own cleanup removes them\nspark.sql(\"CALL catalog.system.remove_orphan_files(table => 'db.events', older_than => TIMESTAMP '2026-01-01 00:00:00')\");",
             ),
         ],
+        "obs.rangeagain" => vec![
+            f(
+                "python",
+                "# read each range once and keep it (a Parquet footer, an index)
+from functools import lru_cache
+@lru_cache(maxsize=1024)
+def read_range(key, start, end):
+    return s3.get_object(Bucket=b, Key=key, Range=f\"bytes={start}-{end}\")[\"Body\"].read()",
+            ),
+            f(
+                "java",
+                "// read each range once and keep it (a Parquet footer, an index)
+Map<String, byte[]> ranges = new ConcurrentHashMap<>();
+byte[] read(String k, String range) { return ranges.computeIfAbsent(k + range, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(range)).asByteArray()); }",
+            ),
+            f(
+                "go",
+                "// read each range once and keep it (a Parquet footer, an index)
+var ranges sync.Map
+if v, ok := ranges.Load(k + rng); ok { return v.([]byte), nil }",
+            ),
+            f(
+                "js",
+                "// read each range once and keep it (a Parquet footer, an index)
+const ranges = new Map();
+const read = (k, Range) => ranges.get(k + Range) ?? ranges.set(k + Range, fetchRange(k, Range)).get(k + Range);",
+            ),
+        ],
+        "obs.wholeread" => vec![
+            f(
+                "python",
+                "# read the ranges used, not the whole object (pyarrow reads a Parquet file's footer, then its columns)
+import pyarrow.parquet as pq, pyarrow.fs as pafs
+table = pq.read_table(f\"{b}/{k}\", columns=[\"id\", \"ts\"], filesystem=pafs.S3FileSystem())",
+            ),
+            f(
+                "java",
+                "// read the ranges used, not the whole object
+byte[] part = s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(\"bytes=\" + start + \"-\" + end)).asByteArray();",
+            ),
+            f(
+                "go",
+                "// read the ranges used, not the whole object
+out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: aws.String(fmt.Sprintf(\"bytes=%d-%d\", start, end))})",
+            ),
+            f(
+                "js",
+                "// read the ranges used, not the whole object
+const part = await s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range: `bytes=${start}-${end}` }));",
+            ),
+        ],
+        "obs.smallreads" => vec![
+            f(
+                "python",
+                "# shard the samples into tar files (WebDataset) and read a shard at a time
+import webdataset as wds
+ds = wds.WebDataset(\"pipe:aws s3 cp s3://BUCKET/shards/train-{000000..000099}.tar -\").decode(\"pil\")",
+            ),
+            f(
+                "java",
+                "// pack small objects into larger files and read those: one GET a shard, not one a sample
+try (TarArchiveInputStream tar = new TarArchiveInputStream(s3.getObject(r -> r.bucket(b).key(\"shards/train-000000.tar\")))) { /* each entry a sample */ }",
+            ),
+            f(
+                "go",
+                "// pack small objects into larger files and read those: one GET a shard, not one a sample
+out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(\"shards/train-000000.tar\")})
+tr := tar.NewReader(out.Body)",
+            ),
+            f(
+                "js",
+                "// pack small objects into larger files and read those: one GET a shard, not one a sample
+const shard = await s3.send(new GetObjectCommand({ Bucket: b, Key: \"shards/train-000000.tar\" }));",
+            ),
+        ],
+        "obs.crawl" => vec![
+            f(
+                "python",
+                "# one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
+import json
+files = json.loads(s3.get_object(Bucket=b, Key=f\"{prefix}_manifest.json\")[\"Body\"].read())",
+            ),
+            f(
+                "java",
+                "// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
+String manifest = s3.getObjectAsBytes(r -> r.bucket(b).key(prefix + \"_manifest.json\")).asUtf8String();",
+            ),
+            f(
+                "go",
+                "// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
+out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(prefix + \"_manifest.json\")})",
+            ),
+            f(
+                "js",
+                "// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
+const manifest = JSON.parse(await (await s3.send(new GetObjectCommand({ Bucket: b, Key: `${prefix}_manifest.json` }))).Body.transformToString());",
+            ),
+        ],
         _ => Vec::new(),
     }
 }
@@ -293,6 +391,8 @@ pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
 pub struct WhatIf {
     /// Before and after.
     pub requests: (usize, usize),
+    /// The bytes read out of the store, before and after.
+    pub bytes_out: (u64, u64),
     /// None when the run's times cannot say it (an imported log's,
     /// to the second).
     pub waiting_ms: Option<(f64, f64)>,
@@ -315,7 +415,10 @@ pub fn rank_by_saving(
     records: &[Record],
     prices: &crate::profile::RequestPrices,
 ) {
-    if findings.iter().any(|o| !o.saved_ids.is_empty()) {
+    if findings
+        .iter()
+        .any(|o| !o.saved_ids.is_empty() || o.saves_bytes > 0)
+    {
         let by_id = crate::episode::RecordsById::of(records);
         for o in findings.iter_mut() {
             o.saves_cost = o
@@ -323,19 +426,35 @@ pub fn rank_by_saving(
                 .iter()
                 .filter_map(|id| by_id.get(id))
                 .map(|r| crate::profile::price(r, prices))
-                .sum::<f64>();
+                .sum::<f64>()
+                + bytes_only_cost(o, prices);
             // (a sum of small prices, without its float's noise)
             o.saves_cost = (o.saves_cost * 1e9).round() / 1e9;
         }
     }
     findings.sort_by(|a, b| {
-        let saves = |o: &Observation| o.saves_requests > 0 || o.saves_ms > 0.0;
+        let saves = |o: &Observation| saves(o);
         saves(b)
             .cmp(&saves(a))
             .then(b.saves_cost.total_cmp(&a.saves_cost))
             .then(b.saves_ms.total_cmp(&a.saves_ms))
             .then(b.saves_requests.cmp(&a.saves_requests))
     });
+}
+
+/// Whether acting on a finding saves something it can count: requests,
+/// time or bytes.
+fn saves(o: &Observation) -> bool {
+    o.saves_requests > 0 || o.saves_ms > 0.0 || o.saves_bytes > 0
+}
+
+/// What a finding that saves bytes and no request (a read of the ranges
+/// used for a whole one) saves, as egress: when the bytes out are charged.
+fn bytes_only_cost(o: &Observation, prices: &crate::profile::RequestPrices) -> f64 {
+    match prices.egress() {
+        crate::profile::Egress::Charged if o.saved_ids.is_empty() => prices.out(o.saves_bytes),
+        _ => 0.0,
+    }
 }
 
 /// What acting on the findings would leave, measured and not estimated: the
@@ -355,10 +474,7 @@ pub fn what_if(
     findings: &[Observation],
     timed: bool,
 ) -> Option<WhatIf> {
-    let saving: Vec<&Observation> = findings
-        .iter()
-        .filter(|o| o.saves_requests > 0 || o.saves_ms > 0.0)
-        .collect();
+    let saving: Vec<&Observation> = findings.iter().filter(|o| saves(o)).collect();
     if saving.is_empty() || records.is_empty() {
         return None;
     }
@@ -395,16 +511,38 @@ pub fn what_if(
         waiting -= o.saves_ms;
         counted.push(o);
     }
+    // a finding that saves bytes alone (ranges read for a whole object):
+    // its bytes, and their egress when charged
+    let (mut fewer_bytes, mut fewer_cost) = (0u64, 0.0);
+    for o in saving
+        .iter()
+        .filter(|o| o.saves_requests == 0 && o.saves_ms == 0.0 && o.saves_bytes > 0)
+    {
+        fewer_bytes += o.saves_bytes;
+        fewer_cost += bytes_only_cost(o, &profile.prices);
+        counted.push(o);
+    }
     if counted.is_empty() {
         return None;
     }
     let cost: f64 = left()
         .map(|r| crate::profile::price(r, &profile.prices))
+        .sum::<f64>()
+        - fewer_cost;
+    let bytes_left: u64 = left()
+        .filter(|r| crate::profile::reached_store(r))
+        .map(crate::profile::out_bytes)
         .sum();
     Some(WhatIf {
         requests: (records.len(), left().count()),
+        bytes_out: (
+            profile.cost.transfer.bytes,
+            bytes_left
+                .saturating_sub(fewer_bytes)
+                .min(profile.cost.transfer.bytes),
+        ),
         waiting_ms: timed.then(|| (profile.waiting_ms, waiting.clamp(0.0, profile.waiting_ms))),
-        cost: (profile.cost.amount, cost.min(profile.cost.amount)),
+        cost: (profile.cost.amount, cost.clamp(0.0, profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),
         of_findings: findings.len(),
@@ -451,6 +589,14 @@ impl WhatIf {
         {
             parts.push(format!("waiting {} → {}", ms_text(before), ms_text(after)));
         }
+        let bytes = crate::episode::human_bytes;
+        if bytes(self.bytes_out.0) != bytes(self.bytes_out.1) {
+            parts.push(format!(
+                "read {} → {}",
+                bytes(self.bytes_out.0),
+                bytes(self.bytes_out.1)
+            ));
+        }
         let (a, b, a_month) = match month {
             Some(m) => (m.of(self.cost.0), m.of(self.cost.1), " a month"),
             None => (self.cost.0, self.cost.1, ""),
@@ -475,6 +621,10 @@ fn kind_name(key: &str) -> &'static str {
         "obs.rename" => "a commit by rename",
         "obs.markers" => "directory markers deleted",
         "obs.listed" => "a prefix listed again and again",
+        "obs.rangeagain" => "a range read again",
+        "obs.wholeread" => "objects read whole",
+        "obs.smallreads" => "small objects read one by one",
+        "obs.crawl" => "prefixes listed one by one",
         "obs.headget" => "HEAD before GET",
         "obs.small" | "obs.small.parts" => "small files",
         "obs.deletes" => "objects deleted one at a time",
@@ -590,6 +740,7 @@ mod tests {
             per_1000_reads: 0.4,
             per_1000_lists: None,
             currency: "USD".into(),
+            ..RequestPrices::default()
         };
         let mut rs = Vec::new();
         for i in 0..3u64 {

@@ -261,6 +261,29 @@ export function costSaid(s: Signals): string {
   return top ? t("costBy.text", { op: top.kind, pct: percent(top.share), total: cost(s.cost.amount, s.cost.currency) }) : "";
 }
 
+/** The run's money slice by slice: its requests, its bytes out as egress (none when free; what it would be when
+ * not known) and what it left stored, a month. A run written before 25.0 has none of it: its requests alone. */
+export function costTimeRows(p: Profile): { tMs: number; requests: number; transfer: number; storage: number }[] {
+  return p.rate.map((b) => ({ tMs: b.tMs, requests: b.requestsCost ?? 0, transfer: b.transferCost ?? 0, storage: b.storageCost ?? 0 }));
+}
+
+/** What the run cost, and when: its parts over the run or the stretch, and the slice that cost the most. */
+export function costTimeSaid(p: Profile, range?: [number, number] | null): string {
+  const rows = costTimeRows(p);
+  const [a, b] = within(rows.length, range);
+  let [req, xfer, store, peak] = [0, 0, 0, a];
+  const of = (i: number) => (rows[i] ? rows[i].requests + rows[i].transfer + rows[i].storage : 0);
+  for (let i = a; i <= b; i++) {
+    req += rows[i]?.requests ?? 0;
+    xfer += rows[i]?.transfer ?? 0;
+    store += rows[i]?.storage ?? 0;
+    if (of(i) > of(peak)) peak = i;
+  }
+  const c = p.cost.currency;
+  const args = { req: cost(req, c), xfer: cost(xfer, c), store: cost(store, c), at: duration(slotMs(p, peak)) };
+  return t(p.cost.transfer?.egress === "unknown" ? "costTime.textIf" : "costTime.text", args);
+}
+
 /** When each prefix was busy: the busiest prefix, in the run's busiest second or the stretch's busiest slice. */
 export function heatSaid(p: Profile, range?: [number, number] | null): string {
   if (!range) {

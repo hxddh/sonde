@@ -3,7 +3,7 @@
 
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { costColumn, count, date, day, duration, factor, hm } from "../format";
+import { bytes, costColumn, count, date, day, duration, factor, hm } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
@@ -210,7 +210,7 @@ function Verdicts(props: { h: ProgramHistory }) {
   const open = signal(false);
   const failed = () => c().verdicts.filter((v) => !v.ok);
   // each figure in its own unit: times as times, cost as cost, the rest counted
-  const value = (what: string, v: number) => (what === "waiting" || what === "p95" ? duration(v) : what === "cost" ? cost(v, props.h.runs[0]?.currency ?? "USD") : count(Math.round(v)));
+  const value = (what: string, v: number) => (what === "waiting" || what === "p95" ? duration(v) : what === "cost" ? cost(v, props.h.runs[0]?.currency ?? "USD") : what === "transfer" ? bytes(v) : count(Math.round(v)));
   // what went past, figure by figure, then the warnings that are new
   const lines = () => [...failed().map((v) => `${t(`verdict.${v.what}` as never)}: ${value(v.what, v.value)} > ${value(v.what, v.limit)}`), ...c().newWarnings.map((w, i) => say(c().newWarningPhrases?.[i], w))].join("\n");
   return (

@@ -21,6 +21,8 @@ pub struct Check {
     pub max_requests: Option<usize>,
     pub max_waiting: Option<toml::Value>,
     pub max_errors: Option<usize>,
+    /// Bytes read out of the store, at most: bytes as a number, or "10 GiB".
+    pub max_transfer: Option<toml::Value>,
     /// Findings kept on purpose, each with why: an identity as `sonde show
     /// -f json` writes it (or a kind, for all of it) and the reason. Never a
     /// new warning; every output says the reason.
@@ -39,12 +41,21 @@ impl Check {
             .transpose()
     }
 
+    /// `max-transfer` in bytes.
+    pub fn max_transfer_bytes(&self) -> Result<Option<u64>, String> {
+        self.max_transfer
+            .as_ref()
+            .map(|v| size_bytes("max-transfer", v))
+            .transpose()
+    }
+
     /// The limits a run is held to alone (no baseline: no tolerance).
     pub fn budget(&self) -> Result<Budget, String> {
         Ok(Budget {
             max_requests: self.max_requests,
             max_waiting_ms: self.max_waiting_ms()?,
             max_errors: self.max_errors,
+            max_transfer: self.max_transfer_bytes()?,
             tolerance: None,
             untimed: false,
         })
@@ -256,6 +267,46 @@ pub fn duration_text(text: &str) -> Option<f64> {
         .ok()
         .filter(|v| v.is_finite() && *v >= 0.0)
         .map(|v| v * scale)
+}
+
+/// "10 GiB", "500 MB", "2048" (bytes): a size as sonde writes it, in
+/// units of 1000 (`kB`, `MB`, `GB`, `TB`) or 1024 (`KiB`, `MiB`, `GiB`,
+/// `TiB`).
+pub fn size_text(text: &str) -> Option<u64> {
+    let t = text.trim();
+    let at = t
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(t.len());
+    let (n, unit) = t.split_at(at);
+    let scale: f64 = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1.0,
+        "kb" => 1e3,
+        "mb" => 1e6,
+        "gb" => 1e9,
+        "tb" => 1e12,
+        "kib" => 1024.0,
+        "mib" => 1024.0 * 1024.0,
+        "gib" => 1024.0 * 1024.0 * 1024.0,
+        "tib" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    n.parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .map(|v| (v * scale).round() as u64)
+}
+
+/// A size as `sonde.toml` writes it: bytes as a number, or "10 GiB".
+pub fn size_bytes(name: &str, v: &toml::Value) -> Result<u64, String> {
+    match v {
+        toml::Value::Integer(n) if *n >= 0 => Ok(*n as u64),
+        toml::Value::String(s) => {
+            size_text(s).ok_or_else(|| format!("{name}: {s:?} is not a size"))
+        }
+        other => Err(format!(
+            "{name}: {other} is not a size (\"10 GiB\", or bytes)"
+        )),
+    }
 }
 
 /// A duration as `sonde.toml` writes it: ms as a number, or "250ms", "2s".

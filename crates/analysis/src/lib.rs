@@ -27,6 +27,7 @@ pub mod run;
 pub mod share;
 pub mod signals;
 pub mod split;
+pub mod stored;
 pub mod summary;
 pub mod trial;
 pub mod trial_plan;

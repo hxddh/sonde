@@ -149,10 +149,11 @@
   "$defs": {
     "cost": {
       "type": "object",
-      "description": "The requests' cost at the endpoint's prices.",
+      "description": "What the run cost at the endpoint's prices (docs/cli.md#cost): its requests, its bytes out, and apart what it left stored a month.",
       "properties": {
         "amount": {
-          "type": "number"
+          "type": "number",
+          "description": "The run's money: `requests`, and `transfer.amount` when `transfer.egress` is `charged`."
         },
         "currency": {
           "type": "string"
@@ -165,6 +166,78 @@
         },
         "free": {
           "type": "integer"
+        },
+        "requests": {
+          "type": "number",
+          "description": "Of `amount`, the requests'."
+        },
+        "transfer": {
+          "type": "object",
+          "description": "The bytes the store sent.",
+          "properties": {
+            "bytes": {
+              "type": "integer"
+            },
+            "egress": {
+              "type": "string",
+              "enum": [
+                "charged",
+                "free",
+                "unknown"
+              ],
+              "description": "`charged`: read from outside the store's region (the endpoint's `egress = true`); `free`: read in it (`egress = false`) or a store with no egress fee; `unknown`: not said, so not in `amount` (`amount` here is what it would be if read from outside the region)."
+            },
+            "amount": {
+              "type": "number",
+              "description": "The bytes at the egress price (0 when `free`)."
+            },
+            "perGib": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "bytes",
+            "egress",
+            "amount",
+            "perGib"
+          ]
+        },
+        "storage": {
+          "type": "object",
+          "description": "What the run left stored, a month (not in `amount`).",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "description": "Bytes it wrote and did not delete."
+            },
+            "perMonth": {
+              "type": "number"
+            },
+            "versioned": {
+              "type": "boolean",
+              "description": "A write's answer said the bucket keeps versions."
+            },
+            "noncurrent": {
+              "type": "integer",
+              "description": "Versions its overwrites and deletes made noncurrent there."
+            },
+            "noncurrentBytes": {
+              "type": "integer",
+              "description": "The bytes of those whose size the run saw."
+            },
+            "noncurrentPerMonth": {
+              "type": "number",
+              "description": "What they cost a month until a lifecycle rule expires them."
+            }
+          },
+          "required": [
+            "bytes",
+            "perMonth",
+            "versioned",
+            "noncurrent",
+            "noncurrentBytes",
+            "noncurrentPerMonth"
+          ]
         }
       },
       "required": [
@@ -172,7 +245,10 @@
         "currency",
         "reads",
         "writes",
-        "free"
+        "free",
+        "requests",
+        "transfer",
+        "storage"
       ]
     },
     "git": {
@@ -307,7 +383,11 @@
             "obs.orphans",
             "obs.small",
             "obs.hot",
+            "obs.rangeagain",
+            "obs.wholeread",
+            "obs.smallreads",
             "obs.listed",
+            "obs.crawl",
             "obs.headget",
             "obs.deletes",
             "obs.rmw",
@@ -332,9 +412,13 @@
         "savesMs": {
           "type": "number"
         },
+        "savesBytes": {
+          "type": "integer",
+          "description": "Bytes it would not read out of the store."
+        },
         "savesCost": {
           "type": "number",
-          "description": "What the requests it would save cost, in the run's currency (times `month.times`: a month)."
+          "description": "What the requests and bytes it would save cost, in the run's currency (times `month.times`: a month); bytes count only when `cost.transfer.egress` is `charged`."
         },
         "fixes": {
           "type": "array",
@@ -635,6 +719,19 @@
           ],
           "items": false
         },
+        "bytesOut": {
+          "type": "array",
+          "description": "The bytes read out of the store.",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
         "waitingMs": {
           "type": [
             "array",
@@ -683,6 +780,7 @@
       },
       "required": [
         "requests",
+        "bytesOut",
         "waitingMs",
         "cost",
         "currency",

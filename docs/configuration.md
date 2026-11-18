@@ -10,7 +10,8 @@ Two files, each setting in one of them:
 | Setting | File | Key |
 |---|---|---|
 | Endpoints and their credentials | `config.toml` | `[[endpoint]]` |
-| Prices (storage, requests) | `config.toml` | `[settings.prices]` |
+| Prices (storage, requests, bytes out) | `config.toml` | `[settings.prices]` |
+| Whether a run's bytes out leave the store's region | `config.toml` | `[[endpoint]] egress` |
 | sonde's own requests in flight and per second | `config.toml` | `[settings] concurrency`, `rate-limit` |
 | Theme, language | `config.toml` | `[settings] theme`, `language` |
 | Where exports and downloads go | `config.toml` | `[settings] exports-dir`, `downloads-dir` |
@@ -58,6 +59,7 @@ default-per-gib-month = 0.023
 currency = "USD"
 per-1000-writes = 0.005     # PUT, COPY, POST, LIST
 per-1000-reads = 0.0004     # GET, HEAD and the rest (DELETE is free)
+per-gib-out = 0.09          # bytes out of the store's region (egress)
 [settings.prices.by-class]  # per GiB-month (not in the app)
 STANDARD = 0.023
 STANDARD_IA = 0.0125
@@ -72,6 +74,7 @@ region = "eu-west-1"
 vendor = "aws"                                 # aws r2 minio ceph-rgw aliyun-oss tencent-cos tigris backblaze-b2 wasabi gcs-xml other
 path-style = false
 credentials = { kind = "profile", name = "prod" }
+egress = false                                 # read in its region (true: from outside it, billed); unset: not known
 
 [[endpoint]]
 id = "lab"
@@ -88,6 +91,11 @@ credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-v
 
 `credentials.kind`: `default`, `profile`, `env`, `imds`, `web-identity`, `process`, `static`, `anonymous`
 ([credentials](credentials.md)).
+
+Request and egress prices left at S3's (as above) are the endpoint's vendor's own list prices, read 2026-11-18: egress
+$0.09/GB on AWS (first 10 TB a month), $0.12/GiB on GCS, $0.08/GB on Alibaba OSS (outside the Chinese mainland), none
+on R2, Tigris, Wasabi, B2 (up to three times what is stored), MinIO and Ceph; Tencent COS's is S3's until set. A
+price you set wins for every endpoint.
 
 ### One-off endpoint
 
@@ -111,6 +119,7 @@ runs-per-month = 720      # how often it runs: cost and savings said a month (cl
 [check]                   # `sonde check`: cli.md
 max-requests = 5000
 max-errors = 0
+max-transfer = "50 GiB"   # bytes the store sent
 baseline = "auto"
 
 [record]

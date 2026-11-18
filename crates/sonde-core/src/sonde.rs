@@ -324,23 +324,40 @@ impl Sonde {
             .collect()
     }
 
-    /// Request prices for a run on `endpoint`: writes, reads, lists
-    /// (when other than a write) and the currency. The settings', unless they
-    /// are still S3 Standard's and the endpoint's vendor charges otherwise
-    /// (R2, B2, Wasabi, a store of one's own). Every view prices this way.
-    pub fn request_prices_for(&self, endpoint: &str) -> (f64, f64, Option<f64>, String) {
+    /// The prices of a run on `endpoint`: its requests (writes, reads,
+    /// lists when other than a write), its bytes out and the storage it
+    /// leaves. The settings', unless they are still S3 Standard's and the
+    /// endpoint's vendor charges otherwise (R2, B2, Wasabi, GCS, OSS, a store
+    /// of one's own), each of requests and bytes out on its own. Whether
+    /// bytes out leave the region is the endpoint's `egress`. Every view
+    /// prices this way.
+    pub fn prices_for(&self, endpoint: &str) -> crate::config::RunPrices {
         let p = self.settings().prices;
         let standard = crate::config::Prices::default();
         let untouched = p.per_1000_writes == standard.per_1000_writes
             && p.per_1000_reads == standard.per_1000_reads
             && p.currency == standard.currency;
-        match self
-            .endpoint_config(endpoint)
-            .and_then(|e| e.vendor.request_prices())
+        let e = self.endpoint_config(endpoint);
+        let vendor = e.as_ref().map(|e| e.vendor);
+        let (w, r, l) = match vendor
+            .and_then(|v| v.request_prices())
             .filter(|_| untouched)
         {
-            Some((w, r, l)) => (w, r, l, p.currency),
-            None => (p.per_1000_writes, p.per_1000_reads, None, p.currency),
+            Some(own) => own,
+            None => (p.per_1000_writes, p.per_1000_reads, None),
+        };
+        let per_gib_out = vendor
+            .and_then(|v| v.transfer_price())
+            .filter(|_| p.per_gib_out == standard.per_gib_out && p.currency == standard.currency)
+            .unwrap_or(p.per_gib_out);
+        crate::config::RunPrices {
+            per_1000_writes: w,
+            per_1000_reads: r,
+            per_1000_lists: l,
+            per_gib_out,
+            egress: e.and_then(|e| e.egress),
+            per_gib_month: p.per_gib_month(Some("STANDARD")),
+            currency: p.currency,
         }
     }
 
@@ -765,6 +782,55 @@ mod tests {
                 .is_empty()
         );
         assert!(s.client("missing").is_err());
+    }
+
+    /// A run is priced at its vendor's list prices for requests and bytes
+    /// out, unless the settings say otherwise; whether bytes out leave the
+    /// region is the endpoint's to say, and not known unless it does.
+    #[test]
+    fn a_run_is_priced_at_its_vendors_requests_and_egress() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(Paths::rooted(dir.path())).unwrap();
+        let mut gcs = EndpointConfig::new(
+            "gcs",
+            "G",
+            "https://storage.googleapis.com",
+            "auto",
+            Vendor::GcsXml,
+        );
+        gcs.egress = Some(true);
+        for e in [
+            gcs,
+            EndpointConfig::new(
+                "r2",
+                "R",
+                "https://a.r2.cloudflarestorage.com",
+                "auto",
+                Vendor::R2,
+            ),
+            EndpointConfig::new(
+                "aws",
+                "A",
+                "https://s3.amazonaws.com",
+                "us-east-1",
+                Vendor::Aws,
+            ),
+        ] {
+            s.upsert_endpoint(e).unwrap();
+        }
+        let (gcs, r2, aws) = (s.prices_for("gcs"), s.prices_for("r2"), s.prices_for("aws"));
+        assert_eq!((gcs.per_gib_out, gcs.egress), (0.12, Some(true)));
+        assert_eq!((r2.per_gib_out, r2.per_1000_reads), (0.0, 0.00036));
+        assert_eq!((aws.per_gib_out, aws.egress), (0.09, None));
+        assert_eq!(aws.per_gib_month, 0.023);
+        // a price of one's own wins over the vendor's
+        let mut st = s.settings();
+        st.prices.per_gib_out = 0.05;
+        s.set_settings(st).unwrap();
+        assert_eq!(s.prices_for("gcs").per_gib_out, 0.05);
+        // and the egress said is kept in config.toml
+        let again = Sonde::open(Paths::rooted(dir.path())).unwrap();
+        assert_eq!(again.endpoint_config("gcs").unwrap().egress, Some(true));
     }
 
     fn ep(id: &str) -> EndpointConfig {
