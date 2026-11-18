@@ -179,7 +179,11 @@ jobs:
         if: runner.os == 'Windows'
         run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
-        run: target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
+        # one file: its viewer, and Native Shell's linked stylesheet set in it
+        run: |
+          target/${{ matrix.target }}/release/sonde share crates/analysis/tests/fixtures/delta.sonde -o share-check.html
+          grep -q 'id="sonde-files"' share-check.html && grep -q '<style>' share-check.html
+          if grep -q '<link rel="stylesheet"' share-check.html; then echo "::error::the shared page links a stylesheet"; exit 1; fi
       # before it is zipped: the archive holds the signed sonde.exe
       - name: Sign sonde.exe (skipped without the signing secrets)
         if: runner.os == 'Windows'
