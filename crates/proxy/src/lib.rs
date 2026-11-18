@@ -383,6 +383,8 @@ struct Shared {
     /// The region each bucket the store said is elsewhere is in
     /// (`x-amz-bucket-region`): its requests are signed for it, as an SDK's.
     regions: parking_lot::Mutex<std::collections::HashMap<String, String>>,
+    /// When the first request arrived: where the run's timeline starts.
+    first: Arc<std::sync::OnceLock<Instant>>,
 }
 
 const MIB: usize = 1 << 20;
@@ -406,6 +408,7 @@ pub struct Proxy {
     stop: tokio::sync::watch::Sender<bool>,
     /// Closed once the last connection has gone.
     open: tokio::sync::mpsc::Receiver<()>,
+    first: Arc<std::sync::OnceLock<Instant>>,
 }
 
 impl Drop for Proxy {
@@ -432,12 +435,14 @@ impl Proxy {
         let buffered = Arc::new(tokio::sync::Semaphore::new(
             (cfg.max_buffered_total / MIB).max(1),
         ));
+        let first = Arc::new(std::sync::OnceLock::new());
         let shared = Arc::new(Shared {
             client,
             log,
             cfg,
             buffered,
             regions: Default::default(),
+            first: first.clone(),
         });
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
@@ -475,6 +480,7 @@ impl Proxy {
             task,
             stop,
             open,
+            first,
         })
     }
 
@@ -494,6 +500,12 @@ impl Proxy {
     }
 
     /// The key and secret the application signs with.
+    /// When the first request arrived (None before one has): the start of
+    /// the run's timeline.
+    pub fn first_request(&self) -> Option<Instant> {
+        self.first.get().copied()
+    }
+
     pub fn client_keys(&self) -> (&str, &str) {
         (&self.keys.0, &self.keys.1)
     }
@@ -1220,6 +1232,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // the request as the application saw it: from its arrival (a buffered
     // body's upload included) to the answer
     let received = Instant::now();
+    let _ = shared.first.set(received);
     let mut record = Record {
         id: 0,
         time: Utc::now(),

@@ -1073,6 +1073,12 @@ async fn play_demo_job(
                     &job,
                     sonde_core::tour::FILE,
                     sonde_proxy::callers::CALLER_HEADER,
+                    || {
+                        RECORDING
+                            .lock()
+                            .as_ref()
+                            .and_then(|r| r.proxy.first_request())
+                    },
                     |line| {
                         let line = format!("{line}\r\n");
                         w.write_log(&line);

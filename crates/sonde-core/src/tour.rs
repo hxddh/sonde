@@ -90,19 +90,24 @@ const HALF_SLICE: std::time::Duration = std::time::Duration::from_millis(10);
 /// Plays `job` (from file `file`) with `app`, each request naming its
 /// line in `caller_header`; `say` is told each request as it is answered,
 /// a line each (`export.py:18 read_reports  HEAD demo/reports/2026-q1.csv → 200`).
+/// `first` is when the recording saw the first request, when the recording
+/// is in this process (the app's): its timeline starts there.
 pub async fn play(
     app: &S3Client,
     job: &str,
     file: &str,
     caller_header: &str,
+    first: impl Fn() -> Option<std::time::Instant>,
     mut say: impl FnMut(String),
 ) {
     let at = |mark: &str| caller(job, file, mark);
     // each request starts on the job's own beat, not when the one before
     // answered: the run's timeline is the same picture each time it is played.
-    // The beats count from the first request's start as the store saw it (its
-    // answer, less the store's wait): not from before it, when its connection
-    // was still being made, a time no two machines take alike
+    // The beats count from the first request's start as the recording saw it:
+    // not from when the job sent it, nor from its answer, both a connection
+    // and a first signing away from it, times no two machines take alike.
+    // A recording in another process (`sonde run`) is not asked: the answer,
+    // less the store's wait, is near it
     let mut start: Option<tokio::time::Instant> = None;
     let mut beat = 0u32;
     let mut send = async |r: S3Request, mark: &str| {
@@ -128,7 +133,10 @@ pub async fn play(
         if start.is_none() {
             // the first request is a HEAD (the job's settings)
             let now = tokio::time::Instant::now();
-            start = Some(now.checked_sub(crate::demo::BRIEF).unwrap_or(now));
+            start = Some(first().map_or_else(
+                || now.checked_sub(crate::demo::BRIEF).unwrap_or(now),
+                tokio::time::Instant::from_std,
+            ));
         }
         say(format!("{place}  {what} → {status}"));
         got.ok()
