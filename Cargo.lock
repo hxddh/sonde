@@ -5031,6 +5031,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-native-certs",
+ "rustls-platform-verifier",
  "s3raw",
  "serde",
  "sha1 0.11.0",
