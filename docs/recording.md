@@ -30,6 +30,7 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 | `AWS_ALLOW_HTTP`, `AWS_S3_FORCE_PATH_STYLE` | `true` |
 | `AWS_VIRTUAL_HOSTED_STYLE_REQUEST` | `false` |
 | `AWS_EC2_METADATA_DISABLED` | `true` |
+| `RCLONE_S3_ENDPOINT`, `RCLONE_S3_ACCESS_KEY_ID`, `RCLONE_S3_SECRET_ACCESS_KEY`, `RCLONE_S3_REGION`, `RCLONE_S3_FORCE_PATH_STYLE`, `RCLONE_S3_ENV_AUTH` | the same, for rclone's S3 remotes (they win over its config file) |
 
 - Removed: `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_ROLE_ARN`,
   `AWS_WEB_IDENTITY_TOKEN_FILE`, the container-credential variables.
@@ -40,10 +41,10 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 
 | Client | How it reaches sonde |
 |---|---|
-| AWS CLI v1.29+ / v2.13+, s5cmd (`S3_ENDPOINT_URL`), pandas (s3fs), polars, pyarrow `FileSystem.from_uri`, Spark (below) | by itself |
+| AWS CLI v1.29+ / v2.13+, s5cmd (`S3_ENDPOINT_URL`), pandas (s3fs), polars, pyarrow `FileSystem.from_uri`, rclone (`RCLONE_S3_*`, every S3 remote), Spark (below) | by itself |
+| the DuckDB CLI | by itself under `sonde run -- duckdb …`: it is given `-init` with `SET s3_*` (after your `~/.duckdbrc`; a command with its own `-init` keeps it) |
 | pyarrow `S3FileSystem()` | `S3FileSystem(endpoint_override=os.environ["AWS_ENDPOINT_URL"])` |
-| DuckDB | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
-| rclone | a remote of the environment's: `rclone ls :s3,env_auth=true:bucket` (a named remote keeps its own endpoint) |
+| DuckDB in a program | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
 | a container | `sonde run -- docker run …` (or `podman run`) is given `--network host` (unless the command names a network) and `-e NAME` for each variable above, by name only; `--tls`'s certificate is mounted where it is. A network of its own cannot reach 127.0.0.1. Docker Desktop needs host networking turned on |
 
 Production that runs elsewhere (Kubernetes, serverless) is read from its logs: [`sonde import`](#production-traffic-access-logs-cloudtrail-har).

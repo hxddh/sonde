@@ -13,6 +13,7 @@
 mod asis;
 pub mod callers;
 pub mod chunked;
+pub mod clients;
 pub mod container;
 pub mod fault;
 pub mod jvm;
@@ -536,6 +537,13 @@ impl Proxy {
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect::<Vec<_>>();
         let mut set = set;
+        // rclone reads its own variables, not AWS_ENDPOINT_URL
+        set.extend(clients::rclone_env(
+            &url,
+            &region,
+            &self.keys.0,
+            &self.keys.1,
+        ));
         if let Some(t) = &self.tls {
             set.extend(t.env());
         }
