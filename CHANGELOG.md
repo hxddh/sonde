@@ -29,7 +29,9 @@ sonde now names the setting to change and what it saves, in money too.
     - `obs.crawl`: many prefixes listed once each.
   - Time: "What did the run cost, and when?", requests, transfer and storage stacked.
 - **The first minute:**
-  - The welcome's demo runs a small job and opens its run on the finding, with the line of code that sent it.
+  - The welcome's demo runs a small job and opens its run on the finding, with the line of code that sent it. The
+    built-in store answers it as a nearby region would (20 ms for a HEAD or a LIST, 40 ms for a GET or a PUT), so
+    its run reads the same on every machine.
   - "Apply and run again" applies the fix and says what it saved, measured beside the prediction. It works on every
     system with nothing installed.
   - Run proposes the commands a chosen folder runs: Makefile, package.json, pyproject, Python and Spark programs,
@@ -80,8 +82,8 @@ sonde 现在会指出该改哪个设置，以及能省多少，包括省多少�
 - **字节和费用算完整：**费用拆成请求费、出网费、每月存储费（含版本桶里的旧版本）；出网费按厂商定价，端点设置
   `egress = true` 后计入；`check --max-transfer` 限制出网流量；新增四类发现：重复读取同一范围、整读大对象、小对象读
   风暴、遍历大量前缀；时间页新增"这次运行花了多少钱、花在什么时候"。
-- **首分钟：**欢迎页的演示跑一个小任务并停在发现上，"应用并重跑"后显示实测节省和预测；运行页根据文件夹推荐命令；
-  rclone 和 DuckDB 自动连到 sonde。
+- **首分钟：**欢迎页的演示跑一个小任务并停在发现上（内置存储按就近区域的延迟应答，每台机器上结果相同），
+  "应用并重跑"后显示实测节省和预测；运行页根据文件夹推荐命令；rclone 和 DuckDB 自动连到 sonde。
 - **S3 覆盖：**识别 RenameObject、UpdateObjectEncryption；支持 SHA512、MD5、XXHash 校验；新增条件删除、复制目标
   条件两项探测，共 52 项。
 - 新增 `sonde completions`、`sonde man`；设置 › 更新新增"sonde 退出时安装"；Native Shell 升级到 v0.6.0，动效统一

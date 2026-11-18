@@ -110,7 +110,7 @@ pub async fn play(
         } else {
             HALF_SLICE
         };
-        tokio::time::sleep_until(start + BEAT * beat + off).await;
+        crate::demo::until(start + BEAT * beat + off).await;
         beat += 1;
         let place = at(mark);
         let target = r.key.clone().unwrap_or_else(|| {

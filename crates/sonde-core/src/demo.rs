@@ -10,6 +10,11 @@
 //! reads, and `DeleteObjects`. An answer leaves in one write on a socket
 //! without Nagle's delay: head and body sent apart on a kept connection
 //! waited 40 ms for the client's delayed ACK, every time.
+//!
+//! The tour's job (its user agent, [`crate::tour::USER_AGENT`]) is answered
+//! as a nearby region would: 20 ms for a HEAD or a LIST, 40 ms for an
+//! object's GET or PUT. Its run then reads the same each time it is played,
+//! not the machine's load at the time.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -298,7 +303,11 @@ pub async fn start() -> std::io::Result<DemoServer> {
                     }
                     let body = buf[head_end + 4..head_end + 4 + len].to_vec();
                     buf.drain(..head_end + 4 + len);
+                    let read = tokio::time::Instant::now();
                     let (status, extra, payload) = handle(&state, &request_line, &headers, body);
+                    if let Some(t) = tour_time(&request_line, &headers) {
+                        until(read + t).await;
+                    }
                     let rid = format!("DEMO{:012X}", rand_id());
                     let mut resp = format!(
                         "HTTP/1.1 {status} {}\r\nx-amz-request-id: {rid}\r\nx-amz-id-2: demo/{rid}\r\nserver: sonde-demo\r\ncontent-length: {}\r\n",
@@ -322,6 +331,43 @@ pub async fn start() -> std::io::Result<DemoServer> {
         }
     });
     Ok(DemoServer { addr, _task: task })
+}
+
+/// How long the tour's job waits for this answer (None: any other caller).
+fn tour_time(line: &str, headers: &[(String, String)]) -> Option<std::time::Duration> {
+    let tour = headers
+        .iter()
+        .any(|(k, v)| k == "user-agent" && v == crate::tour::USER_AGENT);
+    if !tour {
+        return None;
+    }
+    let mut parts = line.split(' ');
+    let method = parts.next().unwrap_or_default();
+    let path = parts.next().unwrap_or_default();
+    let path = path.split('?').next().unwrap_or_default();
+    // "/bucket/key": an object's GET or PUT carries its bytes
+    let object = path
+        .trim_start_matches('/')
+        .split_once('/')
+        .is_some_and(|(_, k)| !k.is_empty());
+    let ms = if object && matches!(method, "GET" | "PUT") {
+        40
+    } else {
+        20
+    };
+    Some(std::time::Duration::from_millis(ms))
+}
+
+/// Waits until `at`, to the millisecond on every system: a timer to near it
+/// (Windows' ticks 15.6 ms apart by default), then yielding until it is past.
+pub(crate) async fn until(at: tokio::time::Instant) {
+    const TICK: std::time::Duration = std::time::Duration::from_millis(16);
+    if let Some(near) = at.checked_sub(TICK) {
+        tokio::time::sleep_until(near).await;
+    }
+    while tokio::time::Instant::now() < at {
+        tokio::task::yield_now().await;
+    }
 }
 
 fn rand_id() -> u64 {
