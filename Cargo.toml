@@ -84,7 +84,9 @@ tracing = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
 rand = "0.10"
-flate2 = "1"
+# one compressor whatever else is built: Native Shell's tree turns zlib-rs on, a
+# crate alone would get miniz_oxide (and write run files byte-different)
+flate2 = { version = "1", features = ["zlib-rs"] }
 apache-avro = { version = "0.23", default-features = false }
 async-trait = "0.1"
 tempfile = "3"
