@@ -57,10 +57,7 @@ async fn browse_mpu_versions_du() {
             .await
             .unwrap();
         assert_eq!(d.size, Some(101));
-        assert!(matches!(
-            d.etag.unwrap().kind,
-            s3raw::etag::EtagKind::Md5 { .. }
-        ));
+        std::assert_matches!(d.etag.unwrap().kind, s3raw::etag::EtagKind::Md5 { .. });
 
         // versions and delete markers
         let tl = versions::timeline(s, &t.name, &b, "img/a.png")

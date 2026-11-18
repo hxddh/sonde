@@ -55,6 +55,20 @@ jobs:
           cd app && nsh build App.tsx 2>&1 | tee build.log
           ! grep -E "^warn" build.log
 
+  msrv:
+    # the oldest Rust sonde builds with: Cargo.toml's rust-version, exactly
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@766a42937d994bd78bb4591385445c188ccb3f09 # 1.97
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: msrv, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - name: The workspace builds with rust-version
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          rustc --version | grep -q "^rustc $msrv\." || { echo "::error title=MSRV::the job's Rust is not Cargo.toml's rust-version ($msrv): move the toolchain pin with it"; exit 1; }
+          cargo check --workspace --all-targets --locked
+
   unit:
     strategy:
       fail-fast: false

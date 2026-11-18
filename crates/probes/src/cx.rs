@@ -246,11 +246,7 @@ impl ProbeCx {
 
 fn truncate(s: &mut String) {
     if s.len() > BODY_LIMIT {
-        let mut cut = BODY_LIMIT;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        s.truncate(cut);
+        s.truncate(s.floor_char_boundary(BODY_LIMIT));
     }
 }
 

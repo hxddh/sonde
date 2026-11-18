@@ -652,22 +652,14 @@ impl Record {
         x.url = crate::redact::redact_url(&x.url);
         if let Some(body) = &mut x.error_body {
             if body.len() > MAX_ERROR_BODY {
-                let mut cut = MAX_ERROR_BODY;
-                while !body.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                body.truncate(cut);
+                body.truncate(body.floor_char_boundary(MAX_ERROR_BODY));
                 body.push_str("\n… (truncated)");
             }
             *body = crate::redact::redact_text(body);
         }
         if let Some(body) = &mut x.request_body {
             if body.len() > MAX_REQUEST_BODY {
-                let mut cut = MAX_REQUEST_BODY;
-                while !body.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                body.truncate(cut);
+                body.truncate(body.floor_char_boundary(MAX_REQUEST_BODY));
                 x.request_body_truncated = true;
             }
             *body = crate::redact::redact_text(body);

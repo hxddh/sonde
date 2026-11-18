@@ -682,7 +682,7 @@ mod tests {
                 "profile default"
             )
         );
-        assert!(matches!(e.credentials, CredentialSource::Default));
+        std::assert_matches!(e.credentials, CredentialSource::Default);
         let cn = |k: &str| (k == "AWS_PROFILE").then(|| "cn".to_string());
         assert_eq!(
             aws_default("aws", &files, &cn).0.url,

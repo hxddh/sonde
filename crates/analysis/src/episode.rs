@@ -3586,10 +3586,10 @@ mod tests {
             part_of("t/dt=1/.3b2a-0_20261112093000123.log.1_0-21-23"),
             Some(Part::HudiData)
         );
-        assert!(matches!(
+        std::assert_matches!(
             part_of("t/.hoodie/metadata/.hoodie/20261112093000123.deltacommit"),
             Some(Part::HudiInstant { metadata: true, .. })
-        ));
+        );
         assert_eq!(
             part_of("p/snapshot/snapshot-7"),
             Some(Part::PaimonSnapshot(7))
