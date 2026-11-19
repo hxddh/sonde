@@ -81,7 +81,12 @@ for (const v of variants) {
     // the variant's appearance and language from its launch, as a person whose system is dark or Chinese first sees
     // sonde: its first screen (Welcome) is shot in them (the settings keep "system" and "auto")
     const app: App = await open("../App.tsx", { width, height, colorScheme: v.theme ?? "light", locale: v.lang ? "zh-CN" : "en-US" });
-    const shot = async (name: string) => {
+    // the pointer rested where nothing shows a tip (the toolbar's middle), so the last press's button is no longer
+    // under it: no tooltip in the picture (where a dialog covers the toolbar, it stays where it was)
+    const rest = () => app.hover("id:toolbar").catch(() => {});
+    // (`hovered`: the picture is of what the pointer is over, a slice's tooltip)
+    const shot = async (name: string, hovered = false) => {
+      if (!hovered) await rest();
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
     };
@@ -365,7 +370,7 @@ for (const v of variants) {
     await app.waitFor(strip);
     await app.hover(strip);
     await app.press(strip);
-    await shot("03f-slice");
+    await shot("03f-slice", true);
     // (a press on the Time pane's shape starts a stretch: let go before the board's picture)
     if (app.shows("id:zoom-reset")) await app.press("id:zoom-reset");
     await app.press("id:run-pane-mode-time");
@@ -523,6 +528,8 @@ for (const v of variants) {
 
     // Settings: a window of their own
     const settings = async (name: string) => {
+      // (the pointer off the button last pressed, onto the tabs' bar: no tooltip in the picture)
+      await app.hover("id:settings-tabs").catch(() => {});
       await app.wait(450);
       await app.window("settings").screenshot(`${dir}/${v.name}-${name}.png`);
     };

@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 s3raw.workspace = true
+quick-xml.workspace = true
 reqlog.workspace = true
 serde.workspace = true
 chrono.workspace = true

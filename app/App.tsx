@@ -24,6 +24,8 @@ import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial 
 import { Toaster } from "./src/ui/toast";
 import { scrubCommand } from "./src/ui/runview";
 
+const mac = platform.os === "macos";
+
 /** The app's name, as it was built (nsh.json's `name`). */
 const APP = appInfo().name ?? "";
 
@@ -101,13 +103,16 @@ function DesktopShell() {
       onFileDragLeave={() => dragging.set(null)}
     >
       <FocusRest />
-      <Toolbar open={open} />
+      {/* the toolbar across the window; on macOS over the place only, the sidebar running the window's height with
+          the window's buttons in it, as a Mac app's does */}
+      {mac ? null : <Toolbar open={open} />}
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
         <ResizablePanel fixed visible={sidebarOpen()} size={shellWidth() < BREAK.toolbar ? Math.min(sidebarWidth.size(), PANE.sidebarNarrow) : sidebarWidth.size()} minSize={PANE.sidebarLeast} maxSize={PANE.sidebarMost} onResize={sidebarWidth.onResize}>
           <Sidebar open={open} />
         </ResizablePanel>
         <ResizablePanel minSize={PANE.mainLeast} class="min-w-0 bg-background">
+          {mac ? <Toolbar open={open} /> : null}
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           <Each of={[view()]} key={(x) => x}>
             {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}

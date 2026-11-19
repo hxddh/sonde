@@ -43,7 +43,7 @@ the next action; counts and chips support it, they do not replace it.
 
 | Target | Form |
 |---|---|
-| macOS | Hidden title bar with the app's toolbar; the window's sidebar material behind the sidebar (`window.backdrop: "sidebar"`); glass on floating surfaces |
+| macOS | Hidden title bar; the sidebar the window's height, the window's buttons in it, and the app's toolbar over the place only; the window's sidebar material behind the sidebar (`window.backdrop: "sidebar"`); glass on floating surfaces; Settings' tabs centred |
 | Linux, Windows | The same layout with opaque fills; the menus behind the toolbar's menu button |
 | Terminal (`sonde tui`) | A home list and a navigation stack; tables and sentences instead of charts; text labels for actions |
 | Web (`sonde share`) | The app's run page, read-only: its header, its tabs, the pane — the shape strip and the findings over the operations |
@@ -73,7 +73,8 @@ Latin and figures alone are halfwidth in Chinese, "(94%)", not "（94%）", whos
 
 The interface is the platform's font (in Chinese on Linux, with a Simplified Chinese face after it: `font-sc`), and
 monospace the platform's (SF Mono or Menlo, Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys,
-commands, URLs and code. Times in a column are the interface's face. Figures outside tables use `tabular-nums` so live
+commands, URLs and code; a shortcut too on macOS (⌘K), where Windows and Linux write words in the interface's face
+(Ctrl+K). Times in a column are the interface's face. Figures outside tables use `tabular-nums` so live
 counters do not jitter, except on Linux, whose faces have even figures of their own and whose GTK measures the feature
 narrower than it draws (FINDINGS 15; a shipped face was dropped for the same reason).
 
@@ -90,7 +91,8 @@ or a tile's figure (both stay in the text's colour, a quiet one muted). A verdic
 "Finished"). The one coloured words are a finding's saving ("↘ 10 fewer requests", `info`).
 
 Theme tokens only (`theme.json`, light and dark; the system's own contrast settings, not one of the app's), the
-formats theirs (`fmt-*`); the scrim under modal layers is `bg-scrim`. Color never carries meaning alone: a dot sits
+formats theirs (`fmt-*`); the scrim under modal layers is `bg-scrim` (the palette's, a glass panel, under half of it on
+macOS in light: `PALETTE_SCRIM`). Color never carries meaning alone: a dot sits
 next to a status code, a warning has its icon and its words.
 
 ## The kit
@@ -124,7 +126,7 @@ piece wraps one nsh export with the theme's tokens:
 Rules: a page passes no classes of its own to an `nsh/base` control; a class string a second page would repeat
 belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
 after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it). One of each state: `SELECTED` the
-selection, `HIGHLIGHT` a popup's row under the keyboard, `DISABLED` the one dimming (0.4), `DOT` the one dot (8 pt),
+selection, `HIGHLIGHT` a popup's row under the keyboard, `DISABLED` the one dimming (0.4; a field's text 0.5 in dark), `DOT` the one dot (8 pt),
 `active:bg-muted` and `PRESS` the press. One formatter per kind of value (`format.ts`, `[number]` and `[duration]`
 below): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding; as an `age`, 86 d, and a `counter`, 0:07),
 `percent` and `change`, `cost` (`costColumn`: a column's costs in one unit, said once in its title), `clock`, `count`,
@@ -248,8 +250,9 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Base**: `bg-background`, regions separated by hairlines (`border-border`), no
   shadows. **One surface level**: the operations and the output fill their pane bare (a hairline under their
   titles); cards (`bg-card`, `rounded-(--radius-card)`) group a few related values; no card inside a card, and no
-  section heading over a titled card (the Time pane's groups are parted by a hairline; a chart's reasons are a plain
-  list under it).
+  section heading over a titled card. The Time pane's charts are not boxed: each group is a section under a hairline
+  and its name, its charts on the card's fill without its edge (`Chart flat`); a chart's reasons are a plain list
+  under it.
 - **Three shadows** (`SHADOW`, `nsh.json` `tailwind.shadow`): `control` (a segment, a switch's thumb), `popup`,
   `modal` (dialogs, side panels).
 - **Popups** (menus, selects, the endpoint switcher, a figure's preview, tooltips, toasts): `POPUP` — the popover
@@ -316,8 +319,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   requests were GetObject (82%)"), never how to read it. How to read it is the frame's `how`: an info mark at
   the title's end (`InfoMark`), the words in a popover a press, Return or a tap opens. A title is a short question
   (two lines at most), its unit said in the sentence or on the axis, so cards abreast stand level. A terminal gets the sentence and a table.
-- **One reading order** on the Time pane: four groups, **Traffic, Latency, Errors, Where** (parted by a hairline,
-  named to a screen reader; each chart's card says its question), every chart
+- **One reading order** on the Time pane: four groups, **Traffic, Latency, Errors, Where** (each a section under a
+  hairline and its name; each chart says its question), every chart
   shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last
   one alone takes the row.
 - **No hidden views**: a chart has no switch between views. A view of its own is a card of its own (the latencies as

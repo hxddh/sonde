@@ -205,23 +205,28 @@ struct LogLine {
     log: LogChunk,
 }
 
-/// Appends records to a run file. A write that fails is not retried:
-/// the first error is kept, and the requests not written are counted, for
-/// the recording's end to say ([`RunWriter::not_written`]).
+/// Appends records to a run file. A write that fails is not retried, and
+/// nothing is written after it (the file may end in part of a line: that
+/// line is its last, torn, as a killed recorder's is): the first error is
+/// kept, and the requests not written are counted, for the recording's end
+/// to say ([`RunWriter::not_written`]).
 pub struct RunWriter {
     out: Mutex<Out>,
 }
 
 struct Out {
-    file: BufWriter<File>,
+    file: BufWriter<Box<dyn Write + Send>>,
     /// Requests not written, and the first error.
     lost: u64,
     why: Option<String>,
 }
 
 impl Out {
-    /// Writes one line; an error is kept, the first one.
+    /// Writes one line; an error is kept, the first one, and ends the writing.
     fn line(&mut self, value: &impl Serialize) -> bool {
+        if self.why.is_some() {
+            return false;
+        }
         let written = serde_json::to_writer(&mut self.file, value)
             .map_err(std::io::Error::from)
             .and_then(|()| self.file.write_all(b"\n"))
@@ -265,7 +270,8 @@ pub fn unreserve(path: &Path) {
 
 impl RunWriter {
     pub fn create(path: &Path, header: &RunHeader) -> std::io::Result<RunWriter> {
-        let mut out = BufWriter::new(reqlog::private::create(path)?);
+        let mut out =
+            BufWriter::new(Box::new(reqlog::private::create(path)?) as Box<dyn Write + Send>);
         serde_json::to_writer(&mut out, header)?;
         out.write_all(b"\n")?;
         out.flush()?;
@@ -1055,7 +1061,7 @@ mod tests {
         let w = RunWriter::create(&path, &RunHeader::new("e", "u", "r", None)).unwrap();
         assert_eq!(w.not_written(), None);
         // a file that refuses writes, as a full disk does
-        w.out.lock().file = BufWriter::new(File::open(&path).unwrap());
+        w.out.lock().file = BufWriter::new(Box::new(File::open(&path).unwrap()));
         for id in 1..=3 {
             w.write(&Record {
                 id,
@@ -1064,6 +1070,56 @@ mod tests {
         }
         let said = w.not_written().unwrap();
         assert!(said.starts_with("3 requests not written: "), "{said}");
+    }
+
+    /// A disk full for a moment, in the middle of a line: that line is the
+    /// file's last, torn, and the records before it are read.
+    #[test]
+    fn a_write_that_fails_mid_line_leaves_only_the_last_line_torn() {
+        /// Takes `room` bytes, refuses once, then takes everything.
+        struct Full {
+            to: std::sync::Arc<Mutex<Vec<u8>>>,
+            room: usize,
+        }
+        impl Write for Full {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                if self.room == 0 {
+                    self.room = usize::MAX;
+                    return Err(std::io::Error::other("no space left on device"));
+                }
+                let n = b.len().min(self.room);
+                self.room = self.room.saturating_sub(n);
+                self.to.lock().extend_from_slice(&b[..n]);
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sonde");
+        let w = RunWriter::create(&path, &RunHeader::new("e", "u", "r", None)).unwrap();
+        let mut text = std::fs::read(&path).unwrap();
+        let to = std::sync::Arc::new(Mutex::new(vec![]));
+        w.out.lock().file = BufWriter::new(Box::new(Full {
+            to: to.clone(),
+            room: 30_000,
+        }));
+        for id in 1..=4 {
+            let mut r = Record {
+                id,
+                ..Default::default()
+            };
+            // larger than the writer's buffer: written while it is made
+            r.rare_mut().request_body = Some("x".repeat(20_000));
+            w.write(&r);
+        }
+        w.flush().ok();
+        drop(w);
+        text.extend_from_slice(&to.lock());
+        std::fs::write(&path, &text).unwrap();
+        let run = RunFile::open(&path).unwrap();
+        assert_eq!(run.records.len(), 1, "the first, whole; the second torn");
     }
 
     /// A run, its counts and its verdicts are their user's alone.

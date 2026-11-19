@@ -40,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `25.0.0`, `25` (the newest 25.x), `25.0` (the newest 25.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v25`: the newest 25.x; `@v25.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `26.0.0`, `26` (the newest 26.x), `26.0` (the newest 26.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v26`: the newest 26.x; `@v26.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.

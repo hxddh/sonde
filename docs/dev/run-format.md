@@ -57,11 +57,11 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 | `bucket`, `key` | optional, null | The bucket and the key. |
 | `status` | optional, null | The HTTP status; null when no answer came. |
 | `requestId`, `hostId` | optional, null | The store's ids. |
-| `requestBytes`, `responseBytes` | optional, null | Body sizes, when known. |
+| `requestBytes`, `responseBytes` | optional, null | Body sizes, when known: the bytes that went, for a body cut or left unread. |
 | `errorBody` | optional, null | An error's body, up to 64 KiB, as the store sent it (or sonde's reason, for a request it refused). |
 | `requestBody` | optional | A control request's body (DeleteObjects, a lifecycle rule, CompleteMultipartUpload), up to 256 KiB; never object data. |
 | `requestBodyTruncated` | optional | `true`: the body was longer than what is kept. |
-| `transportError` | optional, null | Why no answer came (DNS, TLS, a timeout). |
+| `transportError` | optional, null | Why no whole answer came (DNS, TLS, a timeout, a body cut, the program stopped waiting). |
 | `region` | optional, null | The region the request was signed for. |
 | `job` | optional, null | The job (or run tag) it belongs to. |
 | `firstByteMs` | optional | Until the response's first byte, in ms. |
@@ -102,7 +102,7 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
   a line kind it cannot skip, another encoding), in a major release ([contract.md](../contract.md)).
 - A sonde reads its own version only and refuses any other by name, never partially:
-  `written by sonde 25.0.0, format 3; this sonde (24.0.0) reads format 2: update sonde to read it`
+  `written by sonde 26.0.0, format 3; this sonde (24.0.0) reads format 2: update sonde to read it`
   (`another sonde` when the header has no `sonde`; an older format is refused the same, without the advice).
 - A runs folder's `.index.jsonl` (each run's counts, exit code, trial verdicts with where each broke, `where`: `kind`,
   `key`, `caller`, and its `advice`: `key`, `args`) is sonde's cache and state, not part of this contract; an

@@ -262,50 +262,76 @@ impl Made {
     }
 }
 
-/// The objects a DeleteObjects document names (key, version): none when
-/// it does not read.
+/// The objects a DeleteObjects document names (key, version), read as an
+/// XML reader reads it: none when it does not read cleanly or holds anything
+/// but `Delete`, its `Object`s (each one `Key`, at most one `VersionId`,
+/// `ETag`, `LastModifiedTime`, `Size`) and `Quiet`, so a store never removes
+/// an object the guard did not see. No prefixes, attributes (but the S3
+/// namespace on `Delete`), comments, CDATA, doctype or entities of its own.
 fn delete_list(doc: &str) -> Option<Vec<(String, Option<String>)>> {
-    fn text(block: &str, tag: &str) -> Option<String> {
-        let open = format!("<{tag}>");
-        let start = block.find(&open)? + open.len();
-        let end = block[start..].find(&format!("</{tag}>"))? + start;
-        unescape(&block[start..end])
-    }
+    use quick_xml::events::Event;
+    const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
+    const FIELDS: [&str; 5] = ["Key", "VersionId", "ETag", "LastModifiedTime", "Size"];
+    let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
+    let mut reader = quick_xml::Reader::from_str(doc);
+    let mut open: Vec<String> = Vec::new();
+    let mut fields: Vec<(String, String)> = Vec::new(); // the open Object's
+    let mut text = String::new(); // the open field's
     let mut out = Vec::new();
-    for block in doc.split("<Object>").skip(1) {
-        let block = block.split("</Object>").next()?;
-        out.push((text(block, "Key")?, text(block, "VersionId")));
-    }
-    (!out.is_empty()).then_some(out)
-}
-
-/// XML text with its five entities and character references read.
-fn unescape(s: &str) -> Option<String> {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find('&') {
-        out.push_str(&rest[..i]);
-        let end = rest[i..].find(';')? + i;
-        let name = &rest[i + 1..end];
-        let c = match name {
-            "amp" => '&',
-            "lt" => '<',
-            "gt" => '>',
-            "quot" => '"',
-            "apos" => '\'',
-            _ => {
-                let n = match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
-                    Some(h) => u32::from_str_radix(h, 16).ok()?,
-                    None => name.strip_prefix('#')?.parse().ok()?,
+    let (mut first, mut rooted, mut quiet) = (true, false, false);
+    loop {
+        // a field (Delete/Object/Key) or Quiet (Delete/Quiet) holds text
+        let leaf = open.len() == 3 || open.last().is_some_and(|n| n == "Quiet");
+        match reader.read_event().ok()? {
+            Event::Decl(_) if first => {}
+            Event::Start(e) => {
+                let name = e.name().0;
+                let fits = match open.len() {
+                    0 => name == "Delete" && !rooted,
+                    1 => name == "Object" || (name == "Quiet" && !quiet),
+                    2 => {
+                        open[1] == "Object"
+                            && FIELDS.contains(&name)
+                            && !fields.iter().any(|(n, _)| n == name)
+                    }
+                    _ => false,
                 };
-                char::from_u32(n)?
+                if !fits {
+                    return None;
+                }
+                for a in e.attributes() {
+                    let a = a.ok()?;
+                    if !(open.is_empty() && a.key.0 == "xmlns" && a.value == NS) {
+                        return None;
+                    }
+                }
+                rooted = true;
+                quiet |= name == "Quiet";
+                open.push(name.to_string());
+                text.clear();
             }
-        };
-        out.push(c);
-        rest = &rest[end + 1..];
+            Event::End(_) => {
+                // the reader checks the name matches
+                let name = open.pop()?;
+                if open.len() == 2 {
+                    fields.push((name, std::mem::take(&mut text)));
+                } else if name == "Object" {
+                    let get = |n: &str| fields.iter().find(|(f, _)| f == n).map(|(_, v)| v.clone());
+                    out.push((get("Key")?, get("VersionId")));
+                    fields.clear();
+                }
+            }
+            Event::Text(t) if leaf => text.push_str(&t.xml10_content()),
+            Event::Text(t) if space(&t) => {}
+            Event::GeneralRef(r) if leaf => match r.resolve_char_ref().ok()? {
+                Some(c) => text.push(c),
+                None => text.push_str(quick_xml::escape::resolve_xml_entity(&r)?),
+            },
+            Event::Eof => return (rooted && open.is_empty() && !out.is_empty()).then_some(out),
+            _ => return None,
+        }
+        first = false;
     }
-    out.push_str(rest);
-    Some(out)
 }
 
 /// Proxy settings.
@@ -1525,6 +1551,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         None => {}
     }
+    // from here a program that stops waiting (its connection goes, and this
+    // handler with it) still leaves its record, as far as it got
+    let mut held = Unanswered {
+        record: Some(record.clone()),
+        log: shared.clone(),
+        received,
+    };
 
     // headers to forward, and the payload
     let mut out: Vec<(String, String)> = app_headers
@@ -1554,7 +1587,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Err(e) => {
                     let msg = format!("sonde could not read the request body: {e}");
                     record.rare_mut().transport_error = Some(msg.clone());
-                    shared.log.push(record);
+                    held.push(record);
                     return Ok(xml_error(400, "IncompleteBody", &msg));
                 }
             };
@@ -1562,7 +1595,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Ok(d) => d,
                 Err(e) => {
                     record.rare_mut().transport_error = Some(e.clone());
-                    shared.log.push(record);
+                    held.push(record);
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
             };
@@ -1619,7 +1652,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
                             record.rare_mut().transport_error = Some(msg.clone());
-                            shared.log.push(record);
+                            held.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
                     }
@@ -1640,7 +1673,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
                             record.rare_mut().transport_error = Some(msg.clone());
-                            shared.log.push(record);
+                            held.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
                     };
@@ -1655,6 +1688,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         };
     record.request_bytes = payload_len.or(sent_len).into();
+    held.keep(&record);
 
     out.push(("host".into(), upstream_host));
     // as sent before it is signed: signed again for another region
@@ -1683,7 +1717,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Err(e) => {
             let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));
         }
     }
@@ -1790,7 +1824,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Ok(r) => r,
         Err(msg) => {
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         }
     };
@@ -1800,6 +1834,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    held.keep(&record);
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1863,7 +1898,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let msg = "the store's listing stopped part way".to_string();
             record.rare_mut().injected = None;
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
         {
@@ -1904,7 +1939,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             record.response_bytes = Some(sent.len() as u64).into();
             record.first_byte_ms = Some(record.latency_ms).into();
             record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-            shared.log.push(record);
+            held.push(record);
             return Ok(builder
                 .header("content-length", sent.len().to_string())
                 .body(full(sent))
@@ -1952,7 +1987,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(told);
         record.rare_mut().error_body = Some(format!("{code}: {msg}"));
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        shared.log.push(record);
+        held.push(record);
         return Ok(fault_error(told, code, &msg, &name));
     }
     let mut builder = Response::builder().status(status);
@@ -1994,7 +2029,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's answer stopped part way".to_string();
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
         if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
@@ -2004,7 +2039,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.response_bytes = Some(body.len() as u64).into();
         record.first_byte_ms = Some(record.latency_ms).into();
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        shared.log.push(record);
+        held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
     if status.as_u16() >= 400 && method != "HEAD" {
@@ -2017,7 +2052,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         if !body.is_empty() {
             record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
         }
-        shared.log.push(record);
+        held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
     record.response_bytes = resp.content_length().into();
@@ -2027,6 +2062,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.first_byte_ms = Some(record.latency_ms).into();
     let keys =
         (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
+    // the body's record is its own to log
+    held.record = None;
     let mut pending = Pending {
         keys,
         record: Some(record),
@@ -2125,6 +2162,42 @@ impl Drop for GivenUp {
         self.log.log.push(record);
     }
 }
+
+/// A request sent on to the store: if the program stops waiting for the
+/// answer, the handler is dropped, and this keeps its record as it was last
+/// kept, as an attempt the program gave up on.
+struct Unanswered {
+    record: Option<Record>,
+    log: Arc<Shared>,
+    received: Instant,
+}
+
+impl Unanswered {
+    /// The record as it is now, kept if the program goes.
+    fn keep(&mut self, record: &Record) {
+        self.record = Some(record.clone());
+    }
+
+    /// The request ended here: its record is logged as it is.
+    fn push(mut self, record: Record) {
+        self.record = None;
+        self.log.log.push(record);
+    }
+}
+
+impl Drop for Unanswered {
+    fn drop(&mut self) {
+        let Some(mut record) = self.record.take() else {
+            return;
+        };
+        record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
+        record.rare_mut().transport_error = Some(STOPPED_WAITING.into());
+        self.log.log.push(record);
+    }
+}
+
+/// What a record says of a request the program stopped waiting for.
+const STOPPED_WAITING: &str = "the program stopped waiting for the store's answer";
 
 /// The response header a record keeps the place of an injected cut in: the
 /// bytes of the body that went out.
@@ -2468,9 +2541,10 @@ impl Drop for Pending {
                 .saturating_sub(self.fetched)
                 .as_secs_f64()
                 * 1000.0;
-            if r.response_bytes.get().is_none() || self.read > 0 || self.cut.is_some() {
-                r.response_bytes = Some(self.read).into();
-            }
+            // the bytes that went, not the store's length: a program may
+            // stop reading on purpose (a file's header, a range it needed),
+            // and that is no error
+            r.response_bytes = Some(self.read).into();
             // a 200 with fewer bytes is not a clean 200
             if let Some(c) = self.cutting.take() {
                 self.cut = None;
@@ -2694,5 +2768,52 @@ mod budget_tests {
         assert!(removes("b", "etl-slowdown/k") && !removes("c", "etl-slowdown/k"));
         m.object("data", "tmp/part", None);
         assert!(removes("data", "tmp/part") && !removes("data", "tmp/other"));
+    }
+
+    /// A batch of deletes the store reads one way and the guard another
+    /// is not the recording's: it is refused, never forwarded.
+    #[test]
+    fn a_batch_is_the_recordings_only_as_an_xml_reader_reads_it() {
+        let m = Made::default();
+        m.object("b", "mine", None);
+        m.object("b", "a&b", None);
+        let removes = |doc: &str| m.may_remove("DeleteObjects", Some("b"), None, &[], Some(doc));
+        let ns = r#"xmlns="http://s3.amazonaws.com/doc/2006-03-01/""#;
+        // what clients send
+        assert!(removes("<Delete><Object><Key>mine</Key></Object></Delete>"));
+        assert!(removes(&format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Delete {ns}>\n  \
+             <Object>\n    <Key>mine</Key>\n  </Object>\n  <Object><Key>a&amp;b</Key>\
+             <ETag>\"x\"</ETag></Object>\n  <Quiet>true</Quiet>\n</Delete>\n"
+        )));
+        assert!(removes(
+            "<Delete><Object><Key>&#109;ine</Key></Object></Delete>"
+        ));
+        // an object the old reader did not see, or a second key in one
+        for doc in [
+            "<Delete><Object><Key>mine</Key></Object><Object ><Key>victim</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key></Object><Object\n><Key>victim</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key><Key>victim</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key></Object><s3:Object xmlns:s3=\"http://s3.amazonaws.com/doc/2006-03-01/\"><s3:Key>victim</s3:Key></s3:Object></Delete>",
+            "<s3:Delete xmlns:s3=\"http://s3.amazonaws.com/doc/2006-03-01/\"><s3:Object><s3:Key>mine</s3:Key></s3:Object></s3:Delete>",
+            "<Delete><Object><Key><![CDATA[mine]]></Key></Object></Delete>",
+            "<Delete><Object><Key>mi<!-- -->ne</Key></Object></Delete>",
+            "<Delete><!-- <Object><Key>mine</Key></Object> --><Object><Key>victim</Key></Object></Delete>",
+            "<!DOCTYPE d [<!ENTITY m \"mine\">]><Delete><Object><Key>&m;</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key><Extra>victim</Extra></Object></Delete>",
+            "<Delete><Object><Key>mine</Key></Object><Key>victim</Key></Delete>",
+            "<Delete><Object><Key>mine</Key></Object>victim</Delete>",
+            "<Delete><Object a=\"1\"><Key>mine</Key></Object></Delete>",
+            "<Delete xmlns=\"urn:other\"><Object><Key>mine</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key></Object></Delete><Delete><Object><Key>victim</Key></Object></Delete>",
+            "<Delete><Object><Key>mine</Key></Object>",
+            "<Delete><Object><Key>mine</Key></Object></Delete><Object><Key>victim</Key></Object>",
+            "<Delete><Object><Key>mine</Key></Objet></Delete>",
+            "<Delete><Object><VersionId>1</VersionId></Object></Delete>",
+            "<Delete></Delete>",
+            "",
+        ] {
+            assert!(!removes(doc), "{doc}");
+        }
     }
 }

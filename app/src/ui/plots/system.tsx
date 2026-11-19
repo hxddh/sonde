@@ -431,7 +431,7 @@ const CHROME = `flex-row ${REVEAL}`;
  * (`gutter` for a chart of rows), and `empty` said in the plot's room when
  * there is nothing to draw. A terminal gets the title and what the chart
  * says in words. */
-export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string }) {
+export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** a board's chart (the Time pane): its fill without the card's edge, the board's sections parting the charts */ flat?: boolean }) {
   if (terminal()) {
     return (
       <View testID={props.testID} class="gap-0">
@@ -443,7 +443,7 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
     );
   }
   return (
-    <Card testID={props.testID} class={`group ${props.class ?? ""}`}>
+    <Card testID={props.testID} class={`group ${props.flat ? "border-transparent" : ""} ${props.class ?? ""}`}>
       <View class="gap-1">
         <View class="min-h-7 flex-row items-center gap-2">
           {/* a question, short: a unit is said in the sentence or on the axis, not here, so cards abreast keep

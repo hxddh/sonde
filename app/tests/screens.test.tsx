@@ -119,7 +119,9 @@ test("browse: an object's detail is one list of its own, never the one chosen be
   await app.press("id:object-more");
   await app.chooseMenuItem("Copy presigned URL");
   await app.waitUntil(() => /README\.md\?X-Amz-/.test(app.clipboard() ?? ""), { timeout: 10000 });
-  await app.press("id:flat");
+  // how it lists, from the bucket's ⋯
+  await app.press("id:bucket-more");
+  await app.chooseMenuItem("Flat listing");
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
   await app.press("text:images/logo.png");
   await app.waitFor("text:s3://demo/images/logo.png", { timeout: 10000 });
@@ -417,15 +419,14 @@ test("a finding an engine's setting acts on shows the setting first: what, to wh
   expect(app.shows("id:fix-sdk >> text:SlateDB DbReader")).toBe(true);
 });
 
-test("a run's row says what sent its requests, before where they went and how many", async () => {
+test("a run's row says how many requests, then what sent them, before where they went", async () => {
   const run = (name: string, clients?: string[]) => ({ path: `/nowhere/${name}.sonde`, name, created: "2026-11-15T09:00:00Z", endpoint: "demo", command: `python ${name}.py`, requests: 100, live: false, clients });
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Runs.list": [run("load", ["boto3"]), run("lake", ["Lance", "boto3"]), run("plain")] } } });
   await place(app, "runs");
   await app.waitFor("id:run-list", { timeout: 10000 });
-  expect(app.shows("id:run-0 >> text:boto3 · demo")).toBe(true);
-  expect(app.shows("id:run-0 >> text:· 100 requests")).toBe(true);
-  expect(app.shows("id:run-1 >> text:Lance, boto3 · demo")).toBe(true);
-  // none known: as 23.0.1, where they went and how many
-  expect(app.shows("id:run-2 >> text:demo")).toBe(true);
-  expect(app.shows("id:run-2 >> text:· 100 requests")).toBe(true);
+  // (one line cut at its end: the count first, never cut; what sent them and where give way first)
+  expect(app.shows("id:run-0 >> text:100 requests · boto3 · demo")).toBe(true);
+  expect(app.shows("id:run-1 >> text:100 requests · Lance, boto3 · demo")).toBe(true);
+  // none known: how many and where they went
+  expect(app.shows("id:run-2 >> text:100 requests · demo")).toBe(true);
 });

@@ -49,7 +49,8 @@ never a switch away: each is a plan (`sonde-core::guard`):
 2. It runs only with `--yes` (in the app, its confirmation: the count or bucket name typed for more than 100 items
    or a lifecycle, a plain confirm below), built again then: what it changes is what the dry run would list at
    that moment.
-3. Plans expire after 10 minutes and run once.
+3. Plans expire after 10 minutes and run once. A lifecycle plan is refused when the bucket's configuration changed
+   since it was made (a PUT replaces it whole): plan it again.
 4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
 

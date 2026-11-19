@@ -2,6 +2,63 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [26.0.0] - 2026-11-19
+
+sonde now records what the program really got, guards deletes more strictly, and looks at home on each system.
+
+### Changed
+
+- **The app, refined on each system:**
+  - macOS: the sidebar runs the window's height with the window's buttons in it, and the toolbar stands over the
+    place only. Settings' tabs are centred. The palette's scrim is lighter in light mode.
+  - Windows and Linux: shortcuts are written in the interface's face (Ctrl+K), not in monospace.
+  - Time: the charts are no longer boxed. Each group (Traffic, Latency, Errors, Where) is a section with its name.
+  - A run's row in the sidebar says its count first ("18 requests · curl · demo"), so what sent it and where give
+    way first, with no gap.
+  - Buckets › Objects: "Flat listing" moved into the bucket's ⋯ (still ⇧⌘F), so the row over the objects keeps to
+    one line beside the inspector.
+  - The endpoint form puts the CA file and the buckets side by side: its Save stays in view in a short window.
+  - A fix's code sits closer in its well. A disabled field's text is easier to read in dark mode.
+
+### Fixed
+
+- A request the program stops waiting for (its timeout, a closed connection) while the store is still answering
+  is recorded, with the transport error "the program stopped waiting for the store's answer". Before, it was lost.
+- A download the program stops reading part way is recorded with the bytes it read (its transfer and egress too),
+  not with the whole object's length. Stopping early is no error: a reader may want only a file's header.
+- A request sonde sends itself (a probe, a listing, a download, a replay) is timed from when it went, as
+  the proxy's are, not from when its answer was read: a slow answer no longer moved it later on the timeline.
+- A run file whose disk filled for a moment mid-line stops there: only its last line is torn, and the records before
+  it are read. Before, the next record was written after the half line and the file read as broken.
+- `no-delete` reads a DeleteObjects body as XML: a batch with an object the old reader missed (`<Object >`, a
+  second `<Key>`, a prefix, CDATA, a comment) or anything else it does not expect is refused, not forwarded.
+- Restoring a key with another delete marker under its latest one says the key stays deleted. Before, the plan
+  named an older version as becoming current.
+- A lifecycle plan is refused when the bucket's lifecycle changed since it was made. Before, its PUT replaced a
+  rule added meanwhile.
+
+### 中文
+
+sonde 现在如实记录程序真正拿到的内容，删除保护更严格，界面在各平台上更像原生应用。
+
+- **各平台的界面更精致：**macOS 上侧边栏占满窗口高度，窗口按钮位于其中，工具栏只在内容区上方；设置的标签居中；
+  浅色模式下命令面板的遮罩更淡。Windows 和 Linux 上的快捷键改用界面字体（Ctrl+K）。
+- 时间页的图表不再加框，按流量、延迟、错误、位置分节并显示节名。
+- 侧边栏的运行记录先写请求数（"18 个请求 · curl · demo"），空间不够时先省略发出者和端点，不再留空隙。
+- 桶 › 对象："平铺列出"移到桶的 ⋯ 菜单（仍可用 ⇧⌘F），对象上方的一行在检查器旁不再折行。
+- 端点表单把 CA 文件和桶并排放置，窗口较矮时"保存"仍在视野内；修复代码块更紧凑；深色模式下禁用的输入框文字更易读。
+- 修复：`no-delete` 现在按 XML 解析 DeleteObjects 请求体，含有旧解析器漏看的对象或结构不符合预期的批量删除一律拒绝，
+  不再转发。
+- 修复：最新删除标记下面还有删除标记时，恢复计划会说明对象仍处于删除状态，不再声称旧版本会成为当前版本。
+- 修复：生命周期计划生成后若存储桶的生命周期配置已被改动，执行时会拒绝并要求重新生成计划，不再覆盖期间新增的规则。
+- 修复：程序在存储还未应答时就不再等待（超时或关闭连接）的请求现在也会被记录，并标为传输错误；以前会丢失。
+- 修复：程序读到一半就放弃的下载，现在按实际读到的字节数记录（传输量和出网费也按此计算），不再按整个对象的长度；
+  提前停止读取不算错误，程序可能只需要文件头。
+- 修复：sonde 自己发出的请求（探测、列举、下载、回放）的时间改为发出的时刻，与代理记录一致，不再取读完应答的
+  时刻；慢应答不会再让它在时间线上后移。
+- 修复：磁盘在写到一行中间时短暂写满，运行文件就停在那里，只有最后一行不完整，之前的记录照常读出；以前下一条记录会
+  接在半行之后，整个文件读不出来。
+
 ## [25.0.0] - 2026-11-18
 
 sonde now names the setting to change and what it saves, in money too.

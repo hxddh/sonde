@@ -51,7 +51,7 @@ def main() -> int:
         elif not picture.exists():
             print(f"docs/images/{name}.png: missing (the tour's {shot})")
             failed = True
-        elif (d := shots_diff.distance(shots_diff.fingerprint(picture), want)) > shots_diff.TOLERANCE:
+        elif (d := shots_diff.distance(shots_diff.fingerprint(picture), want)) > shots_diff.tolerance(shot):
             print(f"docs/images/{name}.png: not the tour's approved {shot} ({d} cells differ)")
             failed = True
         else:

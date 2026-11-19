@@ -1598,6 +1598,7 @@
  "core.plan.item.abortRule": "%{days} 天后中止未完成的上传",
  "core.plan.item.restore": "删除标记 %{marker}；版本 %{version} 成为当前版本",
  "core.plan.item.restore.nothing": "删除标记 %{marker}；没有更早的版本，不会有版本成为当前版本",
+ "core.plan.item.restore.marker": "删除标记 %{marker}；对象仍处于删除状态：删除标记 %{next} 成为当前版本",
  "core.plan.item.version": "版本 %{v}",
  "core.plan.item.delete": "删除（开启版本控制时会添加一个删除标记）",
  "core.lifecycle.none": "这个桶没有生命周期配置：未完成的上传会一直保留（并计费）。请添加一条规则，在 %{days} 天后中止它们。",

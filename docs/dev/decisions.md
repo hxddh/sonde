@@ -254,3 +254,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-270 | RenameObject under `no-delete` | allow; refuse | **Refuse**: it removes its source key. |
 | D-271 | MinIO in CI | an image; built from source | **Built from source**: no image can be pulled. |
 | D-272 | Completions and man pages | visible commands; hidden; a parser apart | **A parser apart** (`sonde completions`, `sonde man`): clap_complete lists hidden subcommands. |
+| D-273 | The window's chrome on macOS | the toolbar across; the sidebar the window's height | **The sidebar the window's height**, the window's buttons in it and the toolbar over the place: as the system's own apps. The same tree, the toolbar placed by platform. |
+| D-274 | The Time pane's charts | a card each; sections | **Sections**: a hairline and the group's name, each chart on the card's fill without its edge; thirty boxed charts read as a wall of frames. Every chart stays. |
+| D-275 | Linux's interface face | name GNOME's faces first (Adwaita Sans, Cantarell, Inter); `system-ui` | **`system-ui`**: GTK's is the desktop's own face (Ubuntu's, KDE's, GNOME's); a named face would set GNOME's on every desktop, and a `font-*` token keeps only its first family (FINDINGS 18). |
+| D-276 | The demo's pictures, timed live | fake the run's times; a wider tolerance for its two pictures | **A wider tolerance** (12 cells, `shots-diff.py`): the run is a real one; its beats are fixed from the recording's first request, and a loaded runner still moves a sum's last digit. |

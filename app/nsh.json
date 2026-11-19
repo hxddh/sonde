@@ -1,7 +1,7 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "25.0.0",
+  "version": "26.0.0",
   "build": 29,
   "nsh": ">=0.6, <0.7",
   "icon": {
