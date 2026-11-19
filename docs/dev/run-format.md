@@ -57,11 +57,11 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 | `bucket`, `key` | optional, null | The bucket and the key. |
 | `status` | optional, null | The HTTP status; null when no answer came. |
 | `requestId`, `hostId` | optional, null | The store's ids. |
-| `requestBytes`, `responseBytes` | optional, null | Body sizes, when known. |
+| `requestBytes`, `responseBytes` | optional, null | Body sizes, when known: the bytes that went, for a body cut or left unread. |
 | `errorBody` | optional, null | An error's body, up to 64 KiB, as the store sent it (or sonde's reason, for a request it refused). |
 | `requestBody` | optional | A control request's body (DeleteObjects, a lifecycle rule, CompleteMultipartUpload), up to 256 KiB; never object data. |
 | `requestBodyTruncated` | optional | `true`: the body was longer than what is kept. |
-| `transportError` | optional, null | Why no answer came (DNS, TLS, a timeout). |
+| `transportError` | optional, null | Why no whole answer came (DNS, TLS, a timeout, a body cut, the program stopped waiting). |
 | `region` | optional, null | The region the request was signed for. |
 | `job` | optional, null | The job (or run tag) it belongs to. |
 | `firstByteMs` | optional | Until the response's first byte, in ms. |
