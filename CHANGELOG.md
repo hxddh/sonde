@@ -8,11 +8,14 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 - `no-delete` reads a DeleteObjects body as XML: a batch with an object the old reader missed (`<Object >`, a
   second `<Key>`, a prefix, CDATA, a comment) or anything else it does not expect is refused, not forwarded.
+- Restoring a key with another delete marker under its latest one says the key stays deleted. Before, the plan
+  named an older version as becoming current.
 
 ### 中文
 
 - 修复：`no-delete` 现在按 XML 解析 DeleteObjects 请求体，含有旧解析器漏看的对象或结构不符合预期的批量删除一律拒绝，
   不再转发。
+- 修复：最新删除标记下面还有删除标记时，恢复计划会说明对象仍处于删除状态，不再声称旧版本会成为当前版本。
 
 ## [25.0.0] - 2026-11-18
 
