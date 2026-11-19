@@ -660,14 +660,16 @@ test("a count of thousands is grouped in the sidebar, in English and Chinese (1,
   await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));
   // (its row, among however many runs the tests before made)
   await app.type("id:run-search", "grouped_counts");
-  await app.waitFor("text:· 1,500 requests", { timeout: 10000 });
-  expect(app.shows("text:· 1500 requests")).toBe(false);
+  // (the row's line starts with its count)
+  const row = (n: string) => app.texts().some((x) => x.trim().startsWith(n));
+  await app.waitUntil(() => row("1,500 requests ·"), { timeout: 10000 });
+  expect(row("1500 requests")).toBe(false);
   await language(app, "zh");
   try {
     await app.press("id:nav-runs");
     await app.clear("id:run-search");
     await app.type("id:run-search", "grouped_counts");
-    await app.waitFor("text:· 1,500 个请求", { timeout: 10000 });
+    await app.waitUntil(() => row("1,500 个请求 ·"), { timeout: 10000 });
   } finally {
     await language(app, "en");
   }
