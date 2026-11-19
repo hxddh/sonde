@@ -367,7 +367,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
               testID="fix-code"
               // (the sample as written, without the blank lines around it)
               markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
-              classes={{ codeBlock: "rounded-(--radius) bg-muted/60 p-2 font-mono text-small" }}
+              // (a well: a muted fill, no border; the code's own padding only, its first line at the top)
+              classes={{ codeBlock: "rounded-(--radius) border-0 bg-muted/60 font-mono text-small", codeBlockCode: "px-3 py-2" }}
             />
           </If>
         )}
