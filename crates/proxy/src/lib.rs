@@ -2045,7 +2045,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         received,
         fetched,
         read: 0,
-        ended: false,
         cut: None,
         cutting: cutting.clone(),
     };
@@ -2054,27 +2053,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         None => quiet_limited(resp.bytes_stream(), idle).right_stream(),
     };
     let stream = body
-        .map(Some)
-        .chain(futures::stream::once(async { None }))
         // the closure owns the whole of `pending` (a method, not a field): it
         // goes, and the record is logged, when the body does
-        .filter_map(move |piece| {
-            futures::future::ready(match piece {
-                Some(Ok(chunk)) => {
-                    pending.count(&chunk);
-                    Some(Ok(Frame::data(chunk)))
-                }
-                // the status went out already: the record is what says the
-                // program did not get the whole of it
-                Some(Err(e)) => {
-                    pending.cut(&e);
-                    Some(Err(e))
-                }
-                None => {
-                    pending.ended = true;
-                    None
-                }
-            })
+        .map(move |piece| match piece {
+            Ok(chunk) => {
+                pending.count(&chunk);
+                Ok(Frame::data(chunk))
+            }
+            // the status went out already: the record is what says the
+            // program did not get the whole of it
+            Err(e) => {
+                pending.cut(&e);
+                Err(e)
+            }
         });
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
@@ -2493,8 +2484,6 @@ struct Pending {
     received: Instant,
     fetched: std::time::Duration,
     read: u64,
-    /// The store's body went through to its end.
-    ended: bool,
     /// Why the body ended before its end: the idle limit, or the store's
     /// connection.
     cut: Option<String>,
@@ -2526,18 +2515,9 @@ impl Drop for Pending {
                 .saturating_sub(self.fetched)
                 .as_secs_f64()
                 * 1000.0;
-            // the program stopped reading: neither the store's whole length
-            // (that never went), nor a clean 200 (it did not get it all)
-            let whole = r.response_bytes.get();
-            if !self.ended && whole.is_none_or(|n| self.read < n) && self.cut.is_none() {
-                r.rare_mut().transport_error = Some(format!(
-                    "{STOPPED_WAITING}: it read {} of the response body",
-                    match whole {
-                        Some(n) => format!("{} of {n} bytes", self.read),
-                        None => format!("{} bytes", self.read),
-                    }
-                ));
-            }
+            // the bytes that went, not the store's length: a program may
+            // stop reading on purpose (a file's header, a range it needed),
+            // and that is no error
             r.response_bytes = Some(self.read).into();
             // a 200 with fewer bytes is not a clean 200
             if let Some(c) = self.cutting.take() {

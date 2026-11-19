@@ -8,8 +8,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 - A request the program stops waiting for (its timeout, a closed connection) while the store is still answering
   is recorded, with the transport error "the program stopped waiting for the store's answer". Before, it was lost.
-- A download the program stops reading part way is recorded with the bytes it read (its transfer and egress too)
-  and that transport error, not as a clean 200 of the whole object.
+- A download the program stops reading part way is recorded with the bytes it read (its transfer and egress too),
+  not with the whole object's length. Stopping early is no error: a reader may want only a file's header.
 - A request sonde sends itself (a probe, a listing, a download, a replay) is timed from when it went, as
   the proxy's are, not from when its answer was read: a slow answer no longer moved it later on the timeline.
 - A run file whose disk filled for a moment mid-line stops there: only its last line is torn, and the records before
@@ -18,8 +18,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 ### 中文
 
 - 修复：程序在存储还未应答时就不再等待（超时或关闭连接）的请求现在也会被记录，并标为传输错误；以前会丢失。
-- 修复：程序读到一半就放弃的下载，现在按实际读到的字节数记录（传输量和出网费也按此计算），并标为传输错误，
-  不再记成完整对象的正常 200。
+- 修复：程序读到一半就放弃的下载，现在按实际读到的字节数记录（传输量和出网费也按此计算），不再按整个对象的长度；
+  提前停止读取不算错误，程序可能只需要文件头。
 - 修复：sonde 自己发出的请求（探测、列举、下载、回放）的时间改为发出的时刻，与代理记录一致，不再取读完应答的
   时刻；慢应答不会再让它在时间线上后移。
 - 修复：磁盘在写到一行中间时短暂写满，运行文件就停在那里，只有最后一行不完整，之前的记录照常读出；以前下一条记录会

@@ -1068,17 +1068,8 @@ async fn a_body_the_program_stops_reading_is_recorded_as_far_as_it_went() {
     // the bytes that went, not the length the store said
     let read = r.response_bytes.get().unwrap();
     assert!(read < 6, "{read}");
-    let why = r
-        .rare()
-        .transport_error
-        .as_deref()
-        .expect("a body given up on is no clean 200");
-    assert_eq!(
-        why,
-        format!(
-            "the program stopped waiting for the store's answer: it read {read} of 6 bytes of the response body"
-        )
-    );
+    // stopping early is the program's choice (a header, a range), no error
+    assert_eq!(r.rare().transport_error, None);
 }
 
 #[tokio::test]
