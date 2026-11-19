@@ -162,8 +162,8 @@ test("runs are looked after: renamed, searched, deleted, dropped on the window",
   // the run shown is read first: a menu opened while its pane arrives is closed by it
   await app.waitFor("id:run-summary", { timeout: 10000 });
   // each row says where its run went and how many requests it sent
-  expect(app.shows("id:run-0 >> text:/^(· )?\\d[\\d,]* requests?$/")).toBe(true);
-  expect(app.shows("id:run-0 >> text:/^(.* · )?demo$/")).toBe(true);
+  // (one line: how many first, where last)
+  expect(app.shows("id:run-0 >> text:/^\\d[\\d,]* requests? · (.* · )?demo$/")).toBe(true);
   // a title of the user's, from the row's context menu
   await app.rightClick("id:run-0");
   expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page", "Copy file path", "Rename…", "Delete…"]);
