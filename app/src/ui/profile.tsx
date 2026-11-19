@@ -15,7 +15,7 @@ import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import type { ChartRows } from "../csv";
 import type { ProjectBudget, RunView, Signals, Split, SplitBy, Stretch } from "../types";
-import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
+import { Await, Button, DOT, Heading, Notice, Options, terminal, Title, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./runview";
 import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, costTimeSaid, costTimeLegend, CostOverTime, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid, KindsOverTime, kindRates, kindsLegend, kindsSaid } from "./plots";
 
@@ -601,10 +601,10 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       {/* the board: the four groups in their reading order, every chart in the one frame, by one loop */}
       <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
         {(g, i) => (
-          // one surface: each chart's card says its question, so no heading stands over them; the groups are parted
-          // by a hairline, and named to a screen reader (a terminal, with no cards, keeps the heading)
+          // one surface: each group a section under a hairline and its name, its charts unboxed under it (each
+          // says its question); a terminal, with no cards, names it plainly
           <View testID={`board-${g()}`} accessibilityLabel={t(`board.${g()}`)} class="gap-3 terminal:gap-2">
-            <If when={terminal()} else={<If when={i() > 0}><View class="h-px bg-border" /></If>}>
+            <If when={terminal()} else={<><If when={i() > 0}><View class="h-px bg-border" /></If><Title>{t(`board.${g()}`)}</Title></>}>
               <Heading>{t(`board.${g()}`)}</Heading>
             </If>
             {/* two abreast where there is room (a last one alone takes the row); a card is as high as its content */}
@@ -617,7 +617,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
                       if (wanted === c().id) show(wanted);
                     }}
                     class={terminal() ? "" : c().wide ? "w-full" : HALF}>
-                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null}>
+                    <Chart flat testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null}>
                       {c().body()}
                     </Chart>
                   </View>
