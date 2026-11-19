@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use reqlog::{Header, Record, RequestLog, Text};
 use serde::{Deserialize, Serialize};
 
@@ -497,10 +497,10 @@ impl S3Client {
             return Err(S3Error::refused(DOT_SEGMENT));
         }
         let req = S3Request::new(operation, method.clone());
-        let start = Instant::now();
+        let (start, time) = (Instant::now(), Utc::now());
         let sent = self.http.request(method, parsed).send().await;
         let latency = start.elapsed();
-        let mut record = self.record(&req, url, &[], 0, latency);
+        let mut record = self.record(&req, url, &[], 0, time, latency);
         record.lists_mut().query = url::Url::parse(url)
             .map(|u| {
                 u.query_pairs()
@@ -676,14 +676,20 @@ impl S3Client {
             url,
             headers: sent_headers,
         };
-        let start = Instant::now();
+        let (start, time) = (Instant::now(), Utc::now());
         let idle = self.cfg.timeout;
         let sent = match tokio::time::timeout(idle, self.streaming.execute(request)).await {
             Ok(sent) => sent,
             Err(_) => {
                 let msg = format!("no answer in {} s", idle.as_secs_f32());
-                let mut record =
-                    self.record(&req, &prepared.url, &prepared.headers, 0, start.elapsed());
+                let mut record = self.record(
+                    &req,
+                    &prepared.url,
+                    &prepared.headers,
+                    0,
+                    time,
+                    start.elapsed(),
+                );
                 record.rare_mut().transport_error = Some(msg.clone());
                 let mut err = S3Error::new(ErrorKind::Transport, msg);
                 err.record_id = Some(self.log.push(record));
@@ -695,7 +701,8 @@ impl S3Client {
             Ok(resp) => {
                 let status = resp.status().as_u16();
                 let headers = header_pairs(resp.headers());
-                let mut record = self.record(&req, &prepared.url, &prepared.headers, 0, latency);
+                let mut record =
+                    self.record(&req, &prepared.url, &prepared.headers, 0, time, latency);
                 record.status = Some(status);
                 record.response_bytes = resp.content_length().into();
                 fill_ids(&mut record, &headers);
@@ -712,7 +719,7 @@ impl S3Client {
                 let id = self.log.push(record);
                 Ok((Download { resp, idle }, id))
             }
-            Err(e) => Err(self.transport_error(&req, &prepared, 0, latency, e)),
+            Err(e) => Err(self.transport_error(&req, &prepared, 0, time, latency, e)),
         }
     }
 
@@ -730,7 +737,8 @@ impl S3Client {
             url,
             headers: sent_headers,
         };
-        let start = Instant::now();
+        // the record's time is when the request went, as the proxy's is
+        let (start, time) = (Instant::now(), Utc::now());
         let sent = self.http.execute(request).await;
         match sent {
             Ok(resp) => {
@@ -743,14 +751,21 @@ impl S3Client {
                             req,
                             &prepared,
                             attempt,
+                            time,
                             start.elapsed(),
                             e,
                         ));
                     }
                 };
                 let latency = start.elapsed();
-                let mut record =
-                    self.record(req, &prepared.url, &prepared.headers, attempt, latency);
+                let mut record = self.record(
+                    req,
+                    &prepared.url,
+                    &prepared.headers,
+                    attempt,
+                    time,
+                    latency,
+                );
                 record.status = Some(status);
                 record.response_bytes = Some(body.len() as u64).into();
                 fill_ids(&mut record, &headers);
@@ -774,7 +789,7 @@ impl S3Client {
                     retries: attempt,
                 })
             }
-            Err(e) => Err(self.transport_error(req, &prepared, attempt, start.elapsed(), e)),
+            Err(e) => Err(self.transport_error(req, &prepared, attempt, time, start.elapsed(), e)),
         }
     }
 
@@ -783,6 +798,7 @@ impl S3Client {
         req: &S3Request,
         prepared: &Meta,
         attempt: u32,
+        time: DateTime<Utc>,
         latency: Duration,
         e: reqwest::Error,
     ) -> S3Error {
@@ -793,7 +809,14 @@ impl S3Client {
             msg.push_str(&s.to_string());
             src = s.source();
         }
-        let mut record = self.record(req, &prepared.url, &prepared.headers, attempt, latency);
+        let mut record = self.record(
+            req,
+            &prepared.url,
+            &prepared.headers,
+            attempt,
+            time,
+            latency,
+        );
         record.rare_mut().transport_error = Some(msg.clone());
         let id = self.log.push(record);
         let mut err = S3Error::new(ErrorKind::Transport, msg);
@@ -807,11 +830,12 @@ impl S3Client {
         url: &str,
         headers: &[(String, String)],
         attempt: u32,
+        time: DateTime<Utc>,
         latency: Duration,
     ) -> Record {
         Record {
             id: 0,
-            time: Utc::now(),
+            time,
             kind: req.operation.as_str().into(),
             method: req.method.as_str().into(),
             bucket: req.bucket.as_deref().map(Into::into),
@@ -1122,6 +1146,58 @@ mod tests {
             }
         });
         format!("http://{addr}")
+    }
+
+    /// A store that answers every request `wait` after it arrives.
+    async fn slow(wait: Duration) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut c, _) = l.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf).await;
+                    tokio::time::sleep(wait).await;
+                    let _ = c
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\ndata")
+                        .await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_record_is_timed_from_when_its_request_was_sent() {
+        let url = slow(Duration::from_millis(500)).await;
+        let c = client(&url, Addressing::Path);
+        let get = || {
+            S3Request::new("GetObject", http::Method::GET)
+                .bucket("b")
+                .key("k")
+                .no_retry()
+        };
+        let sent = Utc::now();
+        let r = c.send_raw(get()).await.unwrap();
+        let (_, streamed) = c.send_stream(get()).await.unwrap();
+        let sent_again = Utc::now() - chrono::Duration::milliseconds(500);
+        let at = |id| c.log.get(id).unwrap().time;
+        // its start, not its end half a second later
+        let early = |t: chrono::DateTime<Utc>, from: chrono::DateTime<Utc>| {
+            (t - from).num_milliseconds().abs() < 200
+        };
+        assert!(
+            early(at(r.record_id), sent),
+            "{} vs {sent}",
+            at(r.record_id)
+        );
+        assert!(
+            early(at(streamed), sent_again),
+            "{} vs {sent_again}",
+            at(streamed)
+        );
     }
 
     async fn download(url: &str, timeout: Duration) -> Result<usize, S3Error> {
