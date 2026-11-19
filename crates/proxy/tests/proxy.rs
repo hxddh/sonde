@@ -920,6 +920,16 @@ async fn dripping(pieces: usize, gap: std::time::Duration) -> String {
 
 /// [`dripping`], with the first `at_once` bytes sent with the headers.
 async fn dripping_after(at_once: usize, pieces: usize, gap: std::time::Duration) -> String {
+    answering_after(std::time::Duration::ZERO, at_once, pieces, gap).await
+}
+
+/// [`dripping_after`], with the headers sent `wait` after the request.
+async fn answering_after(
+    wait: std::time::Duration,
+    at_once: usize,
+    pieces: usize,
+    gap: std::time::Duration,
+) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -935,6 +945,7 @@ async fn dripping_after(at_once: usize, pieces: usize, gap: std::time::Duration)
                         _ => return,
                     }
                 }
+                tokio::time::sleep(wait).await;
                 let head = format!(
                     "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
                     at_once + pieces,
@@ -958,6 +969,23 @@ async fn get_with_timeout(
     upstream: &str,
     timeout: std::time::Duration,
 ) -> (Proxy, RequestLog, reqwest::Response) {
+    let (proxy, log) = proxy_with_timeout(upstream, timeout).await;
+    let resp = get_k(&proxy).send().await.unwrap();
+    (proxy, log, resp)
+}
+
+/// A GET of `/data/k`, signed for `proxy`.
+fn get_k(proxy: &Proxy) -> reqwest::RequestBuilder {
+    let (date, auth) = signed(proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
+    web()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+}
+
+/// A proxy whose store client has `timeout`.
+async fn proxy_with_timeout(upstream: &str, timeout: std::time::Duration) -> (Proxy, RequestLog) {
     let mut cfg = ClientConfig::new("target", upstream, "eu-west-1").unwrap();
     cfg.timeout = timeout;
     let target = S3Client::new(
@@ -974,16 +1002,44 @@ async fn get_with_timeout(
     let proxy = Proxy::start(target, log.clone(), ProxyConfig::default())
         .await
         .unwrap();
-    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = web()
-        .get(format!("{}/data/k", proxy.url()))
-        .header("x-amz-date", date)
-        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
-        .header("authorization", auth)
+    (proxy, log)
+}
+
+/// The records `log` has once it has `n`, or after 2 s.
+async fn records(log: &RequestLog, n: usize) -> Vec<reqlog::Record> {
+    for _ in 0..40 {
+        if log.snapshot().len() >= n {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    log.snapshot()
+}
+
+#[tokio::test]
+async fn a_request_the_program_stops_waiting_for_is_still_recorded() {
+    use std::time::Duration;
+    // the store answers after 2 s; the program waits 300 ms
+    let url = answering_after(Duration::from_secs(2), 1, 0, Duration::ZERO).await;
+    let (proxy, log) = proxy_with_timeout(&url, Duration::from_secs(30)).await;
+    let gone = get_k(&proxy)
+        .timeout(Duration::from_millis(300))
         .send()
-        .await
-        .unwrap();
-    (proxy, log, resp)
+        .await;
+    assert!(gone.is_err(), "it timed out");
+    let records = records(&log, 1).await;
+    assert_eq!(records.len(), 1, "the attempt is recorded");
+    let r = &records[0];
+    assert_eq!(r.status, None);
+    assert_eq!(
+        r.rare().transport_error.as_deref(),
+        Some("the program stopped waiting for the store's answer")
+    );
+    assert!(
+        r.latency_ms >= 250.0 && r.latency_ms < 2000.0,
+        "{}",
+        r.latency_ms
+    );
 }
 
 #[tokio::test]

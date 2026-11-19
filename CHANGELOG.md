@@ -2,6 +2,17 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## 26.0.0 (unreleased)
+
+### Fixed
+
+- A request the program stops waiting for (its timeout, a closed connection) while the store is still answering
+  is recorded, with the transport error "the program stopped waiting for the store's answer". Before, it was lost.
+
+### 中文
+
+- 修复：程序在存储还未应答时就不再等待（超时或关闭连接）的请求现在也会被记录，并标为传输错误；以前会丢失。
+
 ## [25.0.0] - 2026-11-18
 
 sonde now names the setting to change and what it saves, in money too.

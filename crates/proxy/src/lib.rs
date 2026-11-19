@@ -1525,6 +1525,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         None => {}
     }
+    // from here a program that stops waiting (its connection goes, and this
+    // handler with it) still leaves its record, as far as it got
+    let mut held = Unanswered {
+        record: Some(record.clone()),
+        log: shared.clone(),
+        received,
+    };
 
     // headers to forward, and the payload
     let mut out: Vec<(String, String)> = app_headers
@@ -1554,7 +1561,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Err(e) => {
                     let msg = format!("sonde could not read the request body: {e}");
                     record.rare_mut().transport_error = Some(msg.clone());
-                    shared.log.push(record);
+                    held.push(record);
                     return Ok(xml_error(400, "IncompleteBody", &msg));
                 }
             };
@@ -1562,7 +1569,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Ok(d) => d,
                 Err(e) => {
                     record.rare_mut().transport_error = Some(e.clone());
-                    shared.log.push(record);
+                    held.push(record);
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
             };
@@ -1619,7 +1626,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
                             record.rare_mut().transport_error = Some(msg.clone());
-                            shared.log.push(record);
+                            held.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
                     }
@@ -1640,7 +1647,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
                             record.rare_mut().transport_error = Some(msg.clone());
-                            shared.log.push(record);
+                            held.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
                     };
@@ -1655,6 +1662,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         };
     record.request_bytes = payload_len.or(sent_len).into();
+    held.keep(&record);
 
     out.push(("host".into(), upstream_host));
     // as sent before it is signed: signed again for another region
@@ -1683,7 +1691,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Err(e) => {
             let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));
         }
     }
@@ -1790,7 +1798,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Ok(r) => r,
         Err(msg) => {
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         }
     };
@@ -1800,6 +1808,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    held.keep(&record);
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1863,7 +1872,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let msg = "the store's listing stopped part way".to_string();
             record.rare_mut().injected = None;
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
         {
@@ -1904,7 +1913,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             record.response_bytes = Some(sent.len() as u64).into();
             record.first_byte_ms = Some(record.latency_ms).into();
             record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-            shared.log.push(record);
+            held.push(record);
             return Ok(builder
                 .header("content-length", sent.len().to_string())
                 .body(full(sent))
@@ -1952,7 +1961,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.status = Some(told);
         record.rare_mut().error_body = Some(format!("{code}: {msg}"));
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        shared.log.push(record);
+        held.push(record);
         return Ok(fault_error(told, code, &msg, &name));
     }
     let mut builder = Response::builder().status(status);
@@ -1994,7 +2003,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's answer stopped part way".to_string();
             record.rare_mut().transport_error = Some(msg.clone());
-            shared.log.push(record);
+            held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
         if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
@@ -2004,7 +2013,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.response_bytes = Some(body.len() as u64).into();
         record.first_byte_ms = Some(record.latency_ms).into();
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        shared.log.push(record);
+        held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
     if status.as_u16() >= 400 && method != "HEAD" {
@@ -2017,7 +2026,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         if !body.is_empty() {
             record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
         }
-        shared.log.push(record);
+        held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
     record.response_bytes = resp.content_length().into();
@@ -2027,6 +2036,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.first_byte_ms = Some(record.latency_ms).into();
     let keys =
         (reqlog::is_listing(&record.kind) && status.is_success()).then(reqlog::KeyCounter::default);
+    // the body's record is its own to log
+    held.record = None;
     let mut pending = Pending {
         keys,
         record: Some(record),
@@ -2125,6 +2136,42 @@ impl Drop for GivenUp {
         self.log.log.push(record);
     }
 }
+
+/// A request sent on to the store: if the program stops waiting for the
+/// answer, the handler is dropped, and this keeps its record as it was last
+/// kept, as an attempt the program gave up on.
+struct Unanswered {
+    record: Option<Record>,
+    log: Arc<Shared>,
+    received: Instant,
+}
+
+impl Unanswered {
+    /// The record as it is now, kept if the program goes.
+    fn keep(&mut self, record: &Record) {
+        self.record = Some(record.clone());
+    }
+
+    /// The request ended here: its record is logged as it is.
+    fn push(mut self, record: Record) {
+        self.record = None;
+        self.log.log.push(record);
+    }
+}
+
+impl Drop for Unanswered {
+    fn drop(&mut self) {
+        let Some(mut record) = self.record.take() else {
+            return;
+        };
+        record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
+        record.rare_mut().transport_error = Some(STOPPED_WAITING.into());
+        self.log.log.push(record);
+    }
+}
+
+/// What a record says of a request the program stopped waiting for.
+const STOPPED_WAITING: &str = "the program stopped waiting for the store's answer";
 
 /// The response header a record keeps the place of an injected cut in: the
 /// bytes of the body that went out.
