@@ -12,6 +12,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   and that transport error, not as a clean 200 of the whole object.
 - A request sonde sends itself (a probe, a listing, a download, a replay) is timed from when it went, as
   the proxy's are, not from when its answer was read: a slow answer no longer moved it later on the timeline.
+- A run file whose disk filled for a moment mid-line stops there: only its last line is torn, and the records before
+  it are read. Before, the next record was written after the half line and the file read as broken.
 
 ### 中文
 
@@ -20,6 +22,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   不再记成完整对象的正常 200。
 - 修复：sonde 自己发出的请求（探测、列举、下载、回放）的时间改为发出的时刻，与代理记录一致，不再取读完应答的
   时刻；慢应答不会再让它在时间线上后移。
+- 修复：磁盘在写到一行中间时短暂写满，运行文件就停在那里，只有最后一行不完整，之前的记录照常读出；以前下一条记录会
+  接在半行之后，整个文件读不出来。
 
 ## [25.0.0] - 2026-11-18
 
