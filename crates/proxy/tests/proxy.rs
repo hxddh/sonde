@@ -205,7 +205,7 @@ async fn serve(
                 ))))
                 .unwrap());
         }
-        "GET" => match up.objects.lock().get(&path) {
+        "GET" | "HEAD" => match up.objects.lock().get(&path) {
             Some((data, _)) => {
                 return Ok(Response::builder()
                     .status(200)
@@ -213,6 +213,7 @@ async fn serve(
                     .body(Full::new(Bytes::from(data.clone())))
                     .unwrap());
             }
+            None if parts.method == "HEAD" => Response::builder().status(204),
             None => Response::builder().status(404),
         },
         // a multipart upload started: its id
@@ -349,7 +350,17 @@ async fn put_get_list_are_resigned_and_recorded() {
     let keys = r.text().matches("<Key>").count();
     assert_eq!(keys, 1);
 
-    let records = log.list(&reqlog::Filter::default(), 100);
+    // an answer with a length and no body is whole as it is
+    let head = S3Request::new("HeadObject", http::Method::HEAD)
+        .bucket("data")
+        .key("dir/a b+c.txt");
+    assert_eq!(app.send_raw(head).await.unwrap().status, 200);
+    let mut records = log.list(&reqlog::Filter::default(), 100);
+    let head = records.remove(0);
+    assert_eq!(head.kind, "HeadObject");
+    assert!(head.rare().transport_error.is_none(), "{head:?}");
+    assert_eq!(head.response_bytes, Some(0));
+
     // a listing's record says how many keys it listed
     let listed = records.iter().find(|r| r.kind == "ListObjectsV2").unwrap();
     assert_eq!(
@@ -369,7 +380,7 @@ async fn put_get_list_are_resigned_and_recorded() {
         .find(|h| h.name.eq_ignore_ascii_case("authorization"))
         .unwrap();
     assert!(!auth.value.contains("dummy"));
-    assert!(up.calls.lock().len() == 3);
+    assert!(up.calls.lock().len() == 4);
     // a body read to its end: logged with its first byte inside its whole time
     let get = records.iter().find(|r| r.kind == "GetObject").unwrap();
     let first = get.first_byte_ms.get().expect("first byte measured");
@@ -1039,6 +1050,34 @@ async fn a_request_the_program_stops_waiting_for_is_still_recorded() {
         r.latency_ms >= 250.0 && r.latency_ms < 2000.0,
         "{}",
         r.latency_ms
+    );
+}
+
+#[tokio::test]
+async fn a_body_the_program_stops_reading_is_recorded_as_far_as_it_went() {
+    use std::time::Duration;
+    // one byte with the headers, five more 200 ms apart; the program reads
+    // the headers and goes
+    let url = dripping_after(1, 5, Duration::from_millis(200)).await;
+    let (_proxy, log, resp) = get_with_timeout(&url, Duration::from_secs(30)).await;
+    assert_eq!(resp.status(), 200);
+    drop(resp);
+    let records = records(&log, 1).await;
+    let r = records.first().expect("the request is recorded");
+    assert_eq!(r.status, Some(200));
+    // the bytes that went, not the length the store said
+    let read = r.response_bytes.get().unwrap();
+    assert!(read < 6, "{read}");
+    let why = r
+        .rare()
+        .transport_error
+        .as_deref()
+        .expect("a body given up on is no clean 200");
+    assert_eq!(
+        why,
+        format!(
+            "the program stopped waiting for the store's answer: it read {read} of 6 bytes of the response body"
+        )
     );
 }
 
