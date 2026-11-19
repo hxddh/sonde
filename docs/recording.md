@@ -160,7 +160,7 @@ and a path that names no bucket are no policy's.
 ## A run's file
 
 - JSON lines: a header, then a record per completed request ([format](dev/run-format.md)), redacted. A crash
-  loses at most a torn last line, which is skipped.
+  or a full disk loses at most a torn last line, which is skipped.
 - In `<data>/runs/` ([`sonde runs prune`](cli.md#read-a-run)), or `-o FILE`. Gzipped in place when finished (about
   a tenth; still `.sonde`); a live one stays plain (the app reads only what was appended).
 
