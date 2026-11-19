@@ -1598,6 +1598,7 @@
  "core.plan.item.abortRule": "abort incomplete uploads after %{days} days",
  "core.plan.item.restore": "delete marker %{marker}; version %{version} becomes current",
  "core.plan.item.restore.nothing": "delete marker %{marker}; version nothing (no older version) becomes current",
+ "core.plan.item.restore.marker": "delete marker %{marker}; the key stays deleted: delete marker %{next} becomes current",
  "core.plan.item.version": "version %{v}",
  "core.plan.item.delete": "delete (adds a delete marker when versioning is on)",
  "core.lifecycle.none": "The bucket has no lifecycle configuration: incomplete uploads are kept (and billed) forever. Add a rule aborting them after %{days} days.",

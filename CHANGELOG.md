@@ -18,6 +18,15 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   - The endpoint form puts the CA file and the buckets side by side: its Save stays in view in a short window.
   - A fix's code sits closer in its well. A disabled field's text is easier to read in dark mode.
 
+### Fixed
+
+- `no-delete` reads a DeleteObjects body as XML: a batch with an object the old reader missed (`<Object >`, a
+  second `<Key>`, a prefix, CDATA, a comment) or anything else it does not expect is refused, not forwarded.
+- Restoring a key with another delete marker under its latest one says the key stays deleted. Before, the plan
+  named an older version as becoming current.
+- A lifecycle plan is refused when the bucket's lifecycle changed since it was made. Before, its PUT replaced a
+  rule added meanwhile.
+
 ### 中文
 
 - **各平台的界面更精致：**macOS 上侧边栏占满窗口高度，窗口按钮位于其中，工具栏只在内容区上方；设置的标签居中；
@@ -26,6 +35,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - 侧边栏的运行记录先写请求数（"18 个请求 · curl · demo"），空间不够时先省略发出者和端点，不再留空隙。
 - 桶 › 对象："平铺列出"移到桶的 ⋯ 菜单（仍可用 ⇧⌘F），对象上方的一行在检查器旁不再折行。
 - 端点表单把 CA 文件和桶并排放置，窗口较矮时"保存"仍在视野内；修复代码块更紧凑；深色模式下禁用的输入框文字更易读。
+- 修复：`no-delete` 现在按 XML 解析 DeleteObjects 请求体，含有旧解析器漏看的对象或结构不符合预期的批量删除一律拒绝，
+  不再转发。
+- 修复：最新删除标记下面还有删除标记时，恢复计划会说明对象仍处于删除状态，不再声称旧版本会成为当前版本。
+- 修复：生命周期计划生成后若存储桶的生命周期配置已被改动，执行时会拒绝并要求重新生成计划，不再覆盖期间新增的规则。
 
 ## [25.0.0] - 2026-11-18
 

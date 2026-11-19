@@ -168,38 +168,47 @@ pub async fn plan_restore(
     key: &str,
 ) -> Result<Plan, S3Error> {
     let t = timeline(s, endpoint, bucket, key).await?;
-    let latest = t
-        .versions
-        .iter()
-        .find(|v| v.is_latest)
-        .ok_or_else(|| S3Error::refused(format!("{key} has no versions")))?;
-    if !latest.is_delete_marker {
-        return Err(S3Error::refused(format!(
-            "{key} is not deleted: its latest version is not a delete marker"
-        )));
-    }
-    let restores = t
-        .versions
-        .iter()
-        .find(|v| !v.is_delete_marker)
-        .map(|v| v.version_id.clone());
-    let detail = match restores {
-        Some(v) => ph!("plan.item.restore", marker = latest.version_id, version = v),
-        None => ph!("plan.item.restore.nothing", marker = latest.version_id),
-    };
     Ok(s.guard().plan(
         Action::RestoreObject,
         endpoint,
         bucket,
-        vec![PlanItem::new(
-            key,
-            Some(latest.version_id.clone()),
-            None,
-            detail,
-        )],
+        vec![restore_item(&t)?],
         None,
         None,
     ))
+}
+
+/// What removing the latest delete marker of `t` does: what is next below it
+/// becomes current, which may be another delete marker (the key stays
+/// deleted).
+fn restore_item(t: &Timeline) -> Result<PlanItem, S3Error> {
+    let key = &t.key;
+    let latest = t
+        .versions
+        .iter()
+        .position(|v| v.is_latest)
+        .ok_or_else(|| S3Error::refused(format!("{key} has no versions")))?;
+    let marker = &t.versions[latest];
+    if !marker.is_delete_marker {
+        return Err(S3Error::refused(format!(
+            "{key} is not deleted: its latest version is not a delete marker"
+        )));
+    }
+    let next = t
+        .versions
+        .iter()
+        .enumerate()
+        .find(|(i, _)| *i != latest)
+        .map(|(_, v)| v);
+    let id = &marker.version_id;
+    let detail = match next {
+        Some(v) if v.is_delete_marker => {
+            ph!("plan.item.restore.marker", marker = id, next = v.version_id)
+        }
+        Some(v) => ph!("plan.item.restore", marker = id, version = v.version_id),
+        None => ph!("plan.item.restore.nothing", marker = id),
+    };
+    Ok(PlanItem::new(key, Some(id.clone()), None, detail))
 }
 
 /// A dry run of permanently deleting versions (or delete markers) of keys.
@@ -281,5 +290,56 @@ mod tests {
             vec![v("1", "2024-01-01T00:00:00Z", true, false, 10)],
         );
         assert!(!t.deleted);
+    }
+
+    /// Removing the latest marker makes the next entry current: under it
+    /// another marker keeps the key deleted, and the plan says so.
+    #[test]
+    fn a_restore_says_what_becomes_current() {
+        let t = build_timeline(
+            "b",
+            "k",
+            vec![
+                v("dm2", "2024-01-03T00:00:00Z", true, true, 0),
+                v("dm1", "2024-01-02T00:00:00Z", false, true, 0),
+                v("v1", "2024-01-01T00:00:00Z", false, false, 10),
+            ],
+        );
+        let item = restore_item(&t).unwrap();
+        assert_eq!(item.id.as_deref(), Some("dm2"));
+        assert!(!item.detail.contains("v1"), "{}", item.detail);
+        assert!(item.detail.contains("stays deleted"), "{}", item.detail);
+        let t = build_timeline(
+            "b",
+            "k",
+            vec![
+                v("dm2", "2024-01-03T00:00:00Z", true, true, 0),
+                v("v2", "2024-01-02T00:00:00Z", false, false, 10),
+                v("dm1", "2024-01-01T00:00:00Z", false, true, 0),
+            ],
+        );
+        let item = restore_item(&t).unwrap();
+        assert!(
+            item.detail.contains("v2 becomes current"),
+            "{}",
+            item.detail
+        );
+        let t = build_timeline(
+            "b",
+            "k",
+            vec![v("dm", "2024-01-01T00:00:00Z", true, true, 0)],
+        );
+        assert!(
+            restore_item(&t)
+                .unwrap()
+                .detail
+                .contains("no older version")
+        );
+        let t = build_timeline(
+            "b",
+            "k",
+            vec![v("v", "2024-01-01T00:00:00Z", true, false, 1)],
+        );
+        assert!(restore_item(&t).is_err());
     }
 }

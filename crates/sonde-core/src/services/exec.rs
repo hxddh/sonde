@@ -11,6 +11,16 @@ use crate::guard::{Action, AuditEntry, Outcome};
 pub async fn execute(s: &Sonde, id: &str, confirmation: &str) -> Result<Outcome, S3Error> {
     let plan = s.guard().take(id, confirmation)?;
     let c = s.client(&plan.endpoint)?;
+    // a lifecycle PUT replaces the whole configuration, made from the one
+    // read at plan time: if it changed since, what changed would be lost
+    if plan.action == Action::PutLifecycle
+        && c.lifecycle_raw(&plan.bucket).await? != plan.previous_document
+    {
+        return Err(S3Error::refused(format!(
+            "the lifecycle configuration of {} changed since the plan: nothing was done; plan it again",
+            plan.bucket
+        )));
+    }
     let mut entry = AuditEntry {
         time: Utc::now(),
         plan: plan.id.clone(),
@@ -175,5 +185,43 @@ mod tests {
         assert_eq!(log[1].stage.as_deref(), Some("started"));
         assert_eq!(log[1].targets, vec!["k@v"]);
         assert_eq!((log[0].stage.as_deref(), log[0].failed), (None, 1));
+    }
+
+    /// A lifecycle PUT replaces the whole configuration: a rule added
+    /// between the plan and its run would be lost, so the run is refused.
+    #[tokio::test]
+    async fn a_lifecycle_changed_since_its_plan_is_not_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let server = crate::demo::start().await.unwrap();
+        let mut e =
+            crate::EndpointConfig::new("d", "d", &server.url(), "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Static {
+            access_key_id: "AKIADEMODEMODEMO0000".into(),
+            secret_access_key: "demo".into(),
+        };
+        s.add_transient_endpoint(e).unwrap();
+        let plan = crate::services::mpu::plan_lifecycle_rule(&s, "d", "demo", "tmp/", 7)
+            .await
+            .unwrap();
+        // meanwhile, someone adds a rule of their own
+        let theirs = "<LifecycleConfiguration><Rule><ID>theirs</ID><Filter><Prefix>logs/</Prefix>\
+                      </Filter><Status>Enabled</Status><Expiration><Days>30</Days></Expiration>\
+                      </Rule></LifecycleConfiguration>";
+        let c = s.client("d").unwrap();
+        c.put_lifecycle("demo", theirs).await.unwrap();
+        let err = execute(&s, &plan.id, &plan.confirm).await.unwrap_err();
+        assert!(err.message.contains("changed since"), "{err}");
+        let now = c.lifecycle_raw("demo").await.unwrap().unwrap();
+        assert!(now.contains("theirs") && !now.contains("tmp/"), "{now}");
+        // planned again, it keeps their rule
+        let plan = crate::services::mpu::plan_lifecycle_rule(&s, "d", "demo", "tmp/", 7)
+            .await
+            .unwrap();
+        let out = execute(&s, &plan.id, &plan.confirm).await.unwrap();
+        assert_eq!((out.succeeded, out.failed), (1, 0));
+        let now = c.lifecycle_raw("demo").await.unwrap().unwrap();
+        assert!(now.contains("theirs") && now.contains("tmp/"), "{now}");
     }
 }
