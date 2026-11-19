@@ -2,6 +2,31 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [26.0.0] - unreleased
+
+### Changed
+
+- **The app, refined on each system:**
+  - macOS: the sidebar runs the window's height with the window's buttons in it, and the toolbar stands over the
+    place only. Settings' tabs are centred. The palette's scrim is lighter in light mode.
+  - Windows and Linux: shortcuts are written in the interface's face (Ctrl+K), not in monospace.
+  - Time: the charts are no longer boxed. Each group (Traffic, Latency, Errors, Where) is a section with its name.
+  - A run's row in the sidebar says its count first ("18 requests · curl · demo"), so what sent it and where give
+    way first, with no gap.
+  - Buckets › Objects: "Flat listing" moved into the bucket's ⋯ (still ⇧⌘F), so the row over the objects keeps to
+    one line beside the inspector.
+  - The endpoint form puts the CA file and the buckets side by side: its Save stays in view in a short window.
+  - A fix's code sits closer in its well. A disabled field's text is easier to read in dark mode.
+
+### 中文
+
+- **各平台的界面更精致：**macOS 上侧边栏占满窗口高度，窗口按钮位于其中，工具栏只在内容区上方；设置的标签居中；
+  浅色模式下命令面板的遮罩更淡。Windows 和 Linux 上的快捷键改用界面字体（Ctrl+K）。
+- 时间页的图表不再加框，按流量、延迟、错误、位置分节并显示节名。
+- 侧边栏的运行记录先写请求数（"18 个请求 · curl · demo"），空间不够时先省略发出者和端点，不再留空隙。
+- 桶 › 对象："平铺列出"移到桶的 ⋯ 菜单（仍可用 ⇧⌘F），对象上方的一行在检查器旁不再折行。
+- 端点表单把 CA 文件和桶并排放置，窗口较矮时"保存"仍在视野内；修复代码块更紧凑；深色模式下禁用的输入框文字更易读。
+
 ## [25.0.0] - 2026-11-18
 
 sonde now names the setting to change and what it saves, in money too.
