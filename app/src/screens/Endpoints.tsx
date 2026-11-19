@@ -135,8 +135,11 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
           <Field class={CELL} label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} onSubmit={save} mono error={errorOf("profile")} />
         </If>
       </View>
-      <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder="/etc/ssl/my-ca.pem" mono />
-      <Field label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} onSubmit={save} placeholder="logs, backups" mono />
+      {/* the two rarely needed, side by side: the form's foot stays in a short window */}
+      <View class={GRID}>
+        <Field class={CELL} label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder="/etc/ssl/my-ca.pem" mono />
+        <Field class={CELL} label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} onSubmit={save} placeholder="logs, backups" mono />
+      </View>
       <Actions note={<Muted class="text-small">{t("endpoints.cred.note")}</Muted>}>
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} testID="ep-cancel" />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="ep-save" />
