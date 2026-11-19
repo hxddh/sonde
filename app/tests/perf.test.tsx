@@ -16,7 +16,7 @@ test("100 000 rows: load and scroll", async () => {
   await app.press("label:Choose a bucket");
   await app.press("text:demo-large");
   await app.waitFor("text:1 item", { timeout: 10000 });
-  await app.press("id:flat");
+  await app.keyboard.press("mod+shift+f");
   const loadStart = Date.now();
   await app.press("id:load-all");
   await app.waitFor("text:100,000 items", { timeout: 240000 });

@@ -12,7 +12,7 @@ import { bucket, copy, endpoint, notify, offerCommands, type PlaceCommand, prefi
 import { KeyVersions } from "./Versions";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, BARE_TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
+import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, BARE_TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, useBucketFacts } from "../ui/overview";
 import { ShowSidebar } from "../ui/shell";
@@ -427,16 +427,15 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
           {/* the head every section has: what it looks at (its tab above names it), then its actions at the end */}
           <Breadcrumbs />
         </View>
-        {/* (too narrow for them all, beside the inspector: they wrap to a line of their own, then among themselves,
-            never under the inspector nor into each other's words) */}
-        <View class="ms-auto min-w-0 shrink flex-row flex-wrap items-center justify-end gap-2">
+        {/* (too narrow for both, beside the inspector: they go to a line of their own, where the filter gives way;
+            how it lists is behind ⋯, as on its shortcut, so the line never wraps) */}
+        <View class="ms-auto min-w-0 shrink flex-row items-center justify-end gap-2">
           <Text class="shrink-0 text-small tabular-nums text-muted-foreground" testID="listing-count">
             {t("browse.objects", { n: count(total()) })}
             {done() ? "" : ` · ${t("browse.more")}`}
           </Text>
           {/* one mode: it narrows what is listed (every key under the prefix is searched from the empty list's row) */}
           <SearchField ref={(r) => (filterField = r)} small class={`${WIDTH.long} min-w-0 shrink`} testID="listing-filter" value={filter()} placeholder={t("browse.filter")} label={t("browse.filterLabel")} onChange={applyFilter} />
-          <SwitchRow label={t("browse.flatListing")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
           {/* nothing to load once every row is here */}
           <If when={!done()}>
             <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" />
@@ -446,6 +445,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
           <More
             testID="bucket-more"
             actions={() => [
+              { label: flat() ? t("browse.byFolder") : t("browse.flatListing"), icon: "list-filter", run: () => flat.set(!flat()) },
               { label: t("store.copyName"), icon: "copy", run: () => copy(bucket() ?? "") },
               { label: t("store.copyUri"), icon: "link", run: () => copy(`s3://${bucket() ?? ""}/${prefix()}`) },
             ]}
