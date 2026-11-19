@@ -2,6 +2,18 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## 26.0.0 (unreleased)
+
+### Fixed
+
+- `no-delete` reads a DeleteObjects body as XML: a batch with an object the old reader missed (`<Object >`, a
+  second `<Key>`, a prefix, CDATA, a comment) or anything else it does not expect is refused, not forwarded.
+
+### 中文
+
+- 修复：`no-delete` 现在按 XML 解析 DeleteObjects 请求体，含有旧解析器漏看的对象或结构不符合预期的批量删除一律拒绝，
+  不再转发。
+
 ## [25.0.0] - 2026-11-18
 
 sonde now names the setting to change and what it saves, in money too.
