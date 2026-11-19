@@ -2,7 +2,9 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
-## [26.0.0] - unreleased
+## [26.0.0] - 2026-11-19
+
+sonde now records what the program really got, guards deletes more strictly, and looks at home on each system.
 
 ### Changed
 
@@ -36,6 +38,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   rule added meanwhile.
 
 ### 中文
+
+sonde 现在如实记录程序真正拿到的内容，删除保护更严格，界面在各平台上更像原生应用。
 
 - **各平台的界面更精致：**macOS 上侧边栏占满窗口高度，窗口按钮位于其中，工具栏只在内容区上方；设置的标签居中；
   浅色模式下命令面板的遮罩更淡。Windows 和 Linux 上的快捷键改用界面字体（Ctrl+K）。
