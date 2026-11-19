@@ -13,7 +13,7 @@ import { checkRequested } from "./updates";
 import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row, TEXT } from "./kit";
+import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, terminal, SURFACE, Row, TEXT } from "./kit";
 import { programOf, scrubCommand } from "./runview";
 
 export const paletteOpen = signal(false);
@@ -189,7 +189,7 @@ export function Palette() {
       open={paletteOpen()}
       onOpenChange={({ open }) => paletteOpen.set(open)}
       animation="fade"
-      backdropClass={terminal() ? undefined : SCRIM}
+      backdropClass={terminal() ? undefined : PALETTE_SCRIM}
       // the popup surface, its hairlines from edge to edge
       // (nearer the top of a short window: its list and its hint stay inside the least one)
       style={terminal() ? undefined : { marginTop: shellHeight() < BREAK.short ? 40 : 96, padding: 0, ...glass }}

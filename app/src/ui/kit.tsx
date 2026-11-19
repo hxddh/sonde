@@ -151,6 +151,8 @@ export const SHADOW = { control: "shadow-control", popup: "shadow-popup", modal:
 
 /** What can no longer be pressed or changed: one dimming, on every control. */
 export const DISABLED = "disabled:opacity-40";
+/** The same on a field's text, a little stronger in dark, where text at 0.4 on a dark field could not be read. */
+const DISABLED_TEXT = `${DISABLED} dark:disabled:opacity-50`;
 /** The one dot that marks a status, a live run, what is new: 8 pt, round. */
 export const DOT = "size-2 shrink-0 rounded-full";
 /** The row under the keyboard or the pointer in a popup (a menu, a select,
@@ -240,6 +242,9 @@ export const POPUP_MOTION = {
 export const TOAST_MOTION = GLIDE;
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
+/** The palette's: on macOS in light, under half of it (a glass panel over the window, as the system's own search
+ * floats, needs little to stand apart); the modal scrim elsewhere. */
+export const PALETTE_SCRIM = fill("bg-scrim/45 dark:bg-scrim", SCRIM);
 /** Where the keyboard is: one ring on every control that takes focus, shown
  * for focus the keyboard moved (Native Shell's `focus-visible:`), never after
  * a click. A text field shows it whenever it has focus, as a browser's does. */
@@ -566,14 +571,18 @@ export function Tip(props: { text: string; shortcut?: string }) {
       endingClass="opacity-0"
     >
       <Text class={`min-w-0 shrink ${TEXT.small} text-popover-foreground`}>{props.text}</Text>
-      <If when={props.shortcut}>{(k) => <Text class={`font-mono ${TEXT.meta}`}>{keyLabel(k())}</Text>}</If>
+      <If when={props.shortcut}>{(k) => <Text class={`${KEYS} ${TEXT.meta}`}>{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
 }
 
+/** A shortcut's face: macOS's symbols (⌘K) in monospace, the words of Windows and Linux (Ctrl+K) in the interface's,
+ * as their menus write them. */
+const KEYS = platform.os === "macos" ? "font-mono" : "";
+
 /** A shortcut, as the platform writes it (⌘K, Ctrl+K). */
 export function Kbd(props: { keys: string; class?: string }) {
-  return <Text class={`font-mono ${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
+  return <Text class={`${KEYS} ${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
 }
 
 /** A turning ring: what a `loading` button shows in its icon's place. Still
@@ -1270,7 +1279,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
     if (props.rest && !focused) untracked(() => field?.setSelection(0));
   });
   const refused = () => !!props.error || !!props.invalid;
-  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${DISABLED}`;
+  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${DISABLED_TEXT}`;
   // the reason under the field is the field's description to a screen reader, read again each time the field is
   // reached (Native Shell's `accessibilityDescribedBy`, the web's `aria-describedby`)
   const reason = signal<ViewRef | null>(null);

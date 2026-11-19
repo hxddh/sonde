@@ -209,16 +209,20 @@ function SearchButton() {
   );
 }
 
+/** The title bar's height: the system's, where it says. */
+const titleBarHeight = () => (isAvailable ? titleBar().height || 44 : 44);
+
 /** The window's title bar, drawn by the app: drags the window; the system's controls keep their place. */
 export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element }) {
   let menuButton: ViewRef | undefined;
-  const height = () => (isAvailable ? titleBar().height || 44 : 44);
+  // (on macOS the window's buttons stand in the sidebar while it shows: the toolbar, over the place, starts clear)
+  const left = () => (isAvailable && !(mac && sidebarOpen()) ? titleBar().left : 0);
   return (
     <View
       testID="toolbar"
       desktop={{ windowDrag: true }}
       class="flex-row items-center gap-2 border-b border-border bg-toolbar"
-      style={{ height: height(), flexShrink: 0, paddingLeft: (isAvailable ? titleBar().left : 0) + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
+      style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: left() + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
     >
       <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
       <View class="ml-1 min-w-0 flex-1">
@@ -273,7 +277,10 @@ export const windowMaterial = () => material && (settings()?.theme ?? "system") 
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} pt-3`}>
+      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} ${mac ? "" : "pt-3"}`}>
+        {/* macOS: the window's height, the title bar's room at its top holding the window's buttons (it drags the
+            window, as the toolbar does) */}
+        {mac ? <View desktop={{ windowDrag: true }} style={{ height: titleBarHeight(), flexShrink: 0 }} /> : null}
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
           <Place area="run" open={props.open} />
