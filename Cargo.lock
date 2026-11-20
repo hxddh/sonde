@@ -5053,6 +5053,7 @@ dependencies = [
  "hyper-util",
  "parking_lot",
  "percent-encoding",
+ "quick-xml",
  "rand 0.10.4",
  "rcgen",
  "reqlog",
