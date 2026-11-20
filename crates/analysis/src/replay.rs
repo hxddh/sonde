@@ -143,7 +143,7 @@ fn found(r: &Record) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("if-match"));
     match r.kind.as_str() {
         // a write makes its object: it was there only if it said so
-        "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
+        "PutObject" | "CopyObject" | "CompleteMultipartUpload" | "RenameObject" => {
             status == 412 && !if_match || ok && if_match
         }
         "CreateMultipartUpload"
@@ -185,8 +185,11 @@ fn size_seen(r: &Record) -> Option<u64> {
     }
 }
 
-/// The bucket and key an `x-amz-copy-source` names.
+/// The bucket and key an `x-amz-copy-source` (or a rename's source) names.
 fn source_of(r: &Record) -> Option<(String, String)> {
+    if r.kind == "RenameObject" {
+        return crate::stored::rename_source(r);
+    }
     let v = r
         .request_headers()
         .iter()
@@ -244,10 +247,16 @@ pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
         }
         if matches!(
             r.kind.as_str(),
-            "PutObject" | "CopyObject" | "CompleteMultipartUpload" | "DeleteObject"
+            "PutObject"
+                | "CopyObject"
+                | "CompleteMultipartUpload"
+                | "DeleteObject"
+                | "RenameObject"
         ) && r.status.is_some_and(|s| (200..300).contains(&s))
         {
             touched.insert(at);
+            // (a rename's source is gone)
+            touched.extend(crate::stored::rename_source(r));
         }
     }
     // the objects it found before writing them, read or copied from
@@ -284,10 +293,15 @@ pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
         if let Some(k) = r.key.as_deref().filter(|_| ok)
             && matches!(
                 r.kind.as_str(),
-                "PutObject" | "CopyObject" | "CompleteMultipartUpload" | "DeleteObject"
+                "PutObject"
+                    | "CopyObject"
+                    | "CompleteMultipartUpload"
+                    | "DeleteObject"
+                    | "RenameObject"
             )
         {
             written.insert((b.to_string(), k.to_string()));
+            written.extend(crate::stored::rename_source(r));
         }
         if r.kind == "DeleteObjects" && ok {
             for (k, _) in r
@@ -349,6 +363,12 @@ pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
             ("PutObject" | "CopyObject" | "CompleteMultipartUpload", Some(k)) => {
                 present.insert((b.to_string(), k.to_string()));
                 Vec::new()
+            }
+            ("RenameObject", Some(k)) => {
+                present.insert((b.to_string(), k.to_string()));
+                crate::stored::rename_source(r)
+                    .map(|(_, from)| vec![from])
+                    .unwrap_or_default()
             }
             ("DeleteObject", Some(k)) => vec![k.to_string()],
             ("DeleteObjects", _) => r
@@ -528,6 +548,7 @@ fn keep_header(name: &str) -> bool {
                 | "x-amz-tagging"
                 | "x-amz-copy-source"
                 | "x-amz-copy-source-range"
+                | "x-amz-rename-source"
                 | "x-amz-metadata-directive"
                 | "x-amz-tagging-directive"
                 | "x-amz-server-side-encryption"
@@ -659,6 +680,8 @@ impl State {
                 self.map_etags(&h.value)
             } else if n == "x-amz-copy-source" {
                 copy_source(&h.value, opts)
+            } else if n == "x-amz-rename-source" {
+                rename_source(&h.value, opts)
             } else {
                 h.value.to_string()
             };
@@ -782,6 +805,19 @@ fn copy_source(v: &str, opts: &ReplayOptions) -> String {
             s3raw::client::encode_key(&format!("{}{k}", opts.prefix))
         ),
         None => v.to_string(),
+    }
+}
+
+/// A rename's source (`/bucket/key`, or the key alone) under the replay's
+/// prefix, in its bucket's place.
+fn rename_source(v: &str, opts: &ReplayOptions) -> String {
+    let decoded = percent_encoding::percent_decode_str(v)
+        .decode_utf8_lossy()
+        .into_owned();
+    let moved = |k: &str| s3raw::client::encode_key(&format!("{}{k}", opts.prefix));
+    match decoded.strip_prefix('/').and_then(|p| p.split_once('/')) {
+        Some((b, k)) => format!("/{}/{}", opts.bucket(b), moved(k)),
+        None => moved(&decoded),
     }
 }
 
@@ -1392,6 +1428,39 @@ pub fn transcript(records: &[Record]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rename_finds_its_source_and_makes_its_new_name() {
+        let r = |id: u64, method: &str, kind: &str, key: &str| Record {
+            id,
+            time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64).unwrap(),
+            method: method.into(),
+            kind: kind.into(),
+            bucket: Some("b".into()),
+            key: Some(key.into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        let mut renamed = r(1, "PUT", "RenameObject", "new");
+        renamed.lists_mut().request_headers =
+            vec![reqlog::Header::new("x-amz-rename-source", "/b/old")];
+        // the old name read after: gone, written by the rename
+        let records = [
+            renamed,
+            r(2, "GET", "GetObject", "new"),
+            r(3, "HEAD", "HeadObject", "old"),
+        ];
+        let opts = ReplayOptions {
+            prefix: "p/".into(),
+            buckets: vec![],
+        };
+        let keys: Vec<String> = seeds(&records, &opts).into_iter().map(|s| s.key).collect();
+        assert_eq!(keys, ["old"]);
+        // its source is moved under the prefix as the request is sent
+        assert!(keep_header("x-amz-rename-source"));
+        assert_eq!(rename_source("/b/old%20one", &opts), "/b/p/old%20one");
+        assert_eq!(rename_source("old", &opts), "p/old");
+    }
 
     #[test]
     fn a_prefix_is_a_folder_of_its_own() {

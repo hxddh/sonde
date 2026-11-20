@@ -827,6 +827,7 @@ pub fn read_by_analysis(name: &str) -> bool {
         "traceparent",
         "x-amz-version-id",
         "x-amz-delete-marker",
+        "x-amz-rename-source",
     ];
     let has = |p: &str| {
         name.get(..p.len())
