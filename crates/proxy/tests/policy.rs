@@ -214,3 +214,53 @@ fn policies_by_name_and_the_stricter_of_two() {
     assert_eq!(Policy::Allow.stricter(Policy::NoDelete), Policy::NoDelete);
     assert_eq!(Policy::ReadOnly.stricter(Policy::Allow), Policy::ReadOnly);
 }
+
+#[test]
+fn no_delete_lets_versioning_through_only_when_its_document_reads_enabled() {
+    let refuses = |body: &str| {
+        Policy::NoDelete
+            .refuses_document("PutBucketVersioning", Some(body))
+            .is_some()
+    };
+    let ns = "http://s3.amazonaws.com/doc/2006-03-01/";
+    for ok in [
+        "<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>".to_string(),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<VersioningConfiguration xmlns=\"{ns}\">\n  <Status>Enabled</Status>\n  <MfaDelete>Disabled</MfaDelete>\n</VersioningConfiguration>\n"
+        ),
+    ] {
+        assert!(!refuses(&ok), "{ok}");
+    }
+    let utf16: String = String::from_utf8_lossy(
+        &"<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<u8>>(),
+    )
+    .into_owned();
+    for no in [
+        "<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>",
+        "<VersioningConfiguration><Status>Suspen&#100;ed</Status></VersioningConfiguration>",
+        "<VersioningConfiguration><Status>Suspen<!-- -->ded</Status></VersioningConfiguration>",
+        "<VersioningConfiguration><Status><![CDATA[Suspended]]></Status></VersioningConfiguration>",
+        "<VersioningConfiguration><Status>Enabled</Status><Status>Suspended</Status></VersioningConfiguration>",
+        "<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration><X/>",
+        "<VersioningConfiguration><Status>Enabled</Status>",
+        "<s3:VersioningConfiguration xmlns:s3=\"x\"><s3:Status>Suspended</s3:Status></s3:VersioningConfiguration>",
+        "<VersioningConfiguration><Status>enabled</Status></VersioningConfiguration>",
+        "",
+        &utf16,
+    ] {
+        assert!(refuses(no), "{no}");
+    }
+    assert!(
+        Policy::NoDelete
+            .refuses_document("PutBucketVersioning", None)
+            .is_some()
+    );
+    assert!(
+        Policy::Allow
+            .refuses_document("PutBucketVersioning", Some(&utf16))
+            .is_none()
+    );
+}

@@ -8,8 +8,9 @@
 //!   `Proxy-Authorization`, `x-amz-copy-source-server-side-encryption-customer-key`;
 //! - presign query parameters: `X-Amz-Signature`, `X-Amz-Security-Token`,
 //!   `X-Amz-Credential` (its key id), SigV2's `Signature` and `AWSAccessKeyId`;
-//! - the same names when they appear inside text (error bodies echo
-//!   `<StringToSign>`, `<SignatureProvided>`, `<AWSAccessKeyId>`).
+//! - the same names when they appear inside text, in any case (error bodies
+//!   echo `<StringToSign>`, `<SignatureProvided>`, `<AWSAccessKeyId>`), and
+//!   `<CanonicalRequest>` (it holds signed headers' values) whole.
 
 pub const MASK: &str = "«redacted»";
 
@@ -140,12 +141,17 @@ pub fn redact_url(raw: &str) -> String {
 }
 
 /// Masks secrets that services echo in error bodies (SignatureDoesNotMatch
-/// returns the string to sign, the signature provided and the key id).
+/// returns the string to sign, the signature provided, the key id and the
+/// canonical request, which holds every signed header's value: a session
+/// token, an SSE-C key), and presign parameters anywhere in the text. An
+/// element cut open (a body cut at its limit) is masked to the end.
 pub fn redact_text(text: &str) -> String {
     let mut out = text.to_string();
     for tag in [
         "SignatureProvided",
         "StringToSignBytes",
+        "CanonicalRequest",
+        "CanonicalRequestBytes",
         "Signature",
         "SecurityToken",
         "Token",
@@ -153,21 +159,44 @@ pub fn redact_text(text: &str) -> String {
         out = replace_element(&out, tag, |_| MASK.to_string());
     }
     out = replace_element(&out, "AWSAccessKeyId", mask_key_id);
-    // presigned URLs inside text
-    if out.contains("X-Amz-Signature=") || out.contains("X-Amz-Security-Token=") {
-        let mut result = String::with_capacity(out.len());
-        for (i, word) in out.split(' ').enumerate() {
-            if i > 0 {
-                result.push(' ');
-            }
-            if word.contains('?') && (word.contains("X-Amz-")) {
-                result.push_str(&redact_url(word));
-            } else {
-                result.push_str(word);
-            }
+    redact_parameters(&out)
+}
+
+/// Presign parameters in text (a URL, a canonical query line, either in
+/// XML with `&amp;`), any case: each value redacted as a query's is.
+fn redact_parameters(text: &str) -> String {
+    let b = text.as_bytes();
+    let starts = |c: u8| c.is_ascii_whitespace() || b"?&;\"'>(".contains(&c);
+    let ends = |c: u8| c.is_ascii_whitespace() || b"&#<>\"'".contains(&c);
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut copied) = (0, 0);
+    while i < b.len() {
+        if !(b[i].is_ascii_alphabetic() && (i == 0 || starts(b[i - 1]))) {
+            i += 1;
+            continue;
         }
-        out = result;
+        let mut j = i;
+        while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b'_') {
+            j += 1;
+        }
+        if j < b.len() && b[j] == b'=' {
+            let mut k = j + 1;
+            while k < b.len() && !ends(b[k]) {
+                k += 1;
+            }
+            let (name, value) = (&text[i..j], &text[j + 1..k]);
+            let red = redact_query_value(name, value);
+            if red != value {
+                out.push_str(&text[copied..j + 1]);
+                out.push_str(&red);
+                copied = k;
+            }
+            i = k;
+        } else {
+            i = j;
+        }
     }
+    out.push_str(&text[copied..]);
     out
 }
 
@@ -178,8 +207,13 @@ fn replace_element(text: &str, tag: &str, f: impl Fn(&str) -> String) -> String 
     let mut rest = text;
     while let Some(start) = rest.find(&open) {
         let after = &rest[start + open.len()..];
-        let Some(end) = after.find(&close) else { break };
         out.push_str(&rest[..start + open.len()]);
+        let Some(end) = after.find(&close) else {
+            // cut open: nothing after it is known not to be the secret
+            // (what is there already is a mask, perhaps itself cut)
+            out.push_str(if after.starts_with('«') { after } else { MASK });
+            return out;
+        };
         let inner = &after[..end];
         if inner == MASK || inner.contains('…') {
             out.push_str(inner);
@@ -276,6 +310,67 @@ mod tests {
         assert!(r.contains("<RequestId>R1</RequestId>"));
         assert!(r.contains("<Code>SignatureDoesNotMatch</Code>"));
         assert_eq!(redact_text(&r), r);
+    }
+
+    /// S3's answer to a request signed wrong, as it comes: the canonical
+    /// request echoes every signed header's value.
+    const MISMATCH: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your key and signing method.</Message><AWSAccessKeyId>ASIAIOSFODNN7EXAMPLE</AWSAccessKeyId><StringToSign>AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\n7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972</StringToSign><SignatureProvided>f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41</SignatureProvided><StringToSignBytes>41 57 53 34</StringToSignBytes><CanonicalRequest>PUT\n/b/k\nX-Amz-Credential=ASIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Security-Token=FQoGZXIvYXdzQUERY\nhost:b.s3.amazonaws.com\nx-amz-date:20130524T000000Z\nx-amz-security-token:FQoGZXIvYXdzHEADER\nx-amz-server-side-encryption-customer-key:c3NlLWMta2V5LXNlY3JldA==\n\nhost;x-amz-date;x-amz-security-token;x-amz-server-side-encryption-customer-key\nUNSIGNED-PAYLOAD</CanonicalRequest><CanonicalRequestBytes>50 55 54 0a 2f 62 2f 6b 0a 46 51 6f 47</CanonicalRequestBytes><RequestId>R1</RequestId><HostId>H1</HostId></Error>";
+
+    #[test]
+    fn a_signature_mismatch_keeps_nothing_it_echoes() {
+        let r = redact_text(MISMATCH);
+        for secret in [
+            "FQoGZXIvYXdz",
+            "c3NlLWMta2V5LXNlY3JldA",
+            "f0e8bdb8",
+            "ASIAIOSFODNN7EXAMPLE",
+            "50 55 54 0a",
+        ] {
+            assert!(!r.contains(secret), "{secret} in {r}");
+        }
+        assert!(r.contains("<Code>SignatureDoesNotMatch</Code>"), "{r}");
+        assert!(r.contains("<RequestId>R1</RequestId>"), "{r}");
+        assert_eq!(redact_text(&r), r, "idempotent");
+    }
+
+    #[test]
+    fn presign_parameters_in_text_in_any_case_and_any_separator() {
+        for text in [
+            "url\thttps://h/k?x-amz-signature=deadbeef&X-Amz-Date=1",
+            "<Url>https://h/k?X-Amz-Date=1&amp;X-Amz-Signature=deadbeef&amp;X-Amz-Expires=9</Url>",
+            "GET\n/k\nX-Amz-Date=1&X-Amz-Security-Token=deadbeef&X-Amz-SignedHeaders=host",
+            "see\nhttps://h/k?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=deadbeef",
+        ] {
+            let r = redact_text(text);
+            assert!(!r.contains("deadbeef"), "{r}");
+            assert!(!r.contains("AKIAIOSFODNN7EXAMPLE"), "{r}");
+            assert_eq!(redact_text(&r), r, "idempotent");
+        }
+        let r = redact_text("q: X-Amz-Date=1&amp;X-Amz-Expires=9");
+        assert_eq!(r, "q: X-Amz-Date=1&amp;X-Amz-Expires=9");
+    }
+
+    #[test]
+    fn an_element_cut_open_is_masked_to_the_end() {
+        let at = MISMATCH.find("x-amz-security-token:").unwrap() + 30;
+        let r = redact_text(&MISMATCH[..at]);
+        assert!(!r.contains("FQoG"), "{r}");
+        assert_eq!(redact_text(&r), r, "idempotent");
+        // a record's error body, cut at its limit inside the echo
+        let pad =
+            crate::record::MAX_ERROR_BODY - MISMATCH.find("x-amz-security-token:").unwrap() - 25;
+        let body = format!("{}{}", " ".repeat(pad), MISMATCH);
+        let mut rec = crate::Record::default();
+        rec.rare_mut().error_body = Some(body);
+        let rec = rec.redacted();
+        let got = rec.rare().error_body.clone().unwrap();
+        assert!(!got.contains("FQoG"), "{}", &got[got.len() - 200..]);
+        assert!(
+            got.ends_with("… (truncated)"),
+            "{}",
+            &got[got.len() - 200..]
+        );
+        assert_eq!(rec.clone().redacted(), rec, "idempotent");
     }
 
     #[test]

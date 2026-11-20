@@ -311,16 +311,12 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             if a.requests {
                 w.key("requests")?;
                 w.begin_array()?;
-                sonde_analysis::share::each_record(
-                    &file,
-                    &mut all.iter().map(|r| r.id),
-                    &mut |r| {
-                        if !a.errors || sonde_analysis::summary::is_failure(&r) {
-                            w.value(&r)?;
-                        }
-                        Ok(())
-                    },
-                )?;
+                sonde_analysis::share::each_record(&file, run.afresh, &mut |r| {
+                    if !a.errors || sonde_analysis::summary::is_failure(&r) {
+                        w.value(&r)?;
+                    }
+                    Ok(())
+                })?;
                 w.end_array()?;
             }
             w.end_object()?;

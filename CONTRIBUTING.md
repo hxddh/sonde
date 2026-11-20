@@ -30,7 +30,7 @@ cargo shear                              # no unused dependencies
 python3 scripts/fixtures.py --check      # run fixtures in the current format
 (cd app && nsh check)
 python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
-python3 scripts/check-readme-images.py   # docs/images are the tour's approved linux pictures (needs Pillow)
+python3 scripts/check-readme-images.py   # docs/images are the tour's approved linux pictures (needs Pillow); @vN is Cargo.toml's major
 (cd app && nsh build App.tsx 2>&1 | tee build.log; ! grep -E "^warn" build.log)   # no warnings
 # unit
 cargo test --workspace --locked

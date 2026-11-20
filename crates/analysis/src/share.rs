@@ -169,14 +169,16 @@ impl<W: std::io::Write> JsonOut<W> {
 }
 
 /// A run's records as they are in its file, each handed to `each` with
-/// the id the run read gave it (`ids`, in the file's order: a file joined
-/// from two recordings is numbered afresh). For writing every record out in
-/// full beside an analysis made of [`RunFile::open_lean`].
+/// the id the run read gave it: its place in the file where the run was
+/// numbered `afresh` (a file joined from two recordings), else its own. For
+/// writing every record out in full beside an analysis made of
+/// [`RunFile::open_lean`].
 pub fn each_record(
     path: &Path,
-    ids: &mut dyn Iterator<Item = u64>,
+    afresh: bool,
     each: &mut dyn FnMut(reqlog::Record) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    let mut place = 0u64;
     let mut lines = crate::run::Lines::open(path)?;
     // the header
     lines.line()?;
@@ -189,8 +191,10 @@ pub fn each_record(
         let Ok(mut r) = serde_json::from_str::<reqlog::Record>(text.trim_end_matches('\r')) else {
             continue;
         };
-        let Some(id) = ids.next() else { break };
-        r.id = id;
+        place += 1;
+        if afresh {
+            r.id = place;
+        }
         each(r)?;
     }
     Ok(())
@@ -262,9 +266,7 @@ pub fn write_run_json(
     w.key("records")?;
     w.begin_array()?;
     match full {
-        Some(path) => each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
-            w.json(&shared_record(&r))
-        })?,
+        Some(path) => each_record(path, s.afresh, &mut |r| w.json(&shared_record(&r)))?,
         None => {
             for r in &s.records {
                 w.json(&shared_record(r))?;
@@ -288,26 +290,23 @@ pub fn write_run_json(
 }
 
 /// What a JSON document is written through inside the page's `<script>`:
-/// `</` becomes `<\/` (the same text to JSON), so no string in it closes the
-/// script.
+/// every `<` becomes `\u003c` (the same text to JSON: JSON has `<` only in
+/// strings), so no string in it opens a comment or closes the script.
 struct InScript<W: Write> {
     out: W,
-    lt: bool,
 }
 
 impl<W: Write> Write for InScript<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut from = 0;
         for (i, &b) in buf.iter().enumerate() {
-            if b == b'/' && (self.lt || (i > 0 && buf[i - 1] == b'<')) {
+            if b == b'<' {
                 self.out.write_all(&buf[from..i])?;
-                self.out.write_all(b"\\")?;
-                from = i;
+                self.out.write_all(b"\\u003c")?;
+                from = i + 1;
             }
-            self.lt = false;
         }
         self.out.write_all(&buf[from..])?;
-        self.lt = buf.last() == Some(&b'<');
         Ok(buf.len())
     }
 
@@ -489,10 +488,7 @@ pub fn write_page(
         esc(&title)
     )?;
     {
-        let mut inside = InScript {
-            out: &mut out,
-            lt: false,
-        };
+        let mut inside = InScript { out: &mut out };
         write_run_json(s, full, prices, compared, &mut inside)?;
     }
     write!(
@@ -506,6 +502,27 @@ pub fn write_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_text_in_the_document_opens_or_closes_markup_in_the_page() {
+        let doc = serde_json::json!({
+            "k": "<!-- <script>x</script> </SCRIPT <ScRiPt",
+            "n": ["<", "<<", "a</", "<!--"],
+        });
+        let text = serde_json::to_vec(&doc).unwrap();
+        // written in pieces cut anywhere
+        for cut in 0..text.len() {
+            let mut page = Vec::new();
+            {
+                let mut inside = InScript { out: &mut page };
+                inside.write_all(&text[..cut]).unwrap();
+                inside.write_all(&text[cut..]).unwrap();
+            }
+            assert!(!page.contains(&b'<'), "{}", String::from_utf8_lossy(&page));
+            let back: Value = serde_json::from_slice(&page).unwrap();
+            assert_eq!(back, doc);
+        }
+    }
 
     #[test]
     fn the_page_sets_the_viewers_linked_stylesheet_inline() {
@@ -609,6 +626,7 @@ mod tests {
             },
             records: vec![],
             logs: vec![],
+            afresh: false,
         };
         let doc = super::run_json(&s, &Default::default()).to_string();
         assert!(!doc.contains("hunter2"), "{doc}");

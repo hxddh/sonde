@@ -268,6 +268,7 @@ pub(super) async fn import_logs(
         header,
         records,
         logs: Vec::new(),
+        afresh: false,
     };
     sonde_analysis::import::save(&run, &path)?;
     drop(run);

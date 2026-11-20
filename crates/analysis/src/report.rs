@@ -273,6 +273,7 @@ mod tests {
                 rec(3, "tables/t/_delta_log/00000000000000000010.json"),
             ],
             logs: vec![],
+            afresh: false,
         }
     }
 

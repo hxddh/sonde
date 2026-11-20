@@ -10,7 +10,7 @@ inputs:
     description: "The program's command, as you would type it, in the working directory (`python etl.py --day 2`; with shell syntax, `python etl.py && python report.py`, it is run by bash): all of it is recorded, and the program is named by what it runs (`etl`). A folder goes in working-directory, not `cd`."
     required: true
   run-args:
-    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`).
+    description: "Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`), split as a shell splits words, quotes kept; nothing is run or expanded."
     default: ""
   name:
     description: The program's name (default `[program] name` in sonde.toml for the program it `runs`, else what the command runs).
@@ -40,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `26.0.0`, `26` (the newest 26.x), `26.0` (the newest 26.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v26`: the newest 26.x; `@v26.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `27.0.0`, `27` (the newest 27.x), `27.0` (the newest 27.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v27`: the newest 27.x; `@v27.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.

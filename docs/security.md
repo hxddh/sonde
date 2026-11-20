@@ -86,3 +86,5 @@ you would without sonde.
 `sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds (`--redact`:
 bucket and key names as tokens; headers, bodies, URLs, output and arguments dropped). It fetches nothing and runs no
 server.
+The command it shows hides variables set before the program, options that name a secret (`--token …`,
+`--password=…`) and URL passwords (`https://me:…@host`).

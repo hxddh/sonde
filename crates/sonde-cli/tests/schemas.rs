@@ -436,6 +436,7 @@ async fn every_json_output_is_as_its_schema_says() {
             header: fixture.header.clone(),
             records: Vec::new(),
             logs: Vec::new(),
+            afresh: false,
         };
         for i in 0..30u64 {
             let mut r = list.clone();

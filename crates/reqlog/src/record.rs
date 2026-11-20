@@ -651,11 +651,16 @@ impl Record {
         };
         x.url = crate::redact::redact_url(&x.url);
         if let Some(body) = &mut x.error_body {
-            if body.len() > MAX_ERROR_BODY {
+            // cut, then redacted (an element cut open is masked to the
+            // end), then marked: the mark is not part of what is redacted
+            let cut = body.len() > MAX_ERROR_BODY;
+            if cut {
                 body.truncate(body.floor_char_boundary(MAX_ERROR_BODY));
-                body.push_str("\n… (truncated)");
             }
             *body = crate::redact::redact_text(body);
+            if cut {
+                body.push_str("\n… (truncated)");
+            }
         }
         if let Some(body) = &mut x.request_body {
             if body.len() > MAX_REQUEST_BODY {

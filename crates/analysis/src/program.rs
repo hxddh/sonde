@@ -38,9 +38,9 @@ pub fn command_change(a: Option<&str>, b: Option<&str>) -> Option<String> {
     let (a, b) = (a?, b?);
     let words = |c: &str| -> Vec<String> {
         let c = shell_inner(c);
-        shell_words(&c)
+        scrub_words(shell_words(&c))
             .iter()
-            .map(|w| without_trial(&unquote(&scrub_word(w))))
+            .map(|w| without_trial(&unquote(w)))
             .flat_map(|w| w.split_whitespace().map(String::from).collect::<Vec<_>>())
             .collect()
     };
@@ -373,39 +373,81 @@ pub fn file_stem(name: Option<&str>, command: Option<&str>) -> Option<String> {
 /// The command with the value of every variable it sets hidden
 /// (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole: what may leave the machine.
 pub fn scrub_command(command: &str) -> String {
-    shell_words(command)
+    scrub_words(shell_words(command)).join(" ")
+}
+
+/// Words with any secret in them hidden ([`scrub_word`]), and the word after
+/// an option that names a secret (`--token …`).
+fn scrub_words(words: Vec<String>) -> Vec<String> {
+    let mut after_secret = false;
+    words
         .into_iter()
-        .map(|w| scrub_word(&w))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .map(|w| {
+            let hide = std::mem::take(&mut after_secret)
+                && !w.starts_with('-')
+                && ![";", "|", "||", "&", "&&"].contains(&w.as_str());
+            if hide {
+                return "…".to_string();
+            }
+            after_secret = !w.contains('=') && names_secret(&w);
+            scrub_word(&w)
+        })
+        .collect()
+}
+
+/// An option (`--api-key`, `-password`) whose name says it holds a secret.
+/// A bare `--key` is an object's key (`aws s3api get-object --key …`): kept.
+fn names_secret(option: &str) -> bool {
+    let lower = option.to_ascii_lowercase();
+    let name = lower.trim_start_matches('-');
+    option.starts_with('-')
+        && (["secret", "password", "passwd", "token", "credential"]
+            .iter()
+            .any(|s| name.contains(s))
+            || (name.ends_with("key") && name != "key"))
 }
 
 /// A word with any secret in it hidden: a variable's value, an option that
-/// names a secret (`--password=…`), and both inside a quoted command
-/// (`sh -c 'KEY=… python x.py'`).
+/// names a secret (`--password=…`), a URL's password (`https://me:…@host`),
+/// and these inside a quoted command (`sh -c 'KEY=… python x.py'`).
 fn scrub_word(w: &str) -> String {
-    if let Some((name, _)) = w.split_once('=') {
-        if is_assignment(w) {
-            return format!("{name}=…");
-        }
-        let lower = name.to_ascii_lowercase();
-        if name.starts_with('-')
-            && ["secret", "password", "passwd", "token", "key", "credential"]
-                .iter()
-                .any(|s| lower.contains(s))
-        {
-            return format!("{name}=…");
-        }
+    if let Some((name, _)) = w.split_once('=')
+        && (is_assignment(w) || names_secret(name))
+    {
+        return format!("{name}=…");
     }
     for q in ['\'', '"'] {
         if w.len() >= 2 && w.starts_with(q) && w.ends_with(q) {
             let inner = &w[1..w.len() - 1];
-            if inner.contains('=') {
-                return format!("{q}{}{q}", scrub_command(inner));
+            let scrubbed = scrub_command(inner);
+            if scrubbed != shell_words(inner).join(" ") {
+                return format!("{q}{scrubbed}{q}");
             }
         }
     }
-    w.to_string()
+    scrub_userinfo(w)
+}
+
+/// `scheme://user:password@host` with the password hidden.
+fn scrub_userinfo(w: &str) -> String {
+    let mut out = String::with_capacity(w.len());
+    let mut rest = w;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let host_end = tail.find(['/', '?', '#', ' ']).unwrap_or(tail.len());
+        let authority = &tail[..host_end];
+        match authority.rsplit_once('@') {
+            Some((info, host)) if info.contains(':') => {
+                let user = info.split_once(':').map_or(info, |(u, _)| u);
+                out.push_str(&format!("{user}:…@{host}"));
+            }
+            _ => out.push_str(authority),
+        }
+        rest = &tail[host_end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A command as one line a shell runs as it was given: each argument quoted
@@ -2385,6 +2427,41 @@ mod command_tests {
             Some("python")
         );
         assert_eq!(program_name("cd etl").as_deref(), Some("cd"));
+        // a secret given as the word after its option, or in a URL
+        assert_eq!(
+            scrub_command("app --token abc --password 'p w' --day 1 --api-key=k -v"),
+            "app --token … --password … --day 1 --api-key=… -v"
+        );
+        assert_eq!(
+            scrub_command(
+                "aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key k out"
+            ),
+            "aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key … out"
+        );
+        assert_eq!(
+            scrub_command("app --secret-file --day 1"),
+            "app --secret-file --day 1"
+        );
+        assert_eq!(
+            scrub_command("app --use-token && b"),
+            "app --use-token && b"
+        );
+        assert_eq!(
+            scrub_command("psql postgres://me:hunter2@db:5432/x --url=https://u:pw@h/p"),
+            "psql postgres://me:…@db:5432/x --url=https://u:…@h/p"
+        );
+        assert_eq!(
+            scrub_command("git clone https://me@h/r"),
+            "git clone https://me@h/r"
+        );
+        assert_eq!(
+            scrub_command("sh -c 'etl --token abc s3://b/k'"),
+            "sh -c 'etl --token … s3://b/k'"
+        );
+        assert_eq!(
+            command_change(Some("etl --token abc"), Some("etl --token xyz")),
+            None
+        );
         assert_eq!(
             shell_join(&["python".into(), "my script.py".into(), "it's".into()]),
             if cfg!(windows) {

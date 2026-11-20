@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The README's pictures are this version's screens.
+"""The README is this version's: its pictures are this version's screens,
+and it and the docs name the action at this version's major.
 
     scripts/check-readme-images.py
 
@@ -8,6 +9,8 @@ SONDE_README=1) must be the same picture as its tour shot approved for linux
 in app/shots.approved.json, by the fingerprint `scripts/shots-diff.py`
 compares screens with. A picture that differs is an old screen: take the
 tour (`SONDE_README=1 sh scripts/shots.sh`) once its pictures are approved.
+Every `hxddh/sonde@vN` in the README, docs (not their history), action.yml,
+install.sh and the workflows must be Cargo.toml's major.
 The last line says `ok` or `failed`.
 """
 from __future__ import annotations
@@ -35,10 +38,28 @@ def readme_map(shots_sh: str) -> list[tuple[str, str]]:
     return [tuple(line.split()[:2]) for line in m.group(1).splitlines() if len(line.split()) >= 2]  # type: ignore[misc]
 
 
+def stale_majors() -> list[str]:
+    """Each `hxddh/sonde@vN` whose N is not Cargo.toml's major, where it is."""
+    major = re.search(r'^version = "(\d+)\.', (root / "Cargo.toml").read_text(), re.M).group(1)  # type: ignore[union-attr]
+    files = [root / "README.md", root / "action.yml", root / "install.sh"]
+    files += [p for p in (root / "docs").rglob("*.md") if "history" not in p.parts]
+    files += sorted((root / ".github" / "workflows").glob("*.yml"))
+    return [
+        f"{p.relative_to(root)}:{n}: hxddh/sonde@v{m.group(1)}, not v{major} (Cargo.toml's major)"
+        for p in files
+        for n, line in enumerate(p.read_text().splitlines(), 1)
+        for m in re.finditer(r"hxddh/sonde@v(\d+)", line)
+        if m.group(1) != major
+    ]
+
+
 def main() -> int:
+    stale = stale_majors()
+    for line in stale:
+        print(line)
     pairs = readme_map((root / "scripts" / "shots.sh").read_text())
     approved = json.loads((root / "app" / "shots.approved.json").read_text()).get("pictures", {}).get(PLATFORM, {})
-    failed = not pairs
+    failed = not pairs or bool(stale)
     if not pairs:
         print("scripts/shots.sh: no README map (<<'MAP' … MAP)")
     same = 0
@@ -56,7 +77,7 @@ def main() -> int:
             failed = True
         else:
             same += 1
-    print(f"readme images: {same} of {len(pairs)} are the tour's approved {PLATFORM} pictures (SONDE_README=1 sh scripts/shots.sh takes them): {'failed' if failed else 'ok'}")
+    print(f"readme images: {same} of {len(pairs)} are the tour's approved {PLATFORM} pictures (SONDE_README=1 sh scripts/shots.sh takes them); {len(stale)} names of the action at another major: {'failed' if failed else 'ok'}")
     return 1 if failed else 0
 
 

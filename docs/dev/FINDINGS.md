@@ -1,10 +1,10 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (pinned at its tag `v0.6.0`, commit `5541637`, see
+sonde was written against Native Shell as it is (pinned at its tag `v0.6.1`, commit `2f51d86`, see
 `Cargo.toml`), without changing it. These are the gaps it met, each with what sonde does instead. Those Native Shell
 has since fixed, and what sonde took from 0.5.0: [history](../history/findings-resolved.md).
-Rechecked at `v0.6.0`: every one below stands (1 retested behind a TLS-inspecting proxy, the rest against 0.6.0's
-changes), so no workaround was removed.
+Rechecked at `v0.6.1`: every one below stands (its changes, a 0.6-line backport, touch none of them), so no
+workaround was removed.
 
 ## Open
 

@@ -22,6 +22,12 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 const LIFE_DAYS: i64 = 800;
 const RENEW_DAYS: u64 = 760;
 
+/// Held while one process checks, makes and reads the folder's files, so
+/// two never mix one's key with the other's certificate; one older than
+/// [`LOCK_STALE`] (its process died) is taken.
+const LOCK: &str = "make.lock";
+const LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The endpoint's certificate, ready to serve.
 pub struct Tls {
     pub config: Arc<rustls::ServerConfig>,
@@ -36,6 +42,8 @@ impl Tls {
     /// The certificate kept in `dir`, made there first if it is missing or
     /// near its end.
     pub fn load_or_make(dir: &Path) -> Result<Tls, String> {
+        create_private_dir(dir)?;
+        let _lock = Lock::take(dir)?;
         let (ca, cert, key) = (
             dir.join("ca.pem"),
             dir.join("cert.pem"),
@@ -92,6 +100,45 @@ impl Tls {
     }
 }
 
+/// The folder's [`LOCK`], removed when dropped.
+struct Lock(PathBuf);
+
+impl Lock {
+    fn take(dir: &Path) -> Result<Lock, String> {
+        let path = dir.join(LOCK);
+        let since = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Lock(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // (a time in the future, a clock moved: waited out too)
+                    let old = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > LOCK_STALE);
+                    if old || since.elapsed() > LOCK_STALE {
+                        let _ = std::fs::remove_file(&path);
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// A new authority, the endpoint's certificate issued by it, and its key.
 /// The authority's key is never written.
 fn make(dir: &Path) -> Result<(), String> {
@@ -137,7 +184,6 @@ fn make(dir: &Path) -> Result<(), String> {
     (leaf.not_before, leaf.not_after) = (since, until);
     let cert = leaf.signed_by(&key, &ca).map_err(err)?;
 
-    create_private_dir(dir)?;
     write_file(&dir.join("key.pem"), key.serialize_pem().as_bytes(), true)?;
     write_file(&dir.join("ca.pem"), ca.pem().as_bytes(), false)?;
     // the certificate last: its time is what says the three are fresh
@@ -151,12 +197,22 @@ fn names_its_authority(pem: &[u8]) -> bool {
     CertificateDer::from_pem_slice(pem).is_ok_and(|der| der.windows(AKI.len()).any(|w| w == AKI))
 }
 
-/// The machine's roots (as far as they can be read) and the authority.
+/// The machine's roots (as far as they can be read) and the authority,
+/// written only when that changed (a program may be reading it).
 fn write_bundle(ca: &Path, bundle: &Path) -> Result<(), String> {
     use base64::Engine;
     let mut text = String::new();
-    for c in rustls_native_certs::load_native_certs().certs {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(c.as_ref());
+    // in one order, each once: macOS's keychains hand them out in an order
+    // of their own each time, and the bundle is rewritten only when it changes
+    let mut roots: Vec<Vec<u8>> = rustls_native_certs::load_native_certs()
+        .certs
+        .into_iter()
+        .map(|c| c.as_ref().to_vec())
+        .collect();
+    roots.sort_unstable();
+    roots.dedup();
+    for c in roots {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&c);
         text.push_str("-----BEGIN CERTIFICATE-----\n");
         for line in b64.as_bytes().chunks(64) {
             text.push_str(std::str::from_utf8(line).unwrap_or_default());
@@ -165,6 +221,9 @@ fn write_bundle(ca: &Path, bundle: &Path) -> Result<(), String> {
         text.push_str("-----END CERTIFICATE-----\n");
     }
     text.push_str(&std::fs::read_to_string(ca).map_err(|e| format!("{}: {e}", ca.display()))?);
+    if std::fs::read(bundle).is_ok_and(|b| b == text.as_bytes()) {
+        return Ok(());
+    }
     write_file(bundle, text.as_bytes(), false)
 }
 
@@ -178,13 +237,17 @@ fn create_private_dir(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Writes a file whole, through a new file renamed over it (two runs at
-/// once never read half of one); a private one is the owner's alone.
+/// Writes a file whole, through a new file of its own (named by the
+/// process and a count) renamed over it: two runs at once never read half
+/// of one; a private one is the owner's alone.
 fn write_file(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let wrong = |e: std::io::Error| format!("{}: {e}", path.display());
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
     let mut open = std::fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
+    open.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -237,5 +300,52 @@ mod tests {
             env.iter()
                 .any(|(k, v)| k == "AWS_CA_BUNDLE" && v.ends_with("bundle.pem"))
         );
+    }
+
+    #[test]
+    fn made_by_one_at_a_time_and_the_bundle_left_alone_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path().join("tls");
+        // many at once on a fresh folder: each serves a key and certificate
+        // that go together, and all the same ones
+        let made: Vec<Vec<u8>> = std::thread::scope(|s| {
+            let all: Vec<_> = (0..8)
+                .map(|_| {
+                    s.spawn(|| {
+                        let t = Tls::load_or_make(&at).unwrap();
+                        std::fs::read(t.ca).unwrap()
+                    })
+                })
+                .collect();
+            all.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(made.windows(2).all(|w| w[0] == w[1]), "one authority");
+        let names = || {
+            let mut n: Vec<String> = std::fs::read_dir(&at)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            n.sort();
+            n
+        };
+        assert_eq!(names(), ["bundle.pem", "ca.pem", "cert.pem", "key.pem"]);
+        // the bundle is written only when it changes
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let ino = || std::fs::metadata(at.join("bundle.pem")).unwrap().ino();
+            let before = ino();
+            Tls::load_or_make(&at).unwrap();
+            assert_eq!(ino(), before);
+        }
+        // a lock left by a process that died is taken once it is old
+        let lock = at.join(LOCK);
+        let f = std::fs::File::create(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - 2 * LOCK_STALE)
+            .unwrap();
+        drop(f);
+        std::fs::remove_file(at.join("cert.pem")).unwrap();
+        Tls::load_or_make(&at).unwrap();
+        assert_eq!(names(), ["bundle.pem", "ca.pem", "cert.pem", "key.pem"]);
     }
 }

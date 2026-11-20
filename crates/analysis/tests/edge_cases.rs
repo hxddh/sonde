@@ -161,9 +161,14 @@ fn records_joined_from_two_recordings_get_ids_of_their_own() {
     w.flush().unwrap();
     drop(w);
     let s = RunFile::open(&path).unwrap();
-    let ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
-    assert_eq!(ids, [1, 2, 3]);
-    assert_eq!(s.records[2].key.as_deref(), Some("c"));
+    // numbered in the file's order, read in the order they were sent
+    let ids: Vec<(u64, &str)> = s
+        .records
+        .iter()
+        .map(|r| (r.id, r.key.as_deref().unwrap()))
+        .collect();
+    assert_eq!(ids, [(1, "a"), (3, "c"), (2, "b")]);
+    assert!(s.afresh);
 }
 
 #[test]
@@ -415,4 +420,92 @@ fn a_record_written_after_a_newer_one_is_still_read() {
     let mut ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
     ids.sort();
     assert_eq!(ids, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn a_key_deleted_in_a_batch_is_read_by_its_name() {
+    // `a&b`, written `a&amp;b` in the batch: a range of it read, the key
+    // deleted, the range read again (the second read is of a new object)
+    let range = |mut r: Record| {
+        r.lists_mut()
+            .request_headers
+            .push(reqlog::Header::new("Range", "bytes=0-9"));
+        r
+    };
+    let mut batch = rec(2, 10, "POST", "DeleteObjects", None, 200);
+    batch.rare_mut().request_body =
+        Some("<Delete><Object><Key>a&amp;b</Key></Object></Delete>".into());
+    let rs = [
+        range(rec(1, 0, "GET", "GetObject", Some("a&b"), 206)),
+        batch,
+        range(rec(3, 20, "GET", "GetObject", Some("a&b"), 206)),
+    ];
+    let obs = sonde_analysis::episode::traces(&rs, &episodes(&rs));
+    assert!(
+        !obs.iter().any(|o| o.kind == "obs.rangeagain"),
+        "{:?}",
+        obs.iter().map(|o| &o.kind).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_batch_saves_on_markers_only_when_it_deletes_markers_only() {
+    let mut marker = rec(1, 0, "PUT", "PutObject", Some("out/"), 200);
+    marker.request_bytes = Some(0).into();
+    let batch = |id: u64, keys: &[&str]| {
+        let mut r = rec(id, id as i64 * 10, "POST", "DeleteObjects", None, 200);
+        let objects: String = keys
+            .iter()
+            .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+            .collect();
+        r.rare_mut().request_body = Some(format!("<Delete>{objects}</Delete>"));
+        r
+    };
+    let rs = [
+        marker,
+        // data and a marker: the batch is sent for the data all the same
+        batch(2, &["out/", "out/part-0.csv"]),
+        batch(3, &["tmp/", "out/a/"]),
+    ];
+    let obs = sonde_analysis::episode::traces(&rs, &episodes(&rs));
+    let markers = obs.iter().find(|o| o.kind == "obs.markers").unwrap();
+    assert_eq!(markers.saved_ids, [3]);
+}
+
+#[test]
+fn an_object_written_between_its_range_and_whole_reads_is_not_read_twice() {
+    let ranged = |mut r: Record| {
+        r.lists_mut()
+            .request_headers
+            .push(reqlog::Header::new("Range", "bytes=0-9"));
+        r
+    };
+    let whole = |id: u64, at: i64| {
+        let mut r = rec(id, at, "GET", "GetObject", Some("t.parquet"), 200);
+        r.response_bytes = Some(4 << 20).into();
+        r
+    };
+    let rs = [
+        ranged(rec(1, 0, "GET", "GetObject", Some("t.parquet"), 206)),
+        rec(2, 10, "PUT", "PutObject", Some("t.parquet"), 200),
+        whole(3, 20),
+    ];
+    let kinds = |rs: &[Record]| -> Vec<String> {
+        sonde_analysis::episode::traces(rs, &episodes(rs))
+            .into_iter()
+            .map(|o| o.kind)
+            .collect()
+    };
+    assert!(
+        !kinds(&rs).contains(&"obs.wholeread".into()),
+        "{:?}",
+        kinds(&rs)
+    );
+    // with nothing written between, it is
+    let rs = [rs[0].clone(), whole(3, 20)];
+    assert!(
+        kinds(&rs).contains(&"obs.wholeread".into()),
+        "{:?}",
+        kinds(&rs)
+    );
 }

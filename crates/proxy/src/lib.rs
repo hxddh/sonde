@@ -108,13 +108,78 @@ impl Policy {
     }
 
     /// Why a request is refused for what its document says, once it is
-    /// read: versioning suspended (or a document not read) under no-delete.
-    /// A suspended bucket's next write replaces the version it would keep.
+    /// read: versioning anything but enabled (or a document not read) under
+    /// no-delete. A suspended bucket's next write replaces the version it
+    /// would keep.
     pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
         (self == Policy::NoDelete
             && op == "PutBucketVersioning"
-            && body.is_none_or(|b| b.contains("Suspended")))
+            && !body.is_some_and(keeps_versions))
         .then_some("no-delete")
+    }
+}
+
+/// Whether a PutBucketVersioning document, read as an XML reader reads it,
+/// leaves versioning on: `VersioningConfiguration` (the S3 namespace its
+/// only attribute) holding at most one `Status`, `Enabled`, and one
+/// `MfaDelete`, `Enabled` or `Disabled`, as plain text. Anything else
+/// (entities, comments, CDATA, prefixes, another encoding) is not.
+fn keeps_versions(doc: &str) -> bool {
+    use quick_xml::events::Event;
+    const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
+    let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
+    let mut reader = quick_xml::Reader::from_str(doc);
+    // the open element, what its text was, and the fields seen
+    let mut open: Vec<String> = Vec::new();
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let (mut first, mut rooted) = (true, false);
+    loop {
+        let Ok(event) = reader.read_event() else {
+            return false;
+        };
+        match event {
+            Event::Decl(_) if first => {}
+            Event::Start(e) => {
+                let name = e.name().0.to_string();
+                let fits = match open.len() {
+                    0 => !rooted && name == "VersioningConfiguration",
+                    1 => {
+                        (name == "Status" || name == "MfaDelete")
+                            && !seen.iter().any(|(n, _)| *n == name)
+                    }
+                    _ => false,
+                };
+                let plain = e.attributes().all(|a| {
+                    a.is_ok_and(|a| open.is_empty() && a.key.0 == "xmlns" && a.value == NS)
+                });
+                if !(fits && plain) {
+                    return false;
+                }
+                rooted = true;
+                if open.len() == 1 {
+                    seen.push((name.clone(), String::new()));
+                }
+                open.push(name);
+            }
+            Event::End(_) => {
+                open.pop();
+            }
+            Event::Text(t) if open.len() == 2 => match seen.last_mut() {
+                Some((_, text)) if text.is_empty() => text.push_str(&t),
+                _ => return false,
+            },
+            Event::Text(t) if space(&t) => {}
+            Event::Eof => {
+                return rooted
+                    && open.is_empty()
+                    && seen.iter().all(|(n, v)| match n.as_str() {
+                        "Status" => v == "Enabled",
+                        _ => v == "Enabled" || v == "Disabled",
+                    });
+            }
+            _ => return false,
+        }
+        first = false;
     }
 }
 
@@ -237,13 +302,13 @@ impl Made {
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
             ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
-            ("DeleteObjects", Some(b), None) => {
-                document.and_then(delete_list).is_some_and(|objects| {
+            ("DeleteObjects", Some(b), None) => document
+                .and_then(reqlog::deleted_objects_strict)
+                .is_some_and(|objects| {
                     objects
                         .iter()
                         .all(|(k, v)| self.own_object(b, k, v.as_deref()))
-                })
-            }
+                }),
             ("DeleteBucket", Some(b), None) => self.buckets.lock().contains(b),
             _ => false,
         }
@@ -259,78 +324,6 @@ impl Made {
             .lock()
             .iter()
             .any(|p| under(key, p) || under(&full, p))
-    }
-}
-
-/// The objects a DeleteObjects document names (key, version), read as an
-/// XML reader reads it: none when it does not read cleanly or holds anything
-/// but `Delete`, its `Object`s (each one `Key`, at most one `VersionId`,
-/// `ETag`, `LastModifiedTime`, `Size`) and `Quiet`, so a store never removes
-/// an object the guard did not see. No prefixes, attributes (but the S3
-/// namespace on `Delete`), comments, CDATA, doctype or entities of its own.
-fn delete_list(doc: &str) -> Option<Vec<(String, Option<String>)>> {
-    use quick_xml::events::Event;
-    const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
-    const FIELDS: [&str; 5] = ["Key", "VersionId", "ETag", "LastModifiedTime", "Size"];
-    let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
-    let mut reader = quick_xml::Reader::from_str(doc);
-    let mut open: Vec<String> = Vec::new();
-    let mut fields: Vec<(String, String)> = Vec::new(); // the open Object's
-    let mut text = String::new(); // the open field's
-    let mut out = Vec::new();
-    let (mut first, mut rooted, mut quiet) = (true, false, false);
-    loop {
-        // a field (Delete/Object/Key) or Quiet (Delete/Quiet) holds text
-        let leaf = open.len() == 3 || open.last().is_some_and(|n| n == "Quiet");
-        match reader.read_event().ok()? {
-            Event::Decl(_) if first => {}
-            Event::Start(e) => {
-                let name = e.name().0;
-                let fits = match open.len() {
-                    0 => name == "Delete" && !rooted,
-                    1 => name == "Object" || (name == "Quiet" && !quiet),
-                    2 => {
-                        open[1] == "Object"
-                            && FIELDS.contains(&name)
-                            && !fields.iter().any(|(n, _)| n == name)
-                    }
-                    _ => false,
-                };
-                if !fits {
-                    return None;
-                }
-                for a in e.attributes() {
-                    let a = a.ok()?;
-                    if !(open.is_empty() && a.key.0 == "xmlns" && a.value == NS) {
-                        return None;
-                    }
-                }
-                rooted = true;
-                quiet |= name == "Quiet";
-                open.push(name.to_string());
-                text.clear();
-            }
-            Event::End(_) => {
-                // the reader checks the name matches
-                let name = open.pop()?;
-                if open.len() == 2 {
-                    fields.push((name, std::mem::take(&mut text)));
-                } else if name == "Object" {
-                    let get = |n: &str| fields.iter().find(|(f, _)| f == n).map(|(_, v)| v.clone());
-                    out.push((get("Key")?, get("VersionId")));
-                    fields.clear();
-                }
-            }
-            Event::Text(t) if leaf => text.push_str(&t.xml10_content()),
-            Event::Text(t) if space(&t) => {}
-            Event::GeneralRef(r) if leaf => match r.resolve_char_ref().ok()? {
-                Some(c) => text.push(c),
-                None => text.push_str(quick_xml::escape::resolve_xml_entity(&r)?),
-            },
-            Event::Eof => return (rooted && open.is_empty() && !out.is_empty()).then_some(out),
-            _ => return None,
-        }
-        first = false;
     }
 }
 
@@ -1149,13 +1142,18 @@ pub fn parse_query(raw: Option<&str>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Text for an XML element: `&`, `<`, `>` escaped.
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
     let body = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{}</Message><RequestId>sonde-proxy</RequestId></Error>",
-        message
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{}</Code><Message>{}</Message><RequestId>sonde-proxy</RequestId></Error>",
+        xml_text(code),
+        xml_text(message)
     );
     Response::builder()
         .status(status)
@@ -1168,7 +1166,9 @@ fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
 /// An injected fault's answer: S3's error document, marked as sonde's.
 fn fault_error(status: u16, code: &str, message: &str, scenario: &str) -> Response<Out> {
     let body = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{message}</Message><RequestId>sonde-fault</RequestId></Error>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{}</Code><Message>{}</Message><RequestId>sonde-fault</RequestId></Error>",
+        xml_text(code),
+        xml_text(message)
     );
     Response::builder()
         .status(status)
@@ -2578,6 +2578,20 @@ impl Drop for Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_injected_error_is_escaped_as_a_refusal_is() {
+        use http_body_util::BodyExt;
+        let body = |r: Response<Out>| {
+            let b = futures::executor::block_on(r.into_body().collect()).unwrap();
+            String::from_utf8(b.to_bytes().to_vec()).unwrap()
+        };
+        let f = body(fault_error(503, "A<b>&", "m</Message><x>", "s"));
+        assert!(
+            f.contains("<Code>A&lt;b&gt;&amp;</Code><Message>m&lt;/Message&gt;&lt;x&gt;</Message>"),
+            "{f}"
+        );
+    }
 
     #[test]
     fn a_bucket_elsewhere_is_reached_in_its_region() {
