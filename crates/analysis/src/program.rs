@@ -408,10 +408,10 @@ fn names_secret(option: &str) -> bool {
 /// names a secret (`--password=…`), a URL's password (`https://me:…@host`),
 /// and these inside a quoted command (`sh -c 'KEY=… python x.py'`).
 fn scrub_word(w: &str) -> String {
-    if let Some((name, _)) = w.split_once('=') {
-        if is_assignment(w) || names_secret(name) {
-            return format!("{name}=…");
-        }
+    if let Some((name, _)) = w.split_once('=')
+        && (is_assignment(w) || names_secret(name))
+    {
+        return format!("{name}=…");
     }
     for q in ['\'', '"'] {
         if w.len() >= 2 && w.starts_with(q) && w.ends_with(q) {
