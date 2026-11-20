@@ -188,7 +188,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-204 | The tour's measured screens | exempt; fixtures | **Committed sessions**: no picture is exempt. |
 | D-205 | Timed tests | nightly with a retry; every change, held | **Every change, held at peak memory with no retry** (each test optimised, in a process of its own); time is said, and held only past several times what it takes ([performance](performance.md)). Supersedes D-155. |
 | D-206 | Breaking a stable thing | announce one version ahead; break in the major that makes it | **In the major that makes it**, without notice, by the owner's decision (21.0): no aliases, shims or "deprecated". Supersedes D-197. |
-| D-207 | Native Shell's pin | a tag; its main | **Its tag v0.6.0 (5541637)**: spring motion, install on quit, notes per language, strict-CSP web pages; the apps require `>=0.6, <0.7`. Supersedes D-002. |
+| D-207 | Native Shell's pin | a tag; its main | **Its tag v0.6.1 (2f51d86)**: spring motion, install on quit, notes per language, strict-CSP web pages; 0.6.1 backports fixes (DataTable's scroll bar between fixed columns, a keyed `List`'s index); the apps require `>=0.6, <0.7`. Supersedes D-002. |
 | D-208 | Type | sizes; sizes with their lines | **Each size with its line** (11/16 … 20/28); Chinese captions 12 pt; pages write `TEXT` roles. |
 | D-209 | Motion and depth | per component; tokens; lengths and ease; one spring | **One spring, `SPRING` 620/45**, three shadows: no lengths; a press sinks; nothing moves under reduce-motion; chart draws keep Plot's own lengths. |
 | D-210 | Status colour | paints text and fills; marks | **Marks only**: a dot, an icon or a rule; one `TONE` table; verdicts are quiet words. |
