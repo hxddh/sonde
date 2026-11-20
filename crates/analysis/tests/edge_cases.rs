@@ -447,3 +447,65 @@ fn a_key_deleted_in_a_batch_is_read_by_its_name() {
         obs.iter().map(|o| &o.kind).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_batch_saves_on_markers_only_when_it_deletes_markers_only() {
+    let mut marker = rec(1, 0, "PUT", "PutObject", Some("out/"), 200);
+    marker.request_bytes = Some(0).into();
+    let batch = |id: u64, keys: &[&str]| {
+        let mut r = rec(id, id as i64 * 10, "POST", "DeleteObjects", None, 200);
+        let objects: String = keys
+            .iter()
+            .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+            .collect();
+        r.rare_mut().request_body = Some(format!("<Delete>{objects}</Delete>"));
+        r
+    };
+    let rs = [
+        marker,
+        // data and a marker: the batch is sent for the data all the same
+        batch(2, &["out/", "out/part-0.csv"]),
+        batch(3, &["tmp/", "out/a/"]),
+    ];
+    let obs = sonde_analysis::episode::traces(&rs, &episodes(&rs));
+    let markers = obs.iter().find(|o| o.kind == "obs.markers").unwrap();
+    assert_eq!(markers.saved_ids, [3]);
+}
+
+#[test]
+fn an_object_written_between_its_range_and_whole_reads_is_not_read_twice() {
+    let ranged = |mut r: Record| {
+        r.lists_mut()
+            .request_headers
+            .push(reqlog::Header::new("Range", "bytes=0-9"));
+        r
+    };
+    let whole = |id: u64, at: i64| {
+        let mut r = rec(id, at, "GET", "GetObject", Some("t.parquet"), 200);
+        r.response_bytes = Some(4 << 20).into();
+        r
+    };
+    let rs = [
+        ranged(rec(1, 0, "GET", "GetObject", Some("t.parquet"), 206)),
+        rec(2, 10, "PUT", "PutObject", Some("t.parquet"), 200),
+        whole(3, 20),
+    ];
+    let kinds = |rs: &[Record]| -> Vec<String> {
+        sonde_analysis::episode::traces(rs, &episodes(rs))
+            .into_iter()
+            .map(|o| o.kind)
+            .collect()
+    };
+    assert!(
+        !kinds(&rs).contains(&"obs.wholeread".into()),
+        "{:?}",
+        kinds(&rs)
+    );
+    // with nothing written between, it is
+    let rs = [rs[0].clone(), whole(3, 20)];
+    assert!(
+        kinds(&rs).contains(&"obs.wholeread".into()),
+        "{:?}",
+        kinds(&rs)
+    );
+}
