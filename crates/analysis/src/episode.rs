@@ -2070,7 +2070,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // the same key read again and again, and the same each time: what a
     // cache would answer as the store did (counted by the records' own
     // names: only a hot key's is written out)
-    let writes = writes_by_bucket(records);
+    let batches = batch_deletes(records);
+    let writes = writes_by_bucket(records, &batches);
     // each bucket's writes by key, then time (by place): where a key's are
     let by_key: HashMap<&str, Vec<u32>> = writes
         .iter()
@@ -2291,29 +2292,53 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         drop(ranges);
         // objects read whole and by range both: the program reads only parts
         // of them elsewhere, so a whole read fetches what it does not use
-        // (each read whole saves what it read past the ranges read of it)
-        let mut by_range: HashMap<(&str, &str), (BTreeSet<&str>, u64)> = HashMap::new();
+        // (each read whole saves what it read past the ranges read of it,
+        // of the same object: nothing written to it between)
+        let mut by_range: HashMap<(&str, &str), Vec<(Order, &str, u64)>> = HashMap::new();
         for (_, r) in gets().filter(|(_, r)| ranged(r)) {
-            let e = by_range.entry(place_of(r)).or_default();
-            if e.0.insert(header(r, "range").unwrap_or("")) {
-                e.1 += r.response_bytes.get().unwrap_or(0);
-            }
+            by_range.entry(place_of(r)).or_default().push((
+                order_of(r),
+                header(r, "range").unwrap_or(""),
+                r.response_bytes.get().unwrap_or(0),
+            ));
         }
+        // a key's writes, in time order
+        let writes_of = |b: &str, k: &str| -> Vec<Order> {
+            let (Some(w), Some(at)) = (writes.get(b), by_key.get(b)) else {
+                return Vec::new();
+            };
+            let from = at.partition_point(|i| w[*i as usize].1 < k);
+            let to = at.partition_point(|i| w[*i as usize].1 <= k);
+            at[from..to].iter().map(|i| w[*i as usize].0).collect()
+        };
         let (mut whole, mut whole_bytes, mut saved_bytes) = (Vec::new(), 0u64, 0u64);
         let mut whole_objects: BTreeSet<(&str, &str)> = BTreeSet::new();
         let mut under: Option<String> = None;
         for (_, r) in gets().filter(|(_, r)| !ranged(r) && query(r, "partNumber").is_none()) {
             let bytes = r.response_bytes.get().unwrap_or(0);
-            let Some((_, parts)) = by_range.get(&place_of(r)) else {
+            let Some(read) = by_range.get(&place_of(r)).filter(|_| bytes >= WHOLE_READ) else {
                 continue;
             };
-            if bytes < WHOLE_READ || bytes <= *parts {
+            let (b, k) = place_of(r);
+            let changed = writes_of(b, k);
+            let at = order_of(r);
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            let parts: u64 = read
+                .iter()
+                .filter(|(when, _, _)| {
+                    let (from, to) = (at.min(*when), at.max(*when));
+                    let i = changed.partition_point(|w| *w <= from);
+                    changed.get(i).is_none_or(|w| *w >= to)
+                })
+                .filter(|(_, range, _)| seen.insert(range))
+                .map(|(_, _, n)| n)
+                .sum();
+            if seen.is_empty() || bytes <= parts {
                 continue;
             }
             whole.push(r.id);
             whole_bytes += bytes;
             saved_bytes += bytes - parts;
-            let (b, k) = place_of(r);
             if whole_objects.insert((b, k)) {
                 under = Some(common_folder(under, &format!("{b}/{k}")));
             }
@@ -2504,7 +2529,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             }
             "GetObject" => {
                 if let Some((head, at)) = headed.remove(&(b, k))
-                    && (r.time - at).num_milliseconds() <= 2_000
+                    && (0..=2_000).contains(&(r.time - at).num_milliseconds())
                 {
                     pairs.extend([head, r.id]);
                     checked += 1;
@@ -2563,11 +2588,13 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .iter()
             .filter(|r| {
                 (r.kind == "DeleteObject" && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
+                    // a batch of markers alone: one with data in it is sent
+                    // for the data all the same
                     || (r.kind == "DeleteObjects"
-                        && r.rare()
-                            .request_body
-                            .as_deref()
-                            .is_some_and(|b| b.contains("/</Key>")))
+                        && r.rare().request_body.as_deref().is_some_and(|b| {
+                            let keys = reqlog::deleted_objects(b);
+                            !keys.is_empty() && keys.iter().all(|(k, _)| k.ends_with('/'))
+                        }))
             })
             .map(|r| r.id)
             .collect();
@@ -2975,7 +3002,10 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
 /// it changed (a PUT, a copy onto it, a part, a completion, a delete, each
 /// key a DeleteObjects names), in order: what tells a read that would answer
 /// the same again from one whose answer changed in between.
-fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(Order, &str)>> {
+fn writes_by_bucket<'a>(
+    records: &'a [Record],
+    batches: &'a [(usize, Vec<reqlog::Deleted>)],
+) -> std::collections::HashMap<&'a str, Vec<(Order, &'a str)>> {
     // (each bucket's list made at its size: its writes counted first)
     let mut counts: std::collections::HashMap<&str, usize> = Default::default();
     for r in records.iter().filter(|r| !crate::profile::is_read(r)) {
@@ -2996,22 +3026,30 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
         if let Some(k) = r.key.as_deref() {
             w.push((at, k));
         }
-        if r.kind == "DeleteObjects"
-            && let Some(body) = r.rare().request_body.as_deref()
-        {
-            let mut rest = body;
-            while let Some(i) = rest.find("<Key>") {
-                rest = &rest[i + 5..];
-                let end = rest.find("</Key>").unwrap_or(rest.len());
-                w.push((at, &rest[..end]));
-                rest = &rest[end..];
-            }
+    }
+    for (i, keys) in batches {
+        let r = &records[*i];
+        if let Some(w) = r.bucket.as_deref().and_then(|b| out.get_mut(b)) {
+            w.extend(keys.iter().map(|(k, _)| (order_of(r), k.as_str())));
         }
     }
     for w in out.values_mut() {
         w.sort_unstable();
     }
     out
+}
+
+/// The objects each DeleteObjects names, by the request's place in `records`.
+fn batch_deletes(records: &[Record]) -> Vec<(usize, Vec<reqlog::Deleted>)> {
+    records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind == "DeleteObjects")
+        .filter_map(|(i, r)| {
+            let keys = reqlog::deleted_objects(r.rare().request_body.as_deref()?);
+            (!keys.is_empty()).then_some((i, keys))
+        })
+        .collect()
 }
 
 /// When a request was sent, as requests are ordered: its time in

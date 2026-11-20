@@ -482,7 +482,8 @@ pub const CALLERS: usize = 12;
 pub const CHAIN_CONCURRENCY: usize = 8;
 /// The fewest requests a chain is told of.
 pub const CHAIN_MIN: usize = 10;
-/// The longest wait between two requests of a chain (the program's own time).
+/// The longest wait between two requests of a chain (the program's own
+/// time): why 10 ms is D-277.
 const CHAIN_GAP_US: i64 = 10_000;
 
 /// What the requests of a chain touched: whether the next one depends on

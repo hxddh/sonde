@@ -403,11 +403,12 @@ const manifest = JSON.parse(await (await s3.send(new GetObjectCommand({ Bucket: 
 }
 
 /// The language of an SDK as [`sonde_proxy::callers::sdk`] names it (`boto3
-/// 1.44`): what picks the fix shown for it.
+/// 1.44`): what picks the fix shown for it. None for the AWS CLI: botocore
+/// underneath, and no code of the user's to change (D-258).
 pub fn language(sdk: &str) -> Option<&'static str> {
     let name = sdk.split_whitespace().next().unwrap_or("");
     Some(match name {
-        "boto3" | "botocore" | "aws-cli" | "s3fs" => "python",
+        "boto3" | "botocore" | "s3fs" => "python",
         "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
         "aws-sdk-go" | "aws-sdk-go-v2" => "go",
         "aws-sdk-js" => "js",
@@ -728,6 +729,10 @@ mod tests {
         // an SDK with no fix in its language, or none detected: none shown
         assert_eq!(pick(Some("aws-sdk-cpp 1.11")), None);
         assert_eq!(pick(None), None);
+        // the AWS CLI is botocore underneath, and no Python a user writes:
+        // boto3's code is no fix for it (D-258)
+        assert_eq!(pick(Some("aws-cli 2.15")), None);
+        assert_eq!(retries_on(language("aws-cli 2.15").unwrap_or("")), None);
         // an engine's setting, whatever sent it
         assert_eq!(
             for_sdk(&for_key("obs.rename"), Some("hadoop 3.3")).map(|f| f.sdk),

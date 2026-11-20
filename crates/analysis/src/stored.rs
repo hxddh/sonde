@@ -78,6 +78,59 @@ fn copy_source(r: &Record) -> Option<(String, String)> {
     Some((b.to_string(), k.to_string()))
 }
 
+/// `bucket/key` a RenameObject's `x-amz-rename-source` names: `/bucket/key`,
+/// or the key alone (a rename stays in its bucket).
+pub(crate) fn rename_source(r: &Record) -> Option<(String, String)> {
+    let src = request(r, "x-amz-rename-source")?;
+    let src = percent_encoding::percent_decode_str(src)
+        .decode_utf8_lossy()
+        .into_owned();
+    let bucket = r.bucket.as_deref()?;
+    let src = src.strip_prefix('/').unwrap_or(&src);
+    let key = match src.split_once('/') {
+        Some((b, k)) if b == bucket => k,
+        _ => src,
+    };
+    Some((bucket.to_string(), key.to_string()))
+}
+
+/// Each key the run wrote (or, on a versioned bucket, saw the size of): its
+/// size when known, and the place of the request that wrote it when the run
+/// did.
+type Keys<'a> = HashMap<(&'a str, &'a str), (Option<u64>, Option<usize>)>;
+
+/// `key` deleted from `keys`: `version`, when one is named, is gone for good
+/// (what the run left, where the run wrote that version), else what was
+/// there is gone, or on a versioned bucket (`marker`: a delete marker in its
+/// place) noncurrent.
+fn delete<'a>(
+    records: &[Record],
+    keys: &mut Keys<'a>,
+    out: &mut Stored,
+    at: (&'a str, &'a str),
+    version: Option<&str>,
+    marker: bool,
+) {
+    match version {
+        Some(v) => {
+            let wrote = keys
+                .get(&at)
+                .and_then(|(_, by)| *by)
+                .is_some_and(|i| response(&records[i], "x-amz-version-id") == Some(v));
+            if wrote {
+                keys.remove(&at);
+            }
+        }
+        None => {
+            let before = keys.remove(&at);
+            if marker {
+                out.noncurrent += 1;
+                out.noncurrent_bytes += before.and_then(|(s, _)| s).unwrap_or(0);
+            }
+        }
+    }
+}
+
 /// What `records` (in the order they were sent) leave stored.
 pub fn stored(records: &[Record]) -> Stored {
     let ok = |r: &Record| !r.is_error() && r.status.is_some_and(|s| s < 300);
@@ -93,9 +146,25 @@ pub fn stored(records: &[Record]) -> Stored {
         versioned: !versioned.is_empty(),
         ..Stored::default()
     };
-    // each key the run wrote (or, on a versioned bucket, saw the size of):
-    // its size when known, and the request that wrote it when the run did
-    let mut keys: HashMap<(&str, &str), (Option<u64>, Option<usize>)> = HashMap::new();
+    // what each DeleteObjects names, and each rename's source, by place
+    let batches: HashMap<usize, Vec<reqlog::Deleted>> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind == "DeleteObjects" && ok(r))
+        .filter_map(|(i, r)| {
+            Some((
+                i,
+                reqlog::deleted_objects(r.rare().request_body.as_deref()?),
+            ))
+        })
+        .collect();
+    let sources: HashMap<usize, String> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind == "RenameObject" && ok(r))
+        .filter_map(|(i, r)| Some((i, rename_source(r)?.1)))
+        .collect();
+    let mut keys: Keys = HashMap::new();
     // each upload's parts by number: a part sent again replaces the one
     // before (a retry), as S3 keeps only the last
     let mut parts: HashMap<&str, HashMap<&str, u64>> = HashMap::new();
@@ -110,6 +179,15 @@ pub fn stored(records: &[Record]) -> Stored {
             );
             continue;
         }
+        if let (Some(objects), Some(b)) = (batches.get(&i), r.bucket.as_deref()) {
+            // each key as DeleteObject would: a batch's answer has no
+            // headers of its own, its bucket says whether a marker is left
+            let marker = versioned.contains(b);
+            for (k, v) in objects {
+                delete(records, &mut keys, &mut out, (b, k), v.as_deref(), marker);
+            }
+            continue;
+        }
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
             continue;
         };
@@ -117,6 +195,12 @@ pub fn stored(records: &[Record]) -> Stored {
             continue;
         }
         let versioned = versioned.contains(b);
+        if let Some(from) = sources.get(&i) {
+            // the object, by its new name (a directory bucket's: no versions)
+            let size = keys.remove(&(b, from.as_str())).and_then(|(s, _)| s);
+            keys.insert((b, k), (size, Some(i)));
+            continue;
+        }
         let written = match r.kind.as_str() {
             "PutObject" => Some(r.request_bytes.get()),
             "CopyObject" => Some(copy_source(r).and_then(|(sb, sk)| {
@@ -139,15 +223,16 @@ pub fn stored(records: &[Record]) -> Stored {
             continue;
         }
         match r.method.as_str() {
-            "DELETE" if r.kind == "DeleteObject" && query(r, "versionId").is_none() => {
-                let before = keys.remove(&(b, k));
-                // on a versioned bucket a delete leaves a marker: what was
-                // there is noncurrent, not gone
-                if versioned && says_versioned(r) {
-                    out.noncurrent += 1;
-                    out.noncurrent_bytes += before.and_then(|(s, _)| s).unwrap_or(0);
-                }
-            }
+            // on a versioned bucket a delete leaves a marker: what was
+            // there is noncurrent, not gone
+            "DELETE" if r.kind == "DeleteObject" => delete(
+                records,
+                &mut keys,
+                &mut out,
+                (b, k),
+                query(r, "versionId"),
+                versioned && says_versioned(r),
+            ),
             // (sizes of what the run did not write are wanted only to say
             // what its versions keep)
             "GET" if versioned && r.kind == "GetObject" => {
@@ -309,5 +394,76 @@ mod tests {
         ];
         let s = stored(&records);
         assert_eq!(s.left, vec![(4, (17 << 20))]);
+    }
+
+    fn batch(id: u64, body: &str) -> Record {
+        let mut r = rec(id, "POST", "DeleteObjects", "", 0, 0);
+        r.key = None;
+        r.rare_mut().request_body = Some(body.into());
+        r
+    }
+
+    #[test]
+    fn what_a_batch_deletes_is_not_stored() {
+        let records = [
+            rec(1, "PUT", "PutObject", "a&b", 1000, 0),
+            rec(2, "PUT", "PutObject", "kept", 500, 0),
+            batch(
+                3,
+                "<Delete><Object><Key>a&amp;b</Key></Object><Object><Key>never</Key></Object></Delete>",
+            ),
+        ];
+        let s = stored(&records);
+        assert_eq!(s.left, vec![(1, 500)]);
+        assert_eq!(s.noncurrent, 0);
+    }
+
+    #[test]
+    fn on_a_versioned_bucket_a_batch_leaves_markers_and_removes_versions() {
+        let v = |r: Record, id: &str| answered(r, "x-amz-version-id", id);
+        let records = [
+            v(rec(1, "PUT", "PutObject", "marked", 300, 0), "v1"),
+            v(rec(2, "PUT", "PutObject", "removed", 400, 0), "v2"),
+            v(rec(3, "PUT", "PutObject", "other", 500, 0), "v3"),
+            // a marker over `marked`; `removed`'s version gone for good; a
+            // version of `other` the run did not write
+            batch(
+                4,
+                "<Delete><Object><Key>marked</Key></Object>\
+                 <Object><Key>removed</Key><VersionId>v2</VersionId></Object>\
+                 <Object><Key>other</Key><VersionId>v0</VersionId></Object></Delete>",
+            ),
+        ];
+        let s = stored(&records);
+        assert_eq!((s.noncurrent, s.noncurrent_bytes), (1, 300));
+        assert_eq!(s.left, vec![(2, 500)]);
+        // one version named, alone, as DeleteObject?versionId= is
+        let mut one = rec(5, "DELETE", "DeleteObject", "other", 0, 0);
+        one.lists_mut().query = vec![("versionId".into(), "v3".into())];
+        let mut records = records.to_vec();
+        records.push(one);
+        assert_eq!(stored(&records).left, vec![]);
+    }
+
+    #[test]
+    fn a_renamed_object_is_stored_by_its_new_name() {
+        let mut renamed = rec(2, "PUT", "RenameObject", "new", 0, 0);
+        renamed
+            .lists_mut()
+            .request_headers
+            .push(Header::new("x-amz-rename-source", "/b/old"));
+        let records = [
+            rec(1, "PUT", "PutObject", "old", 1000, 0),
+            renamed,
+            // the old name, written again
+            rec(3, "PUT", "PutObject", "old", 10, 0),
+            rec(4, "DELETE", "DeleteObject", "new", 0, 0),
+        ];
+        let s = stored(&records);
+        assert_eq!(s.left, vec![(2, 10)]);
+        // what a lean reading keeps
+        assert!(crate::run::read_by_analysis("x-amz-rename-source"));
+        let records = &records[..2];
+        assert_eq!(stored(records).left, vec![(1, 1000)]);
     }
 }

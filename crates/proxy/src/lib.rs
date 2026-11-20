@@ -302,13 +302,13 @@ impl Made {
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
             ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
-            ("DeleteObjects", Some(b), None) => {
-                document.and_then(delete_list).is_some_and(|objects| {
+            ("DeleteObjects", Some(b), None) => document
+                .and_then(reqlog::deleted_objects_strict)
+                .is_some_and(|objects| {
                     objects
                         .iter()
                         .all(|(k, v)| self.own_object(b, k, v.as_deref()))
-                })
-            }
+                }),
             ("DeleteBucket", Some(b), None) => self.buckets.lock().contains(b),
             _ => false,
         }
@@ -324,78 +324,6 @@ impl Made {
             .lock()
             .iter()
             .any(|p| under(key, p) || under(&full, p))
-    }
-}
-
-/// The objects a DeleteObjects document names (key, version), read as an
-/// XML reader reads it: none when it does not read cleanly or holds anything
-/// but `Delete`, its `Object`s (each one `Key`, at most one `VersionId`,
-/// `ETag`, `LastModifiedTime`, `Size`) and `Quiet`, so a store never removes
-/// an object the guard did not see. No prefixes, attributes (but the S3
-/// namespace on `Delete`), comments, CDATA, doctype or entities of its own.
-fn delete_list(doc: &str) -> Option<Vec<(String, Option<String>)>> {
-    use quick_xml::events::Event;
-    const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
-    const FIELDS: [&str; 5] = ["Key", "VersionId", "ETag", "LastModifiedTime", "Size"];
-    let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
-    let mut reader = quick_xml::Reader::from_str(doc);
-    let mut open: Vec<String> = Vec::new();
-    let mut fields: Vec<(String, String)> = Vec::new(); // the open Object's
-    let mut text = String::new(); // the open field's
-    let mut out = Vec::new();
-    let (mut first, mut rooted, mut quiet) = (true, false, false);
-    loop {
-        // a field (Delete/Object/Key) or Quiet (Delete/Quiet) holds text
-        let leaf = open.len() == 3 || open.last().is_some_and(|n| n == "Quiet");
-        match reader.read_event().ok()? {
-            Event::Decl(_) if first => {}
-            Event::Start(e) => {
-                let name = e.name().0;
-                let fits = match open.len() {
-                    0 => name == "Delete" && !rooted,
-                    1 => name == "Object" || (name == "Quiet" && !quiet),
-                    2 => {
-                        open[1] == "Object"
-                            && FIELDS.contains(&name)
-                            && !fields.iter().any(|(n, _)| n == name)
-                    }
-                    _ => false,
-                };
-                if !fits {
-                    return None;
-                }
-                for a in e.attributes() {
-                    let a = a.ok()?;
-                    if !(open.is_empty() && a.key.0 == "xmlns" && a.value == NS) {
-                        return None;
-                    }
-                }
-                rooted = true;
-                quiet |= name == "Quiet";
-                open.push(name.to_string());
-                text.clear();
-            }
-            Event::End(_) => {
-                // the reader checks the name matches
-                let name = open.pop()?;
-                if open.len() == 2 {
-                    fields.push((name, std::mem::take(&mut text)));
-                } else if name == "Object" {
-                    let get = |n: &str| fields.iter().find(|(f, _)| f == n).map(|(_, v)| v.clone());
-                    out.push((get("Key")?, get("VersionId")));
-                    fields.clear();
-                }
-            }
-            Event::Text(t) if leaf => text.push_str(&t.xml10_content()),
-            Event::Text(t) if space(&t) => {}
-            Event::GeneralRef(r) if leaf => match r.resolve_char_ref().ok()? {
-                Some(c) => text.push(c),
-                None => text.push_str(quick_xml::escape::resolve_xml_entity(&r)?),
-            },
-            Event::Eof => return (rooted && open.is_empty() && !out.is_empty()).then_some(out),
-            _ => return None,
-        }
-        first = false;
     }
 }
 

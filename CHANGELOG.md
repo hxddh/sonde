@@ -6,6 +6,17 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ### Fixed
 
+- A run is read in the order its requests were sent. The recorder writes each request when its answer is in, so a
+  run file is in the order they finished; read so, a range read again after a write looked unchanged
+  (`obs.rangeagain`), a HEAD was paired with a GET sent before it (`obs.headget`), a write sent before a read was a
+  read-modify-write (`obs.rmw`), and what a run leaves stored counted a delete before the write it followed.
+- A DeleteObjects body is read by one XML reader everywhere: `a&amp;b` is the key `a&b`, and a prefixed `<s3:Key>`
+  is a key. Before, each place had its own text search.
+- What a run leaves stored counts the keys a DeleteObjects deletes (on a versioned bucket, a marker each, or the
+  version named), and a RenameObject's object under its new name; a replay seeds a rename's source and sends it.
+- `obs.markers` saves a DeleteObjects only when it deletes directory markers alone, and `obs.wholeread` sets a whole
+  read against ranges of the same object, nothing written to it between.
+- An AWS CLI run is offered no boto3 code as a fix.
 - Redaction masks S3's `<CanonicalRequest>` and `<CanonicalRequestBytes>` (SignatureDoesNotMatch echoes every signed
   header's value there: a session token, an SSE-C key), finds presign parameters in any text, in any case and after
   any separator (`&amp;`, a canonical query line), and masks an element an error body was cut inside to its end.
@@ -22,6 +33,16 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ### 中文
 
+- 修复：运行按请求的发出顺序读取。录制器在应答到达时才写入请求，运行文件因此按完成顺序排列；以前按此顺序分析时，
+  写入之后再次读取同一范围被当作内容未变（`obs.rangeagain`），HEAD 会与在它之前发出的 GET 配对（`obs.headget`），
+  先发出的写入被当作“读后写”（`obs.rmw`），存储留存也会把删除算在它之后才发出的写入之前。
+- 修复：所有地方都用同一个 XML 解析器读取 DeleteObjects 请求体：`a&amp;b` 就是键 `a&b`，带前缀的 `<s3:Key>`
+  也算键。以前各处各自按文本查找。
+- 修复：运行留存的存储会计入 DeleteObjects 删除的键（开启版本控制的桶上，每个键留下删除标记，或删除指定的版本），
+  RenameObject 的对象按新名称计；回放会为重命名的源对象预置数据，并发送重命名的源。
+- 修复：`obs.markers` 只在 DeleteObjects 全部删除目录标记时才计为可省；`obs.wholeread` 只把整读与同一对象、
+  中间没有写入的范围读取相比。
+- 修复：AWS CLI 的运行不再给出 boto3 代码作为修复。
 - 修复：脱敏现在会遮盖 S3 返回的 `<CanonicalRequest>` 和 `<CanonicalRequestBytes>`（SignatureDoesNotMatch 会在其中回显
   所有签名头的值，包括会话令牌和 SSE-C 密钥），能在任意文本中识别预签名参数（不区分大小写，`&amp;` 或规范查询行也可），
   错误正文在某个元素中间被截断时，该元素一直遮盖到末尾。

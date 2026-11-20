@@ -795,14 +795,6 @@ fn tags<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
     out
 }
 
-fn unesc(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
 /// `POST /bucket?delete`: each object of the document deleted as
 /// `DELETE` would (a delete marker where the bucket keeps versions, the
 /// version itself when one is named), and each answered for.
@@ -810,7 +802,7 @@ fn delete_objects(b: &mut Bucket, doc: &str, seq_id: &str, now: DateTime<Utc>) -
     if b.synthetic > 0 {
         return err(501, "NotImplemented", "demo-large is read-only");
     }
-    let objects = tags(doc, "Object");
+    let objects = reqlog::deleted_objects(doc);
     if objects.is_empty() || objects.len() > 1000 {
         return err(
             400,
@@ -822,11 +814,7 @@ fn delete_objects(b: &mut Bucket, doc: &str, seq_id: &str, now: DateTime<Utc>) -
         .first()
         .is_some_and(|q| q.trim() == "true");
     let mut out = String::from("<DeleteResult>");
-    for (n, object) in objects.iter().enumerate() {
-        let Some(key) = tags(object, "Key").first().map(|k| unesc(k)) else {
-            continue;
-        };
-        let version = tags(object, "VersionId").first().map(|v| unesc(v));
+    for (n, (key, version)) in objects.into_iter().enumerate() {
         let mut said = format!("<Key>{}</Key>", esc(&key));
         match version {
             Some(vid) => {

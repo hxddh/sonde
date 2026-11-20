@@ -7,6 +7,7 @@
 //! exports ([`export`]) and "copy as" renderings ([`copy`]).
 
 pub mod copy;
+mod delete;
 pub mod export;
 mod list;
 mod name;
@@ -16,6 +17,7 @@ pub mod redact;
 mod ring;
 mod size;
 
+pub use delete::{Deleted, deleted_objects, deleted_objects_strict};
 pub use list::Lists;
 pub use name::Name;
 pub use record::{
