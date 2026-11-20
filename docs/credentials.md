@@ -26,7 +26,7 @@ Every request record is redacted when created, before anything stores or shows i
 |---|---|
 | `Authorization` | signature replaced; key id shortened (`AKIA…LE`); scope and signed headers kept |
 | `x-amz-security-token`, SSE-C key headers, `Cookie`, `Proxy-Authorization` | replaced |
-| Presigned URLs | `X-Amz-Signature`, `X-Amz-Security-Token`, SigV2 `Signature` replaced; `X-Amz-Credential`, `AWSAccessKeyId` shortened |
-| Error bodies | `<SignatureProvided>`, `<StringToSign…>`, `<AWSAccessKeyId>`, tokens replaced |
+| Presigned URLs | `X-Amz-Signature`, `X-Amz-Security-Token`, SigV2 `Signature` replaced; `X-Amz-Credential`, `AWSAccessKeyId` shortened; the same in any text, any case |
+| Error bodies | `<SignatureProvided>`, `<StringToSign…>`, `<CanonicalRequest…>` (signed headers' values), `<AWSAccessKeyId>`, tokens replaced; an element cut at the body's limit replaced to the end |
 
 "Copy as curl" never carries a signature: it prints the request with curl's `--aws-sigv4` option.
