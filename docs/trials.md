@@ -208,7 +208,7 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 ```
 
 - With scenarios here, `--trial` runs those; `--fault flaky-wal` runs one.
-- A status fault: 400–599 with at most one code. `delay`: `200ms` or `2s`, up to 3600 s.
+- A status fault: 400–599 with at most one code, letters and digits (`SlowDown`). `delay`: `200ms` or `2s`, up to 3600 s.
 - Checked before anything runs; configuration errors (64): an `on` name no request can have (`PutObjekt`);
   `[[scenarios]]` or any unknown key; a built-in name or `clean`; a duplicate name; an extra word (`503 Slow Down`);
   a `[program]` with an empty `name` or `runs`, or one without the other.

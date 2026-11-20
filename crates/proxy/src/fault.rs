@@ -638,6 +638,11 @@ pub fn parse_effect(text: &str) -> Result<Effect, String> {
         if !(400..600).contains(&code) {
             return Err(format!("{code}: a fault's status is 400 to 599"));
         }
+        if let Some(c) = second.filter(|c| !c.chars().all(|c| c.is_ascii_alphanumeric())) {
+            return Err(format!(
+                "{t}: {c:?} is no error code: a code is letters and digits, as in SlowDown"
+            ));
+        }
         let name = second.map(str::to_string).unwrap_or_else(|| {
             match code {
                 503 => "SlowDown",
@@ -1315,6 +1320,18 @@ mod tests {
         assert!(parse_effect("503 Slow Down").is_err());
         assert!(parse_effect("lost-answer twice").is_err());
         assert!(parse_effect("delay 200ms more").is_err());
+        // a code is S3's kind of word: letters and digits
+        for bad in ["503 Slow<Down>", "503 a&b", "503 Slow-Down", "503 Ünicode"] {
+            let e = parse_effect(bad).unwrap_err();
+            assert!(e.contains("letters and digits"), "{e}");
+        }
+        assert_eq!(
+            parse_effect("503 SlowDown2").unwrap(),
+            Effect::Status {
+                status: 503,
+                code: "SlowDown2".into()
+            }
+        );
     }
 
     #[test]
