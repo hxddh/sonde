@@ -72,7 +72,7 @@ the viewer's web runtime is kept by that commit and Rust's version. `fuzz.yml` r
 1. Update `CHANGELOG.md` (`## [x.y.z] - date`; a `### 中文` part at the section's end gives the Chinese notes the app
    shows in Chinese, the English otherwise: `scripts/changelog-section.sh x.y.z zh`) and the versions: `Cargo.toml` `workspace.package.version`,
    `app/nsh.json` `version` and `build`, `viewer/nsh.json` `version`; a new major also the action's `@vN` in
-   `README.md`, `docs/ci.md` and `action.yml`.
+   `README.md`, `docs/ci.md` and `action.yml` (`scripts/check-readme-images.py` fails on one left behind).
 2. Merge to `main`, then push tag `vx.y.z` on that commit, or run Actions › Release › Run workflow with `x.y.z` (it
    tags the chosen commit). `release.yml` builds nothing: it waits (up to two hours) for CI's run of that commit on
    `main` (its push, the nightly or one by hand; never a pull request's), refuses it unless it is green — every
