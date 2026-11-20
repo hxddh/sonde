@@ -62,8 +62,8 @@ Production that runs elsewhere (Kubernetes, serverless) is read from its logs: [
 | `NODE_EXTRA_CA_CERTS` | `<data>/tls/ca.pem`: sonde's authority alone |
 
 The first run makes an authority, issues one certificate (`localhost`, `*.localhost`, `127.0.0.1`, `::1`) and
-discards the authority's key. The certificate's key is `tls/key.pem` (0600); both renew after about two years.
-HTTP/1.1 only.
+discards the authority's key. The certificate's key is `tls/key.pem` (0600); both renew after about two years,
+by one sonde at a time (`tls/make.lock`). `bundle.pem` is rewritten only when it changes. HTTP/1.1 only.
 
 ### Spark, Flink, Trino and Hadoop s3a
 
