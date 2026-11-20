@@ -257,6 +257,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         header: sonde_analysis::run::RunHeader::new("t", &original.url, "us-east-1", None),
         records,
         logs: Vec::new(),
+        afresh: false,
     };
     // a store where the prefix is taken, and a neighbour that only starts with the same letters
     let store = MiniS3::start(true).await;
@@ -370,6 +371,7 @@ fn one_put() -> sonde_analysis::run::RunFile {
         header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records: vec![r],
         logs: Vec::new(),
+        afresh: false,
     }
 }
 
@@ -447,6 +449,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         // one key written twice: two versions of it
         records: vec![put(1, "a"), put(2, "a"), put(3, "dir/b")],
         logs: Vec::new(),
+        afresh: false,
     };
     let dir = tempfile::tempdir().unwrap();
     let opts = ReplayOptions {
@@ -506,6 +509,7 @@ async fn replayed(
         header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records,
         logs: Vec::new(),
+        afresh: false,
     };
     let dir = tempfile::tempdir().unwrap();
     let opts = ReplayOptions {
@@ -698,6 +702,7 @@ async fn a_run_that_reads_existing_input_replays_with_no_difference() {
         header: sonde_analysis::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records,
         logs: Vec::new(),
+        afresh: false,
     };
     let dir = tempfile::tempdir().unwrap();
     let done = sonde_analysis::replay::replay_to_file(

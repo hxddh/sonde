@@ -478,6 +478,7 @@ mod tests {
             header: crate::run::RunHeader::new("e", "https://e", "r", None),
             records,
             logs: Vec::new(),
+            afresh: false,
         }
     }
 

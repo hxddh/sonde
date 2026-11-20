@@ -169,14 +169,16 @@ impl<W: std::io::Write> JsonOut<W> {
 }
 
 /// A run's records as they are in its file, each handed to `each` with
-/// the id the run read gave it (`ids`, in the file's order: a file joined
-/// from two recordings is numbered afresh). For writing every record out in
-/// full beside an analysis made of [`RunFile::open_lean`].
+/// the id the run read gave it: its place in the file where the run was
+/// numbered `afresh` (a file joined from two recordings), else its own. For
+/// writing every record out in full beside an analysis made of
+/// [`RunFile::open_lean`].
 pub fn each_record(
     path: &Path,
-    ids: &mut dyn Iterator<Item = u64>,
+    afresh: bool,
     each: &mut dyn FnMut(reqlog::Record) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    let mut place = 0u64;
     let mut lines = crate::run::Lines::open(path)?;
     // the header
     lines.line()?;
@@ -189,8 +191,10 @@ pub fn each_record(
         let Ok(mut r) = serde_json::from_str::<reqlog::Record>(text.trim_end_matches('\r')) else {
             continue;
         };
-        let Some(id) = ids.next() else { break };
-        r.id = id;
+        place += 1;
+        if afresh {
+            r.id = place;
+        }
         each(r)?;
     }
     Ok(())
@@ -262,9 +266,7 @@ pub fn write_run_json(
     w.key("records")?;
     w.begin_array()?;
     match full {
-        Some(path) => each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
-            w.json(&shared_record(&r))
-        })?,
+        Some(path) => each_record(path, s.afresh, &mut |r| w.json(&shared_record(&r)))?,
         None => {
             for r in &s.records {
                 w.json(&shared_record(r))?;
@@ -609,6 +611,7 @@ mod tests {
             },
             records: vec![],
             logs: vec![],
+            afresh: false,
         };
         let doc = super::run_json(&s, &Default::default()).to_string();
         assert!(!doc.contains("hunter2"), "{doc}");

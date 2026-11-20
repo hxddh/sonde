@@ -161,9 +161,14 @@ fn records_joined_from_two_recordings_get_ids_of_their_own() {
     w.flush().unwrap();
     drop(w);
     let s = RunFile::open(&path).unwrap();
-    let ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
-    assert_eq!(ids, [1, 2, 3]);
-    assert_eq!(s.records[2].key.as_deref(), Some("c"));
+    // numbered in the file's order, read in the order they were sent
+    let ids: Vec<(u64, &str)> = s
+        .records
+        .iter()
+        .map(|r| (r.id, r.key.as_deref().unwrap()))
+        .collect();
+    assert_eq!(ids, [(1, "a"), (3, "c"), (2, "b")]);
+    assert!(s.afresh);
 }
 
 #[test]

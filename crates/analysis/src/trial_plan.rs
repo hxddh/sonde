@@ -127,6 +127,7 @@ mod tests {
             header,
             records: vec![rec(1, "PUT", "PutObject"), rec(2, "GET", "GetObject")],
             logs: Vec::new(),
+            afresh: false,
         }
     }
 

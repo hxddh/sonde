@@ -599,9 +599,13 @@ impl Tally {
 #[derive(Debug, Clone)]
 pub struct RunFile {
     pub header: RunHeader,
+    /// In the order they were sent ([`in_send_order`]).
     pub records: Vec<Record>,
     /// The recorded program's output, when sonde ran it in a terminal.
     pub logs: Vec<LogChunk>,
+    /// Its file repeats ids (two recordings joined): each record's id is its
+    /// place in the file, from 1, not the file's ([`crate::share::each_record`]).
+    pub afresh: bool,
 }
 
 /// Where a growing (uncompressed) run file's complete lines end: what
@@ -638,11 +642,11 @@ impl RunFile {
         const WINDOW: u64 = 4096;
         let last_id = self.records.iter().map(|r| r.id).max().unwrap_or(0);
         let floor = last_id.saturating_sub(WINDOW);
+        // (all of them: in the order they were sent, a long request's
+        // record is anywhere)
         let recent: std::collections::HashSet<u64> = self
             .records
             .iter()
-            .rev()
-            .take(WINDOW as usize * 2)
             .map(|r| r.id)
             .filter(|id| *id > floor)
             .collect();
@@ -666,10 +670,12 @@ impl RunFile {
                 self.records.push(r);
             }
         }
+        in_send_order(&mut self.records);
         Ok(from + end as u64 + 1)
     }
 
-    /// Reads a run file. A torn last line (the recorder was killed) is
+    /// Reads a run file, its records in the order they were sent
+    /// ([`in_send_order`]). A torn last line (the recorder was killed) is
     /// skipped; any other bad line is an error.
     pub fn open(path: &Path) -> Result<RunFile, String> {
         RunFile::read(path, Keep::All)
@@ -729,13 +735,17 @@ impl RunFile {
         // (no room past the last: a million records are 120 MiB)
         records.shrink_to_fit();
         // ids name records everywhere (operations, findings, the inspector): a
-        // file joined from two recordings repeats them, so number them afresh
+        // file joined from two recordings repeats them, so number them afresh,
+        // in the file's order
         let mut seen = std::collections::HashSet::with_capacity(records.len());
-        if !records.iter().all(|r| seen.insert(r.id)) {
+        let afresh = !records.iter().all(|r| seen.insert(r.id));
+        drop(seen);
+        if afresh {
             for (i, r) in records.iter_mut().enumerate() {
                 r.id = i as u64 + 1;
             }
         }
+        in_send_order(&mut records);
         let cut = cut.map(|why| {
             format!(
                 "its compressed text stops short ({why}): read up to there, {} requests",
@@ -747,9 +757,19 @@ impl RunFile {
                 header,
                 records,
                 logs,
+                afresh,
             },
             cut,
         })
+    }
+}
+
+/// Puts records in the order they were sent: by time (when each was
+/// sent), then id. A run file holds them as they finished (the proxy numbers
+/// and writes each when its answer is in); every analysis reads them as sent.
+pub fn in_send_order(records: &mut [Record]) {
+    if !records.is_sorted_by_key(|r| (r.time, r.id)) {
+        records.sort_by_key(|r| (r.time, r.id));
     }
 }
 

@@ -2504,7 +2504,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             }
             "GetObject" => {
                 if let Some((head, at)) = headed.remove(&(b, k))
-                    && (r.time - at).num_milliseconds() <= 2_000
+                    && (0..=2_000).contains(&(r.time - at).num_milliseconds())
                 {
                     pairs.extend([head, r.id]);
                     checked += 1;

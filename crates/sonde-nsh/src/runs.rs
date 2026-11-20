@@ -394,14 +394,13 @@ fn record_from_file(path: &Path, s: &RunFile, id: u64) -> Result<Option<reqlog::
     }
     let mut found = None;
     // read to where it is, and no further
-    let read =
-        sonde_analysis::share::each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
-            if r.id == id {
-                found = Some(r);
-                return Err(std::io::Error::other("found"));
-            }
-            Ok(())
-        });
+    let read = sonde_analysis::share::each_record(path, s.afresh, &mut |r| {
+        if r.id == id {
+            found = Some(r);
+            return Err(std::io::Error::other("found"));
+        }
+        Ok(())
+    });
     match (found, read) {
         (Some(r), _) => Ok(Some(r)),
         (None, Err(e)) => Err(err_msg(e)),

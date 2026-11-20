@@ -228,6 +228,7 @@ impl Parts {
                 header,
                 records,
                 logs: Vec::new(),
+                afresh: false,
             },
             malformed: self.malformed,
             not_requests: self.not_requests,
