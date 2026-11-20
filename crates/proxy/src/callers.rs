@@ -532,6 +532,51 @@ mod tests {
         assert!(plain.lines().all(|l| l.ends_with(" -")), "{plain}");
     }
 
+    /// The Node.js hook names the line of a request from an ES module that
+    /// imports the SDK's client (`@smithy/core/client`, where newer SDKs keep
+    /// it) and from code that requires it (`@smithy/smithy-client`), against
+    /// a stand-in for the SDK (`tests/support/sdk`). Skipped where there is no
+    /// Node.js.
+    #[test]
+    fn a_node_request_names_its_line_from_an_es_module_and_from_commonjs() {
+        if !std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            eprintln!("skipped: node is not here");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let env = caller_env(dir.path()).unwrap();
+        let options = &env.iter().find(|(k, _)| k == "NODE_OPTIONS").unwrap().1;
+        let support = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support");
+        let run = |options: Option<&str>| {
+            let mut cmd = std::process::Command::new("node");
+            cmd.arg("callers_check.mjs")
+                .current_dir(&support)
+                .env("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+                .env_remove("NODE_OPTIONS");
+            if let Some(o) = options {
+                cmd.env("NODE_OPTIONS", o);
+            }
+            let out = cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let text = run(Some(options));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert!(lines[0].starts_with("import callers_check.mjs:"), "{text}");
+        assert!(lines[1].starts_with("require callers_check.mjs:"), "{text}");
+        // without the hook nothing is named
+        assert_eq!(run(None), "import -\nrequire -\n");
+    }
+
     #[test]
     fn a_windows_path_keeps_its_backslashes_in_node_options() {
         // node unescapes inside quotes: each backslash is written twice

@@ -5,8 +5,8 @@
 // header to each request to sonde, before it is signed: x-sonde-caller:
 // <file>:<line> <function>, the first frame of the program's own code (not
 // Node's, not an installed package's). sonde reads it and never forwards it
-// to the store. A program loaded as CommonJS (require) is named; nothing
-// else changes, and nothing here may stop the program.
+// to the store. A program in CommonJS (require) or in ES modules (import) is
+// named; nothing else changes, and nothing here may stop the program.
 "use strict";
 
 (function sondeCallers() {
@@ -94,16 +94,21 @@
     };
   }
 
-  // every v3 client is a smithy Client (older ones an @aws-sdk/smithy-client one)
-  const CLIENT = /(^|[\\/])@(?:smithy|aws-sdk)[\\/]smithy-client([\\/]|$)/;
-  const load = Module._load;
-  Module._load = function sondeLoad(request, parent, isMain) {
-    const m = load.apply(this, arguments);
+  // Every v3 client is a smithy Client: @smithy/core/client's (newer SDKs),
+  // @smithy/smithy-client's before, @aws-sdk/smithy-client's in the oldest.
+  // Node loads the SDK as CommonJS whichever way the program takes it (its
+  // packages' `node` export, or `main`), so each file of it passes through
+  // Module.prototype.load: on `require`, and on an ES module's `import` of
+  // one, which never goes through Module._load.
+  const CLIENT = /[\\/]@(?:smithy|aws-sdk)[\\/](?:smithy-client|core[\\/]dist-cjs[\\/]submodules[\\/]client)[\\/]/;
+  const load = Module.prototype.load;
+  Module.prototype.load = function sondeLoad(filename) {
+    const done = load.apply(this, arguments);
     try {
-      if (CLIENT.test(String(request)) && m) patch(m.Client);
+      if (CLIENT.test(String(filename)) && this.exports) patch(this.exports.Client);
     } catch {
       // the module is what it was
     }
-    return m;
+    return done;
   };
 })();

@@ -119,14 +119,16 @@ The DataTable is virtual: JS holds one 400-row window, fetched from Rust's `List
 
 ## Opening the Time pane
 
-Headless `nsh test --trace`, the example run (172 requests), three runs; measured at Native Shell `v0.5.0`:
+Headless `nsh test --trace`, the example run (172 requests), three runs each, Native Shell `v0.6.1`, from the press on
+Time to the pane at rest:
 
-| The press's commit | Largest commit after it | All commits | Mount items |
-|---|---|---|---|
-| 207 ms (107 ms binding rows in JS) | 1.17–1.25 s (1.15–1.21 s JS) | 1.35–1.46 s | 13,846 |
+| Board | The press's commit | Largest commit after it | All commits | Mount items |
+|---|---|---|---|---|
+| every chart built at once (26.0) | 432–440 ms | 1.13–1.14 s (1.10–1.12 s JS) | 1.57–1.60 s | 17,877 |
+| a `List` in the pane's scroll (27.0) | 87–106 ms | 218–254 ms (182–217 ms JS) | 309–364 ms | 4,509 |
 
-The pane shows after about 0.2 s; the rest is JavaScript building every chart's rows in one turn — sonde's to
-shorten (build charts as they come into view).
+The board is a virtualized `List` (`viewport="parent"`, [D-278](decisions.md)): opening the pane builds the charts
+of its first screen, and each further line of charts as it scrolls into view.
 
 ## Long jobs
 

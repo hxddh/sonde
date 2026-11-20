@@ -1,6 +1,6 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at `v0.6.0` (`5541637`): all still stand (`32f1635` narrowed the GTK
+Drafts for `longbridge/nsh`, last checked at `v0.6.1` (`2f51d86`): all still stand (`32f1635` narrowed the GTK
 focus one, below). sonde works around them in its own code (FINDINGS 18, 19, 22, 23) and does not patch Native Shell.
 
 ## A theme font token keeps only the first family of its list

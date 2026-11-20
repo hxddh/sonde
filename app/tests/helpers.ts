@@ -164,3 +164,12 @@ export async function language(app: App, to: "zh" | "en") {
   await app.waitFor(to === "zh" ? "text:通用" : "text:General");
   await app.keyboard.press("mod+w");
 }
+
+/** Scrolls the Time pane down until `query` shows: its board builds a chart as it comes into view. */
+export async function reach(app: App, query: string) {
+  for (let i = 0; i < 40 && !app.shows(query); i++) {
+    await app.scroll("id:time-pane", 300);
+    await app.wait(50);
+  }
+  await app.waitFor(query);
+}

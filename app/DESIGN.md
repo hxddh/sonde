@@ -339,7 +339,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   waterfall, Run's live panel, the shared page: a card with the question as its title, a sentence that answers it
   (it wraps, never cut), an act at the title's end (`action`: the timeline's let-go), the plot, its `legend`, and `empty` said in
   the plot's room. A card is as high as its content: a chart of two bars is not stretched to its neighbour's
-  height. The Time pane is a list of chart descriptors drawn by one loop. `CHARTS` names the chart
+  height. The Time pane is a list of chart descriptors drawn by one loop, a virtualized `List` in the pane's
+  scroll (`viewport="parent"`): a chart is built as it comes into view. `CHARTS` names the chart
   components (a `Plot` anywhere else fails the lint, as does a chart used outside a frame); `FRAMED` those that
   draw their own frame (`RunTrend`); `MARKS` what is not a chart and stands in none: a run's `Sparkline` in its
   row and the shape strip under a run's header (`RunShape strip`).

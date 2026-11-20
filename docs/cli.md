@@ -148,7 +148,7 @@ manager) is named by the line that handed it:
 | Language | SDK | How |
 |---|---|---|
 | Python | boto3 / botocore | a `sitecustomize` first on `PYTHONPATH` (a program's own still runs); it imports nothing until the program imports botocore |
-| Node.js | AWS SDK for JavaScript v3 | `NODE_OPTIONS=--require …/sonde-caller.cjs`: a middleware on each client |
+| Node.js | AWS SDK for JavaScript v3 | `NODE_OPTIONS=--require …/sonde-caller.cjs`: a middleware on each client, in CommonJS and ES modules (`import`) alike, on any Node.js the SDK runs on (no flag but `--require`: Node.js loads the SDK as CommonJS either way); not in a program bundled into one file |
 | Java | AWS SDK for Java 2 | `JAVA_TOOL_OPTIONS=-javaagent:…/sonde-agent.jar`: a global `ExecutionInterceptor`, only when the SDK is on the class path (not a Spring Boot jar's own loader) |
 
 The Java hook's sources are in `hooks/java` (`build.sh` rebuilds its jars). Other SDKs can add the header with their

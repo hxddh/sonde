@@ -44,7 +44,7 @@ if [ -n "$musl" ]; then
 fi
 asset="sonde-$os-$arch$libc.tar.gz"
 # A major alone (26) is its newest release (26.x.y), a major and minor (26.0)
-# the newest 25.0.y; prereleases left out
+# the newest 26.0.y; prereleases left out
 case "$version" in
   latest | *.*.*) ;;
   *)

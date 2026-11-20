@@ -4,6 +4,12 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [27.0.0] - unreleased
 
+### Changed
+
+- Time: the pane opens at once. Its charts are built as they come into view, not all before the pane shows; every
+  chart is still there.
+- The app is built on Native Shell 0.6.1 (fixes from its 0.6 line).
+
 ### Fixed
 
 - A run is read in the order its requests were sent. The recorder writes each request when its answer is in, so a
@@ -30,9 +36,14 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   kept, and nothing in them is run or expanded.
 - `--tls`: two sondes renewing the certificate at once no longer mix their files (`tls/make.lock`), and
   `bundle.pem` is rewritten only when it changes.
+- `sonde run` names the line that sent a request again with the AWS SDK for JavaScript v3's newer releases (the
+  client moved to `@smithy/core`), and in a program written as ES modules (`import`), on any Node.js the SDK runs on.
+- The README named the GitHub Action `@v25`; it names the current major, and a check keeps it in step.
 
 ### 中文
 
+- 时间页立即打开：图表在滚动到可见时才构建，不再在页面显示前一次性全部构建；所有图表仍然都在。
+- 应用基于 Native Shell 0.6.1（包含其 0.6 系列的修复）。
 - 修复：运行按请求的发出顺序读取。录制器在应答到达时才写入请求，运行文件因此按完成顺序排列；以前按此顺序分析时，
   写入之后再次读取同一范围被当作内容未变（`obs.rangeagain`），HEAD 会与在它之前发出的 GET 配对（`obs.headget`），
   先发出的写入被当作“读后写”（`obs.rmw`），存储留存也会把删除算在它之后才发出的写入之前。
@@ -54,6 +65,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - 修复：GitHub Action 不再对 `run-args`、`check-args` 和普通的 `run` 使用 `eval`，而是按词拆分并保留引号，其中的内容
   不会被执行或展开。
 - 修复：`--tls`：两个 sonde 同时续期证书时不会再混用彼此的文件（`tls/make.lock`），`bundle.pem` 仅在内容变化时重写。
+- 修复：AWS SDK for JavaScript v3 的较新版本（客户端移到了 `@smithy/core`）下，`sonde run` 重新能指出发出请求的代码行；
+  以 ES 模块（`import`）编写的程序同样可以，适用于该 SDK 支持的任何 Node.js 版本。
+- 修复：README 中 GitHub Action 写的是 `@v25`，现改为当前主版本，并新增检查保证主版本号一致。
+
 
 ## [26.0.0] - 2026-11-19
 
