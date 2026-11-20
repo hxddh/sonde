@@ -202,8 +202,17 @@ fn names_its_authority(pem: &[u8]) -> bool {
 fn write_bundle(ca: &Path, bundle: &Path) -> Result<(), String> {
     use base64::Engine;
     let mut text = String::new();
-    for c in rustls_native_certs::load_native_certs().certs {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(c.as_ref());
+    // in one order, each once: macOS's keychains hand them out in an order
+    // of their own each time, and the bundle is rewritten only when it changes
+    let mut roots: Vec<Vec<u8>> = rustls_native_certs::load_native_certs()
+        .certs
+        .into_iter()
+        .map(|c| c.as_ref().to_vec())
+        .collect();
+    roots.sort_unstable();
+    roots.dedup();
+    for c in roots {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&c);
         text.push_str("-----BEGIN CERTIFICATE-----\n");
         for line in b64.as_bytes().chunks(64) {
             text.push_str(std::str::from_utf8(line).unwrap_or_default());
