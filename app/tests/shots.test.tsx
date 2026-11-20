@@ -395,10 +395,12 @@ for (const v of variants) {
     await app.scroll("id:time-pane", 400);
     await charts("03k-prefixes");
     // what the run cost, and when, the chart whole at every size. A hover brings a view into view, a gesture of up to
-    // four tenths of the pane at a time, until it is clear of the pane's edges. A few lines more give the chart's foot
-    // its room in the least window (the board builds a chart as it comes into view: scrolled to it first)
+    // four tenths of the pane at a time, until it is clear of the pane's edges: its plot, then its title. A few lines
+    // more give the chart's foot its room in the least window (the board builds a chart as it comes into view:
+    // scrolled to it first)
     await reach(app, "id:cost-time-chart");
     await app.wait(500);
+    await app.hover("id:cost-over-time");
     await app.hover("id:cost-time-chart >> role:header");
     await app.scroll("id:time-pane", 60);
     await charts("03ka-cost");
