@@ -2,6 +2,28 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [27.0.0] - unreleased
+
+### Changed
+
+- Time: the pane opens at once. Its charts are built as they come into view, not all before the pane shows; every
+  chart is still there.
+- The app is built on Native Shell 0.6.1 (fixes from its 0.6 line).
+
+### Fixed
+
+- `sonde run` names the line that sent a request again with the AWS SDK for JavaScript v3's newer releases (the
+  client moved to `@smithy/core`), and in a program written as ES modules (`import`), on any Node.js the SDK runs on.
+- The README named the GitHub Action `@v25`; it names `@v26`, and a check keeps the major in step.
+
+### 中文
+
+- 时间页立即打开：图表在滚动到可见时才构建，不再在页面显示前一次性全部构建；所有图表仍然都在。
+- 应用基于 Native Shell 0.6.1（包含其 0.6 系列的修复）。
+- 修复：AWS SDK for JavaScript v3 的较新版本（客户端移到了 `@smithy/core`）下，`sonde run` 重新能指出发出请求的代码行；
+  以 ES 模块（`import`）编写的程序同样可以，适用于该 SDK 支持的任何 Node.js 版本。
+- 修复：README 中 GitHub Action 写的是 `@v25`，现改为 `@v26`，并新增检查保证主版本号一致。
+
 ## [26.0.0] - 2026-11-19
 
 sonde now records what the program really got, guards deletes more strictly, and looks at home on each system.
