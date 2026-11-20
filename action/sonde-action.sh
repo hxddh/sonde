@@ -97,7 +97,7 @@ split_words() {
 }
 
 # `sonde run -o FILE` of the program, as the inputs give it, in this
-# folder: its exit status. A command with shell syntax (`cd job && make`, a glob,
+# folder: its exit status. A command with shell syntax (`cd job && make`,
 # `etl | tee log`, `etl > out`) is bash's, as typed, all of it under sonde,
 # the program named by what bash is given to run; a plain command (`docker
 # run …`, `spark-submit …`) is run itself, so sonde sets up what it knows
@@ -110,10 +110,14 @@ run_to() {
   case "$SONDE_RUN" in
     *[\;\&\|\<\>\(\)\$\`]* | *$'\n'* | cd\ *) cmd=(bash -c "$SONDE_RUN") ;;
     *)
-      if split_words "$SONDE_RUN" && [ "$GLOB" = 0 ]; then
+      split_words "$SONDE_RUN" || fail "run: a quote is not closed: $SONDE_RUN"
+      if [ "$GLOB" = 0 ]; then
         cmd=("${WORDS[@]}")
       else
-        cmd=(bash -c "$SONDE_RUN")
+        # a glob (data/*.csv) expands as the shell's would, and the program
+        # is still run itself; nothing here can run a command: the case
+        # above sent ; & | < > ( ) $ ` and newlines to bash
+        eval "cmd=($SONDE_RUN)"
       fi
       ;;
   esac

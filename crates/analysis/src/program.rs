@@ -396,12 +396,15 @@ fn scrub_words(words: Vec<String>) -> Vec<String> {
 }
 
 /// An option (`--api-key`, `-password`) whose name says it holds a secret.
+/// A bare `--key` is an object's key (`aws s3api get-object --key …`): kept.
 fn names_secret(option: &str) -> bool {
     let lower = option.to_ascii_lowercase();
+    let name = lower.trim_start_matches('-');
     option.starts_with('-')
-        && ["secret", "password", "passwd", "token", "key", "credential"]
+        && (["secret", "password", "passwd", "token", "credential"]
             .iter()
-            .any(|s| lower.contains(s))
+            .any(|s| name.contains(s))
+            || (name.ends_with("key") && name != "key"))
 }
 
 /// A word with any secret in it hidden: a variable's value, an option that
@@ -2428,6 +2431,10 @@ mod command_tests {
         assert_eq!(
             scrub_command("app --token abc --password 'p w' --day 1 --api-key=k -v"),
             "app --token … --password … --day 1 --api-key=… -v"
+        );
+        assert_eq!(
+            scrub_command("aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key k out"),
+            "aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key … out"
         );
         assert_eq!(
             scrub_command("app --secret-file --day 1"),

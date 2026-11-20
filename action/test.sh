@@ -242,7 +242,7 @@ is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t
   is "run-args: \$(...) and backquotes are words, never run" "$( [ -e "$t/pwned" ] && echo ran || echo not)" not
   is "run-args: \$(...) kept as typed" "$(grep -c -x -F '$(touch' "$t/sonde.run")" 1
   SONDE_RUN="python3 etl.py *.csv" step record >/dev/null
-  is "a glob is bash's" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 etl.py *.csv"
+  is "a glob is the shell's expansion, the program run itself" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|etl.py|*.csv"
   if SONDE_RUN="python3 etl.py" SONDE_RUN_ARGS="--url 'x" step record >/dev/null 2>&1; then is "run-args: an open quote fails the step" 0 1; fi
   rm -f "$t/pwned"
   SONDE_CHECK_ARGS='--tolerance 5 $(touch "$FAKE/pwned") "a b"' SONDE_FILE=f SONDE_BASELINE=auto step check >/dev/null
