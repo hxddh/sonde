@@ -2433,7 +2433,9 @@ mod command_tests {
             "app --token … --password … --day 1 --api-key=… -v"
         );
         assert_eq!(
-            scrub_command("aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key k out"),
+            scrub_command(
+                "aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key k out"
+            ),
             "aws s3api get-object --bucket b --key logs/a.txt --sse-customer-key … out"
         );
         assert_eq!(
