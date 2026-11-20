@@ -233,6 +233,23 @@ is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' 
 # a plain command is run itself, so sonde sets up what it knows (a container's network, a JVM engine's endpoint)
 SONDE_RUN="docker run --rm 'amazon/aws-cli' s3 ls" step record >/dev/null
 is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t/sonde.run" | tail -n +2 | paste -sd'|')" "docker|run|--rm|amazon/aws-cli|s3|ls"
+# inputs' words split as a shell splits them, quotes kept, nothing run or expanded
+# shellcheck disable=SC2016 # (never expanded: that is the test)
+{
+  SONDE_RUN="docker run 'a b' \"c\\\"d\" 'e*f'" SONDE_RUN_ARGS='--url "https://s3.test/a b" $(touch "$FAKE/pwned") `touch "$FAKE/pwned"` --region '"'eu west'" step record >/dev/null
+  is "a quoted word with a space is one word" "$(grep -c -x -e 'https://s3.test/a b' -e 'eu west' -e 'a b' -e 'c"d' -e 'e\*f' "$t/sonde.run")" 5
+  is "the run is run itself" "$(grep -c -x docker "$t/sonde.run")" 1
+  is "run-args: \$(...) and backquotes are words, never run" "$( [ -e "$t/pwned" ] && echo ran || echo not)" not
+  is "run-args: \$(...) kept as typed" "$(grep -c -x -F '$(touch' "$t/sonde.run")" 1
+  SONDE_RUN="python3 etl.py *.csv" step record >/dev/null
+  is "a glob is bash's" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "bash|-c|python3 etl.py *.csv"
+  if SONDE_RUN="python3 etl.py" SONDE_RUN_ARGS="--url 'x" step record >/dev/null 2>&1; then is "run-args: an open quote fails the step" 0 1; fi
+  rm -f "$t/pwned"
+  SONDE_CHECK_ARGS='--tolerance 5 $(touch "$FAKE/pwned") "a b"' SONDE_FILE=f SONDE_BASELINE=auto step check >/dev/null
+  is "check-args: \$(...) never run" "$( [ -e "$t/pwned" ] && echo ran || echo not)" not
+  is "check-args: words as quoted" "$(grep -c -x -e 'a b' -e '$(touch' "$t/sonde.check")" 2
+}
+
 # each shell operator as typed, all of it under sonde, none of it before
 # shellcheck disable=SC2016 # (expanded by the program's bash, under sonde)
 {

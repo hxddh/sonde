@@ -53,19 +53,69 @@ install() {
   echo "$dir" >>"${GITHUB_PATH:-/dev/null}"
 }
 
+# The words of $1 in WORDS, split as a shell splits them, with no shell:
+# blanks part words, '…' and "…" keep theirs (in "…", \ escapes " \ $ `),
+# \ escapes one character; nothing is run or expanded. Fails on an open
+# quote. GLOB is 1 when an unquoted *, ?, [, { or a leading ~ would have
+# been expanded by a shell.
+split_words() {
+  local s="$1" c q="" w="" have=0 i
+  WORDS=()
+  GLOB=0
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    if [ "$q" = "'" ]; then
+      if [ "$c" = "'" ]; then q=""; else w+="$c"; fi
+    elif [ "$q" = '"' ]; then
+      case "$c" in
+        '"') q="" ;;
+        "\\")
+          case "${s:i+1:1}" in
+            '"' | "\\" | '$' | '`') w+="${s:i+1:1}" && i=$((i + 1)) ;;
+            *) w+="$c" ;;
+          esac
+          ;;
+        *) w+="$c" ;;
+      esac
+    else
+      case "$c" in
+        "'" | '"') q="$c" && have=1 ;;
+        "\\") w+="${s:i+1:1}" && i=$((i + 1)) && have=1 ;;
+        ' ' | $'\t' | $'\n')
+          [ "$have" = 0 ] || WORDS+=("$w")
+          w="" && have=0
+          ;;
+        *)
+          case "$c" in '*' | '?' | '[' | '{') GLOB=1 ;; '~') [ "$have" = 1 ] || GLOB=1 ;; esac
+          w+="$c" && have=1
+          ;;
+      esac
+    fi
+  done
+  [ -z "$q" ] || return 1
+  [ "$have" = 0 ] || WORDS+=("$w")
+}
+
 # `sonde run -o FILE` of the program, as the inputs give it, in this
-# folder: its exit status. A command with shell syntax (`cd job && make`,
+# folder: its exit status. A command with shell syntax (`cd job && make`, a glob,
 # `etl | tee log`, `etl > out`) is bash's, as typed, all of it under sonde,
 # the program named by what bash is given to run; a plain command (`docker
 # run …`, `spark-submit …`) is run itself, so sonde sets up what it knows
 # (a container's network, a JVM engine's endpoint).
 run_to() {
   local file="$1" args=() cmd=() status=0
-  eval "args=(${SONDE_RUN_ARGS:-})"
+  split_words "${SONDE_RUN_ARGS:-}" || fail "run-args: a quote is not closed: ${SONDE_RUN_ARGS:-}"
+  args=(${WORDS[@]+"${WORDS[@]}"})
   [ -z "${SONDE_NAME:-}" ] || args+=(--name "$SONDE_NAME")
   case "$SONDE_RUN" in
     *[\;\&\|\<\>\(\)\$\`]* | *$'\n'* | cd\ *) cmd=(bash -c "$SONDE_RUN") ;;
-    *) eval "cmd=($SONDE_RUN)" ;;
+    *)
+      if split_words "$SONDE_RUN" && [ "$GLOB" = 0 ]; then
+        cmd=("${WORDS[@]}")
+      else
+        cmd=(bash -c "$SONDE_RUN")
+      fi
+      ;;
   esac
   rm -f "$file"
   sonde run -o "$file" ${args[@]+"${args[@]}"} -- "${cmd[@]}" || status=$?
@@ -208,9 +258,8 @@ check_args() {
   ARGS=("$SONDE_FILE")
   [ -z "${SONDE_BASELINE:-}" ] || ARGS+=(--baseline "$SONDE_BASELINE")
   [ -z "${SONDE_CONFIG:-}" ] || ARGS+=(--config "$SONDE_CONFIG")
-  local more=()
-  eval "more=(${SONDE_CHECK_ARGS:-})"
-  ARGS+=(${more[@]+"${more[@]}"})
+  split_words "${SONDE_CHECK_ARGS:-}" || fail "check-args: a quote is not closed: ${SONDE_CHECK_ARGS:-}"
+  ARGS+=(${WORDS[@]+"${WORDS[@]}"})
 }
 
 # Annotations on the run and the diff; whether it passed.

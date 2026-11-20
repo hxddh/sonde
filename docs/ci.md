@@ -39,7 +39,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | Step | Does |
 |---|---|
 | Install | The release binary of `version` (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
-| Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`; RUN with shell syntax (`&&`, `|`, `>`, `cd x &&`) is `bash -c RUN`, all of it recorded; a plain RUN (`docker run …`, `spark-submit …`) is run itself, so sonde sets it up. The program is named by what runs (`etl` of `python etl.py`). The program's exit status fails the job, after the steps below. |
+| Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`; RUN with shell syntax (`&&`, `|`, `>`, `cd x &&`, `$`, a glob) is `bash -c RUN`, all of it recorded; a plain RUN (`docker run …`, `spark-submit …`) is run itself, so sonde sets it up. The program is named by what runs (`etl` of `python etl.py`). The program's exit status fails the job, after the steps below. |
 | Baseline | `auto`: of the newest 6 completed runs of the same workflow, the first that kept the artifact `artifact` in a format this sonde reads (`gh run list`, `gh run download`). A pull request looks at push runs on its base branch; a push or a schedule at the earlier runs of its own event on its own branch. None kept, on a pull request: its merge-base, recorded in the same job (above). None: a warning with why, and `check --baseline auto` says `no baseline yet` in every format. |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` in `working-directory` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
@@ -50,9 +50,9 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | Input | Default | |
 |---|---|---|
 | `run` | (required) | The command, as typed; with shell syntax it is run by bash (`bash -c`). A folder goes in `working-directory`, not `cd x &&`: the annotations' file paths are taken from where the command starts. |
-| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--policy no-delete`, `--demo`. |
+| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--policy no-delete`, `--demo`. Words as a shell splits them (`'…'`, `"…"`, `\`), nothing run or expanded (`$VAR`, `$(…)` are text). |
 | `name` | | The program's name (else `[program] name` in `sonde.toml` for the program it `runs`, else what the command runs). |
-| `check-args` | | `sonde check` flags: `--tolerance 5`, `--max-requests N`. |
+| `check-args` | | `sonde check` flags: `--tolerance 5`, `--max-requests N`. Words as `run-args`'. |
 | `config` | found upward | `sonde.toml`. |
 | `baseline` | `auto` | `none`, a run's path, or an https URL. |
 | `setup` | | What the merge-base's checkout needs before RUN, run there in `working-directory` (`npm ci`, `pip install -r requirements.txt`): it has none of this checkout's untracked files. Fails: held to the budget, said. |
