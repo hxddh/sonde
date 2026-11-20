@@ -163,7 +163,7 @@ fn features(r: &Record) -> Vec<(String, Phrase)> {
             .rare()
             .request_body
             .as_deref()
-            .map_or(0, |b| b.matches("<Key>").count());
+            .map_or(0, |b| reqlog::deleted_objects(b).len());
         add(
             "delete.batch-limit".into(),
             ph!("relies.batch", n = n, s = crate::phrase::plural(n)),
@@ -323,7 +323,9 @@ mod tests {
     fn only_what_the_run_used_is_listed_once_each() {
         let mut del = rec("DeleteObjects", &[]);
         del.rare_mut().request_body = Some(
-            "<Delete><Object><Key>a</Key></Object><Object><Key>b</Key></Object></Delete>".into(),
+            "<s3:Delete xmlns:s3=\"http://s3.amazonaws.com/doc/2006-03-01/\"><s3:Object><s3:Key>a</s3:Key></s3:Object>\
+             <s3:Object><s3:Key>b</s3:Key></s3:Object></s3:Delete>"
+                .into(),
         );
         let runs = [
             rec(

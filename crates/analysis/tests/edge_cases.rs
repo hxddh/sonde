@@ -421,3 +421,29 @@ fn a_record_written_after_a_newer_one_is_still_read() {
     ids.sort();
     assert_eq!(ids, vec![1, 2, 3, 4, 5]);
 }
+
+#[test]
+fn a_key_deleted_in_a_batch_is_read_by_its_name() {
+    // `a&b`, written `a&amp;b` in the batch: a range of it read, the key
+    // deleted, the range read again (the second read is of a new object)
+    let range = |mut r: Record| {
+        r.lists_mut()
+            .request_headers
+            .push(reqlog::Header::new("Range", "bytes=0-9"));
+        r
+    };
+    let mut batch = rec(2, 10, "POST", "DeleteObjects", None, 200);
+    batch.rare_mut().request_body =
+        Some("<Delete><Object><Key>a&amp;b</Key></Object></Delete>".into());
+    let rs = [
+        range(rec(1, 0, "GET", "GetObject", Some("a&b"), 206)),
+        batch,
+        range(rec(3, 20, "GET", "GetObject", Some("a&b"), 206)),
+    ];
+    let obs = sonde_analysis::episode::traces(&rs, &episodes(&rs));
+    assert!(
+        !obs.iter().any(|o| o.kind == "obs.rangeagain"),
+        "{:?}",
+        obs.iter().map(|o| &o.kind).collect::<Vec<_>>()
+    );
+}

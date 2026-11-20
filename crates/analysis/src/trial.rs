@@ -1152,16 +1152,15 @@ pub fn judge(
                 "DeleteObject" => remove(r.key.as_deref().unwrap_or_default().to_string()),
                 "DeleteObjects" => {
                     let body = r.rare().request_body.as_deref().unwrap_or("");
-                    let mut keys: BTreeSet<&str> = body
-                        .split("<Key>")
-                        .skip(1)
-                        .filter_map(|k| k.split("</Key>").next())
+                    let mut keys: BTreeSet<String> = reqlog::deleted_objects(body)
+                        .into_iter()
+                        .map(|(k, _)| k)
                         .collect();
                     if keys.is_empty() {
-                        keys.insert("");
+                        keys.insert(String::new());
                     }
                     for key in keys {
-                        remove(key.to_string());
+                        remove(key);
                     }
                 }
                 _ => {}

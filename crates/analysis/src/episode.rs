@@ -2070,7 +2070,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // the same key read again and again, and the same each time: what a
     // cache would answer as the store did (counted by the records' own
     // names: only a hot key's is written out)
-    let writes = writes_by_bucket(records);
+    let batches = batch_deletes(records);
+    let writes = writes_by_bucket(records, &batches);
     // each bucket's writes by key, then time (by place): where a key's are
     let by_key: HashMap<&str, Vec<u32>> = writes
         .iter()
@@ -2564,10 +2565,11 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .filter(|r| {
                 (r.kind == "DeleteObject" && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
                     || (r.kind == "DeleteObjects"
-                        && r.rare()
-                            .request_body
-                            .as_deref()
-                            .is_some_and(|b| b.contains("/</Key>")))
+                        && r.rare().request_body.as_deref().is_some_and(|b| {
+                            reqlog::deleted_objects(b)
+                                .iter()
+                                .any(|(k, _)| k.ends_with('/'))
+                        }))
             })
             .map(|r| r.id)
             .collect();
@@ -2975,7 +2977,10 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
 /// it changed (a PUT, a copy onto it, a part, a completion, a delete, each
 /// key a DeleteObjects names), in order: what tells a read that would answer
 /// the same again from one whose answer changed in between.
-fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(Order, &str)>> {
+fn writes_by_bucket<'a>(
+    records: &'a [Record],
+    batches: &'a [(usize, Vec<reqlog::Deleted>)],
+) -> std::collections::HashMap<&'a str, Vec<(Order, &'a str)>> {
     // (each bucket's list made at its size: its writes counted first)
     let mut counts: std::collections::HashMap<&str, usize> = Default::default();
     for r in records.iter().filter(|r| !crate::profile::is_read(r)) {
@@ -2996,22 +3001,30 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
         if let Some(k) = r.key.as_deref() {
             w.push((at, k));
         }
-        if r.kind == "DeleteObjects"
-            && let Some(body) = r.rare().request_body.as_deref()
-        {
-            let mut rest = body;
-            while let Some(i) = rest.find("<Key>") {
-                rest = &rest[i + 5..];
-                let end = rest.find("</Key>").unwrap_or(rest.len());
-                w.push((at, &rest[..end]));
-                rest = &rest[end..];
-            }
+    }
+    for (i, keys) in batches {
+        let r = &records[*i];
+        if let Some(w) = r.bucket.as_deref().and_then(|b| out.get_mut(b)) {
+            w.extend(keys.iter().map(|(k, _)| (order_of(r), k.as_str())));
         }
     }
     for w in out.values_mut() {
         w.sort_unstable();
     }
     out
+}
+
+/// The objects each DeleteObjects names, by the request's place in `records`.
+fn batch_deletes(records: &[Record]) -> Vec<(usize, Vec<reqlog::Deleted>)> {
+    records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind == "DeleteObjects")
+        .filter_map(|(i, r)| {
+            let keys = reqlog::deleted_objects(r.rare().request_body.as_deref()?);
+            (!keys.is_empty()).then_some((i, keys))
+        })
+        .collect()
 }
 
 /// When a request was sent, as requests are ordered: its time in

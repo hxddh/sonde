@@ -290,14 +290,14 @@ pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
             written.insert((b.to_string(), k.to_string()));
         }
         if r.kind == "DeleteObjects" && ok {
-            for k in r
+            for (k, _) in r
                 .rare()
                 .request_body
                 .as_deref()
-                .map(|x| tags(x, "Key"))
+                .map(reqlog::deleted_objects)
                 .unwrap_or_default()
             {
-                written.insert((b.to_string(), k.to_string()));
+                written.insert((b.to_string(), k));
             }
         }
     }
@@ -355,7 +355,12 @@ pub fn seeds(records: &[Record], opts: &ReplayOptions) -> Vec<Seed> {
                 .rare()
                 .request_body
                 .as_deref()
-                .map(|x| tags(x, "Key").iter().map(|k| k.to_string()).collect())
+                .map(|x| {
+                    reqlog::deleted_objects(x)
+                        .into_iter()
+                        .map(|(k, _)| k)
+                        .collect()
+                })
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
