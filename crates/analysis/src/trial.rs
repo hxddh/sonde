@@ -707,14 +707,7 @@ fn where_of(r: &Record) -> Where {
 
 /// The SDK's own setting that turns retries on ([`crate::fixes::retries_on`]).
 fn retry_setting(sdk: &str) -> Option<&'static str> {
-    let name = sdk.split(' ').next().unwrap_or("");
-    crate::fixes::retries_on(match name {
-        "boto3" | "botocore" | "aws-cli" | "s3fs" => "python",
-        "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
-        "aws-sdk-go-v2" | "aws-sdk-go" => "go",
-        "aws-sdk-js" => "js",
-        _ => return None,
-    })
+    crate::fixes::retries_on(crate::fixes::language(sdk)?)
 }
 
 /// Reads the trial: `clean` is the run without faults, `run` the one with.
