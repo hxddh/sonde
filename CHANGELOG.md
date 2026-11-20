@@ -2,6 +2,38 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [27.0.0] - unreleased
+
+### Fixed
+
+- Redaction masks S3's `<CanonicalRequest>` and `<CanonicalRequestBytes>` (SignatureDoesNotMatch echoes every signed
+  header's value there: a session token, an SSE-C key), finds presign parameters in any text, in any case and after
+  any separator (`&amp;`, a canonical query line), and masks an element an error body was cut inside to its end.
+- `sonde share` hides the word after an option that names a secret (`--token …`) and a URL's password
+  (`https://me:…@host`) in the command, and escapes every `<` in the run it carries, so no text in it opens a
+  comment or closes the page's script.
+- `no-delete` reads a PutBucketVersioning document as XML: anything but plain `Enabled` is refused (before,
+  `Suspen&#100;ed`, a comment or a UTF-16 body went through).
+- An injected fault's error document escapes its code and message; a fault's code is letters and digits.
+- The GitHub Action no longer `eval`s `run-args`, `check-args` or a plain `run`: they are split into words, quotes
+  kept, and nothing in them is run or expanded.
+- `--tls`: two sondes renewing the certificate at once no longer mix their files (`tls/make.lock`), and
+  `bundle.pem` is rewritten only when it changes.
+
+### 中文
+
+- 修复：脱敏现在会遮盖 S3 返回的 `<CanonicalRequest>` 和 `<CanonicalRequestBytes>`（SignatureDoesNotMatch 会在其中回显
+  所有签名头的值，包括会话令牌和 SSE-C 密钥），能在任意文本中识别预签名参数（不区分大小写，`&amp;` 或规范查询行也可），
+  错误正文在某个元素中间被截断时，该元素一直遮盖到末尾。
+- 修复：`sonde share` 会隐藏命令中密钥类选项后面的那个词（`--token …`）和 URL 中的密码（`https://me:…@host`），
+  并转义所携带运行数据中的每个 `<`，任何文本都无法开启注释或提前结束页面脚本。
+- 修复：`no-delete` 现在按 XML 解析 PutBucketVersioning 请求体，只放行明确的 `Enabled`，其余一律拒绝（以前
+  `Suspen&#100;ed`、注释或 UTF-16 编码的请求体可以通过）。
+- 修复：注入故障的错误文档会转义错误码和消息；故障的错误码只能由字母和数字组成。
+- 修复：GitHub Action 不再对 `run-args`、`check-args` 和普通的 `run` 使用 `eval`，而是按词拆分并保留引号，其中的内容
+  不会被执行或展开。
+- 修复：`--tls`：两个 sonde 同时续期证书时不会再混用彼此的文件（`tls/make.lock`），`bundle.pem` 仅在内容变化时重写。
+
 ## [26.0.0] - 2026-11-19
 
 sonde now records what the program really got, guards deletes more strictly, and looks at home on each system.
