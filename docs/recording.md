@@ -142,7 +142,7 @@ sonde's own destructive acts are each a dry run, then `--yes` ([security](securi
 | Policy | Allows | Refuses |
 |---|---|---|
 | `allow` (default) | everything: the program does with its data what it would without sonde | nothing |
-| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, any write sonde cannot name |
+| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning (a versioning document that does not read as plainly `Enabled`), any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 
 A program may remove what it made in the same recording: abort an upload it started, delete an object or a version

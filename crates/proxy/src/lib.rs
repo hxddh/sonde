@@ -108,13 +108,78 @@ impl Policy {
     }
 
     /// Why a request is refused for what its document says, once it is
-    /// read: versioning suspended (or a document not read) under no-delete.
-    /// A suspended bucket's next write replaces the version it would keep.
+    /// read: versioning anything but enabled (or a document not read) under
+    /// no-delete. A suspended bucket's next write replaces the version it
+    /// would keep.
     pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
         (self == Policy::NoDelete
             && op == "PutBucketVersioning"
-            && body.is_none_or(|b| b.contains("Suspended")))
+            && !body.is_some_and(keeps_versions))
         .then_some("no-delete")
+    }
+}
+
+/// Whether a PutBucketVersioning document, read as an XML reader reads it,
+/// leaves versioning on: `VersioningConfiguration` (the S3 namespace its
+/// only attribute) holding at most one `Status`, `Enabled`, and one
+/// `MfaDelete`, `Enabled` or `Disabled`, as plain text. Anything else
+/// (entities, comments, CDATA, prefixes, another encoding) is not.
+fn keeps_versions(doc: &str) -> bool {
+    use quick_xml::events::Event;
+    const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
+    let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
+    let mut reader = quick_xml::Reader::from_str(doc);
+    // the open element, what its text was, and the fields seen
+    let mut open: Vec<String> = Vec::new();
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let (mut first, mut rooted) = (true, false);
+    loop {
+        let Ok(event) = reader.read_event() else {
+            return false;
+        };
+        match event {
+            Event::Decl(_) if first => {}
+            Event::Start(e) => {
+                let name = e.name().0.to_string();
+                let fits = match open.len() {
+                    0 => !rooted && name == "VersioningConfiguration",
+                    1 => {
+                        (name == "Status" || name == "MfaDelete")
+                            && !seen.iter().any(|(n, _)| *n == name)
+                    }
+                    _ => false,
+                };
+                let plain = e.attributes().all(|a| {
+                    a.is_ok_and(|a| open.is_empty() && a.key.0 == "xmlns" && a.value == NS)
+                });
+                if !(fits && plain) {
+                    return false;
+                }
+                rooted = true;
+                if open.len() == 1 {
+                    seen.push((name.clone(), String::new()));
+                }
+                open.push(name);
+            }
+            Event::End(_) => {
+                open.pop();
+            }
+            Event::Text(t) if open.len() == 2 => match seen.last_mut() {
+                Some((_, text)) if text.is_empty() => text.push_str(&t),
+                _ => return false,
+            },
+            Event::Text(t) if space(&t) => {}
+            Event::Eof => {
+                return rooted
+                    && open.is_empty()
+                    && seen.iter().all(|(n, v)| match n.as_str() {
+                        "Status" => v == "Enabled",
+                        _ => v == "Enabled" || v == "Disabled",
+                    });
+            }
+            _ => return false,
+        }
+        first = false;
     }
 }
 
@@ -1149,13 +1214,18 @@ pub fn parse_query(raw: Option<&str>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Text for an XML element: `&`, `<`, `>` escaped.
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
     let body = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{}</Message><RequestId>sonde-proxy</RequestId></Error>",
-        message
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{}</Code><Message>{}</Message><RequestId>sonde-proxy</RequestId></Error>",
+        xml_text(code),
+        xml_text(message)
     );
     Response::builder()
         .status(status)
@@ -1168,7 +1238,9 @@ fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
 /// An injected fault's answer: S3's error document, marked as sonde's.
 fn fault_error(status: u16, code: &str, message: &str, scenario: &str) -> Response<Out> {
     let body = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{message}</Message><RequestId>sonde-fault</RequestId></Error>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{}</Code><Message>{}</Message><RequestId>sonde-fault</RequestId></Error>",
+        xml_text(code),
+        xml_text(message)
     );
     Response::builder()
         .status(status)
@@ -2578,6 +2650,20 @@ impl Drop for Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_injected_error_is_escaped_as_a_refusal_is() {
+        use http_body_util::BodyExt;
+        let body = |r: Response<Out>| {
+            let b = futures::executor::block_on(r.into_body().collect()).unwrap();
+            String::from_utf8(b.to_bytes().to_vec()).unwrap()
+        };
+        let f = body(fault_error(503, "A<b>&", "m</Message><x>", "s"));
+        assert!(
+            f.contains("<Code>A&lt;b&gt;&amp;</Code><Message>m&lt;/Message&gt;&lt;x&gt;</Message>"),
+            "{f}"
+        );
+    }
 
     #[test]
     fn a_bucket_elsewhere_is_reached_in_its_region() {
