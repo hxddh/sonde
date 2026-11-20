@@ -5,6 +5,7 @@
 // for the visual record CI keeps of each build.
 
 import { type App, open, test } from "nsh/test";
+import { reach } from "./helpers";
 // what scripts/shots.sh tells the tour of this machine, as its VM has no environment (committed with none): `max`,
 // the largest window its screen holds, "WxH" ("" for any)
 import here from "./shots.env.json";
@@ -308,9 +309,10 @@ for (const v of variants) {
     await charts("02c-errors");
     await app.press("id:signal-latency");
     await app.wait(700);
-    // (the committed run has a large object: its first byte against the rest has a chart)
-    await app.waitFor("id:chart-firstByte");
-    await app.scroll("id:time-pane", 320);
+    // (the committed run has a large object: its first byte against the rest has a chart; the board builds it as it
+    // comes into view)
+    await reach(app, "id:chart-firstByte");
+    await app.hover("id:chart-firstByte");
     await charts("02d-first-byte");
 
     await go("runs");
@@ -393,10 +395,9 @@ for (const v of variants) {
     await app.scroll("id:time-pane", 400);
     await charts("03k-prefixes");
     // what the run cost, and when, the chart whole at every size. A hover brings a view into view, a gesture of up to
-    // four tenths of the pane at a time, until it is clear of the pane's edges: from the board's end the chart's title
-    // comes in at the pane's upper half. A few lines more give the chart's foot its room in the least window
-    await app.waitFor("id:cost-time-chart");
-    await app.scroll("id:time-pane", 10000);
+    // four tenths of the pane at a time, until it is clear of the pane's edges. A few lines more give the chart's foot
+    // its room in the least window (the board builds a chart as it comes into view: scrolled to it first)
+    await reach(app, "id:cost-time-chart");
     await app.wait(500);
     await app.hover("id:cost-time-chart >> role:header");
     await app.scroll("id:time-pane", 60);

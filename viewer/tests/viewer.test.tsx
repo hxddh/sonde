@@ -27,5 +27,7 @@ test("a shared page has the app's Time pane: its charts, titles and sentences", 
   await app.waitFor("id:chart-timeline");
   expect(app.shows("text:When were requests sent?")).toBe(true);
   expect(app.shows("text:/^49 requests, the most at \\+\\d+ ms: \\d+ in [\\d.]+ ms$/")).toBe(true);
-  expect(app.shows("id:latency-heat-chart")).toBe(true);
+  // the board builds a chart as it comes into view
+  for (let i = 0; i < 20 && !app.shows("id:latency-heat-chart"); i++) await app.scroll("id:time-pane", 300);
+  await app.waitFor("id:latency-heat-chart");
 });

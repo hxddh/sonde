@@ -8,7 +8,7 @@
 // `stretch`), saying so. A signal pressed in the run's header brings its
 // chart into view.
 
-import { batch, effect, type JSX, resource, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
+import { batch, computed, effect, type JSX, List, type ListRef, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { t } from "../i18n";
 import { costColumn, count, duration, percent } from "../format";
 import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
@@ -48,6 +48,11 @@ interface ChartSpec {
   /** what it draws, as rows: a CSV of it (each figure in one unit, named in its column) */
   rows?: () => ChartRows;
 }
+
+/** A row of the board: a group's heading (its hairline and name), or a line of
+ * its charts (a wide one, or two abreast; one in a terminal). The board is a
+ * list in the pane's scroll, so a chart is built as it comes into view. */
+type BoardRow = { key: string; group: Group; index: number } & ({ head: true } | { head: false; charts: ChartSpec[]; under: boolean });
 
 /** The chart a signal's tile opens. */
 const SIGNAL_CHART: Record<SignalId, string> = { rate: "timeline", errors: "errors", latency: "latency", bytes: "bytes", inFlight: "lanes" };
@@ -570,13 +575,33 @@ export function TimePane(props: { /** whether the board is scrolled from its top
     const stretch = c.stretched ? ofStretch() : c.zooms && z ? t("time.ofStretch", { a: duration(z[0]), b: duration(z[1]) }) : "";
     return stretch ? (text ? `${text} · ${stretch}` : stretch) : text;
   };
-  // a signal pressed scrolls its chart into view (Native Shell's `reveal`, from the chart's own ref)
-  const frames: Record<string, ViewRef> = {};
-  // the chart asked for before the board was there: it shows itself as it comes
+  // the board as rows, in the four groups' reading order: a chart line under its group's heading
+  const rows = computed((): BoardRow[] => {
+    const out: BoardRow[] = [];
+    GROUPS.filter((g) => of(g).length > 0).forEach((group, index) => {
+      out.push({ key: group, group, index, head: true });
+      let line: ChartSpec[] = [];
+      const flush = () => {
+        if (line.length) out.push({ key: line.map((c) => c.id).join("+"), group, index, head: false, charts: line, under: out[out.length - 1].head });
+        line = [];
+      };
+      for (const c of of(group)) {
+        if (c.wide || terminal()) flush();
+        line.push(c);
+        if (c.wide || terminal() || line.length === 2) flush();
+      }
+      flush();
+    });
+    return out;
+  });
+  // a signal pressed scrolls its chart's line into view (the list builds it as it comes)
+  let board: ListRef | undefined;
+  // the chart asked for before the board was there: shown once it is
   let wanted: string | null = null;
   const show = (id: string) => {
-    wanted = frames[id] ? null : id;
-    frames[id]?.reveal({ vertical: "start" });
+    const at = untracked(rows).findIndex((r) => !r.head && r.charts.some((c) => c.id === id));
+    wanted = board && at >= 0 ? null : id;
+    if (board && at >= 0) board.scrollToIndex({ index: at, viewPosition: 0 });
   };
   let revealed = -1;
   effect(() => {
@@ -598,35 +623,46 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       <If when={!timed(p())}>
         <Notice testID="untimed" text={t("profile.untimed")} />
       </If>
-      {/* the board: the four groups in their reading order, every chart in the one frame, by one loop */}
-      <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
-        {(g, i) => (
-          // one surface: each group a section under a hairline and its name, its charts unboxed under it (each
-          // says its question); a terminal, with no cards, names it plainly
-          <View testID={`board-${g()}`} accessibilityLabel={t(`board.${g()}`)} class="gap-3 terminal:gap-2">
-            <If when={terminal()} else={<><If when={i() > 0}><View class="h-px bg-border" /></If><Title>{t(`board.${g()}`)}</Title></>}>
-              <Heading>{t(`board.${g()}`)}</Heading>
-            </If>
-            {/* two abreast where there is room (a last one alone takes the row); a card is as high as its content */}
-            <View class="flex-row flex-wrap items-start gap-4 terminal:flex-col terminal:flex-nowrap terminal:items-stretch terminal:gap-2">
-              <Each of={of(g())} key={(c) => c.id}>
-                {(c) => (
-                  <View
-                    ref={(r) => {
-                      frames[c().id] = r;
-                      if (wanted === c().id) show(wanted);
-                    }}
-                    class={terminal() ? "" : c().wide ? "w-full" : HALF}>
-                    <Chart flat testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null}>
-                      {c().body()}
-                    </Chart>
-                  </View>
-                )}
-              </Each>
+      {/* the board: the four groups in their reading order, every chart in the one frame, by one loop; a list
+          in the pane's scroll, so a chart is built as it comes into view and opening the pane builds a screenful */}
+      <List
+        viewport="parent"
+        each={rows()}
+        keyExtractor={(r) => r.key}
+        estimatedItemSize={260}
+        ref={(r) => {
+          board = r;
+          if (wanted) show(wanted);
+        }}
+      >
+        {(r) => (
+          <If
+            when={r().head}
+            else={
+              // two abreast where there is room (a last one alone takes the row); a chart is as high as its content
+              <View class={`flex-row flex-wrap items-start gap-4 terminal:flex-col terminal:flex-nowrap terminal:items-stretch terminal:gap-2 ${(r() as { under?: boolean }).under ? "pt-3" : "pt-4"} terminal:pt-2`}>
+                <Each of={r().head ? [] : (r() as { charts: ChartSpec[] }).charts} key={(c) => c.id}>
+                  {(c) => (
+                    <View class={terminal() ? "" : c().wide ? "w-full" : HALF}>
+                      <Chart flat testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null}>
+                        {c().body()}
+                      </Chart>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            }
+          >
+            {/* one surface: each group a section under a hairline and its name, its charts unboxed under it (each
+                says its question); a terminal, with no cards, names it plainly */}
+            <View testID={`board-${r().group}`} class={`gap-3 ${r().index > 0 ? "pt-6" : ""} terminal:gap-2 ${r().index > 0 ? "terminal:pt-2" : ""}`}>
+              <If when={terminal()} else={<><If when={r().index > 0}><View class="h-px bg-border" /></If><Title>{t(`board.${r().group}`)}</Title></>}>
+                <Heading>{t(`board.${r().group}`)}</Heading>
+              </If>
             </View>
-          </View>
+          </If>
         )}
-      </Each>
+      </List>
     </Scroll>
   );
 }

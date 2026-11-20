@@ -2,7 +2,7 @@
 // the run's own view afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, runCommand, runText, runView, runAction, runMenu } from "./helpers";
+import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, reach, runCommand, runText, runView, runAction, runMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -219,41 +219,38 @@ test("a run's time: where it went, and two runs before and after", async () => {
   expect(app.shows("id:run-folded")).toBe(false);
   expect(app.shows("text:/^rustfs · .* · from object_store/")).toBe(true);
   expect(app.shows("id:run-story")).toBe(true);
+  // the board in its groups, each chart in the one frame
+  expect(app.shows("id:board-traffic")).toBe(true);
+  expect(app.shows("id:time-shape")).toBe(true);
+  // a signal pressed brings its chart into view (the board builds a chart as it comes into view)
+  await app.press("id:signal-latency");
+  await app.waitFor("id:latency-over-time");
+  // no chart hides a view behind a switch: the latencies' grid, the requests by size, each a card of its own
+  await reach(app, "id:latency-heat-chart");
   // the busiest kinds over time, a chart of its own (v21's, dropped in 22)
-  await app.waitFor("text:Which kind of request got slow, and when?");
+  await reach(app, "text:Which kind of request got slow, and when?");
   expect(app.shows("id:kinds-over-time")).toBe(true);
   expect(app.shows("text:/^The slowest kind: PutObject, p95 /")).toBe(true);
   // a chart's how to read is quiet at rest, never hidden
   expect(app.viewStyle("id:chart-kinds-how")?.effectiveOpacity ?? 0).toBeGreaterThan(0.3);
-  await app.press("id:signal-latency");
-  await app.waitFor("id:latency-over-time");
-  // the board in its groups, each chart in the one frame
-  expect(app.shows("id:board-latency")).toBe(true);
-  expect(app.shows("id:board-traffic")).toBe(true);
-  expect(app.shows("id:time-shape")).toBe(true);
-  await app.waitFor("text:Where did the time go?");
-  // (the pane scrolls its chart into view a moment after it is laid out)
-  await app.wait(200);
+  await reach(app, "id:scatter-size-chart");
+  for (const id of ["latency-as", "scatter-by", "spent-by", "sizes-by", "prefix-measure"]) expect(app.shows(`id:${id}`)).toBe(false);
+  await reach(app, "text:Where did the time go?");
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
-  expect(app.shows("id:profile-cost")).toBe(true);
-  // what the run cost over time: its requests, its bytes out (said as egress if read from outside the region, where
-  // that is not known) and what it left stored, stacked on the one time axis
-  await app.waitFor("text:What did the run cost, and when?");
-  expect(app.shows("id:cost-time-chart")).toBe(true);
-  expect(app.shows("id:cost-over-time")).toBe(true);
-  expect(app.shows("label:/^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/")).toBe(true);
-  // no chart hides a view behind a switch: the latencies' grid, the requests by size, each a card of its own
-  expect(app.shows("id:latency-heat-chart")).toBe(true);
-  expect(app.shows("id:scatter-size-chart")).toBe(true);
-  for (const id of ["latency-as", "scatter-by", "spent-by", "sizes-by", "prefix-measure"]) expect(app.shows(`id:${id}`)).toBe(false);
-  // where by prefix: one bar chart, each prefix's requests and its busiest second against S3's limit
-  await app.scroll("id:time-pane", 900);
   // scrolled, the header folds to a line whose latency says what it is
   await app.waitFor("id:run-folded", { timeout: 3000 });
   expect(app.shows("text:/^median \\d/")).toBe(true);
-  await app.waitFor("id:prefix-use");
+  // where by prefix: one bar chart, each prefix's requests and its busiest second against S3's limit
+  await reach(app, "id:prefix-use");
   expect(app.shows("label:/^Most at .*: \\d+ requests?, \\d+\\/s at its busiest$/")).toBe(true);
+  // what the run cost over time: its requests, its bytes out (said as egress if read from outside the region, where
+  // that is not known) and what it left stored, stacked on the one time axis
+  await reach(app, "text:What did the run cost, and when?");
+  expect(app.shows("id:cost-time-chart")).toBe(true);
+  expect(app.shows("id:cost-over-time")).toBe(true);
+  expect(app.shows("label:/^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/")).toBe(true);
+  await reach(app, "id:profile-cost");
   // the operations sort by how long they took
   await app.press("id:run-pane-mode-operations");
   // compared with another run: before and after
@@ -298,8 +295,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   await app.press("id:run-pane-mode-time");
   await app.waitFor("id:time-pane");
   // how long every request took (of two: said so), and where they went, on demand
-  expect(app.shows("text:/^Half took .* or less; the slowest .* · of only 2 requests$/")).toBe(true);
-  await app.waitFor("id:flows");
+  await reach(app, "text:/^Half took .* or less; the slowest .* · of only 2 requests$/");
+  await reach(app, "id:flows");
   expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
 });
 
