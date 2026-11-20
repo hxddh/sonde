@@ -785,31 +785,17 @@ fn copy_source(v: &str, opts: &ReplayOptions) -> String {
     }
 }
 
-/// Moves every `<Key>` of a DeleteObjects document under `prefix` and drops
+/// Moves every key of a DeleteObjects document under `prefix` and drops
 /// version ids (they belong to the original endpoint).
 fn move_keys(body: &str, prefix: &str) -> String {
-    let mut out = String::with_capacity(body.len() + 64);
-    let mut rest = body;
-    while let Some(i) = rest.find("<Key>") {
-        out.push_str(&rest[..i + 5]);
-        out.push_str(prefix);
-        rest = &rest[i + 5..];
-    }
-    out.push_str(rest);
-    // drop <VersionId>…</VersionId>
-    let mut clean = String::with_capacity(out.len());
-    let mut rest = out.as_str();
-    while let Some(i) = rest.find("<VersionId>") {
-        clean.push_str(&rest[..i]);
-        match rest[i..].find("</VersionId>") {
-            Some(j) => rest = &rest[i + j + "</VersionId>".len()..],
-            None => {
-                rest = "";
-            }
-        }
-    }
-    clean.push_str(rest);
-    clean
+    let moved: Vec<(String, Option<String>)> = reqlog::deleted_objects(body)
+        .into_iter()
+        .map(|(k, _)| (format!("{prefix}{k}"), None))
+        .collect();
+    let quiet = tags(body, "Quiet")
+        .first()
+        .is_some_and(|q| q.trim() == "true");
+    s3raw::xml::delete_body(&moved, quiet)
 }
 
 /// Replays `records` in order with `client` (each replayed record is tagged
@@ -1493,10 +1479,19 @@ mod tests {
         assert_eq!(synthetic(1001, "k").len(), 1001);
         assert_eq!(
             move_keys(
-                "<Delete><Object><Key>a/b</Key><VersionId>v1</VersionId></Object><Object><Key>c</Key></Object></Delete>",
+                "<Delete><Quiet>true</Quiet><Object><Key>a/b&amp;</Key><VersionId>v1</VersionId></Object><Object><Key>c</Key></Object></Delete>",
                 "replay-1/"
             ),
-            "<Delete><Object><Key>replay-1/a/b</Key></Object><Object><Key>replay-1/c</Key></Object></Delete>"
+            "<Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Quiet>true</Quiet>\
+             <Object><Key>replay-1/a/b&amp;</Key></Object><Object><Key>replay-1/c</Key></Object></Delete>"
+        );
+        // a prefixed document's keys are moved too
+        assert_eq!(
+            move_keys(
+                "<s3:Delete><s3:Object><s3:Key>k</s3:Key></s3:Object></s3:Delete>",
+                "p/"
+            ),
+            s3raw::xml::delete_body(&[("p/k".into(), None)], false)
         );
         let opts = ReplayOptions {
             prefix: "p/".into(),
