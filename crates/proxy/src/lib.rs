@@ -607,7 +607,12 @@ fn bucket_region(status: u16, headers: &http::HeaderMap, signed: &str) -> Option
         return None;
     }
     let region = headers.get("x-amz-bucket-region")?.to_str().ok()?.trim();
-    (!region.is_empty() && region != signed).then(|| region.to_string())
+    // a region's name, nothing else: it reaches a URL and a copied command
+    let named = (1..=40).contains(&region.len())
+        && region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    (named && region != signed).then(|| region.to_string())
 }
 
 /// The endpoint for `region` when the store is AWS's (`s3.amazonaws.com`,
@@ -692,15 +697,20 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
             ));
         }
     }
+    // a value is signed and forwarded as its bytes: UTF-8 text (`café` in
+    // x-amz-meta-*) is; other bytes could not be forwarded as sent
+    if let Some((name, _)) = parts
+        .headers
+        .iter()
+        .find(|(_, v)| std::str::from_utf8(v.as_bytes()).is_err())
+    {
+        return Err(format!(
+            "its header {name} is not UTF-8 text, so sonde cannot forward it as sent"
+        ));
+    }
     let query = parse_query(parts.uri.query());
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    let header = |k: &str| {
-        parts
-            .headers
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-    };
+    let header = |k: &str| parts.headers.get(k).map_or("", text);
     // the legacy form some SDKs still presign with (boto3's default for S3)
     if q("AWSAccessKeyId").is_some() || header("authorization").starts_with("AWS ") {
         return admit_v2(cfg, parts, host, &query);
@@ -779,7 +789,7 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
                 .headers
                 .get_all(h)
                 .iter()
-                .filter_map(|v| v.to_str().ok())
+                .map(text)
                 .collect::<Vec<_>>()
                 .join(",");
             (h.to_string(), v)
@@ -895,15 +905,7 @@ fn admit_v2(
     use base64::Engine;
     use hmac::{Hmac, KeyInit, Mac};
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    let header = |k: &str| {
-        parts
-            .headers
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    };
+    let header = |k: &str| parts.headers.get(k).map_or("", text).trim().to_string();
     let (key, signature, date) = match q("AWSAccessKeyId") {
         Some(k) => (
             k.to_string(),
@@ -967,12 +969,7 @@ fn admit_v2(
         .headers
         .iter()
         .filter(|(n, _)| n.as_str().starts_with("x-amz-"))
-        .map(|(n, v)| {
-            (
-                n.as_str().to_string(),
-                v.to_str().unwrap_or("").trim().to_string(),
-            )
-        })
+        .map(|(n, v)| (n.as_str().to_string(), text(v).trim().to_string()))
         .collect();
     amz.sort();
     let mut merged: Vec<(String, String)> = Vec::new();
@@ -1027,6 +1024,11 @@ fn admit_v2(
     } else {
         Err("its signature does not match the secret sonde gave the program".into())
     }
+}
+
+/// A header's value as text: [`admit`] has refused one that is not UTF-8.
+fn text(v: &http::HeaderValue) -> &str {
+    std::str::from_utf8(v.as_bytes()).unwrap_or("")
 }
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {
@@ -2635,6 +2637,11 @@ mod tests {
             bucket_region(301, &http::HeaderMap::new(), "us-east-1"),
             None
         );
+        // anything but a region's name is not taken
+        for bad in ["eu-west-1;id", "EU-WEST-1", "eu west", "", &"a".repeat(41)] {
+            h.insert("x-amz-bucket-region", bad.parse().unwrap());
+            assert_eq!(bucket_region(301, &h, "us-east-1"), None, "{bad}");
+        }
     }
 
     #[test]

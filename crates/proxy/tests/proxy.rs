@@ -92,7 +92,7 @@ fn verify(req: &http::request::Parts, body_hash: &str) -> Result<(), String> {
                 h.to_string(),
                 req.headers
                     .get(h)
-                    .map(|v| v.to_str().unwrap().to_string())
+                    .map(|v| String::from_utf8(v.as_bytes().to_vec()).unwrap())
                     .unwrap_or_default(),
             )
         })
@@ -386,6 +386,39 @@ async fn put_get_list_are_resigned_and_recorded() {
     let first = get.first_byte_ms.get().expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
+}
+
+/// A signed header's value is its bytes: UTF-8 text (as go-v2 and minio-go
+/// send metadata) is signed and forwarded as sent; other bytes are refused.
+#[tokio::test]
+async fn a_signed_header_in_utf8_is_admitted_and_forwarded_as_sent() {
+    let (proxy, app, log, up) = setup(Policy::Allow).await;
+    let put = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key("k")
+        .header("x-amz-meta-name", "café")
+        .body(Body::from("x"));
+    let r = app.send_raw(put).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(up.calls.lock().len(), 1);
+
+    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], sigv4::UNSIGNED_PAYLOAD);
+    let r = reqwest::Client::new()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", sigv4::UNSIGNED_PAYLOAD)
+        .header("authorization", auth)
+        .header(
+            "x-other",
+            http::HeaderValue::from_bytes(b"caf\xe9").unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("not UTF-8"));
+    assert_eq!(up.calls.lock().len(), 1);
+    assert_eq!(log.list(&reqlog::Filter::default(), 10).len(), 2);
 }
 
 /// A bucket in another region than the endpoint's: the store's redirect
