@@ -471,6 +471,12 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if r.query().iter().any(|(k, _)| k == "versionId") {
         return Some("names a version of the original endpoint".into());
     }
+    if r.query()
+        .iter()
+        .any(|(k, _)| k == "version-id-marker" || k == "upload-id-marker")
+    {
+        return Some("continues a listing from a marker of the original endpoint".into());
+    }
     // a copy of a version: its id is the original endpoint's
     if r.request_headers()
         .iter()
@@ -728,7 +734,10 @@ impl State {
             } else {
                 b.clone()
             };
-            req = req.body(Body::from(body));
+            // the original's checksum was dropped with the others: S3 wants
+            // one on DeleteObjects and on several settings' documents
+            let md5 = s3raw::checksum::Algorithm::Md5.compute(body.as_bytes());
+            req = req.header("content-md5", md5).body(Body::from(body));
         } else if let Some(n) = r.request_bytes.get().filter(|n| *n > 0) {
             if n > 1 << 30 {
                 return Err("a body over 1 GiB".into());
@@ -793,11 +802,12 @@ impl State {
 }
 
 fn copy_source(v: &str, opts: &ReplayOptions) -> String {
-    let decoded = percent_encoding::percent_decode_str(v)
+    // cut at the query before decoding: `%3F` is a key's own `?`
+    let raw = v.split('?').next().unwrap_or("");
+    let decoded = percent_encoding::percent_decode_str(raw)
         .decode_utf8_lossy()
         .into_owned();
-    let path = decoded.split('?').next().unwrap_or("");
-    let path = path.trim_start_matches('/');
+    let path = decoded.trim_start_matches('/');
     match path.split_once('/') {
         Some((b, k)) => format!(
             "{}/{}",
@@ -1621,6 +1631,70 @@ mod tests {
             state.build(&page(Some("t1")), &opts).unwrap_err(),
             "asks for a further page of a listing that had ended on this store"
         );
+    }
+
+    #[test]
+    fn a_rewritten_document_carries_the_md5_of_what_is_sent() {
+        let mut r = Record {
+            method: "POST".into(),
+            kind: "DeleteObjects".into(),
+            bucket: Some("b".into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        r.lists_mut().query = vec![("delete".into(), "".into())];
+        r.lists_mut().request_headers = vec![reqlog::Header::new("Content-MD5", "original==")];
+        r.rare_mut().request_body = Some("<Delete><Object><Key>k</Key></Object></Delete>".into());
+        let opts = ReplayOptions {
+            prefix: "p/".into(),
+            buckets: vec![],
+        };
+        let req = State::default().build(&r, &opts).unwrap();
+        let sent = s3raw::xml::delete_body(&[("p/k".into(), None)], false);
+        let md5: Vec<&str> = req
+            .headers
+            .iter()
+            .filter(|(k, _)| k == "content-md5")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(
+            md5,
+            [s3raw::checksum::Algorithm::Md5
+                .compute(sent.as_bytes())
+                .as_str()]
+        );
+    }
+
+    #[test]
+    fn a_copy_source_keeps_a_question_mark_of_its_key() {
+        let opts = ReplayOptions {
+            prefix: "p/".into(),
+            buckets: vec![],
+        };
+        assert_eq!(copy_source("/b/a%3Fb", &opts), "b/p/a%3Fb");
+        assert_eq!(copy_source("/b/a%3Fb?versionId=1", &opts), "b/p/a%3Fb");
+    }
+
+    #[test]
+    fn a_page_from_the_original_endpoints_marker_is_skipped() {
+        for marker in ["version-id-marker", "upload-id-marker"] {
+            let mut r = Record {
+                method: "GET".into(),
+                kind: "ListObjectVersions".into(),
+                bucket: Some("b".into()),
+                status: Some(200),
+                ..Default::default()
+            };
+            r.lists_mut().query = vec![
+                ("versions".into(), "".into()),
+                ("key-marker".into(), "k".into()),
+                (marker.into(), "v1".into()),
+            ];
+            assert!(
+                skip_reason(&r, &ReplayOptions::default()).is_some(),
+                "{marker}"
+            );
+        }
     }
 
     #[test]

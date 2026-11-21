@@ -244,11 +244,12 @@ Re-enacted (a run holds no object data):
   size for each object it read, copied from or wrote on a condition it met, and empty `sonde-seed-N` keys where a
   listing found more. Reads of existing data then find it, and nothing differs falsely.
 - Payloads: deterministic bytes of the recorded length. Control documents (DeleteObjects, tagging, …): as recorded,
-  keys moved under the prefix.
+  keys moved under the prefix, with the `Content-MD5` of what is sent.
 - Upload ids, part ETags, ETags in `If-Match`/`If-None-Match` and continuation tokens map to the replay endpoint's;
   `CompleteMultipartUpload` is rebuilt from the replayed parts.
 - Every key and listing prefix under `replay-<time>/` (or `--prefix`). Creating or deleting a bucket, bucket-level
-  changes (lifecycle, policy) and requests naming a version id are left out, and the plan says so.
+  changes (lifecycle, policy) and requests naming a version id or a version or upload page marker are left out,
+  and the plan says so.
 - One request at a time, in order, no retries.
 - A dry run first; `--yes` replays. It deletes what it wrote afterwards, always.
 - Each bucket must be there, its prefix empty and listable, else nothing is sent.
