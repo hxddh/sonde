@@ -9,7 +9,7 @@ trap 'rm -rf "$t"' EXIT
 mkdir -p "$t/bin"
 # each call answers with the next line of $FAKE/answers (the last again when
 # they run out): runs as "id status conclusion", ";" between runs; "-" none;
-# "!" the API failing
+# "!" the API failing; "{...}" the API's JSON, through the script's own filter
 cat >"$t/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 n=$(cat "$FAKE/n" 2>/dev/null || echo 0)
@@ -19,6 +19,7 @@ line=$(sed -n "$((n + 1))p" "$FAKE/answers")
 case "$line" in
   "!") exit 1 ;;
   -) exit 0 ;;
+  "{"*) while [ "$1" != --jq ]; do shift; done; jq -r "$2" <<<"$line" ;;
   *) tr ';' '\n' <<<"$line" ;;
 esac
 EOF
@@ -53,5 +54,9 @@ is "no run of the commit: refused" "$(waits -)" "1 1 "
 is "it says how to make one" "$(grep -c 'run CI on it by hand' "$t/said")" 1
 is "a run that starts late is waited for" "$(START=1 waits - - "6 completed success")" "0 3 6"
 is "a run past the bound: refused" "$(WAIT=0 waits "5 in_progress null")" "1 1 "
+run() { echo "{\"id\":$1,\"status\":\"completed\",\"conclusion\":\"success\",\"event\":\"$2\",\"head_branch\":\"$3\",\"head_repository\":{\"full_name\":\"o/r\"}}"; }
+is "a run by hand on main is taken" "$(waits "{\"workflow_runs\":[$(run 7 workflow_dispatch main)]}")" "0 1 7"
+is "a run by hand of the commit on another branch is not" \
+  "$(waits "{\"workflow_runs\":[$(run 7 workflow_dispatch topic)]}")" "1 1 "
 
 exit "$failed"
