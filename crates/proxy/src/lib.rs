@@ -1689,6 +1689,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
         };
+    // an unsigned aws-chunked body goes as sent: its payload is what it says
+    if content_sha == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
+        payload_len = header_value(&parts.headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok();
+    }
     record.request_bytes = payload_len.or(sent_len).into();
     held.keep(&record);
 

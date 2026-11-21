@@ -496,6 +496,33 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     assert_eq!(r.request_bytes, Some(15));
 }
 
+/// An unsigned aws-chunked upload (as newer SDKs send with a checksum)
+/// goes on as sent, and its record counts the payload, not the framing.
+#[tokio::test]
+async fn an_unsigned_chunked_upload_counts_its_payload() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let body = "f\r\n0123456789abcde\r\n0\r\nx-amz-checksum-crc32:Ufg6kA==\r\n\r\n";
+    let sha = "STREAMING-UNSIGNED-PAYLOAD-TRAILER";
+    let (date, auth) = signed(&proxy, "PUT", "/data/u", &[], &[], sha);
+    let resp = web()
+        .put(format!("{}/data/u", proxy.url()))
+        .header("x-amz-content-sha256", sha)
+        .header("x-amz-date", date)
+        .header("content-encoding", "aws-chunked")
+        .header("x-amz-decoded-content-length", "15")
+        .header("x-amz-trailer", "x-amz-checksum-crc32")
+        .header("authorization", auth)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let (data, _) = up.objects.lock().get("/data/u").cloned().unwrap();
+    assert_eq!(data, b"0123456789abcde");
+    let r = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(r.request_bytes, Some(15));
+}
+
 /// A large signed body goes on as it comes, in pieces of any size: without
 /// a trailer as its payload, unsigned; with one, framed again with the
 /// client's checksum. Neither is read whole first.
