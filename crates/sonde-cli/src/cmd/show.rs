@@ -238,10 +238,9 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         let split = sonde_analysis::split::split(all, by, &prices);
         match a.format {
             Format::Json => output::print_json(&serde_json::json!({
-                    "run": run.header,
-                    "split": split,
-                })
-            ),
+                "run": run.header,
+                "split": split,
+            })),
             _ => print_split(
                 &split,
                 &run.header,
@@ -427,21 +426,26 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     }
 }
 
-/// A run's summary and findings on stdout, as `sonde show` writes them.
-pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
-    show(
-        s,
-        &ShowArgs {
-            file: Some(file.to_path_buf()),
-            errors: false,
-            requests: false,
-            all: false,
-            app: false,
-            by: None,
-            format: Format::Text,
-        },
-    )
-    .await
+/// A run just made (`import`): its summary and findings on stderr, as
+/// `run` says its own; stdout is for what was asked (`show` reads it).
+pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
+    let run = super::runs::read(file, sonde_analysis::run::Keep::All)?;
+    let mut analysis = Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
+    sonde_analysis::program::mark_expected(
+        &mut analysis.observations,
+        &super::check::expect_of(&run.header),
+    );
+    let since = super::fixloop::since_last(s, file, &run.header, &run.records, &analysis);
+    print_summary_of(
+        &analysis,
+        &run.header,
+        file,
+        std::io::stderr().is_terminal(),
+        false,
+        false,
+        since.as_ref(),
+    );
+    Ok(0)
 }
 
 /// Operations a finding names in `show -f json` (all of them with --all).

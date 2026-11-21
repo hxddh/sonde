@@ -85,7 +85,7 @@ pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     // of this run only: neither the endpoint nor the limits are ever saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);
-        let mut e = EndpointConfig::new(ADHOC, url, url, &cli.region, vendor);
+        let mut e = EndpointConfig::new(ADHOC, url, url, &region(cli, url), vendor);
         e.path_style = cli.path_style;
         e.ca_file = cli.ca_file.clone();
         e.credentials = CredentialSource::Default;
@@ -96,6 +96,50 @@ pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
         concurrency: cli.concurrency.map(|c| c.clamp(1, 1024)),
     })?;
     Ok(s)
+}
+
+/// The region of an endpoint given at `url`: `--region`, else the region
+/// an AWS URL names (`s3.eu-west-1.amazonaws.com`, `s3-eu-west-1…`,
+/// `s3.dualstack.eu-west-1…`), else `AWS_REGION` or `AWS_DEFAULT_REGION`,
+/// else us-east-1.
+pub fn region(cli: &Cli, url: &str) -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    cli.region
+        .clone()
+        .or_else(|| region_of_url(url))
+        .or_else(|| env("AWS_REGION"))
+        .or_else(|| env("AWS_DEFAULT_REGION"))
+        .unwrap_or_else(|| "us-east-1".into())
+}
+
+/// The region an AWS S3 URL names in its host, if it names one.
+fn region_of_url(url: &str) -> Option<String> {
+    let host = url.split_once("://").map_or(url, |(_, h)| h);
+    let host = host.split(['/', ':', '?']).next()?.to_ascii_lowercase();
+    if !(host.ends_with(".amazonaws.com") || host.ends_with(".amazonaws.com.cn")) {
+        return None;
+    }
+    // eu-west-1, us-gov-west-1, cn-north-1: letters, then a number last
+    let is_region = |r: &str| {
+        let parts: Vec<&str> = r.split('-').collect();
+        parts.len() >= 3
+            && parts[0].len() == 2
+            && parts[..parts.len() - 1]
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase()))
+            && parts[parts.len() - 1].bytes().all(|b| b.is_ascii_digit())
+            && !parts[parts.len() - 1].is_empty()
+    };
+    // from S3's own label on: a bucket's name before it is no region
+    let labels: Vec<&str> = host.split('.').collect();
+    let s3 = labels
+        .iter()
+        .position(|l| *l == "s3" || l.starts_with("s3-"))?;
+    labels[s3..]
+        .iter()
+        .map(|l| l.strip_prefix("s3-").unwrap_or(l))
+        .find(|l| is_region(l))
+        .map(String::from)
 }
 
 /// The endpoint a command acts on: `--endpoint`, `--url`, or the only one
@@ -250,6 +294,29 @@ mod tests {
             ctx.check()?;
             Ok(serde_json::json!(1))
         })
+    }
+
+    /// 27.0 stored us-east-1 for any URL without --region.
+    #[test]
+    fn an_aws_url_names_its_region() {
+        for (url, region) in [
+            ("https://s3.eu-west-1.amazonaws.com", Some("eu-west-1")),
+            ("https://s3-ap-south-1.amazonaws.com/", Some("ap-south-1")),
+            (
+                "https://s3.dualstack.us-west-2.amazonaws.com",
+                Some("us-west-2"),
+            ),
+            (
+                "https://my-bkt-1.s3.us-gov-west-1.amazonaws.com",
+                Some("us-gov-west-1"),
+            ),
+            ("https://s3.cn-north-1.amazonaws.com.cn", Some("cn-north-1")),
+            ("https://my-bkt-1.s3.amazonaws.com", None),
+            ("http://localhost:9000", None),
+            ("https://s3.eu-west-1.example.com", None),
+        ] {
+            assert_eq!(region_of_url(url).as_deref(), region, "{url}");
+        }
     }
 
     #[test]

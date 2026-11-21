@@ -142,10 +142,10 @@ is "baseline from the base branch's run that has it" "$(output baseline)" "$t/ru
 is "it says which run" "$(grep -c 'actions/runs/22' "$t/said")" 1
 is "of this workflow, on the base branch" "$(grep -c -- '--workflow ci.yml --branch main' "$t/gh.log")" 1
 FAKE_SHOW=65 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
-is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" auto
+is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" ""
 is "it says why" "$(grep -c 'not one this sonde reads' "$t/said")" 1
 FAKE_RUNS="11" step baseline >"$t/said"
-is "none kept: auto" "$(output baseline)" auto
+is "none kept: nothing passed (sonde.toml's baseline then applies)" "$(output baseline)" ""
 is "none kept: a warning" "$(grep -c '^::warning title=sonde::no baseline' "$t/said")" 1
 is "it says why no merge-base was recorded" "$(grep -c 'its merge-base could not be recorded (not a git checkout)' "$t/said")" 1
 is "and nothing was run" "$([ -f "$t/sonde.pwd" ] && echo ran || echo none)" none
@@ -179,10 +179,10 @@ is "in a folder of its own, not the run's (never its run before)" "$(dirname "$(
 SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
 is "setup runs first, in the same folder" "$(cat "$t/setup.pwd")" "$(cat "$t/sonde.pwd")"
 SONDE_RUN="python3 etl.py" SONDE_SETUP="false" step baseline >"$t/said"
-is "setup failed: held to its budget" "$(output baseline)" auto
+is "setup failed: held to its budget" "$(output baseline)" ""
 is "it says why" "$(grep -c 'could not be recorded (setup failed in the merge-base.s checkout)' "$t/said")" 1
 SONDE_RUN="python3 etl.py" FAKE_RUN_EXIT=3 step baseline >"$t/said"
-is "its program failed: held to its budget" "$(output baseline)" auto
+is "its program failed: held to its budget" "$(output baseline)" ""
 is "it says why, and what to set" "$(grep -c "the merge-base's program exited 3: .*the setup input" "$t/said")" 1
 # a push is no pull request: no merge-base
 GITHUB_BASE_REF="" GITHUB_REF_NAME=main SONDE_RUN="python3 etl.py" step baseline >"$t/said"
@@ -207,7 +207,7 @@ is "recorded from the base branch's commit it was merged into" "$(cat "$t/sonde.
 is "which is the merge's first parent" "$(grep -c "^::notice title=sonde::baseline: the merge-base $(git rev-parse --short=7 HEAD^1) of main" "$t/said")" 1
 cd "$t/nogit"
 SONDE_BASELINE=none step baseline
-is "none asked: none" "$(output baseline)" ""
+is "none asked: none, passed on (no baseline at all)" "$(output baseline)" none
 SONDE_BASELINE=https://x/b.sonde step baseline
 is "a URL is passed on" "$(output baseline)" https://x/b.sonde
 # a push: this branch's earlier run, never its own
@@ -267,10 +267,12 @@ is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t
 }
 
 # check: passed or not; anything else is the step's failure
-export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto
+export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=none
 SONDE_CHECK_ARGS="--tolerance 5" step check >/dev/null
 is "a check that passed" "$(output passed)" true
-is "check's flags" "$(paste -sd' ' "$t/sonde.check")" "check $SONDE_FILE --baseline auto --tolerance 5 -f github"
+is "check's flags" "$(paste -sd' ' "$t/sonde.check")" "check $SONDE_FILE --baseline none --tolerance 5 -f github"
+SONDE_BASELINE="" step check >/dev/null
+is "no baseline found: none passed, so sonde.toml's applies" "$(grep -c -- --baseline "$t/sonde.check")" 0
 FAKE_CHECK=1 step check >/dev/null
 is "a check that failed" "$(output passed)" false
 if FAKE_CHECK=64 step check >/dev/null; then is "a check that could not run fails the step" 0 1; fi
@@ -283,10 +285,10 @@ for s in record baseline check report comment; do
     $0 ~ ("sonde-action.sh\" " s "$") { print wd }' "$here/../action.yml")" 1
 done
 
-# the report: against a baseline file, never `auto`
+# the report: against a baseline file, never `none`
 step report >/dev/null
 is "a report" "$(output file)" "$t/runner/sonde/report/sonde-report.html"
-is "auto is not passed to share" "$(grep -c baseline "$t/sonde.share")" 0
+is "none is not passed to share" "$(grep -c baseline "$t/sonde.share")" 0
 
 # one comment, found by its marker and edited; else written
 export SONDE_PR=7 SONDE_ARTIFACT=etl SONDE_REPORT_URL=https://github.test/artifact/1

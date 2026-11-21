@@ -82,7 +82,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
                 return Ok(64);
             }
             let vendor = sonde_core::Vendor::guess(endpoint_url);
-            let mut e = sonde_core::EndpointConfig::new(id, id, endpoint_url, &cli.region, vendor);
+            let region = super::region(cli, endpoint_url);
+            let mut e = sonde_core::EndpointConfig::new(id, id, endpoint_url, &region, vendor);
             e.path_style |= cli.path_style;
             e.ca_file = cli.ca_file.clone();
             if let Some(name) = profile {

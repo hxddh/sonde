@@ -189,20 +189,19 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     ];
     match a.format {
         Format::Json => output::print_json(&serde_json::json!({
-                "plan": plan,
-                "run": path,
-                "comparison": c,
-                "relies": relied,
-                "cost": costs,
-                "removed": run.removed,
-                "removedVersions": run.removed_versions,
-                "remaining": run.remaining,
-                "remainingObjects": run.remaining_objects,
-                "remainingVersions": run.remaining_versions,
-                "remainingMarkers": run.remaining_markers,
-                "unabortedUploads": run.unaborted_uploads,
-            })
-        ),
+            "plan": plan,
+            "run": path,
+            "comparison": c,
+            "relies": relied,
+            "cost": costs,
+            "removed": run.removed,
+            "removedVersions": run.removed_versions,
+            "remaining": run.remaining,
+            "remainingObjects": run.remaining_objects,
+            "remainingVersions": run.remaining_versions,
+            "remainingMarkers": run.remaining_markers,
+            "unabortedUploads": run.unaborted_uploads,
+        })),
         _ => {
             let out = std::io::stdout().is_terminal();
             print_comparison(&c, out);

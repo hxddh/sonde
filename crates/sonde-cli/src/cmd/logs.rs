@@ -272,7 +272,7 @@ pub(super) async fn import_logs(
     };
     sonde_analysis::import::save(&run, &path)?;
     drop(run);
-    super::record::show_file(s, &path).await?;
+    super::record::summary_on_stderr(s, &path)?;
     Ok(code)
 }
 

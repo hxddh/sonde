@@ -22,7 +22,8 @@ pub struct CheckArgs {
     file: Option<PathBuf>,
     /// A run to hold it to: its requests, waiting, cost and errors with
     /// --tolerance of room, and no warning it did not have. `auto` is the
-    /// baseline set for the run's program (in the app, or with --set-baseline).
+    /// baseline set for the run's program (in the app, or with --set-baseline);
+    /// `none`, no baseline (sonde.toml's left out).
     #[arg(long)]
     baseline: Option<String>,
     /// Make this run its program's baseline, for later `--baseline auto` (and the app).
@@ -50,7 +51,7 @@ pub struct CheckArgs {
     max_transfer: Option<u64>,
     /// Against the baseline: requests, waiting and cost may grow this many
     /// percent (10 unless sonde.toml says).
-    #[arg(long)]
+    #[arg(long, value_parser = tolerance_arg, value_name = "PCT")]
     tolerance: Option<f64>,
     /// Write `sonde.toml` here (or at --config) with a `[check]` that this
     /// run passes: its figures with --tolerance, 10%, of room. Refused when
@@ -102,6 +103,13 @@ type Checked = (
 fn size_arg(text: &str) -> Result<u64, String> {
     sonde_analysis::project::size_text(text)
         .ok_or_else(|| format!("{text:?} is not a size (10GiB, 500MB, or bytes as a number)"))
+}
+
+fn tolerance_arg(text: &str) -> Result<f64, String> {
+    let t: f64 = text
+        .parse()
+        .map_err(|_| format!("{text:?} is not a percent"))?;
+    sonde_analysis::project::tolerance(t)
 }
 
 fn duration_arg(text: &str) -> Result<f64, String> {
@@ -361,7 +369,9 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
     const MAX: u64 = 1 << 30;
     let shown = url_shown(url);
     if !url.starts_with("https://") {
-        anyhow::bail!("baseline {shown}: only https URLs are fetched");
+        return Err(super::usage(format!(
+            "baseline {shown}: only https URLs are fetched"
+        )));
     }
     let client = s3raw::http_client()
         .timeout(std::time::Duration::from_secs(60))
@@ -461,7 +471,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             _ => b,
         }
     });
-    let baseline_arg = a.baseline.clone().or(project_baseline);
+    // `none`: no baseline, whatever sonde.toml says
+    let baseline_arg = a
+        .baseline
+        .clone()
+        .or(project_baseline)
+        .filter(|b| b != "none");
     let mut fetched: Option<tempfile::TempPath> = None;
     if let Some(u) = baseline_arg
         .as_deref()
@@ -500,12 +515,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // (its records are let go here: two runs are never held at once)
         Ok((point, pr, ob, opened.header, run))
     };
-    if !file.exists() {
-        return Err(super::usage(format!(
+    let no_run = |f: &Path| {
+        super::usage(format!(
             "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
-            file.display(),
+            f.display(),
             s.paths().runs().display()
-        )));
+        ))
+    };
+    if !file.exists() {
+        return Err(no_run(&file));
     }
     let mut run = read(&file)?;
     // what the project keeps on purpose, each finding with why
@@ -553,17 +571,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         let parent = std::path::absolute(&file)
             .ok()
             .and_then(|f| f.parent().and_then(|p| p.canonicalize().ok()));
-        if parent.is_none() || parent != dir.canonicalize().ok() {
-            eprintln!(
-                "a baseline is a run in {}: record it there (no -o), or pass --baseline FILE",
-                dir.display()
-            );
-            return Ok(64);
-        }
-        let name = file
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        // a run of the folder by its name; one written elsewhere (-o) by its
+        // whole path, listed with the folder's (`dir.join` of it is itself)
+        let name = file.file_name().unwrap_or_default();
+        let name = match parent {
+            Some(p) if Some(&p) != dir.canonicalize().ok().as_ref() => {
+                sonde_analysis::index::note_elsewhere(&dir, &file);
+                p.join(name).to_string_lossy().into_owned()
+            }
+            _ => name.to_string_lossy().into_owned(),
+        };
         sonde_analysis::program::set_baseline(&dir, key, Some(&name))?;
         eprintln!("baseline for `{key}`: {}", file.display());
     }
@@ -586,7 +603,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             }
             found
         }
-        Some(p) => Some(super::runs::resolve(s, &PathBuf::from(p))),
+        Some(p) => {
+            let found = super::runs::resolve(s, &PathBuf::from(p));
+            if !found.is_file() {
+                return Err(no_run(&found));
+            }
+            Some(found)
+        }
     };
     // the baseline: its figures and its findings
     let base = base_path.as_ref().map(read).transpose()?;

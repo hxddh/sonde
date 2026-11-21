@@ -282,7 +282,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
                 "the tour is not tried or named: give a command after -- (`sonde run --demo --trial -- python etl.py`)",
             ));
         }
-        return super::demo::tour(s, a.rec.out.clone()).await;
+        return super::demo::tour(s, a.rec.out.clone(), a.force).await;
     }
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
@@ -541,8 +541,8 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_analysis::trial::Trial]
     }
     if let Some(url) = &cli.url {
         words.push(format!("--url {}", q(url)));
-        if cli.region != "us-east-1" {
-            words.push(format!("--region {}", q(&cli.region)));
+        if let Some(r) = &cli.region {
+            words.push(format!("--region {}", q(r)));
         }
         if cli.path_style {
             words.push("--path-style".into());

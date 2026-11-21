@@ -268,7 +268,10 @@ mod tests {
     fn json_escapes_what_a_terminal_acts_on_as_json_does() {
         let key = "a\u{7f}b\u{202e}c\u{9b}d\u{2066}é";
         let text = super::json(&serde_json::json!({ key: key }));
-        assert!(!text.contains(['\u{7f}', '\u{202e}', '\u{9b}', '\u{2066}']), "{text}");
+        assert!(
+            !text.contains(['\u{7f}', '\u{202e}', '\u{9b}', '\u{2066}']),
+            "{text}"
+        );
         assert_eq!(sonde_fmt::terminal(&text), text);
         let back: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(back[key], key);

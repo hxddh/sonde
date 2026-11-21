@@ -499,13 +499,19 @@ async fn every_json_output_is_as_its_schema_says() {
         let split = b.json(&["show", p, "--by", "key", "-f", "json"], 0).await;
         assert!(split.to_string().contains(PLANTED), "{split}");
         holds("show-by", &split);
-        holds("show", &b.json(&["show", p, "--all", "-f", "json"], 0).await);
+        holds(
+            "show",
+            &b.json(&["show", p, "--all", "-f", "json"], 0).await,
+        );
         holds(
             "check",
             &b.json(&["check", p, "--baseline", s, "-f", "json"], 0)
                 .await,
         );
-        holds("compare", &b.json(&["compare", s, p, "-f", "json"], 0).await);
+        holds(
+            "compare",
+            &b.json(&["compare", s, p, "-f", "json"], 0).await,
+        );
         holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
     }
     for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {

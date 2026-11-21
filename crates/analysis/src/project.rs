@@ -210,6 +210,9 @@ pub fn parse(text: &str) -> Result<Project, String> {
         format!("{}{hint}", e.to_string().trim_end())
     })?;
     file.program.check()?;
+    if let Some(t) = file.check.tolerance {
+        tolerance(t).map_err(|e| format!("[check] {e}"))?;
+    }
     if let Some(why) = file
         .check
         .expect
@@ -236,6 +239,16 @@ pub fn parse(text: &str) -> Result<Project, String> {
         scenarios,
         policy,
     })
+}
+
+/// A tolerance as `[check] tolerance` and `--tolerance` take it: a percent,
+/// 0 or more.
+pub fn tolerance(t: f64) -> Result<f64, String> {
+    if t.is_finite() && t >= 0.0 {
+        Ok(t)
+    } else {
+        Err(format!("tolerance = {t}: a percent, 0 or more"))
+    }
 }
 
 /// [`parse`] of the file at `path`; an error names the file.
@@ -376,6 +389,9 @@ mod tests {
             ("[program]\nname = \"\"\nruns = \"etl\"\n", "an empty name"),
             ("[program]\nname = \"etl\"\n", "needs `runs`"),
             ("[program]\nruns = \"etl\"\n", "needs a `name`"),
+            // room to grow: never less than none
+            ("[check]\ntolerance = -5\n", "0 or more"),
+            ("[check]\ntolerance = nan\n", "0 or more"),
             // words of a finding's text are no identity
             (
                 "[check]\nexpect = { \"read again\" = \"kept\" }\n",
