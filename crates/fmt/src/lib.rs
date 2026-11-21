@@ -43,7 +43,8 @@ pub fn bytes(n: u64) -> String {
     }
     let (r, decimals) = scaled(n, i);
     if decimals == 0 {
-        format!("{r} {}", UNITS[i])
+        // grouped as a count is (only PiB reaches four digits)
+        format!("{} {}", count(r as u64), UNITS[i])
     } else {
         format!("{}.{} {}", r / 10, r % 10, UNITS[i])
     }
@@ -377,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_largest_count_of_bytes_is_written() {
-        assert_eq!(bytes(u64::MAX), "16384 PiB");
+        assert_eq!(bytes(u64::MAX), "16,384 PiB");
         assert_eq!(bytes_f64(-3.0), "0 B");
         assert_eq!(bytes_f64(f64::NAN), "0 B");
         assert_eq!(bytes_f64(1535.6), "1.5 KiB");

@@ -1553,6 +1553,6 @@ mod tests {
         assert_eq!(bytes_text(1536.0), "1.5 KiB");
         // whole from 100 of a unit, as the app writes them; PiB the last
         assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "586 PiB");
-        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3072 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3,072 PiB");
     }
 }
