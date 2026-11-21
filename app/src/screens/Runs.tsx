@@ -137,7 +137,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // a program opened from the Programs list: its runs
   effect(() => {
     const o = paneOnOpen();
-    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
+    if (o && o.path === props.path) untracked(() => batch(() => ((paneChosen = true), pane.set(o.pane), paneOnOpen.set(null))));
   });
   // the demo's run: its first finding open, its line of code and its fix in view
   effect(() => {
