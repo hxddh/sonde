@@ -32,10 +32,10 @@ pub fn detect(objects: &[ObjectMeta]) -> Vec<Detection> {
 fn graveler_value(v: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let mut p = 0;
     let il = svarint(v, &mut p).ok()? as usize;
-    let identity = v.get(p..p + il)?.to_vec();
+    let identity = sstable::take(v, p, il)?.to_vec();
     p += il;
     let dl = svarint(v, &mut p).ok()? as usize;
-    let data = v.get(p..p + dl)?.to_vec();
+    let data = sstable::take(v, p, dl)?.to_vec();
     Some((identity, data))
 }
 
@@ -109,11 +109,11 @@ pub fn decode(bytes: &[u8]) -> Sst {
 }
 
 pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError> {
-    let objects = src.list(root).await?;
+    let listing = src.list(root).await?;
     let mut l = Layout::new(Format::Lakefs, root);
     l.format_version = Some("graveler (Pebble SSTables)".into());
-    l.objects = objects.len() as u64;
-    l.bytes = objects.iter().map(|o| o.size).sum();
+    l.count(&listing);
+    let (objects, cut) = (listing.objects, listing.cut);
     let meta: Vec<&ObjectMeta> = objects
         .iter()
         .filter(|o| {
@@ -138,7 +138,16 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         BTreeMap::new();
     for o in &meta {
         let name = o.key.rsplit('/').next().unwrap_or_default().to_string();
-        let bytes = src.get(&o.key, None).await?;
+        let bytes = match src.get(&o.key, None).await {
+            Ok(b) => b,
+            Err(e) => {
+                l.issues.push(issue(
+                    Severity::Error,
+                    ph!("read.failed", key = o.key, error = e),
+                ));
+                continue;
+            }
+        };
         match decode(&bytes) {
             Sst::Metarange(r) => {
                 metaranges.insert(name, (r, o.last_modified));
@@ -168,7 +177,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .collect();
     let unreferenced: Vec<&&ObjectMeta> = data
         .iter()
-        .filter(|o| !tails.contains(rel(o).as_str()))
+        .filter(|o| !cut && !tails.contains(rel(o).as_str()))
         .collect();
     let unreferenced_keys: HashSet<&str> = unreferenced.iter().map(|u| u.key.as_str()).collect();
     let used_ranges: BTreeSet<String> = metaranges
@@ -177,7 +186,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .collect();
     let dangling: Vec<&String> = used_ranges
         .iter()
-        .filter(|r| !ranges.contains_key(*r))
+        .filter(|r| !cut && !ranges.contains_key(*r))
         .collect();
     for d in &dangling {
         l.issues
@@ -325,6 +334,12 @@ fn short(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::short;
+
+    #[test]
+    fn a_negative_length_is_no_value() {
+        // identity length -1
+        assert_eq!(super::graveler_value(&[0x01]), None);
+    }
 
     #[test]
     fn a_name_with_multi_byte_characters_is_shortened_not_sliced() {

@@ -481,6 +481,7 @@ pub async fn scan_inner(
     let mut source = "ListObjectVersions";
     let mut versions_unknown = None;
     let (mut km, mut vm): (Option<String>, Option<String>) = (None, None);
+    let mut versions_pages = crate::services::Pages::default();
     loop {
         ctx.check()?;
         let page = match c
@@ -530,9 +531,11 @@ pub async fn scan_inner(
         }
         km = page.next_key_marker;
         vm = page.next_version_id_marker;
+        versions_pages.next((&km, &vm))?;
     }
     if source == "ListObjectsV2" {
         let mut token = None;
+        let mut pages = crate::services::Pages::default();
         loop {
             ctx.check()?;
             let (page, _) = c
@@ -566,6 +569,7 @@ pub async fn scan_inner(
                 break;
             }
             token = page.next_continuation_token;
+            pages.next(&token)?;
         }
     }
     let mut uncounted = None;

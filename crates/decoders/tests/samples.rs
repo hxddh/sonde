@@ -274,3 +274,112 @@ async fn cadence_on_any_prefix() {
             .any(|f| f.label == "Median interval" && f.value == "2000 ms")
     );
 }
+
+/// A sample whose GETs of some keys fail, and whose listing leaves out the
+/// keys holding `dropped`, said cut or not.
+struct Flaky {
+    inner: DirSource,
+    fail: Vec<&'static str>,
+    dropped: &'static str,
+    cut: bool,
+}
+
+#[async_trait::async_trait]
+impl decoders::Source for Flaky {
+    async fn list(&self, prefix: &str) -> Result<decoders::Listing, decoders::SourceError> {
+        let mut l = self.inner.list(prefix).await?;
+        if !self.dropped.is_empty() {
+            l.objects.retain(|o| !o.key.contains(self.dropped));
+        }
+        l.cut = self.cut;
+        Ok(l)
+    }
+    async fn get(
+        &self,
+        key: &str,
+        range: Option<(u64, u64)>,
+    ) -> Result<bytes::Bytes, decoders::SourceError> {
+        if self.fail.iter().any(|f| key.ends_with(f)) {
+            return Err(decoders::SourceError("503 SlowDown".into()));
+        }
+        self.inner.get(key, range).await
+    }
+}
+
+#[tokio::test]
+async fn a_read_that_fails_is_an_issue_not_the_end() {
+    for (sample, root, format, fail) in [
+        (
+            "slatedb",
+            "db/",
+            Format::Slatedb,
+            vec!["manifest/00000000000000000003.manifest"],
+        ),
+        (
+            "lakefs",
+            "sample/",
+            Format::Lakefs,
+            vec!["_lakefs/c3e92946de4eef6f941cf2b5268876ab501598df8d5ecb411267be73cb9e767e"],
+        ),
+        (
+            "woodpecker",
+            "",
+            Format::Woodpecker,
+            vec!["1/0/footer.blk", "1/2/0.blk"],
+        ),
+    ] {
+        let n = fail.len();
+        let src = Flaky {
+            inner: samples(sample),
+            fail,
+            dropped: "",
+            cut: false,
+        };
+        let l = analyze(&src, format, root)
+            .await
+            .unwrap_or_else(|e| panic!("{sample}: {e}"));
+        let said = l
+            .issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error && i.message.contains("cannot read"))
+            .count();
+        assert_eq!(said, n, "{sample}: {:?}", l.issues);
+    }
+}
+
+#[tokio::test]
+async fn a_cut_listing_says_so_and_calls_nothing_missing() {
+    for (sample, root, format, dropped) in [
+        (
+            "iceberg",
+            "warehouse/demo.db/events/",
+            Format::Iceberg,
+            "/data/",
+        ),
+        ("slatedb", "db/", Format::Slatedb, "/compacted/"),
+    ] {
+        let missing = |l: &decoders::Layout| {
+            l.issues
+                .iter()
+                .any(|i| i.message.contains("but missing") || i.message.contains("orphans"))
+        };
+        let flaky = |cut| Flaky {
+            inner: samples(sample),
+            fail: vec![],
+            dropped,
+            cut,
+        };
+        // listed to its end, what is not there is missing
+        let whole = analyze(&flaky(false), format, root).await.unwrap();
+        assert!(missing(&whole), "{sample}: {:?}", whole.issues);
+        let cut = analyze(&flaky(true), format, root).await.unwrap();
+        assert!(!missing(&cut), "{sample}: {:?}", cut.issues);
+        assert!(
+            cut.issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("listing stopped")),
+            "{sample}: {:?}",
+            cut.issues
+        );
+    }
+}

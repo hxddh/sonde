@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use decoders::{Format, ObjectMeta, Source, SourceError};
+use decoders::{Format, Listing, ObjectMeta, Source, SourceError};
 use s3raw::ops::ListV2;
 use s3raw::{S3Client, S3Error};
 use serde_json::json;
@@ -25,9 +25,10 @@ pub struct S3Source {
 
 #[async_trait]
 impl Source for S3Source {
-    async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>, SourceError> {
+    async fn list(&self, prefix: &str) -> Result<Listing, SourceError> {
         let mut out = vec![];
-        let mut token = None;
+        let mut token: Option<String> = None;
+        let mut pages = crate::services::Pages::default();
         loop {
             if let Some(c) = &self.ctx {
                 c.check().map_err(|e| SourceError(e.to_string()))?;
@@ -38,7 +39,7 @@ impl Source for S3Source {
                     &self.bucket,
                     &ListV2 {
                         prefix: Some(prefix.into()),
-                        continuation_token: token,
+                        continuation_token: token.clone(),
                         url_encoding: true,
                         ..Default::default()
                     },
@@ -63,15 +64,18 @@ impl Source for S3Source {
                     ph!("progress.listed", n = out.len()),
                 ));
             }
-            if out.len() >= self.max_objects
-                || !page.is_truncated
-                || page.next_continuation_token.is_none()
-            {
-                break;
+            let next = page.next_continuation_token.filter(|_| page.is_truncated);
+            let Some(next) = next else { break };
+            if out.len() >= self.max_objects {
+                return Ok(Listing {
+                    objects: out,
+                    cut: true,
+                });
             }
-            token = page.next_continuation_token;
+            pages.next(&next).map_err(|e| SourceError(e.to_string()))?;
+            token = Some(next);
         }
-        Ok(out)
+        Ok(out.into())
     }
 
     async fn get(&self, key: &str, range: Option<(u64, u64)>) -> Result<Bytes, SourceError> {
@@ -142,4 +146,34 @@ pub fn analyze(s: &Arc<Sonde>, endpoint: &str, bucket: &str, format: Format, roo
             Ok(serde_json::to_value(layout).unwrap_or_default())
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_listing_says_when_it_was_cut_and_ends_when_a_token_repeats() {
+        // every page holds one object and says another follows, at one token
+        let (_dir, s) = crate::services::tests::store(|_| {
+            "<ListBucketResult><IsTruncated>true</IsTruncated>\
+             <NextContinuationToken>t</NextContinuationToken>\
+             <Contents><Key>k</Key><Size>1</Size></Contents></ListBucketResult>"
+                .into()
+        })
+        .await;
+        let src = |max_objects| S3Source {
+            client: s.client("e").unwrap(),
+            bucket: "b".into(),
+            max_objects,
+            ctx: None,
+        };
+        let cut = src(1).list("").await.unwrap();
+        assert!(cut.cut);
+        assert_eq!(cut.objects.len(), 1);
+        let endless = tokio::time::timeout(std::time::Duration::from_secs(20), src(1000).list(""))
+            .await
+            .expect("the listing ended");
+        assert!(endless.unwrap_err().0.contains("again"));
+    }
 }
