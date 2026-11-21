@@ -662,6 +662,10 @@ impl Record {
                 body.push_str("\n… (truncated)");
             }
         }
+        if let Some(e) = &mut x.transport_error {
+            // it can name the URL it failed on
+            *e = crate::redact::redact_text(e);
+        }
         if let Some(body) = &mut x.request_body {
             if body.len() > MAX_REQUEST_BODY {
                 body.truncate(body.floor_char_boundary(MAX_REQUEST_BODY));
