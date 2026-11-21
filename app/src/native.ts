@@ -91,7 +91,8 @@ export const api = {
     split: async (path: string, by: T.SplitBy) => (await Runs.split(path, by)) as T.Split,
     /** Every request of one key, whatever its operation, in time order (the inspector's history). */
     keyHistory: async (path: string, bucket: string, key: string) => (await Runs.keyHistory(path, bucket, key)) as T.KeyRequest[],
-    record: (path: string, id: number) => Runs.record(path, id) as T.RequestRecord | null,
+    /** One request in full. Off the interface's thread (a large run's is read from its file). */
+    record: async (path: string, id: number) => (await Runs.record(path, id)) as T.RequestRecord | null,
     copy: (path: string, id: number, kind: "cli" | "curl") => Runs.copy(path, id, kind) as string | null,
     start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Runs.start(endpoint, policy)) as T.RecordingView,
     current: () => Runs.current() as T.RecordingView | null,
@@ -100,7 +101,8 @@ export const api = {
     /** The budget the run's program has in its project's sonde.toml, for the charts' lines; null without one. */
     budget: (path: string) => Runs.budget(path) as T.ProjectBudget | null,
     import: (name: string, text: string) => Runs.import(name, text) as string,
-    importPath: (path: string) => Runs.importPath(path) as string,
+    /** A run file or a log of traffic at a path added to the runs (one of them already: opened as it is). Off the interface's thread. */
+    importPath: (path: string) => Runs.importPath(path) as Promise<string>,
     pick: (runsKind: string, trafficKind: string) => Runs.pick(runsKind, trafficKind) as Promise<string | null>,
     pickFolder: () => Runs.pickFolder() as Promise<string | null>,
     /** The demo's job, written afresh into its folder: the command that plays it on the demo store, and that folder. */
@@ -132,7 +134,8 @@ export const api = {
     /** Try again what did not survive: the run's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
     trialAgain: (path: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent | T.RunEvent) => void) =>
       Runs.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
-    logLines: (path: string) => Runs.logLines(path) as T.LogLine[],
+    /** Its output as timed lines. Off the interface's thread (a run not yet read is read whole). */
+    logLines: async (path: string) => (await Runs.logLines(path)) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Runs.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Runs.replay(path, endpoint, prefix),
     compare: async (a: string, b: string) => await Runs.compare(a, b),

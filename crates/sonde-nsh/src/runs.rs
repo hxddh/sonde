@@ -58,6 +58,58 @@ impl Recording {
 
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 static RUNNING: Mutex<Option<crate::run::Running>> = Mutex::new(None);
+/// A program is being started (its recording begun, not yet in
+/// [`RUNNING`]): Stop pressed now is kept for when it runs. Both are
+/// changed only under [`RUNNING`]'s lock.
+static LAUNCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STOP_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A program's start, from the check that none runs to [`Launch::hold`]:
+/// a stop asked meanwhile ends it as soon as it runs. Dropped without
+/// holding one (it never started), the stop asked goes with it.
+struct Launch;
+
+impl Launch {
+    /// None while a program runs or starts.
+    fn begin() -> Option<Self> {
+        let g = RUNNING.lock();
+        if g.is_some() || LAUNCHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        STOP_ASKED.store(false, std::sync::atomic::Ordering::SeqCst);
+        Some(Launch)
+    }
+
+    /// The program is running: whether a stop asked while it started ended it.
+    fn hold(self, running: crate::run::Running) -> bool {
+        let mut g = RUNNING.lock();
+        let r = g.insert(running);
+        LAUNCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+        STOP_ASKED.swap(false, std::sync::atomic::Ordering::SeqCst) && r.kill()
+    }
+}
+
+impl Drop for Launch {
+    fn drop(&mut self) {
+        let _g = RUNNING.lock();
+        LAUNCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+        STOP_ASKED.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Ends the running program, or the one being started as soon as it runs:
+/// whether it is (or will be) ended.
+fn stop_program() -> bool {
+    let mut g = RUNNING.lock();
+    if let Some(r) = g.as_mut() {
+        return r.kill();
+    }
+    let starting = LAUNCHING.load(std::sync::atomic::Ordering::SeqCst);
+    if starting {
+        STOP_ASKED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    starting
+}
 
 /// What a press on a code place does with the file it names.
 #[derive(Debug, PartialEq)]
@@ -819,7 +871,9 @@ async fn end_for_quit() -> JsonValue {
     if trial {
         TRIAL_STOPPED.store(true, SeqCst);
     }
-    let program = RUNNING.lock().take().is_some_and(|mut r| r.kill());
+    // (a program still starting is ended as it runs)
+    let program = stop_program();
+    RUNNING.lock().take();
     let recording = RECORDING.lock().take();
     let mut run = None;
     if let Some(r) = recording {
@@ -864,9 +918,9 @@ async fn run_recorded(
     // (Run); none does for a trial's runs or a clean run made for one
     terminal: bool,
 ) -> Result<(Option<i32>, String), String> {
-    if RUNNING.lock().is_some() {
+    let Some(launch) = Launch::begin() else {
         return Err(err_msg("a program is running: stop it first"));
-    }
+    };
     let trial = under.as_ref().map(|u| u.scenario.name.clone());
     let dir = crate::run::folder(cwd);
     // the code that sent each request, unless its project says not
@@ -882,11 +936,15 @@ async fn run_recorded(
     )
     .await?;
     if demo {
+        drop(launch);
         return play_demo_job(view, dir.as_deref(), output, trial.as_deref()).await;
     }
     let (env_set, env_unset, writer, path) = {
         let g = RECORDING.lock();
-        let r = g.as_ref().expect("begin started a recording");
+        // (stopped, or the app quitting, since it began)
+        let Some(r) = g.as_ref() else {
+            return Err(err_msg(STOPPED_AS_IT_BEGAN));
+        };
         let (mut set, unset) = r.proxy.env();
         // the code that sent each request, when asked (a Python, Node.js
         // or Java program's)
@@ -936,7 +994,7 @@ async fn run_recorded(
             return Err(err_msg(format!("cannot start {command}: {e}")));
         }
     };
-    *RUNNING.lock() = Some(handle);
+    launch.hold(handle);
     match &trial {
         None => output.post(json!({ "started": view })),
         Some(t) => output.post(json!({ "started": view, "scenario": t })),
@@ -1014,6 +1072,10 @@ async fn run_recorded(
     Ok((code, path))
 }
 
+/// Why a run did not start: its recording was stopped (or the app quit)
+/// between beginning and the program's start.
+const STOPPED_AS_IT_BEGAN: &str = "the recording was stopped as the program started";
+
 /// Writes `job` as the tour's file in its folder (`<data>/tour`): the folder.
 fn write_tour(job: &str) -> Result<String, String> {
     let dir = sonde().paths().data_dir.join("tour");
@@ -1050,7 +1112,9 @@ async fn play_demo_job(
     };
     let (url, keys, writer, path) = {
         let g = RECORDING.lock();
-        let r = g.as_ref().expect("begin started a recording");
+        let Some(r) = g.as_ref() else {
+            return Err(err_msg(STOPPED_AS_IT_BEGAN));
+        };
         let (k, s) = r.proxy.client_keys();
         (
             r.proxy.url(),
@@ -1459,6 +1523,21 @@ async fn try_under(
     Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
 }
 
+/// [`Runs::import_path`]'s work, on the thread it is called on.
+fn import_file(path: &str) -> Result<String, String> {
+    if let Ok((own, _)) = own_run(path) {
+        return Ok(own.to_string_lossy().into_owned());
+    }
+    let p = Path::new(path);
+    let bytes = std::fs::read(p).map_err(|e| format!("{path}: {e}"))?;
+    let text = file_text(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Runs::import(name, text)
+}
+
 /// Recorded runs and the live recording, as TSX calls them.
 #[module]
 pub struct Runs;
@@ -1660,9 +1739,12 @@ impl Runs {
         Ok(to_json(rows))
     }
 
-    /// One record of a run, in full.
-    pub fn record(path: String, id: f64) -> Result<JsonValue, String> {
-        Ok(to_json(full_record(&path, id as u64)?))
+    /// One record of a run, in full. Off the interface's thread: a run
+    /// kept lean is read from its file up to the record.
+    pub async fn record(path: String, id: f64) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || Ok(to_json(full_record(&path, id as u64)?)))
+            .await
+            .map_err(err_msg)?
     }
 
     /// The operations table split by `by` (`operation`, `prefix`, `size`,
@@ -1765,11 +1847,13 @@ impl Runs {
 
     /// Ends the running program; a trial ends with it (no further scenario
     /// runs, and nothing of the trial is kept).
+    /// A program still starting is ended as soon as it runs. Whether
+    /// the stop took effect (false: nothing was running).
     pub fn kill() -> bool {
         if TRYING.load(std::sync::atomic::Ordering::SeqCst) {
             TRIAL_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+        stop_program()
     }
 
     /// The budget the run's program has in its project's `sonde.toml`
@@ -2332,9 +2416,14 @@ impl Runs {
     }
 
     /// A run's output as timed lines, for lining up with its operations.
-    pub fn log_lines(path: String) -> Result<JsonValue, String> {
-        let s = open_run(&path)?;
-        Ok(to_json(sonde_analysis::logs::lines(&s.logs)))
+    /// Off the interface's thread: a run not yet read is read whole.
+    pub async fn log_lines(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let s = open_run(&path)?;
+            Ok(to_json(sonde_analysis::logs::lines(&s.logs)))
+        })
+        .await
+        .map_err(err_msg)?
     }
 
     /// The running recording, or null.
@@ -2482,10 +2571,8 @@ impl Runs {
         let Some(path) = paths.into_iter().next() else {
             return Ok(None);
         };
-        let path = path.to_string_lossy().into_owned();
-        tokio::task::spawn_blocking(move || Self::import_path(path))
+        Self::import_path(path.to_string_lossy().into_owned())
             .await
-            .map_err(err_msg)?
             .map(Some)
     }
 
@@ -2499,20 +2586,14 @@ impl Runs {
             .map(|p| p.to_string_lossy().into_owned()))
     }
 
-    /// Adds a run file at `path` (dropped on the window) to the runs
-    /// directory, as [`Runs::import`]; one already there is opened as it is.
-    pub fn import_path(path: String) -> Result<String, String> {
-        if let Ok((own, _)) = own_run(&path) {
-            return Ok(own.to_string_lossy().into_owned());
-        }
-        let p = Path::new(&path);
-        let bytes = std::fs::read(p).map_err(|e| format!("{path}: {e}"))?;
-        let text = file_text(&bytes).map_err(|e| format!("{path}: {e}"))?;
-        let name = p
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        Self::import(name, text)
+    /// Adds a run file at `path` (dropped on the window, opened from the
+    /// system or a link) to the runs directory, as [`Runs::import`]; one
+    /// already there is opened as it is. Read off the interface's thread,
+    /// however large.
+    pub async fn import_path(path: String) -> Result<String, String> {
+        tokio::task::spawn_blocking(move || import_file(&path))
+            .await
+            .map_err(err_msg)?
     }
 
     /// Gives a run a title of the user's (an empty one takes it away).
@@ -2658,6 +2739,34 @@ mod tests {
         // elsewhere it is a command like any: the shell runs it
         assert!(!demo_job(sonde_core::tour::COMMAND, "minio"));
         assert!(!demo_job("python3 export.py", "demo"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_pressed_while_a_program_starts_ends_it_as_it_runs() {
+        // nothing starting or running: a stop does nothing, and says so
+        assert!(!Runs::kill());
+        let launch = Launch::begin().unwrap();
+        assert!(Launch::begin().is_none(), "one program at a time");
+        // pressed while the recording begins, before the program runs
+        assert!(Runs::kill());
+        let (_, exit, running) = crate::run::spawn("sleep 30", None, &[], &[], 80, 24).unwrap();
+        assert!(launch.hold(running), "ended as soon as it ran");
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), exit).await;
+        assert!(ended.is_ok(), "the program was ended");
+        RUNNING.lock().take();
+        // a start that failed takes its stop with it
+        let launch = Launch::begin().unwrap();
+        assert!(Runs::kill());
+        drop(launch);
+        let (_, exit, running) = crate::run::spawn("sleep 1", None, &[], &[], 80, 24).unwrap();
+        assert!(!Launch::begin().unwrap().hold(running));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), exit)
+                .await
+                .is_err()
+        );
+        RUNNING.lock().take();
     }
 
     #[test]
@@ -3382,8 +3491,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn a_trials_run_opens_like_any_other_and_says_what_it_is_a_trial_of() {
+    #[tokio::test]
+    async fn a_trials_run_opens_like_any_other_and_says_what_it_is_a_trial_of() {
         let dir = tempfile::tempdir().unwrap();
         let (clean, trial, _) = run_and_trial(dir.path(), "python job.py", None);
         // open, analyse, records, record, copy and log_lines read the same run
@@ -3396,14 +3505,14 @@ mod tests {
         let rows = Runs::records(trial.clone(), vec![1.0, 2.0]).unwrap();
         assert_eq!(rows[0]["injected"], "slowdown", "{rows}");
         assert!(rows[1].get("injected").is_none(), "{rows}");
-        let full = Runs::record(trial.clone(), 1.0).unwrap();
+        let full = Runs::record(trial.clone(), 1.0).await.unwrap();
         assert_eq!(full["injected"], "slowdown");
         assert!(
             Runs::copy(trial.clone(), 1.0, "curl".into())
                 .unwrap()
                 .is_some()
         );
-        let lines = Runs::log_lines(trial.clone()).unwrap();
+        let lines = Runs::log_lines(trial.clone()).await.unwrap();
         assert!(lines.to_string().contains("trial output"), "{lines}");
         // a clean run without verdicts says nothing of trials
         let view = view_of(&clean).unwrap();

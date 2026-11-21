@@ -120,7 +120,10 @@ for k in en:
 
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
-GONE: dict[str, str] = {}
+GONE: dict[str, str] = {
+    "settings.saved": "Settings apply silently, as a system's settings do: the toast after each change went",
+    "common.undo": "its one use was that toast's Undo",
+}
 
 
 def git(*args):

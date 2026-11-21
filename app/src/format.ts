@@ -32,6 +32,26 @@ function dateFormat(parts: "full" | "day" | "time" | "seconds" = "full"): Intl.D
 
 const p2 = (x: number) => String(x).padStart(2, "0");
 
+const numbers = new Map<string, Intl.NumberFormat>();
+/** A figure as the reader's region writes it ("12,345.6", "12.345,6"), to `digits` decimals (left out: as a count
+ * is, up to three), its minus "−": the one way this file writes a number, so a figure and a count beside it never
+ * mix their marks. Each formatter is made once per locale. */
+export function decimal(v: number, digits?: number): string {
+  const loc = locale();
+  const key = `${loc}|${digits ?? ""}`;
+  let f = numbers.get(key);
+  if (!f) {
+    const fixed = digits === undefined ? {} : { minimumFractionDigits: digits, maximumFractionDigits: digits };
+    try {
+      f = new Intl.NumberFormat(loc, fixed);
+    } catch {
+      f = new Intl.NumberFormat("en-US", fixed);
+    }
+    numbers.set(key, f);
+  }
+  return f.format(v).replace("-", "−");
+}
+
 /** A day as the reader writes it: "7 Nov 2026". */
 export function day(s: string | null | undefined): string {
   if (!s) return "—";
@@ -63,6 +83,13 @@ export function hm(s: string | null | undefined): string {
   return dateFormat("time")?.format(d) ?? `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
+/** How moments listed together are told apart: by the time of day while they all fall on one day, else by
+ * their date and time ("14:05", or "Nov 6, 2026, 14:05" beside "Nov 7, 2026, 09:12"). */
+export function moments(isos: (string | null | undefined)[]): (iso: string) => string {
+  const days = new Set(isos.filter((x): x is string => !!x).map(day));
+  return days.size > 1 ? (iso) => date(iso) : hm;
+}
+
 /** Between a figure and its unit: a space that does not break in Chinese, where a line may break at any
  * character and left "5.7" at one line's end and "ms" at the next's start (English breaks at words). */
 const unitGap = () => (lang() === "zh" ? "\u00a0" : " ");
@@ -82,7 +109,7 @@ export function bytes(n: number | null | undefined): string {
     v /= 1024;
     i++;
   }
-  return i === 0 ? `${Math.round(n)}${unitGap()}B` : `${v.toFixed(v >= 100 ? 0 : 1)}${unitGap()}${units[i]}`;
+  return i === 0 ? `${decimal(Math.round(n))}${unitGap()}B` : `${decimal(v, v >= 100 ? 0 : 1)}${unitGap()}${units[i]}`;
 }
 
 /** Bytes sent and received, the one way everywhere: "↑ 78.1 KiB ↓ 75.1 KiB". */
@@ -91,11 +118,7 @@ export function transfer(up: number | null | undefined, down: number | null | un
 }
 
 export function count(n: number): string {
-  try {
-    return n.toLocaleString(locale());
-  } catch {
-    return String(n);
-  }
+  return decimal(n);
 }
 
 /** A moment (ISO 8601 or an HTTP date) as the reader writes dates: "Nov 7,
@@ -126,12 +149,12 @@ export function date(s: string | null | undefined, precision: "m" | "ms" = "m"):
  * JavaScript's "2.6e-7", which `toPrecision` writes under a millionth). */
 function small(v: number): string {
   const r = Number(v.toPrecision(2));
-  return r.toFixed(Math.min(100, Math.max(2, 1 - Math.floor(Math.log10(r)))));
+  return decimal(r, Math.min(20, Math.max(2, 1 - Math.floor(Math.log10(r)))));
 }
 
 /** An amount of money: two decimals, or two significant figures under a cent (0.0040 USD), never "<0.01". */
 export function money(v: number, currency: string): string {
-  return `${v < 0.01 && v > 0 ? small(v) : v.toFixed(2)} ${currency}`;
+  return `${v < 0.01 && v > 0 ? small(v) : decimal(v, 2)} ${currency}`;
 }
 
 /** A length of time, the one way everywhere. As measured (the default):
@@ -157,10 +180,10 @@ export function duration(v: number, as: "measured" | "age" | "counter" = "measur
   const a = Math.abs(v);
   const g = unitGap();
   if (a === 0) return `0${g}ms`;
-  if (a < 9.95) return `${v.toFixed(1)}${g}ms`;
-  if (a < 999.5) return `${Math.round(v)}${g}ms`;
-  if (a < 9995) return `${(v / 1000).toFixed(2)}${g}s`;
-  if (a < 59950) return `${(v / 1000).toFixed(1)}${g}s`;
+  if (a < 9.95) return `${decimal(v, 1)}${g}ms`;
+  if (a < 999.5) return `${decimal(Math.round(v))}${g}ms`;
+  if (a < 9995) return `${decimal(v / 1000, 2)}${g}s`;
+  if (a < 59950) return `${decimal(v / 1000, 1)}${g}s`;
   const s = Math.round(a / 1000);
   const sign = v < 0 ? "−" : "";
   if (s < 3600) return `${sign}${Math.floor(s / 60)}${g}min ${p2(s % 60)}${g}s`;
@@ -185,12 +208,12 @@ export function pct(part: number, whole: number): string {
 
 /** How many times over, to one decimal: "1.5" (the caller writes its "×"). */
 export function factor(x: number): string {
-  return Number.isFinite(x) ? x.toFixed(1) : "—";
+  return Number.isFinite(x) ? decimal(x, 1) : "—";
 }
 
 /** So many a second, as a live counter reads: a decimal under ten, whole from there. */
 export function rate(perSecond: number): string {
-  return Number.isFinite(perSecond) ? (perSecond < 10 ? perSecond.toFixed(1) : count(Math.round(perSecond))) : "—";
+  return Number.isFinite(perSecond) ? (perSecond < 10 ? decimal(perSecond, 1) : count(Math.round(perSecond))) : "—";
 }
 
 /** A change from `a` to `b` as a signed share of `a`: "+12%", "−3%", "0%"
@@ -212,9 +235,9 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
   if (v > 0 && v < 0.01) {
     const k = v * 1000;
     // two significant figures under one (0.010 beside 0.0078, never 0.01 beside it), else two decimals
-    return { figure: k < 1 ? small(k) : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
+    return { figure: k < 1 ? small(k) : decimal(k, 2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
   }
-  return { figure: v.toFixed(2), unit: currency, per1000: false };
+  return { figure: decimal(v, 2), unit: currency, per1000: false };
 }
 
 /** A column of costs in one unit, said once in its title: the largest
@@ -230,7 +253,7 @@ export function costColumn(values: number[], currency: string): { unit: string; 
     if (!Number.isFinite(v) || v < 0) return "—";
     if (v === 0) return "0";
     const x = per1000 ? v * 1000 : v;
-    return x < 0.01 ? small(x) : x.toFixed(2);
+    return x < 0.01 ? small(x) : decimal(x, 2);
   };
   return { unit, figures: values.map(figure) };
 }

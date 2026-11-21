@@ -252,11 +252,17 @@ export function TimePane(props: { /** whether the board is scrolled from its top
     untracked(() => props.onRange?.(r));
   });
   // the selection: the requests that started in the stretch chosen, reckoned again for the charts not over time
+  // (each reckoning tagged with its stretch: while the next is under way, the last one's figures are not
+  // shown under the new stretch's name)
   const held = resource(
     () => (props.stretchOf ? stretchMs() : null),
-    async (r) => props.stretchOf!(r[0], r[1]),
+    async (r) => ({ at: r, of: await props.stretchOf!(r[0], r[1]) }),
   );
-  const sel = (): Stretch | null => (stretchMs() && !held.error() ? (held() ?? null) : null);
+  const sel = (): Stretch | null => {
+    const z = stretchMs();
+    const h = held.error() ? null : held();
+    return z && h && h.at[0] === z[0] && h.at[1] === z[1] ? h.of : null;
+  };
   /** what the charts not over time read: the stretch's requests, or the run's */
   const pa = () => sel()?.profile ?? p();
   const sa = () => sel()?.signals ?? sig();

@@ -152,7 +152,7 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
   // what can be done with it: on its row, in the palette, and on their shortcuts
   const commands = (): PlaceCommand[] => [
     { id: "object-download", label: t("browse.download"), icon: "download", shortcut: "mod+s", disabled: progress() !== null, run: download },
-    { id: "object-versions", label: t("browse.versionsOpen"), icon: "file-clock", shortcut: "mod+y", disabled: versions(), run: () => versions.set(true) },
+    { id: "object-versions", label: t("browse.versionsOpen"), icon: "file-clock", shortcut: "mod+shift+h", disabled: versions(), run: () => versions.set(true) },
     { id: "object-uri", label: t("store.copyUri"), icon: "copy", shortcut: "mod+shift+c", run: () => copy(uri()) },
     { id: "object-presign", label: t("browse.presignCopy"), icon: "link", run: () => void presign() },
   ];
@@ -173,7 +173,7 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
         {/* what takes the object, what opens its history; behind ⋯ what copies it */}
         <View class="flex-row items-center gap-2">
           <Button small variant="outline" icon="download" label={t("browse.download")} shortcut="mod+s" onPress={download} disabled={progress() !== null} testID="download" />
-          <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} shortcut="mod+y" onPress={() => versions.set(true)} testID="object-versions" />
+          <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} shortcut="mod+shift+h" onPress={() => versions.set(true)} testID="object-versions" />
           <More
             testID="object-more"
             actions={() => [
@@ -223,7 +223,10 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
   const width = signal(0);
   const ranked = () => fitColumns(terminal() ? 0 : width(), SIZE + 2, NAME, [...OBJECT_COLUMNS]);
   let searchJob: string | null = null;
+  // counted at each stop: a search whose job is still being started when another stops it cancels it on arrival
+  let searches = 0;
   const stopSearch = () => {
+    searches++;
     if (searchJob) api.cancelJob(searchJob);
     searchJob = null;
   };
@@ -337,11 +340,14 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
     const b = bucket();
     if (!ep || !b || !filter()) return;
     stopSearch();
+    const mine = searches;
     searchHits.set([]);
     const where = `${ep}|${b}|${prefix()}`;
     const here = () => `${endpoint()}|${bucket()}|${prefix()}` === where;
     try {
       const job = await api.search(ep, b, prefix(), filter());
+      // a newer search, or the place left, while this one started: it does not run on unseen
+      if (mine !== searches) return void api.cancelJob(job);
       searchJob = job;
       const r = await watch<{ matches: Entry[]; scanned: number }>(job, (ev) => {
         if (!here() || searchJob !== job) return;

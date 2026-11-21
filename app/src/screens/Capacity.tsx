@@ -93,11 +93,16 @@ export function Capacity() {
     const p = pfx();
     let mine: string | null = null;
     try {
-      mine = job = await api.duScan(ep, b, p, mpu());
-      const r = await watch<DuReport>(mine, (e) => e.type === "Progress" && shown === of && progress.set(`${core(e.progress.messageText, e.progress.message)} · ${bytes(e.progress.bytes)}`));
-      remember(ep, b, p, { size: r });
-      // the answer of a place since left is kept for it, not shown here
-      if (shown === of) result.set(r);
+      mine = await api.duScan(ep, b, p, mpu());
+      // the place left while the scan started: it does not run on unseen
+      if (shown !== of) api.cancelJob(mine);
+      else {
+        job = mine;
+        const r = await watch<DuReport>(mine, (e) => e.type === "Progress" && shown === of && progress.set(`${core(e.progress.messageText, e.progress.message)} · ${bytes(e.progress.bytes)}`));
+        remember(ep, b, p, { size: r });
+        // the answer of a place since left is kept for it, not shown here
+        if (shown === of) result.set(r);
+      }
     } catch (e) {
       const err = asError(e);
       // over a report already shown, a toast; with nothing to show, the reason in its place
