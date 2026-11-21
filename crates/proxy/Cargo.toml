@@ -35,6 +35,10 @@ rustls-native-certs = "0.8"
 rustls-platform-verifier = "0.7"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
+[target.'cfg(unix)'.dependencies]
+# as many connections as the system lets one process hold
+rustix = { version = "1", features = ["process"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

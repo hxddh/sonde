@@ -443,6 +443,7 @@ impl Proxy {
         log: RequestLog,
         cfg: ProxyConfig,
     ) -> std::io::Result<Proxy> {
+        raise_open_files();
         let listener = TcpListener::bind(cfg.listen).await?;
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
@@ -467,8 +468,14 @@ impl Proxy {
         let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
         let task = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    continue;
+                let stream = match listener.accept().await {
+                    Ok((stream, _)) => stream,
+                    // out of file descriptors, most likely: wait for some
+                    // to close rather than spin
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        continue;
+                    }
                 };
                 let shared = shared.clone();
                 let stopping = stopping.clone();
@@ -644,6 +651,29 @@ fn in_region(endpoint: &reqwest::Url, configured: &str, region: &str) -> reqwest
         let _ = url.set_host(Some(&h));
     }
     url
+}
+
+/// Raises the soft limit on open files to the hard one: each connection is
+/// one, and a busy program opens many (macOS's soft limit is 256).
+pub fn raise_open_files() {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Resource, getrlimit, setrlimit};
+        let mut lim = getrlimit(Resource::Nofile);
+        let Some(current) = lim.current else { return };
+        // (macOS refuses more than its kern.maxfilesperproc: 10240 it takes)
+        for to in [
+            lim.maximum,
+            lim.maximum.map(|m| m.min(10240)).or(Some(10240)),
+        ] {
+            if to.is_some_and(|t| t > current) {
+                lim.current = to;
+                if setrlimit(Resource::Nofile, lim.clone()).is_ok() {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// Serves one connection until it closes, or until the proxy stops: then
@@ -2782,6 +2812,20 @@ mod budget_tests {
             ..ProxyConfig::default()
         };
         assert_eq!(buffer_share(&small, None), 100);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_proxy_may_hold_as_many_files_as_the_system_lets_it() {
+        use rustix::process::{Resource, getrlimit, setrlimit};
+        let mut lim = getrlimit(Resource::Nofile);
+        let Some(max) = lim.maximum.filter(|m| *m > 512) else {
+            return;
+        };
+        lim.current = Some(512);
+        setrlimit(Resource::Nofile, lim).unwrap();
+        raise_open_files();
+        assert_eq!(getrlimit(Resource::Nofile).current, Some(max));
     }
 
     #[test]

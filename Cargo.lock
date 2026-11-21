@@ -5058,6 +5058,7 @@ dependencies = [
  "rcgen",
  "reqlog",
  "reqwest",
+ "rustix",
  "rustls",
  "rustls-native-certs",
  "rustls-platform-verifier",
