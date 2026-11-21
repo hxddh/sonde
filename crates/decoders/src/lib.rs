@@ -18,11 +18,11 @@ pub mod woodpecker;
 
 pub use model::{Detection, Event, Fact, Format, Issue, Layout, Severity, Snapshot, Table};
 pub use phrase::Phrase;
-pub use source::{DirSource, MemSource, ObjectMeta, Source, SourceError};
+pub use source::{DirSource, Listing, MemSource, ObjectMeta, Source, SourceError};
 
 /// Layouts found under `prefix`, decodable formats first.
 pub async fn detect(src: &dyn Source, prefix: &str) -> Result<Vec<Detection>, SourceError> {
-    let objects = src.list(prefix).await?;
+    let objects = src.list(prefix).await?.objects;
     let mut out = vec![];
     out.extend(slatedb::detect(&objects));
     out.extend(iceberg::detect(&objects));

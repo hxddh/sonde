@@ -214,6 +214,7 @@ pub async fn scan_inner(
     // 1. list every upload
     let mut uploads = Vec::new();
     let (mut km, mut um): (Option<String>, Option<String>) = (None, None);
+    let mut pages = crate::services::Pages::default();
     loop {
         ctx.check()?;
         let page = c
@@ -233,6 +234,7 @@ pub async fn scan_inner(
         }
         km = page.next_key_marker;
         um = page.next_upload_id_marker;
+        pages.next((&km, &um))?;
     }
     let total = uploads.len() as u64;
     // 2. sum the parts of each, concurrently (the throttle bounds it)
@@ -249,7 +251,12 @@ pub async fn scan_inner(
                 let mut parts = 0u32;
                 let mut marker: Option<String> = None;
                 let mut parts_error = None;
+                let mut pages = crate::services::Pages::default();
                 loop {
+                    if let Err(e) = ctx.check() {
+                        parts_error = Some(e.to_string());
+                        break;
+                    }
                     match c
                         .list_parts(&b, &u.key, &u.upload_id, marker.as_deref())
                         .await
@@ -261,6 +268,10 @@ pub async fn scan_inner(
                                 break;
                             }
                             marker = lp.next_part_number_marker;
+                            if let Err(e) = pages.next(&marker) {
+                                parts_error = Some(e.to_string());
+                                break;
+                            }
                         }
                         Err(e) => {
                             parts_error = Some(e.to_string());
@@ -640,5 +651,57 @@ mod tests {
         s.add_transient_endpoint(e).unwrap();
         let err = plan_lifecycle_rule(&s, "e", "b", "", 7).await.unwrap_err();
         assert_eq!(err.kind, s3raw::ErrorKind::Refused, "{err}");
+    }
+
+    #[tokio::test]
+    async fn uploads_and_parts_end_when_the_store_repeats_its_marker() {
+        // the uploads' listing repeats its markers
+        let (_dir, s) = crate::services::tests::store(|t| {
+            if t.contains("uploads") {
+                "<ListMultipartUploadsResult><IsTruncated>true</IsTruncated>\
+                 <NextKeyMarker>k</NextKeyMarker><NextUploadIdMarker>u</NextUploadIdMarker>\
+                 <Upload><Key>k</Key><UploadId>u</UploadId></Upload></ListMultipartUploadsResult>"
+                    .into()
+            } else {
+                String::new()
+            }
+        })
+        .await;
+        let job = scan(&s, "e", "b", "");
+        let e = tokio::time::timeout(std::time::Duration::from_secs(20), s.jobs().wait(&job))
+            .await
+            .expect("the scan ended")
+            .unwrap_err();
+        assert!(e.message.contains("again"), "{e}");
+        // the parts' listing does
+        let (_dir, s) = crate::services::tests::store(|t| {
+            if t.contains("uploadId") {
+                "<ListPartsResult><IsTruncated>true</IsTruncated>\
+                 <NextPartNumberMarker>1</NextPartNumberMarker>\
+                 <Part><PartNumber>1</PartNumber><Size>5</Size></Part></ListPartsResult>"
+                    .into()
+            } else {
+                "<ListMultipartUploadsResult><Upload><Key>k</Key><UploadId>u</UploadId></Upload>\
+                 </ListMultipartUploadsResult>"
+                    .into()
+            }
+        })
+        .await;
+        let job = scan(&s, "e", "b", "");
+        let r: MpuReport = serde_json::from_value(
+            tokio::time::timeout(std::time::Duration::from_secs(20), s.jobs().wait(&job))
+                .await
+                .expect("the scan ended")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            r.uploads[0]
+                .parts_error
+                .as_deref()
+                .is_some_and(|e| e.contains("again")),
+            "{:?}",
+            r.uploads[0].parts_error
+        );
     }
 }

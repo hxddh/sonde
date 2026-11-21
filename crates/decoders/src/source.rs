@@ -21,11 +21,29 @@ pub struct ObjectMeta {
 #[error("{0}")]
 pub struct SourceError(pub String);
 
+/// The objects under a prefix, sorted by key.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    pub objects: Vec<ObjectMeta>,
+    /// The listing stopped before its end (a source's cap): what is not in
+    /// it may still exist.
+    pub cut: bool,
+}
+
+impl From<Vec<ObjectMeta>> for Listing {
+    fn from(objects: Vec<ObjectMeta>) -> Self {
+        Listing {
+            objects,
+            cut: false,
+        }
+    }
+}
+
 /// Read-only access to objects. Decoders never write.
 #[async_trait]
 pub trait Source: Send + Sync {
     /// Every object under `prefix` (recursively), sorted by key.
-    async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>, SourceError>;
+    async fn list(&self, prefix: &str) -> Result<Listing, SourceError>;
     /// The object's bytes; `range` is `(start, end_inclusive)`.
     async fn get(&self, key: &str, range: Option<(u64, u64)>) -> Result<Bytes, SourceError>;
 }
@@ -55,7 +73,7 @@ fn slice(b: &Bytes, range: Option<(u64, u64)>) -> Bytes {
 
 #[async_trait]
 impl Source for MemSource {
-    async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>, SourceError> {
+    async fn list(&self, prefix: &str) -> Result<Listing, SourceError> {
         Ok(self
             .objects
             .iter()
@@ -65,7 +83,8 @@ impl Source for MemSource {
                 size: b.len() as u64,
                 last_modified: *t,
             })
-            .collect())
+            .collect::<Vec<_>>()
+            .into())
     }
     async fn get(&self, key: &str, range: Option<(u64, u64)>) -> Result<Bytes, SourceError> {
         self.objects
@@ -112,21 +131,60 @@ fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<ObjectMeta>
     }
 }
 
+/// Whether `key` names a file under the folder: relative, with no `..`, no
+/// root and no drive (`/etc/passwd` or `C:/x` would leave it).
+fn inside(key: &str) -> bool {
+    use std::path::Component;
+    let drive = key.split(['/', '\\']).next().is_some_and(|first| {
+        first.len() == 2 && first.ends_with(':') && first.as_bytes()[0].is_ascii_alphabetic()
+    });
+    !drive
+        && !key.split(['/', '\\']).any(|c| c == "..")
+        && std::path::Path::new(key)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
 #[async_trait]
 impl Source for DirSource {
-    async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>, SourceError> {
+    async fn list(&self, prefix: &str) -> Result<Listing, SourceError> {
         let mut out = vec![];
         walk(&self.root, &self.root, &mut out);
         out.retain(|o| o.key.starts_with(prefix));
         out.sort_by(|a, b| a.key.cmp(&b.key));
-        Ok(out)
+        Ok(out.into())
     }
     async fn get(&self, key: &str, range: Option<(u64, u64)>) -> Result<Bytes, SourceError> {
-        if key.split('/').any(|c| c == "..") {
-            return Err(SourceError("'..' in key".into()));
+        if !inside(key) {
+            return Err(SourceError(format!("{key}: not a path inside the folder")));
         }
         let b =
             std::fs::read(self.root.join(key)).map_err(|e| SourceError(format!("{key}: {e}")))?;
         Ok(slice(&Bytes::from(b), range))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_folder_gives_nothing_outside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("in")).unwrap();
+        std::fs::write(dir.path().join("in/x"), b"x").unwrap();
+        std::fs::write(dir.path().join("secret"), b"s").unwrap();
+        let src = DirSource::new(dir.path().join("in"));
+        assert_eq!(src.get("x", None).await.unwrap(), Bytes::from("x"));
+        let outside = dir.path().join("secret").display().to_string();
+        for key in [
+            outside.as_str(),
+            "../secret",
+            "a/../../secret",
+            "C:/secret",
+            "c:\\x",
+        ] {
+            assert!(src.get(key, None).await.is_err(), "{key}");
+        }
     }
 }

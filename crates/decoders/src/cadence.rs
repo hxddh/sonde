@@ -62,11 +62,11 @@ fn bucket_size(span: Duration) -> Duration {
 }
 
 pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Layout, SourceError> {
-    let objects = src.list(root).await?;
+    let listing = src.list(root).await?;
     let mut l = Layout::new(format, root);
     l.decoded = false;
-    l.objects = objects.len() as u64;
-    l.bytes = objects.iter().map(|o| o.size).sum();
+    l.count(&listing);
+    let objects = listing.objects;
     if matches!(format, Format::Turbopuffer | Format::Warpstream) {
         l.issues.push(issue(
             Severity::Info,

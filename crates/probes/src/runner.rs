@@ -334,6 +334,10 @@ fn said_all(left: &[String]) -> String {
 pub async fn cleanup(c: &S3Client, bucket: &str, prefix: &str, temp: &[String]) -> Vec<String> {
     let mut left = purge(c, bucket, prefix).await;
     for b in temp {
+        // one whose create went unanswered may not exist
+        if c.head_bucket(b).await.is_err_and(|e| e.is_not_found()) {
+            continue;
+        }
         // Object Lock buckets keep locked versions: governance bypass
         let inside = purge(c, b, "").await;
         match c.delete_bucket(b).await {
@@ -349,9 +353,11 @@ pub async fn cleanup(c: &S3Client, bucket: &str, prefix: &str, temp: &[String]) 
 async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
     let mut left = Vec::new();
     let mut stuck_uploads = 0usize;
-    for _ in 0..20 {
+    let (mut km, mut um): (Option<String>, Option<String>) = (None, None);
+    let mut pages = sonde_core::services::Pages::default();
+    loop {
         let l = match c
-            .list_multipart_uploads(bucket, Some(prefix), None, None)
+            .list_multipart_uploads(bucket, Some(prefix), km.as_deref(), um.as_deref())
             .await
         {
             Ok(l) => l,
@@ -364,7 +370,6 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
                 break;
             }
         };
-        stuck_uploads = 0;
         for u in &l.upload {
             if c.abort_multipart_upload(bucket, &u.key, &u.upload_id)
                 .await
@@ -373,7 +378,11 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
                 stuck_uploads += 1;
             }
         }
-        if !l.is_truncated {
+        // the next page: a store that hands its marker back again has
+        // no further page to give
+        km = l.next_key_marker;
+        um = l.next_upload_id_marker;
+        if !l.is_truncated || (km.is_none() && um.is_none()) || pages.next((&km, &um)).is_err() {
             break;
         }
     }
@@ -510,6 +519,13 @@ mod tests {
         stall: AtomicBool,
         deny_delete: AtomicBool,
         deny_list: AtomicBool,
+        /// multipart uploads (their id is their path), one per listed page;
+        /// one whose key holds `stuck` cannot be aborted
+        uploads: Mutex<BTreeSet<String>>,
+        /// buckets created (beside `scratch`); a create is not answered
+        /// while `drop_create` is on
+        buckets: Mutex<BTreeSet<String>>,
+        drop_create: AtomicBool,
     }
 
     async fn serve(fake: Arc<Fake>) -> String {
@@ -559,6 +575,33 @@ mod tests {
             let path = path.trim_end_matches('/');
             let is_object = path.trim_start_matches('/').contains('/');
             let (status, body) = match (method, is_object) {
+                ("DELETE", true) if query.contains("uploadId") => {
+                    if path.contains("stuck") {
+                        (403, "<Error><Code>AccessDenied</Code></Error>".to_string())
+                    } else {
+                        fake.uploads.lock().remove(path);
+                        (204, String::new())
+                    }
+                }
+                ("PUT", false) => {
+                    if !fake.buckets.lock().insert(path.to_string()) {
+                        (
+                            409,
+                            "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>".to_string(),
+                        )
+                    } else if fake.drop_create.load(Ordering::SeqCst) {
+                        return;
+                    } else {
+                        (200, String::new())
+                    }
+                }
+                ("HEAD", false) if path != "/scratch" && !fake.buckets.lock().contains(path) => {
+                    (404, String::new())
+                }
+                ("DELETE", false) => {
+                    fake.buckets.lock().remove(path);
+                    (204, String::new())
+                }
                 ("PUT", true) => {
                     fake.keys.lock().insert(path.to_string());
                     (200, String::new())
@@ -581,10 +624,30 @@ mod tests {
                     403,
                     "<Error><Code>AccessDenied</Code><Message>no</Message></Error>".to_string(),
                 ),
-                ("GET", false) if query.contains("uploads") => (
-                    200,
-                    "<ListMultipartUploadsResult></ListMultipartUploadsResult>".to_string(),
-                ),
+                ("GET", false) if query.contains("uploads") => {
+                    let marker = query
+                        .split('&')
+                        .find_map(|kv| kv.strip_prefix("key-marker="))
+                        .map(|m| m.replace("%2F", "/"))
+                        .unwrap_or_default();
+                    let uploads = fake.uploads.lock();
+                    let mut after = uploads
+                        .iter()
+                        .filter_map(|u| u.strip_prefix(&format!("{path}/")))
+                        .filter(|k| *k > marker.as_str());
+                    let page = match (after.next(), after.next().is_some()) {
+                        (Some(k), more) => format!(
+                            "<IsTruncated>{more}</IsTruncated><NextKeyMarker>{k}</NextKeyMarker>\
+                             <NextUploadIdMarker>{k}</NextUploadIdMarker>\
+                             <Upload><Key>{k}</Key><UploadId>{k}</UploadId></Upload>"
+                        ),
+                        (None, _) => String::new(),
+                    };
+                    (
+                        200,
+                        format!("<ListMultipartUploadsResult>{page}</ListMultipartUploadsResult>"),
+                    )
+                }
                 // no versions here: cleanup falls back to ListObjectsV2
                 ("GET", false) if query.contains("versions") => (
                     501,
@@ -739,6 +802,42 @@ mod tests {
                 .is_empty()
         );
         assert!(fake.keys.lock().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bucket_whose_create_went_unanswered_is_removed_too() {
+        let fake = Arc::new(Fake::default());
+        fake.drop_create.store(true, Ordering::SeqCst);
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+        let c = s.client("fake").unwrap();
+        let cx = crate::cx::ProbeCx::new(c.clone(), "scratch", "p/", Some("tmp".into()));
+        assert_eq!(cx.temp_bucket("create", false).await, None);
+        assert_eq!(fake.buckets.lock().len(), 1, "the store made it");
+        let mut temp = cx.temp_buckets();
+        assert_eq!(temp.len(), 1);
+        // and one that was never made is no leftover
+        temp.push("tmp-never".into());
+        assert!(cleanup(&c, "scratch", "p/", &temp).await.is_empty());
+        assert!(fake.buckets.lock().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_aborts_the_uploads_of_every_page() {
+        let fake = Arc::new(Fake::default());
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+        let c = s.client("fake").unwrap();
+        // the first page holds one that cannot be aborted
+        for k in ["a-stuck", "b", "c"] {
+            fake.uploads.lock().insert(format!("/scratch/p/{k}"));
+        }
+        let left = cleanup(&c, "scratch", "p/", &[]).await;
+        assert_eq!(left, ["1 multipart uploads under scratch/p/"]);
+        assert_eq!(
+            fake.uploads.lock().iter().collect::<Vec<_>>(),
+            ["/scratch/p/a-stuck"]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

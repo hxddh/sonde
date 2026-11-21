@@ -1199,6 +1199,7 @@ dependencies = [
  "serde_json",
  "snap",
  "sonde-fmt",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]

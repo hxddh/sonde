@@ -265,6 +265,19 @@ impl Layout {
         self.headline = phrase::en(&self.headline_text);
     }
 
+    /// Counts what was listed; a cut listing says so, and the lens then
+    /// checks nothing for missing or unreferenced objects.
+    pub fn count(&mut self, listing: &crate::source::Listing) {
+        self.objects = listing.objects.len() as u64;
+        self.bytes = listing.objects.iter().map(|o| o.size).sum();
+        if listing.cut {
+            self.issues.push(issue(
+                Severity::Warning,
+                crate::ph!("listing.cut", n = self.objects),
+            ));
+        }
+    }
+
     pub fn has_errors(&self) -> bool {
         self.issues.iter().any(|i| i.severity == Severity::Error)
     }

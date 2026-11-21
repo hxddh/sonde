@@ -113,6 +113,7 @@ pub async fn timeline(
     let c = s.client(endpoint)?;
     let mut out = Vec::new();
     let (mut km, mut vm): (Option<String>, Option<String>) = (None, None);
+    let mut pages = crate::services::Pages::default();
     loop {
         let page = c
             .list_object_versions(bucket, Some(key), km.as_deref(), vm.as_deref(), None)
@@ -156,6 +157,7 @@ pub async fn timeline(
         if km.is_none() {
             break;
         }
+        pages.next((&km, &vm))?;
     }
     Ok(build_timeline(bucket, key, out))
 }

@@ -16,3 +16,79 @@ pub fn parse_time(s: &str) -> Option<DateTime<Utc>> {
         .ok()
         .map(|d| d.with_timezone(&Utc))
 }
+
+/// The markers a paged listing was handed. A store that hands one back
+/// again would be asked for the same pages forever: that is an error.
+#[derive(Default)]
+pub struct Pages(std::collections::HashSet<String>);
+
+impl Pages {
+    /// Takes the marker of the next page.
+    pub fn next(&mut self, marker: impl std::fmt::Debug) -> Result<(), s3raw::S3Error> {
+        if self.0.insert(format!("{marker:?}")) {
+            Ok(())
+        } else {
+            Err(s3raw::S3Error::decode(format!(
+                "the store handed back the page marker {marker:?} again: the listing would never end"
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::Arc;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::Sonde;
+
+    /// A sonde with endpoint `e` on a store that answers every request
+    /// (its target) with 200 and `answer`'s body.
+    pub(crate) async fn store(answer: fn(&str) -> String) -> (tempfile::TempDir, Arc<Sonde>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    loop {
+                        let mut chunk = [0u8; 4096];
+                        match c.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                        let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                            continue;
+                        };
+                        let head = String::from_utf8_lossy(&buf[..end]).to_string();
+                        buf.drain(..end + 4);
+                        let body = answer(head.split(' ').nth(1).unwrap_or(""));
+                        let reply = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+                            body.len()
+                        );
+                        if c.write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut e = crate::EndpointConfig::new("e", "e", &url, "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Anonymous;
+        s.add_transient_endpoint(e).unwrap();
+        (dir, s)
+    }
+
+    #[test]
+    fn a_marker_handed_back_again_ends_the_listing() {
+        let mut p = super::Pages::default();
+        assert!(p.next("a").is_ok());
+        assert!(p.next("b").is_ok());
+        assert!(p.next("a").is_err());
+    }
+}

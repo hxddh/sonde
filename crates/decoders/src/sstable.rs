@@ -44,6 +44,12 @@ fn handle(b: &[u8], pos: &mut usize) -> Result<Handle, SstError> {
     })
 }
 
+/// `len` bytes of `b` from `pos`, or `None` past its end (or past any
+/// address: a length read from the file may be anything).
+pub fn take(b: &[u8], pos: usize, len: usize) -> Option<&[u8]> {
+    b.get(pos..pos.checked_add(len)?)
+}
+
 /// Which table format the file is in.
 pub fn magic(file: &[u8]) -> Option<u64> {
     let m = u64::from_le_bytes(file.get(file.len().checked_sub(8)?..)?.try_into().ok()?);
@@ -52,10 +58,9 @@ pub fn magic(file: &[u8]) -> Option<u64> {
 
 fn block(file: &[u8], h: Handle) -> Result<Vec<u8>, SstError> {
     let start = h.offset as usize;
-    let end = start + h.size as usize;
-    let data = file
-        .get(start..end)
+    let data = take(file, start, h.size as usize)
         .ok_or_else(|| SstError(format!("block {start}+{} past the file", h.size)))?;
+    let end = start + data.len();
     let kind = *file
         .get(end)
         .ok_or_else(|| SstError("block trailer missing".into()))?;
@@ -94,12 +99,10 @@ fn entries(b: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, SstError> {
         }
         key.truncate(shared);
         key.extend_from_slice(
-            b.get(pos..pos + unshared)
-                .ok_or_else(|| SstError("key past the block".into()))?,
+            take(b, pos, unshared).ok_or_else(|| SstError("key past the block".into()))?,
         );
         pos += unshared;
-        let v = b
-            .get(pos..pos + vlen)
+        let v = take(b, pos, vlen)
             .ok_or_else(|| SstError("value past the block".into()))?
             .to_vec();
         pos += vlen;
@@ -169,8 +172,7 @@ pub fn protobuf(b: &[u8]) -> Result<Vec<(u32, Pb)>, SstError> {
             }
             2 => {
                 let len = varint(b, &mut pos)? as usize;
-                let x = b
-                    .get(pos..pos + len)
+                let x = take(b, pos, len)
                     .ok_or_else(|| SstError("bytes past the end".into()))?
                     .to_vec();
                 pos += len;
@@ -219,6 +221,24 @@ mod tests {
         assert_eq!(svarint(&[0x4e], &mut p).unwrap(), 39);
         let mut p = 0;
         assert_eq!(svarint(&[0x01], &mut p).unwrap(), -1);
+    }
+
+    #[test]
+    fn a_length_past_any_address_is_an_error() {
+        let huge = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+        let mut field = vec![0x0a];
+        field.extend_from_slice(&huge);
+        assert!(protobuf(&field).is_err());
+        // an entry: shared 0, unshared huge, then the restart array
+        let mut entry = vec![0x00];
+        entry.extend_from_slice(&huge);
+        entry.extend_from_slice(&[0x00, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(entries(&entry).is_err());
+        let h = Handle {
+            offset: 1,
+            size: u64::MAX,
+        };
+        assert!(block(&[0u8; 16], h).is_err());
     }
 
     #[test]

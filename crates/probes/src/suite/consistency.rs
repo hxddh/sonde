@@ -40,7 +40,7 @@ impl Probe for ListAfterWrite {
             .list_objects_v2(
                 &cx.bucket,
                 &ListV2 {
-                    prefix: Some(p),
+                    prefix: Some(p.clone()),
                     ..Default::default()
                 },
             )
@@ -48,7 +48,13 @@ impl Probe for ListAfterWrite {
         match r {
             Ok((page, resp)) => {
                 cx.record("list", Ok(resp));
-                cx.note("listed", page.contents.len().to_string());
+                // the names listed, by what follows the prefix
+                let names: Vec<&str> = page
+                    .contents
+                    .iter()
+                    .filter_map(|o| o.key.strip_prefix(&p))
+                    .collect();
+                cx.note("listed", names.join(" "));
             }
             Err(e) => {
                 cx.record("list", Err(e));
@@ -56,11 +62,16 @@ impl Probe for ListAfterWrite {
         }
     }
     fn judge(&self, s: &Steps) -> Judgement {
-        let puts =
-            s.0.iter()
-                .filter(|x| x.label.starts_with("put-") && x.ok())
-                .count();
-        let listed: usize = s.at("listed").body.parse().unwrap_or(0);
+        // every acknowledged write listed: a write that failed here may have
+        // been kept all the same, so more may be listed than acknowledged
+        let acked: Vec<usize> = (0..N).filter(|i| s.at(&format!("put-{i}")).ok()).collect();
+        let puts = acked.len();
+        let names = s.at("listed").body;
+        let names: std::collections::HashSet<&str> = names.split_whitespace().collect();
+        let listed = acked
+            .iter()
+            .filter(|i| names.contains(format!("{i:02}").as_str()))
+            .count();
         if !s.at("list").ok() {
             return Judgement::say(
                 Verdict::Error,
@@ -189,5 +200,47 @@ impl Probe for ReadAfterDelete {
                 s,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Step;
+
+    fn steps(failed: usize, listed: &[usize]) -> Steps {
+        let mut s: Vec<Step> = (0..N)
+            .map(|i| Step {
+                label: format!("put-{i}"),
+                status: (i != failed).then_some(200),
+                ..Default::default()
+            })
+            .collect();
+        s.push(Step {
+            label: "list".into(),
+            status: Some(200),
+            ..Default::default()
+        });
+        let names: Vec<String> = listed.iter().map(|i| format!("{i:02}")).collect();
+        s.push(Step {
+            label: "listed".into(),
+            body: names.join(" "),
+            ..Default::default()
+        });
+        Steps(s)
+    }
+
+    #[test]
+    fn a_write_that_failed_here_but_was_kept_is_no_failure() {
+        let all: Vec<usize> = (0..N).collect();
+        // put-3 timed out client-side, and the store kept it
+        assert_eq!(ListAfterWrite.judge(&steps(3, &all)).verdict, Verdict::Pass);
+        // an acknowledged write not listed still fails, whatever the count
+        let mut most: Vec<usize> = (0..N).filter(|i| *i != 5).collect();
+        most.push(3);
+        assert_eq!(
+            ListAfterWrite.judge(&steps(3, &most)).verdict,
+            Verdict::Fail
+        );
     }
 }
