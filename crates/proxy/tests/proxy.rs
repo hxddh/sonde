@@ -1035,6 +1035,74 @@ async fn answering_after(
     format!("http://{addr}")
 }
 
+/// An upstream that answers every request with `answer`, then holds the
+/// connection open without a word more.
+async fn answering_raw(answer: Vec<u8>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let answer = answer.clone();
+            tokio::spawn(async move {
+                let mut seen = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf).await {
+                        Ok(n) if n > 0 => seen.extend_from_slice(&buf[..n]),
+                        _ => return,
+                    }
+                }
+                let _ = s.write_all(&answer).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// A store's error body that stops part way is a transport error, never
+/// an answer whose length is not its body's.
+#[tokio::test]
+async fn an_error_body_that_stops_part_way_is_a_transport_error() {
+    use std::time::Duration;
+    let url = answering_raw(
+        b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\n\r\n<Error>".to_vec(),
+    )
+    .await;
+    let (proxy, log) = proxy_with_timeout(&url, Duration::from_millis(300)).await;
+    let resp = get_k(&proxy).send().await.unwrap();
+    assert_eq!(resp.status(), 502);
+    assert!(resp.text().await.unwrap().contains("SondeUpstreamError"));
+    let r = &records(&log, 1).await[0];
+    assert!(r.rare().transport_error.is_some(), "{r:?}");
+}
+
+/// A long error body goes through whole; the record keeps its start.
+#[tokio::test]
+async fn a_long_error_body_goes_through_whole_and_its_start_is_kept() {
+    use std::time::Duration;
+    let long = "e".repeat(200 << 10);
+    let mut answer =
+        b"HTTP/1.1 500 Internal Server Error\r\ntransfer-encoding: chunked\r\n\r\n".to_vec();
+    for c in long.as_bytes().chunks(8 << 10) {
+        answer.extend(format!("{:x}\r\n", c.len()).as_bytes());
+        answer.extend(c);
+        answer.extend(b"\r\n");
+    }
+    answer.extend(b"0\r\n\r\n");
+    let url = answering_raw(answer).await;
+    let (proxy, log) = proxy_with_timeout(&url, Duration::from_secs(5)).await;
+    let resp = get_k(&proxy).send().await.unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.text().await.unwrap(), long);
+    let r = &records(&log, 1).await[0];
+    let kept = r.rare().error_body.clone().unwrap();
+    assert!(kept.len() <= reqlog::MAX_ERROR_BODY + 100, "{}", kept.len());
+    assert_eq!(r.response_bytes, Some(200 << 10));
+}
+
 /// A proxy whose store client has `timeout`, and a GET of `/data/k` sent to it.
 async fn get_with_timeout(
     upstream: &str,

@@ -2080,20 +2080,36 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
-    if status.as_u16() >= 400 && method != "HEAD" {
-        let body = tokio::time::timeout(idle, resp.bytes())
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or_default();
-        record.response_bytes = Some(body.len() as u64).into();
-        if !body.is_empty() {
-            record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
-        }
-        held.push(record);
-        return Ok(builder.body(full(body)).expect("valid response"));
-    }
     record.response_bytes = resp.content_length().into();
+    let mut upstream = Box::pin(quiet_limited(resp.bytes_stream(), idle));
+    let mut start = Vec::new();
+    // an error's body is kept on the record, as much as a record keeps: one
+    // that short goes on whole, a longer one as it comes
+    if status.as_u16() >= 400 && method != "HEAD" {
+        while start.len() <= reqlog::MAX_ERROR_BODY {
+            match upstream.next().await {
+                Some(Ok(piece)) => start.extend_from_slice(&piece),
+                Some(Err(e)) => {
+                    let msg = format!("the store's answer stopped part way: {e}");
+                    record.rare_mut().transport_error = Some(msg.clone());
+                    held.push(record);
+                    return Ok(xml_error(502, "SondeUpstreamError", &msg));
+                }
+                None => {
+                    record.response_bytes = Some(start.len() as u64).into();
+                    if !start.is_empty() {
+                        record.rare_mut().error_body =
+                            Some(String::from_utf8_lossy(&start).into_owned());
+                    }
+                    held.push(record);
+                    return Ok(builder.body(full(start.into())).expect("valid response"));
+                }
+            }
+        }
+        record.rare_mut().error_body = Some(String::from_utf8_lossy(&start).into_owned());
+    }
+    let upstream =
+        futures::stream::iter((!start.is_empty()).then(|| Ok(Bytes::from(start)))).chain(upstream);
     // the headers are the first byte; the record is logged once the body has
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
@@ -2113,8 +2129,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         cutting: cutting.clone(),
     };
     let body = match cutting {
-        Some(c) => cut_short(quiet_limited(resp.bytes_stream(), idle), c.at).left_stream(),
-        None => quiet_limited(resp.bytes_stream(), idle).right_stream(),
+        Some(c) => cut_short(upstream, c.at).left_stream(),
+        None => upstream.right_stream(),
     };
     let stream = body
         // the closure owns the whole of `pending` (a method, not a field): it
