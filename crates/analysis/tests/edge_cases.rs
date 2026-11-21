@@ -509,3 +509,63 @@ fn an_object_written_between_its_range_and_whole_reads_is_not_read_twice() {
         kinds(&rs)
     );
 }
+
+/// 27.0's review: a small upload whose one part was retried read as two
+/// parts, and was no small upload.
+#[test]
+fn a_small_upload_whose_part_was_retried_is_one_part() {
+    let mut recs = Vec::new();
+    for i in 0..3u64 {
+        let k = format!("f{i}");
+        let at = i as i64 * 100;
+        let id = i * 4;
+        let upload = format!("u{i}");
+        let part = |n, at, status| {
+            q(
+                rec(n, at, "PUT", "UploadPart", Some(&k), status),
+                &[("partNumber", "1"), ("uploadId", &upload)],
+            )
+        };
+        recs.push(q(
+            rec(id + 1, at, "POST", "CreateMultipartUpload", Some(&k), 200),
+            &[("uploads", "")],
+        ));
+        recs.push(part(id + 2, at + 10, 503));
+        recs.push(part(id + 3, at + 20, 200));
+        recs.push(q(
+            rec(
+                id + 4,
+                at + 30,
+                "POST",
+                "CompleteMultipartUpload",
+                Some(&k),
+                200,
+            ),
+            &[("uploadId", &upload)],
+        ));
+    }
+    let obs = observations(&recs, &episodes(&recs));
+    let small = obs
+        .iter()
+        .find(|o| o.phrases[0].key == "obs.small.parts")
+        .unwrap_or_else(|| panic!("small uploads in {obs:#?}"));
+    assert_eq!(small.phrases[0].args["n"].as_ref(), "3");
+}
+
+/// 27.0's review: a listing that failed four times and was answered the
+/// fifth read as a prefix listed five times.
+#[test]
+fn a_listing_retried_is_listed_once() {
+    let list = |id, at, status| {
+        let mut r = rec(id, at, "GET", "ListObjectsV2", None, status);
+        r.key = None;
+        q(r, &[("list-type", "2"), ("prefix", "in/")])
+    };
+    let mut recs: Vec<Record> = (1..=4).map(|i| list(i, i as i64 * 100, 503)).collect();
+    recs.push(list(5, 500, 200));
+    let obs = observations(&recs, &episodes(&recs));
+    assert!(
+        !obs.iter().any(|o| o.phrases[0].key == "obs.listed"),
+        "{obs:#?}"
+    );
+}

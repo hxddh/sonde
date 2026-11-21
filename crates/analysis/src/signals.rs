@@ -282,7 +282,7 @@ const POLL_MIN_US: i64 = 200_000;
 
 /// A request's time as it is taken everywhere here: never negative, never
 /// past a day ([`reqlog::MAX_LATENCY_MS`]), as its span on the timeline is.
-fn took_ms(r: &Record) -> f64 {
+pub(crate) fn took_ms(r: &Record) -> f64 {
     if r.latency_ms.is_finite() {
         r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS)
     } else {

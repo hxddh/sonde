@@ -123,20 +123,22 @@ pub struct FindingChange {
 }
 
 /// What a request asked, as another run of the program asks it again: its
-/// kind and what it named (`HeadObject b/in/part-001.json`, a listing with
-/// its prefix).
+/// kind and what it named, made [`stable`](crate::profile::stable) as a
+/// finding's identity is (`HeadObject b/in/part-{n}.json`, a listing with
+/// its prefix): a key that holds the run's own id is the same ask in the
+/// next run.
 pub fn asked(r: &Record) -> String {
     let prefix = r
         .query()
         .iter()
         .find(|(k, _)| k == "prefix")
-        .map(|(_, v)| v.to_string())
+        .map(|(_, v)| crate::profile::stable(v))
         .unwrap_or_default();
     format!(
         "{} {}/{}?{prefix}",
         r.kind,
         r.bucket.as_deref().unwrap_or(""),
-        r.key.as_deref().unwrap_or("")
+        crate::profile::stable(r.key.as_deref().unwrap_or(""))
     )
 }
 

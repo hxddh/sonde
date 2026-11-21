@@ -1902,23 +1902,31 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .weigh(impact, 0, total),
         );
     }
-    // the uploads in parts, each by its upload id
-    let mut uploads: HashMap<&str, (usize, u64, bool, Vec<u64>)> = HashMap::new();
+    // the uploads in parts, each by its upload id: its parts stored (a part
+    // retried is one part, its bytes those of its last answered upload),
+    // whether it completed, its requests
+    type Upload<'a> = (HashMap<&'a str, u64>, bool, Vec<u64>);
+    let mut uploads: HashMap<&str, Upload> = HashMap::new();
     for r in records {
         if let Some(id) = query(r, "uploadId") {
             let u = uploads.entry(id).or_default();
-            if r.kind == "UploadPart" {
-                u.0 += 1;
-                u.1 += r.request_bytes.get().unwrap_or(0);
+            if r.kind == "UploadPart" && !r.is_error() {
+                u.0.insert(
+                    query(r, "partNumber").unwrap_or(""),
+                    r.request_bytes.get().unwrap_or(0),
+                );
             }
-            u.2 |= r.kind == "CompleteMultipartUpload" && !r.is_error();
-            u.3.push(r.id);
+            u.1 |= r.kind == "CompleteMultipartUpload" && !r.is_error();
+            u.2.push(r.id);
         }
     }
     // each upload began with a CreateMultipartUpload (`?uploads`, no upload
     // id): the creates of a key go to its uploads in order, each the earliest
     // left before the upload's first part
-    let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads.into_values().collect();
+    let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads
+        .into_values()
+        .map(|(parts, done, ids)| (parts.len(), parts.values().sum(), done, ids))
+        .collect();
     {
         use std::collections::VecDeque;
         let at = &by_id;
@@ -2149,12 +2157,14 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     }
     // the same prefix listed again and again, with nothing written under it
     // in between: a listing kept from the first would answer the same (one
-    // written between is the program looking for what changed)
+    // written between is the program looking for what changed; one not
+    // answered, retried, is no listing to keep)
     let mut lists: HashMap<(&str, &str), Vec<&Record>> = HashMap::new();
     for r in records.iter().filter(|r| {
         // a later page (ListObjectsV2's token, ListObjects' marker) is the
         // same listing going on
         r.kind.starts_with("ListObjects")
+            && !r.is_error()
             && query(r, "continuation-token").is_none()
             && query(r, "marker").is_none_or(str::is_empty)
     }) {

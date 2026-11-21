@@ -491,8 +491,80 @@ fn a_workload_that_grew_is_said_and_saves_nothing() {
     let c = fixed.change.as_ref().unwrap();
     assert!(c.workload_changed.is_none());
     // and a small run's few more requests are no grown workload
-    assert_eq!(sonde_analysis::profile::workload_grew((3, 6)), None);
-    assert_eq!(sonde_analysis::profile::workload_grew((120, 170)), None);
+    let changed = sonde_analysis::profile::workload_changed;
+    assert_eq!(changed((3, 6), 0), None);
+    assert_eq!(changed((120, 170), 0), None);
+    // nor a few fewer
+    assert_eq!(changed((12, 5), 0), None);
+    assert_eq!(changed((120, 90), 0), None);
+}
+
+/// 27.0's review: HEAD+GET of 400 files, then of 30, with the same command,
+/// read `↓ less … saved 370`. A workload shrunk by a third or more below
+/// what fixing the run before's findings would leave is said, and counts
+/// no saving; a fix that leaves just that is counted.
+#[test]
+fn a_workload_that_shrank_is_said_and_saves_nothing() {
+    let head_get = |files: u64, head: bool| -> Vec<Record> {
+        let mut rs = Vec::new();
+        for i in 0..files {
+            let key = format!("in/part-{i:03}.json");
+            if head {
+                let mut h = get(i * 2 + 1, &key);
+                h.method = "HEAD".into();
+                h.kind = "HeadObject".into();
+                rs.push(h);
+            }
+            rs.push(get(i * 2 + 2, &key));
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &head_get(400, true), Some(0));
+    let after = ran(dir.path(), 2, &head_get(30, true), Some(0));
+    let c = after.change.as_ref().unwrap();
+    assert_eq!(
+        c.workload_changed.as_deref(),
+        Some("requests 800 → 60, 0.1×")
+    );
+    assert_eq!(c.uncounted(false).as_deref(), Some("the workload shrank"));
+    let f = after
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.headget"))
+        .unwrap();
+    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    // the HEADs dropped, the 400 files read: a fix, counted
+    ran(dir.path(), 3, &head_get(400, true), Some(0));
+    let fixed = ran(dir.path(), 4, &head_get(400, false), Some(0));
+    let c = fixed.change.as_ref().unwrap();
+    assert!(c.workload_changed.is_none(), "{c:#?}");
+    let f = fixed
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.headget"))
+        .unwrap();
+    assert_eq!(f.measured.map(|m| m.requests), Some(400));
+}
+
+/// 27.0's review: a key that holds the run's own id (`jobs/{id}/state.json`)
+/// is one finding in both runs, but its reads were counted by the key as it
+/// was, none in the later run: `saved 39` where 4 were.
+#[test]
+fn what_a_fix_saved_counts_keys_that_hold_a_runs_id_as_the_same() {
+    let reads = |id: &str, n: u64| -> Vec<Record> {
+        (1..=n)
+            .map(|i| get(i, &format!("jobs/{id}/state.json")))
+            .collect()
+    };
+    let (ra, rb) = (reads("1794558464595", 40), reads("1794558469999", 36));
+    let a = run_of(&ra);
+    let mut b = run_of(&rb);
+    b.measure(&rb, &a);
+    let c = compare_runs(&a, &b);
+    let hot = &c.findings[0];
+    assert_eq!(hot.state, State::Less, "{c:#?}");
+    assert_eq!(hot.measured.map(|m| m.requests), Some(4));
 }
 
 /// Less is kept: over its threshold again it is back, not new.

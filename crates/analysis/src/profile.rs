@@ -1726,10 +1726,10 @@ pub struct RunChange {
     /// workload's doing, and no saving is counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_changed: Option<String>,
-    /// How much the workload grew between two runs of one program with the
-    /// same command (`requests 120 → 402, 3.4×`): a fix that does more
-    /// work than before (all 400 files, not 30) is not a fix to count, and
-    /// no saving is counted.
+    /// How much the workload changed between two runs of one program with
+    /// the same command ([`workload_changed`], `requests 120 → 402, 3.4×`):
+    /// a fix that does more work than before (all 400 files, not 30), or
+    /// less (30, not 400), is not a fix to count, and no saving is counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workload_changed: Option<String>,
     /// The two runs' endpoints, when they differ (`rfs`, `demo`): the same
@@ -1747,10 +1747,16 @@ pub struct RunChange {
     pub prefixes: Vec<PrefixChange>,
 }
 
-/// A workload that grew by half or more (and by ten requests at least),
-/// said `requests 120 → 402, 3.4×`; none when it did not.
-pub fn workload_grew((a, b): (usize, usize)) -> Option<String> {
-    (a > 0 && b >= a + 10 && b * 2 >= a * 3).then(|| {
+/// A workload that changed between two runs of `(a, b)` requests, said
+/// `requests 120 → 402, 3.4×`: grown by half or more, or shrunk by a third
+/// or more below what a's findings would leave once fixed (`saved`, the
+/// requests they predicted saving), by ten requests at least either way.
+/// None when it did not: a fix makes fewer requests, never fewer than that.
+pub fn workload_changed((a, b): (usize, usize), saved: usize) -> Option<String> {
+    let left = a.saturating_sub(saved);
+    let grew = a > 0 && b >= a + 10 && b * 2 >= a * 3;
+    let shrank = left >= b + 10 && b * 3 <= left * 2;
+    (grew || shrank).then(|| {
         format!(
             "requests {} → {}, {:.1}×",
             sonde_fmt::count(a as u64),
@@ -1788,7 +1794,14 @@ impl RunChange {
     pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
         self.command_changed = crate::program::command_change(a, b);
         if self.command_changed.is_none() {
-            self.workload_changed = workload_grew(self.requests);
+            // what the run before's findings would save, fixed
+            let saved = self
+                .findings
+                .iter()
+                .filter(|f| f.state != crate::fixloop::State::New)
+                .map(|f| f.predicted.requests)
+                .sum();
+            self.workload_changed = workload_changed(self.requests, saved);
         }
         if self.command_changed.is_some() || self.workload_changed.is_some() {
             crate::fixloop::by_command(&mut self.findings);
@@ -1797,17 +1810,22 @@ impl RunChange {
     }
 
     /// Why what moved between the runs is not counted as a fix: the command
-    /// changed, or the workload grew (`whole`: with how much, else in a few
-    /// words, as each finding's line ends).
+    /// changed, or the workload grew or shrank (`whole`: with how much, else
+    /// in a few words, as each finding's line ends).
     pub fn uncounted(&self, whole: bool) -> Option<String> {
         if let Some(c) = &self.command_changed {
             return Some(format!("the command changed ({c})"));
         }
         self.workload_changed.as_ref().map(|w| {
-            if whole {
-                format!("the workload grew ({w})")
+            let how = if self.requests.1 > self.requests.0 {
+                "the workload grew"
             } else {
-                "the workload grew".to_string()
+                "the workload shrank"
+            };
+            if whole {
+                format!("{how} ({w})")
+            } else {
+                how.to_string()
             }
         })
     }

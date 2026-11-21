@@ -279,7 +279,7 @@
     },
     "workloadChanged": {
       "type": "string",
-      "description": "Display text, not stable: how much the workload grew between two runs of one program with the same command (`requests 120 → 402, 3.4×`), by half or more. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+      "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`requests 120 → 402, 3.4×`): grown by half or more, or shrunk by a third or more below what fixing the first run's findings would leave. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
     },
     "endpoints": {
       "type": "array",
