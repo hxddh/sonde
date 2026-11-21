@@ -668,7 +668,7 @@ pub fn raise_open_files() {
         ] {
             if to.is_some_and(|t| t > current) {
                 lim.current = to;
-                if setrlimit(Resource::Nofile, lim.clone()).is_ok() {
+                if setrlimit(Resource::Nofile, lim).is_ok() {
                     return;
                 }
             }
