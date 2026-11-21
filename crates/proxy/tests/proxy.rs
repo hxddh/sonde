@@ -92,7 +92,7 @@ fn verify(req: &http::request::Parts, body_hash: &str) -> Result<(), String> {
                 h.to_string(),
                 req.headers
                     .get(h)
-                    .map(|v| v.to_str().unwrap().to_string())
+                    .map(|v| String::from_utf8(v.as_bytes().to_vec()).unwrap())
                     .unwrap_or_default(),
             )
         })
@@ -388,6 +388,39 @@ async fn put_get_list_are_resigned_and_recorded() {
     assert_eq!(get.response_bytes, Some(19));
 }
 
+/// A signed header's value is its bytes: UTF-8 text (as go-v2 and minio-go
+/// send metadata) is signed and forwarded as sent; other bytes are refused.
+#[tokio::test]
+async fn a_signed_header_in_utf8_is_admitted_and_forwarded_as_sent() {
+    let (proxy, app, log, up) = setup(Policy::Allow).await;
+    let put = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key("k")
+        .header("x-amz-meta-name", "café")
+        .body(Body::from("x"));
+    let r = app.send_raw(put).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(up.calls.lock().len(), 1);
+
+    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], sigv4::UNSIGNED_PAYLOAD);
+    let r = reqwest::Client::new()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", sigv4::UNSIGNED_PAYLOAD)
+        .header("authorization", auth)
+        .header(
+            "x-other",
+            http::HeaderValue::from_bytes(b"caf\xe9").unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("not UTF-8"));
+    assert_eq!(up.calls.lock().len(), 1);
+    assert_eq!(log.list(&reqlog::Filter::default(), 10).len(), 2);
+}
+
 /// A bucket in another region than the endpoint's: the store's redirect
 /// says which, the request with no body is sent again signed for it, and
 /// the bucket's next requests (a write too) are signed for it from the start.
@@ -460,6 +493,33 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     assert!(!headers.iter().any(|(k, _)| k == "content-encoding"));
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(r.kind, "PutObject");
+    assert_eq!(r.request_bytes, Some(15));
+}
+
+/// An unsigned aws-chunked upload (as newer SDKs send with a checksum)
+/// goes on as sent, and its record counts the payload, not the framing.
+#[tokio::test]
+async fn an_unsigned_chunked_upload_counts_its_payload() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let body = "f\r\n0123456789abcde\r\n0\r\nx-amz-checksum-crc32:Ufg6kA==\r\n\r\n";
+    let sha = "STREAMING-UNSIGNED-PAYLOAD-TRAILER";
+    let (date, auth) = signed(&proxy, "PUT", "/data/u", &[], &[], sha);
+    let resp = web()
+        .put(format!("{}/data/u", proxy.url()))
+        .header("x-amz-content-sha256", sha)
+        .header("x-amz-date", date)
+        .header("content-encoding", "aws-chunked")
+        .header("x-amz-decoded-content-length", "15")
+        .header("x-amz-trailer", "x-amz-checksum-crc32")
+        .header("authorization", auth)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let (data, _) = up.objects.lock().get("/data/u").cloned().unwrap();
+    assert_eq!(data, b"0123456789abcde");
+    let r = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(r.request_bytes, Some(15));
 }
 
@@ -973,6 +1033,74 @@ async fn answering_after(
         }
     });
     format!("http://{addr}")
+}
+
+/// An upstream that answers every request with `answer`, then holds the
+/// connection open without a word more.
+async fn answering_raw(answer: Vec<u8>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let answer = answer.clone();
+            tokio::spawn(async move {
+                let mut seen = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf).await {
+                        Ok(n) if n > 0 => seen.extend_from_slice(&buf[..n]),
+                        _ => return,
+                    }
+                }
+                let _ = s.write_all(&answer).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// A store's error body that stops part way is a transport error, never
+/// an answer whose length is not its body's.
+#[tokio::test]
+async fn an_error_body_that_stops_part_way_is_a_transport_error() {
+    use std::time::Duration;
+    let url = answering_raw(
+        b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\n\r\n<Error>".to_vec(),
+    )
+    .await;
+    let (proxy, log) = proxy_with_timeout(&url, Duration::from_millis(300)).await;
+    let resp = get_k(&proxy).send().await.unwrap();
+    assert_eq!(resp.status(), 502);
+    assert!(resp.text().await.unwrap().contains("SondeUpstreamError"));
+    let r = &records(&log, 1).await[0];
+    assert!(r.rare().transport_error.is_some(), "{r:?}");
+}
+
+/// A long error body goes through whole; the record keeps its start.
+#[tokio::test]
+async fn a_long_error_body_goes_through_whole_and_its_start_is_kept() {
+    use std::time::Duration;
+    let long = "e".repeat(200 << 10);
+    let mut answer =
+        b"HTTP/1.1 500 Internal Server Error\r\ntransfer-encoding: chunked\r\n\r\n".to_vec();
+    for c in long.as_bytes().chunks(8 << 10) {
+        answer.extend(format!("{:x}\r\n", c.len()).as_bytes());
+        answer.extend(c);
+        answer.extend(b"\r\n");
+    }
+    answer.extend(b"0\r\n\r\n");
+    let url = answering_raw(answer).await;
+    let (proxy, log) = proxy_with_timeout(&url, Duration::from_secs(5)).await;
+    let resp = get_k(&proxy).send().await.unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.text().await.unwrap(), long);
+    let r = &records(&log, 1).await[0];
+    let kept = r.rare().error_body.clone().unwrap();
+    assert!(kept.len() <= reqlog::MAX_ERROR_BODY + 100, "{}", kept.len());
+    assert_eq!(r.response_bytes, Some(200 << 10));
 }
 
 /// A proxy whose store client has `timeout`, and a GET of `/data/k` sent to it.

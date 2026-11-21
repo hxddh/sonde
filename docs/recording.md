@@ -116,8 +116,8 @@ committer settings; empty `…/` directory markers are reported with their delet
 1. Bucket and key from the path (`/bucket/key`); the query decoded as is (`+` stays).
 2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
-   and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
-   SignatureDoesNotMatch`, recorded as refused, never forwarded.
+   and a SigV4 (header or presigned) or SigV2 signature with this recording's keys, over header values in UTF-8
+   (`x-amz-meta-name: café`, as sent). Else `403 SignatureDoesNotMatch`, recorded as refused, never forwarded.
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
    refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
    (`a/../b`, a key of its own in S3) are forwarded as sent.
@@ -128,7 +128,7 @@ committer settings; empty `…/` directory markers are reported with their delet
    checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
    `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged.
 6. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
-7. The response streams back unchanged; error bodies are kept whole.
+7. The response streams back unchanged; an error body's first 64 KiB is kept on the record.
 
 A record holds the program's headers (signatures redacted), the URL sonde sent to, status, bytes each way, request
 ids, the error body, **latency** (the whole exchange, until the body is through or the program stops reading) and
@@ -244,11 +244,12 @@ Re-enacted (a run holds no object data):
   size for each object it read, copied from or wrote on a condition it met, and empty `sonde-seed-N` keys where a
   listing found more. Reads of existing data then find it, and nothing differs falsely.
 - Payloads: deterministic bytes of the recorded length. Control documents (DeleteObjects, tagging, …): as recorded,
-  keys moved under the prefix.
+  keys moved under the prefix, with the `Content-MD5` of what is sent.
 - Upload ids, part ETags, ETags in `If-Match`/`If-None-Match` and continuation tokens map to the replay endpoint's;
   `CompleteMultipartUpload` is rebuilt from the replayed parts.
 - Every key and listing prefix under `replay-<time>/` (or `--prefix`). Creating or deleting a bucket, bucket-level
-  changes (lifecycle, policy) and requests naming a version id are left out, and the plan says so.
+  changes (lifecycle, policy) and requests naming a version id or a version or upload page marker are left out,
+  and the plan says so.
 - One request at a time, in order, no retries.
 - A dry run first; `--yes` replays. It deletes what it wrote afterwards, always.
 - Each bucket must be there, its prefix empty and listable, else nothing is sent.

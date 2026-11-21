@@ -496,7 +496,7 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [1073741824, "1.0 GiB"],
     [1099511627776, "1.0 TiB"],
     [1125899906842624, "1.0 PiB"],
-    [1152921504606847000, "1024 PiB"],
+    [1152921504606847000, "1,024 PiB"],
   ];
   for (const [n, text] of sizes) expect(bytes(n)).toBe(text);
   const times: [number, string][] = [
@@ -527,9 +527,37 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [3599500, "1 h 00 min"],
     [5976000, "1 h 40 min"],
     [86400000, "24 h 00 min"],
-    [-2350, "-2.35 s"],
+    [-2350, "−2.35 s"],
+    [-4, "−4.0 ms"],
+    [-185000, "−3 min 05 s"],
   ];
   for (const [ms, text] of times) expect(duration(ms)).toBe(text);
+});
+
+test("an operation of two hundred thousand requests says its span (no spread of every row into one call)", async () => {
+  const { spanMs } = await import("../src/ui/runview");
+  const rows = Array.from({ length: 200000 }, (_, i) => ({ time: new Date(Date.UTC(2026, 10, 7) + i).toISOString(), latencyMs: 5 }));
+  expect(spanMs(rows)).toBe(199999 + 5);
+});
+
+test("runs listed together are told apart by their time of day, and by their date once they are of other days", async () => {
+  const { date, hm, moments } = await import("../src/format");
+  const [a, b, c] = ["2026-11-07T09:12:00", "2026-11-07T14:05:00", "2026-11-06T14:05:00"];
+  expect(moments([a, b])(b)).toBe(hm(b));
+  expect(moments([a, b, c])(b)).toBe(date(b));
+  expect(moments([a, b, c])(b)).not.toBe(moments([a, b, c])(c));
+});
+
+test("a figure and a count beside it use the region's marks alike (English in Germany: 12.345 beside 2,35 s)", async () => {
+  await open("../App.tsx", { ...desktop, locale: "en-DE" });
+  const { bytes, count, duration, money, rate, separators } = await import("../src/format");
+  // (the marks as the engine's Intl writes the region's: a headless engine without locale data writes en-US's)
+  const { group: g, decimal: d } = separators();
+  expect(count(12345)).toBe(`12${g}345`);
+  expect(duration(2350)).toBe(`2${d}35 s`);
+  expect(bytes(1536)).toBe(`1${d}5 KiB`);
+  expect(money(1234.5, "EUR")).toBe(`1${g}234${d}50 EUR`);
+  expect(rate(4.25)).toBe(`4${d}3`);
 });
 
 test("one function writes a duration, and a scenario has words", async () => {

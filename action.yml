@@ -22,7 +22,7 @@ inputs:
     description: The project's sonde.toml (default found from the working directory up).
     default: ""
   baseline:
-    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push); a pull request with none records its merge-base (`git merge-base origin/BASE HEAD`: the base branch's commit the pull request is merged into, of actions/checkout's default checkout) in this job. `none`, or a run's path or https URL."
+    description: "`auto`: the run the latest earlier run of this workflow kept on the base branch (on this branch for a push); a pull request with none records its merge-base (`git merge-base origin/BASE HEAD`: the base branch's commit the pull request is merged into, of actions/checkout's default checkout) in this job. `none` (no baseline, not sonde.toml's either), or a run's path or https URL."
     default: auto
   setup:
     description: "What the merge-base's checkout needs before the command, run there in the working directory (`npm ci`, `pip install -r requirements.txt`): a git worktree has none of this checkout's untracked files."
@@ -40,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `27.0.0`, `27` (the newest 27.x), `27.0` (the newest 27.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v27`: the newest 27.x; `@v27.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `28.0.0`, `28` (the newest 28.x), `28.0` (the newest 28.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v28`: the newest 28.x; `@v28.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.

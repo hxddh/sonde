@@ -19,7 +19,7 @@ while :; do
   # one line per run: id, status, conclusion
   # (a failed call is asked again, as a run not yet started is)
   runs="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" --jq \
-    '.workflow_runs[] | select((.event == "push" or .event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO) | "\(.id) \(.status) \(.conclusion)"')" ||
+    '.workflow_runs[] | select((.event == "push" or .event == "schedule" or .event == "workflow_dispatch") and .head_branch == "main" and .head_repository.full_name == env.REPO) | "\(.id) \(.status) \(.conclusion)"')" ||
     { echo "::warning::GitHub's API did not answer; asking again"; runs="?"; }
   green="$(awk '$2 == "completed" && $3 == "success" { print $1; exit }' <<<"$runs")"
   if [ -n "$green" ]; then

@@ -21,8 +21,8 @@ pub use delete::{Deleted, deleted_objects, deleted_objects_strict};
 pub use list::Lists;
 pub use name::Name;
 pub use record::{
-    Header, KEYS_HEADER, KeyCounter, MAX_LATENCY_MS, MAX_REQUEST_BODY, Rare, Record, RecordSummary,
-    Text, is_control_operation, is_listing,
+    Header, KEYS_HEADER, KeyCounter, MAX_ERROR_BODY, MAX_LATENCY_MS, MAX_REQUEST_BODY, Rare,
+    Record, RecordSummary, Text, is_control_operation, is_listing,
 };
 pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, Sink, StatusFilter};
 pub use size::{Millis, Size};

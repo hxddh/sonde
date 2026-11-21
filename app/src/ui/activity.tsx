@@ -10,7 +10,7 @@ import { core } from "../phrases";
 import { api } from "../native";
 import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
 import type { AuditEntry, JobInfo } from "../types";
-import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, TONE, type Tone, TEXT } from "./kit";
+import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, TONE, type Tone, TEXT, Tip } from "./kit";
 
 export const activityOpen = signal(false);
 
@@ -72,7 +72,8 @@ function Jobs() {
                 <View class="min-h-7 flex-row items-center gap-2">
                   {/* how it stands, at its start: at work (live), done (quiet), failed; its word to a screen reader */}
                   <View class={`${DOT} ${JOB_DOT[j().state] ?? TONE.quiet.dot} ${j().state === "running" ? "motion-safe:animate-pulse" : ""}`} accessibilityLabel={t(`jobs.state.${j().state}` as never)} />
-                  <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{core(j().titleText, j().title)}</Text>
+                  {/* cut to its line: the whole title where the pointer rests */}
+                  <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`} tooltip={<Tip text={core(j().titleText, j().title)} />}>{core(j().titleText, j().title)}</Text>
                   {/* a job done says nothing more in words: only one at work, failed or cancelled says how it stands */}
                   <If when={j().state !== "finished"}>
                     <Badge tone={JOB_TONE[j().state] ?? "quiet"} label={t(`jobs.state.${j().state}` as never)} />

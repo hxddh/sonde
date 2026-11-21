@@ -28,8 +28,8 @@ install() {
   fi
   local ref="${GITHUB_ACTION_REF:-}"
   if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
-    # a release's tag (v27.0.0) is that release; a major's (v27) the newest
-    # of it, a major and minor (v27.0) the newest of that (install.sh)
+    # a release's tag (v28.0.0) is that release; a major's (v28) the newest
+    # of it, a major and minor (v28.0) the newest of that (install.sh)
     [ -n "$version" ] || version="${ref#v}"
   else
     # a branch, a commit or a local checkout (`uses: ./`): its scripts are
@@ -37,7 +37,7 @@ install() {
     # major, never with whatever release is the newest
     local own major
     own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
-    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (27, 27.0.0)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (28, 28.0.0)"
     major="${own%%.*}"
     case "$version" in
       latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;
@@ -197,12 +197,11 @@ workflow_file() {
 
 # The run the latest earlier run of this workflow kept on the base
 # branch (a pull request's) or on this branch (a push); for a pull request
-# with none, its merge-base recorded here ([merge_base]); `auto` (said as
-# "no baseline yet" by every format of `check`) when there is none. Another
-# input is passed on as it is.
+# with none, its merge-base recorded here ([merge_base]); nothing when there
+# is none (sonde.toml's `[check] baseline` then applies). `none` (no baseline
+# at all, `check --baseline none`) and another input are passed on as they are.
 baseline() {
   case "${SONDE_BASELINE:-auto}" in
-    none | "") return ;;
     auto) ;;
     *)
       out baseline "$SONDE_BASELINE"
@@ -249,12 +248,10 @@ baseline() {
       out baseline "$work/merge-base-run/merge-base.sonde"
       return
     fi
-    warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget alone"
-    out baseline auto
+    warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
     return
   fi
-  warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget alone"
-  out baseline auto
+  warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
 }
 
 # `sonde check`'s flags, as the step's inputs give them, in ARGS.
@@ -283,7 +280,7 @@ report() {
   local args=("$SONDE_FILE") file="$work/report/sonde-report.html"
   mkdir -p "$(dirname "$file")"
   case "${SONDE_BASELINE:-}" in
-    "" | auto) ;;
+    "" | none) ;;
     *) args+=(--baseline "$SONDE_BASELINE") ;;
   esac
   [ "${SONDE_REDACT:-false}" != true ] || args+=(--redact)

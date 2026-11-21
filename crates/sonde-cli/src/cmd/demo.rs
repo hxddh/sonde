@@ -19,7 +19,18 @@ pub const TOUR: &str = "sonde run --demo";
 /// A tour in one command: the job and the job fixed, each recorded as any
 /// program's run is, the first shown with its findings, the second against
 /// the first.
-pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
+pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>, force: bool) -> anyhow::Result<i32> {
+    // `-o x.sonde` writes x-fixed.sonde too: refused as x.sonde is
+    let fixed_out = out.as_ref().map(|o| {
+        let stem = o
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "tour".into());
+        o.with_file_name(format!("{stem}-fixed.sonde"))
+    });
+    if let Some(f) = &fixed_out {
+        refuse_existing(f, force)?;
+    }
     let ep = sonde_core::demo::install(s)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -32,13 +43,6 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>) -> anyhow::Result<i32> {
         "The tour: a small export job ({}), played by sonde request by request as boto3 sends them, to sonde's built-in demo store.",
         first_py.display()
     );
-    let fixed_out = out.as_ref().map(|o| {
-        let stem = o
-            .file_stem()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "tour".into());
-        o.with_file_name(format!("{stem}-fixed.sonde"))
-    });
     let first = play(s, &ep.id, out, JOB, "export.py").await?;
     let color = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let run = RunFile::open(&first).map_err(|e| anyhow::anyhow!(e))?;

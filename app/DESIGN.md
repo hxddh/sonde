@@ -33,7 +33,7 @@ the next action; counts and chips support it, they do not replace it.
   shows. A dialog is for a short decision only.
 - **One door each.** A thing is reached one way per surface: recent runs from Runs' sidebar list and the palette's
   "Recent runs"; the example and the demo from the welcome and the palette; Buckets' sections from their row (and
-  `⌥⌘1`–`⌥⌘4`; a finding whose fix is one of them leads to the same section); "See the whole run" in the palette on
+  `⌥⌘1`–`⌥⌘4`, not while typing; a finding whose fix is one of them leads to the same section); "See the whole run" in the palette on
   Run only.
 - **No control that does nothing.** A press with something missing says what (Run with no endpoint, Save with no
   URL: on its field); a control that must stay dimmed says why in its tip. The sidebar's toggle always toggles; a

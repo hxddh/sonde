@@ -24,7 +24,7 @@ pub use super::check::{CheckArgs, check};
 pub use super::compare::{CompareArgs, compare};
 pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
-pub use super::show::{ShowArgs, show, show_file};
+pub use super::show::{ShowArgs, show, summary_on_stderr};
 
 #[derive(Args, Clone)]
 pub struct Recording {
@@ -702,8 +702,8 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 /// The run a command is about when none is named: one rule for `show`,
 /// `compare`, `share` and `check`. The newest run of the project's program
 /// (`[program] name` in sonde.toml), else of the program recorded in this
-/// folder (the run's `cwd`), else the newest run of
-/// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
+/// folder (the run's `cwd`); else none, said (another folder's run is
+/// another program's). Only runs (`run`, `proxy`): a replay, an import and a trial are
 /// named to be read. Runs written elsewhere (`-o`) that the runs folder
 /// lists are runs like its own. The run, and which it is in words.
 pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
@@ -754,10 +754,10 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
             p,
             format!("the newest run of program `{key}` recorded in this folder"),
         )),
-        (None, _, None, Some((_, p, key))) => Ok((
-            p,
-            format!("the newest run (program `{key}`; none was recorded in this folder)"),
-        )),
+        // another folder's program is not this one's: named, never taken
+        (None, _, None, Some((_, _, key))) => Err(super::usage(format!(
+            "no run recorded in this folder (the newest, of program `{key}`, was recorded in another): name the run (`sonde runs` lists them), or record one here with `sonde run -- <command>`"
+        ))),
         (None, _, None, None) => Err(super::usage(format!(
             "no recorded runs in {} yet: record one with `sonde run -- <command>`",
             dir.display()

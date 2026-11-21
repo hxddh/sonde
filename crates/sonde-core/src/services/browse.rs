@@ -468,6 +468,7 @@ pub fn search(
             let mut token = None;
             let mut scanned = 0u64;
             let mut found: Vec<Entry> = Vec::new();
+            let mut pages = crate::services::Pages::default();
             loop {
                 ctx.check()?;
                 let (page, _) = c
@@ -514,6 +515,7 @@ pub fn search(
                     break;
                 }
                 token = page.next_continuation_token;
+                pages.next(&token)?;
             }
             found.truncate(limit);
             Ok(json!({"scanned": scanned, "matches": found}))

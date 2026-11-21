@@ -443,6 +443,7 @@ impl Proxy {
         log: RequestLog,
         cfg: ProxyConfig,
     ) -> std::io::Result<Proxy> {
+        raise_open_files();
         let listener = TcpListener::bind(cfg.listen).await?;
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
@@ -467,8 +468,14 @@ impl Proxy {
         let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
         let task = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    continue;
+                let stream = match listener.accept().await {
+                    Ok((stream, _)) => stream,
+                    // out of file descriptors, most likely: wait for some
+                    // to close rather than spin
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        continue;
+                    }
                 };
                 let shared = shared.clone();
                 let stopping = stopping.clone();
@@ -607,7 +614,12 @@ fn bucket_region(status: u16, headers: &http::HeaderMap, signed: &str) -> Option
         return None;
     }
     let region = headers.get("x-amz-bucket-region")?.to_str().ok()?.trim();
-    (!region.is_empty() && region != signed).then(|| region.to_string())
+    // a region's name, nothing else: it reaches a URL and a copied command
+    let named = (1..=40).contains(&region.len())
+        && region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    (named && region != signed).then(|| region.to_string())
 }
 
 /// The endpoint for `region` when the store is AWS's (`s3.amazonaws.com`,
@@ -639,6 +651,29 @@ fn in_region(endpoint: &reqwest::Url, configured: &str, region: &str) -> reqwest
         let _ = url.set_host(Some(&h));
     }
     url
+}
+
+/// Raises the soft limit on open files to the hard one: each connection is
+/// one, and a busy program opens many (macOS's soft limit is 256).
+pub fn raise_open_files() {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Resource, getrlimit, setrlimit};
+        let mut lim = getrlimit(Resource::Nofile);
+        let Some(current) = lim.current else { return };
+        // (macOS refuses more than its kern.maxfilesperproc: 10240 it takes)
+        for to in [
+            lim.maximum,
+            lim.maximum.map(|m| m.min(10240)).or(Some(10240)),
+        ] {
+            if to.is_some_and(|t| t > current) {
+                lim.current = to;
+                if setrlimit(Resource::Nofile, lim).is_ok() {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// Serves one connection until it closes, or until the proxy stops: then
@@ -692,15 +727,20 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
             ));
         }
     }
+    // a value is signed and forwarded as its bytes: UTF-8 text (`café` in
+    // x-amz-meta-*) is; other bytes could not be forwarded as sent
+    if let Some((name, _)) = parts
+        .headers
+        .iter()
+        .find(|(_, v)| std::str::from_utf8(v.as_bytes()).is_err())
+    {
+        return Err(format!(
+            "its header {name} is not UTF-8 text, so sonde cannot forward it as sent"
+        ));
+    }
     let query = parse_query(parts.uri.query());
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    let header = |k: &str| {
-        parts
-            .headers
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-    };
+    let header = |k: &str| parts.headers.get(k).map_or("", text);
     // the legacy form some SDKs still presign with (boto3's default for S3)
     if q("AWSAccessKeyId").is_some() || header("authorization").starts_with("AWS ") {
         return admit_v2(cfg, parts, host, &query);
@@ -779,7 +819,7 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
                 .headers
                 .get_all(h)
                 .iter()
-                .filter_map(|v| v.to_str().ok())
+                .map(text)
                 .collect::<Vec<_>>()
                 .join(",");
             (h.to_string(), v)
@@ -895,15 +935,7 @@ fn admit_v2(
     use base64::Engine;
     use hmac::{Hmac, KeyInit, Mac};
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    let header = |k: &str| {
-        parts
-            .headers
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    };
+    let header = |k: &str| parts.headers.get(k).map_or("", text).trim().to_string();
     let (key, signature, date) = match q("AWSAccessKeyId") {
         Some(k) => (
             k.to_string(),
@@ -967,12 +999,7 @@ fn admit_v2(
         .headers
         .iter()
         .filter(|(n, _)| n.as_str().starts_with("x-amz-"))
-        .map(|(n, v)| {
-            (
-                n.as_str().to_string(),
-                v.to_str().unwrap_or("").trim().to_string(),
-            )
-        })
+        .map(|(n, v)| (n.as_str().to_string(), text(v).trim().to_string()))
         .collect();
     amz.sort();
     let mut merged: Vec<(String, String)> = Vec::new();
@@ -986,13 +1013,9 @@ fn admit_v2(
         }
     }
     // a virtual-hosted request names its bucket in the Host
-    let name = host
-        .rsplit_once(':')
-        .map_or(host, |(h, _)| h)
-        .to_ascii_lowercase();
-    let mut resource = match name.strip_suffix(".localhost") {
-        Some(bucket) if !bucket.is_empty() => format!("/{bucket}{}", parts.uri.path()),
-        _ => parts.uri.path().to_string(),
+    let mut resource = match host_bucket(host) {
+        Some(bucket) => format!("/{bucket}{}", parts.uri.path()),
+        None => parts.uri.path().to_string(),
     };
     let mut subs: Vec<&(String, String)> = query
         .iter()
@@ -1027,6 +1050,11 @@ fn admit_v2(
     } else {
         Err("its signature does not match the secret sonde gave the program".into())
     }
+}
+
+/// A header's value as text: [`admit`] has refused one that is not UTF-8.
+fn text(v: &http::HeaderValue) -> &str {
+    std::str::from_utf8(v.as_bytes()).unwrap_or("")
 }
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {
@@ -1089,17 +1117,10 @@ fn decode(s: &str) -> String {
 /// Bucket and key from the Host header and the path. `<bucket>.localhost`
 /// hosts are virtual-hosted style; anything else is path style.
 pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) {
-    let host = host.rsplit_once(':').map_or(host, |(h, p)| {
-        if p.chars().all(|c| c.is_ascii_digit()) {
-            h
-        } else {
-            host
-        }
-    });
     let rest = path.strip_prefix('/').unwrap_or(path);
     let non_empty = |s: &str| (!s.is_empty()).then(|| decode(s));
-    if let Some(bucket) = host.strip_suffix(".localhost").filter(|b| !b.is_empty()) {
-        return (Some(bucket.to_string()), non_empty(rest));
+    if let Some(bucket) = host_bucket(host) {
+        return (Some(bucket), non_empty(rest));
     }
     match rest.split_once('/') {
         Some((b, k)) => (non_empty(b), non_empty(k)),
@@ -1110,17 +1131,22 @@ pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) 
 /// Whether a path-style path starts with an empty segment (`//bucket/key`):
 /// it names no bucket here, but the store may fold the slashes and find one.
 pub fn empty_first_segment(host: &str, path: &str) -> bool {
-    let host = host.rsplit_once(':').map_or(host, |(h, p)| {
-        if p.chars().all(|c| c.is_ascii_digit()) {
-            h
-        } else {
-            host
-        }
-    });
-    let virtual_hosted = host
-        .strip_suffix(".localhost")
-        .is_some_and(|b| !b.is_empty());
-    !virtual_hosted && path.starts_with("//")
+    host_bucket(host).is_none() && path.starts_with("//")
+}
+
+/// The bucket a virtual-hosted Host names (`<bucket>.localhost`), read as
+/// [`admit`] reads a host: in any case, with or without a port or the
+/// final dot of a fully qualified name.
+fn host_bucket(host: &str) -> Option<String> {
+    let name = host
+        .rsplit_once(':')
+        .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()))
+        .map_or(host, |(h, _)| h)
+        .to_ascii_lowercase();
+    let name = name.strip_suffix('.').unwrap_or(&name);
+    name.strip_suffix(".localhost")
+        .filter(|b| !b.is_empty())
+        .map(str::to_string)
 }
 
 /// Whether a request's bucket is `.` or `..`: no bucket is, and a store
@@ -1687,6 +1713,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
         };
+    // an unsigned aws-chunked body goes as sent: its payload is what it says
+    if content_sha == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
+        payload_len = header_value(&parts.headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok();
+    }
     record.request_bytes = payload_len.or(sent_len).into();
     held.keep(&record);
 
@@ -2042,20 +2074,36 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         held.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
     }
-    if status.as_u16() >= 400 && method != "HEAD" {
-        let body = tokio::time::timeout(idle, resp.bytes())
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or_default();
-        record.response_bytes = Some(body.len() as u64).into();
-        if !body.is_empty() {
-            record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
-        }
-        held.push(record);
-        return Ok(builder.body(full(body)).expect("valid response"));
-    }
     record.response_bytes = resp.content_length().into();
+    let mut upstream = Box::pin(quiet_limited(resp.bytes_stream(), idle));
+    let mut start = Vec::new();
+    // an error's body is kept on the record, as much as a record keeps: one
+    // that short goes on whole, a longer one as it comes
+    if status.as_u16() >= 400 && method != "HEAD" {
+        while start.len() <= reqlog::MAX_ERROR_BODY {
+            match upstream.next().await {
+                Some(Ok(piece)) => start.extend_from_slice(&piece),
+                Some(Err(e)) => {
+                    let msg = format!("the store's answer stopped part way: {e}");
+                    record.rare_mut().transport_error = Some(msg.clone());
+                    held.push(record);
+                    return Ok(xml_error(502, "SondeUpstreamError", &msg));
+                }
+                None => {
+                    record.response_bytes = Some(start.len() as u64).into();
+                    if !start.is_empty() {
+                        record.rare_mut().error_body =
+                            Some(String::from_utf8_lossy(&start).into_owned());
+                    }
+                    held.push(record);
+                    return Ok(builder.body(full(start.into())).expect("valid response"));
+                }
+            }
+        }
+        record.rare_mut().error_body = Some(String::from_utf8_lossy(&start).into_owned());
+    }
+    let upstream =
+        futures::stream::iter((!start.is_empty()).then(|| Ok(Bytes::from(start)))).chain(upstream);
     // the headers are the first byte; the record is logged once the body has
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
@@ -2075,8 +2123,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         cutting: cutting.clone(),
     };
     let body = match cutting {
-        Some(c) => cut_short(quiet_limited(resp.bytes_stream(), idle), c.at).left_stream(),
-        None => quiet_limited(resp.bytes_stream(), idle).right_stream(),
+        Some(c) => cut_short(upstream, c.at).left_stream(),
+        None => upstream.right_stream(),
     };
     let stream = body
         // the closure owns the whole of `pending` (a method, not a field): it
@@ -2635,6 +2683,11 @@ mod tests {
             bucket_region(301, &http::HeaderMap::new(), "us-east-1"),
             None
         );
+        // anything but a region's name is not taken
+        for bad in ["eu-west-1;id", "EU-WEST-1", "eu west", "", &"a".repeat(41)] {
+            h.insert("x-amz-bucket-region", bad.parse().unwrap());
+            assert_eq!(bucket_region(301, &h, "us-east-1"), None, "{bad}");
+        }
     }
 
     #[test]
@@ -2656,6 +2709,15 @@ mod tests {
             parse_target("data.localhost:9000", "/"),
             (Some("data".into()), None)
         );
+        // as admit reads a host: any case, a final dot
+        for host in ["mybucket.LOCALHOST:9000", "mybucket.localhost.:9000"] {
+            assert_eq!(
+                parse_target(host, "/key"),
+                (Some("mybucket".into()), Some("key".into())),
+                "{host}"
+            );
+            assert!(!empty_first_segment(host, "//key"), "{host}");
+        }
     }
 
     #[test]
@@ -2769,6 +2831,20 @@ mod budget_tests {
             ..ProxyConfig::default()
         };
         assert_eq!(buffer_share(&small, None), 100);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_proxy_may_hold_as_many_files_as_the_system_lets_it() {
+        use rustix::process::{Resource, getrlimit, setrlimit};
+        let mut lim = getrlimit(Resource::Nofile);
+        let Some(max) = lim.maximum.filter(|m| *m > 512) else {
+            return;
+        };
+        lim.current = Some(512);
+        setrlimit(Resource::Nofile, lim).unwrap();
+        raise_open_files();
+        assert_eq!(getrlimit(Resource::Nofile).current, Some(max));
     }
 
     #[test]

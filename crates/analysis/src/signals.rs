@@ -282,7 +282,7 @@ const POLL_MIN_US: i64 = 200_000;
 
 /// A request's time as it is taken everywhere here: never negative, never
 /// past a day ([`reqlog::MAX_LATENCY_MS`]), as its span on the timeline is.
-fn took_ms(r: &Record) -> f64 {
+pub(crate) fn took_ms(r: &Record) -> f64 {
     if r.latency_ms.is_finite() {
         r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS)
     } else {
@@ -1553,6 +1553,6 @@ mod tests {
         assert_eq!(bytes_text(1536.0), "1.5 KiB");
         // whole from 100 of a unit, as the app writes them; PiB the last
         assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "586 PiB");
-        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3072 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3,072 PiB");
     }
 }

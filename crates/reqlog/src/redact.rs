@@ -373,6 +373,23 @@ mod tests {
         assert_eq!(rec.clone().redacted(), rec, "idempotent");
     }
 
+    /// A transport error names the URL it failed on: a presigned one's
+    /// signature is masked there as anywhere.
+    #[test]
+    fn a_transport_errors_url_is_redacted() {
+        let mut rec = crate::Record::default();
+        rec.rare_mut().transport_error = Some(
+            "error sending request for url (https://h/b/k?X-Amz-Credential=AKIAXYZ%2F1&X-Amz-Signature=deadbeef)".into(),
+        );
+        let rec = rec.redacted();
+        let got = rec.rare().transport_error.clone().unwrap();
+        assert!(
+            !got.contains("deadbeef") && !got.contains("AKIAXYZ"),
+            "{got}"
+        );
+        assert!(got.starts_with("error sending request for url (https://h/b/k?"));
+    }
+
     #[test]
     fn short_key_ids() {
         assert_eq!(mask_key_id("abc"), MASK);

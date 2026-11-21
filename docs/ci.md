@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v27
+      - uses: hxddh/sonde@v28
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -40,7 +40,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 |---|---|
 | Install | The release binary of `version` (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`; RUN with shell syntax (`&&`, `|`, `>`, `cd x &&`, `$`) is `bash -c RUN`, all of it recorded; a plain RUN (`docker run …`, `spark-submit …`, a glob expanded) is run itself, so sonde sets it up. The program is named by what runs (`etl` of `python etl.py`). The program's exit status fails the job, after the steps below. |
-| Baseline | `auto`: of the newest 6 completed runs of the same workflow, the first that kept the artifact `artifact` in a format this sonde reads (`gh run list`, `gh run download`). A pull request looks at push runs on its base branch; a push or a schedule at the earlier runs of its own event on its own branch. None kept, on a pull request: its merge-base, recorded in the same job (above). None: a warning with why, and `check --baseline auto` says `no baseline yet` in every format. |
+| Baseline | `auto`: of the newest 6 completed runs of the same workflow, the first that kept the artifact `artifact` in a format this sonde reads (`gh run list`, `gh run download`). A pull request looks at push runs on its base branch; a push or a schedule at the earlier runs of its own event on its own branch. None kept, on a pull request: its merge-base, recorded in the same job (above). None: a warning with why, and no `--baseline` (sonde.toml's `[check] baseline` applies, else the budget alone). |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` in `working-directory` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
@@ -54,13 +54,13 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | `name` | | The program's name (else `[program] name` in `sonde.toml` for the program it `runs`, else what the command runs). |
 | `check-args` | | `sonde check` flags: `--tolerance 5`, `--max-requests N`. Words as `run-args`'. |
 | `config` | found upward | `sonde.toml`. |
-| `baseline` | `auto` | `none`, a run's path, or an https URL. |
+| `baseline` | `auto` | `none` (no baseline, not sonde.toml's either), a run's path, or an https URL. |
 | `setup` | | What the merge-base's checkout needs before RUN, run there in `working-directory` (`npm ci`, `pip install -r requirements.txt`): it has none of this checkout's untracked files. Fails: held to the budget, said. |
 | `artifact` | `sonde` | One per job (a matrix names each). |
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `27.0.0`, `27`, `27.0` (the newest 27.0.x), `latest`, `path`. Tag `@v27` installs the newest 27.x; `@v27.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
+| `version` | the action's tag; at a branch or commit, its own major | `28.0.0`, `28`, `28.0` (the newest 28.0.x), `latest`, `path`. Tag `@v28` installs the newest 28.x; `@v28.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 

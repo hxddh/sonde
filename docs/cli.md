@@ -7,10 +7,10 @@
 | | |
 |---|---|
 | Global options | `--config-dir` (`$SONDE_CONFIG_DIR`), `--data-dir` (`$SONDE_DATA_DIR`) |
-| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (us-east-1), `--path-style`, `--ca-file`. Not on commands that only read files. sonde's own pace is `concurrency` and `rate-limit` in `config.toml` (`--concurrency`, `--rate` also taken, not listed). |
+| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (else an AWS URL's, `s3.<region>.amazonaws.com`; else `AWS_REGION`, `AWS_DEFAULT_REGION`; else us-east-1; `endpoints add` takes it so too), `--path-style`, `--ca-file`. Not on commands that only read files. sonde's own pace is `concurrency` and `rate-limit` in `config.toml` (`--concurrency`, `--rate` also taken, not listed). |
 | `-f`, `--format` | `text` (default) or `json`; `check` also writes `markdown` and `github`. A command that writes only text has none. |
 | Confirmation | What changes a store or deletes runs (`runs prune`, `bucket abort-uploads`, `bucket lifecycle`, `compare --replay`) is a dry run, exit 4; `--yes` does it. |
-| Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. A failed request prints its error, request id and the request line from the log. Keys, commands and other text sonde did not write reach the terminal with their control characters written out (`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor. A closed standard output (`sonde check \| head`) ends the output, not the command: the exit code is the command's own. |
+| Streams | The answer on stdout; hints, progress and the summary of `run` and `import` on stderr. Ctrl+C cancels the running job. A failed request prints its error, request id and the request line from the log. Keys, commands and other text sonde did not write reach the terminal with their control characters written out (`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor. JSON escapes them as JSON does (`\u007f`, `\u202e`). A closed standard output (`sonde check \| head`) ends the output, not the command: the exit code is the command's own. |
 | A run argument | A path or a name, resolved in order: a file; `runs/<name>[.sonde]`; `runs/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | Which run | When none is named: [below](#which-run). |
 | A program | `--name`, else `sonde.toml`'s `[program] name` for the program it `runs`, else what the command runs: the script an interpreter runs (`etl` for `python3 etl.py 5`), a module (`pytest` for `python -m pytest`), the command a shell is given (`aws` for `sh -c 'aws s3 cp …'`), a container's image (`aws-cli` for `docker run amazon/aws-cli …`), else the program (`load` for `./load --all`; `python3` for inline code, `python3 -c …`). Its arguments are not part of it: a run with others is another run of it, and the [fix loop](#the-fix-loop) says the command changed. Runs, baselines and trial verdicts go by it. |
@@ -19,11 +19,12 @@
 
 ### Which run
 
-When none is named, `show`, `compare`, `share` and `check` take the first there is of:
+When none is named, `show`, `compare`, `share` and `check` take:
 
-1. the newest run of `[program] name` (none: an error);
-2. the newest recorded in this folder (the run's `cwd`);
-3. the newest of any.
+1. the newest run of `[program] name`;
+2. else the newest recorded in this folder (the run's `cwd`).
+
+None is a usage error (64), never another folder's run: name the run (`sonde runs` lists them).
 
 Only runs from `run` or `proxy` count (never a replay, import or trial), in the runs folder or written elsewhere with
 `-o` (as `sonde runs` lists them). `check` says which it took. A `sonde.toml` is applied only to its own program's
@@ -37,7 +38,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | `sonde` | Three lines: the tour, a real run, where to read more. |
 | `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); when nothing was sent, how to point the program's own client at sonde, that client first. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). With no endpoint configured it goes where an AWS SDK would: the default credential chain and region (`AWS_REGION`, the profile's, else us-east-1; `AWS_ENDPOINT_URL` if set), said on stderr. An unknown option before `--`, or no endpoint and no AWS credentials, is a usage error (64); a command that cannot start leaves no run (70). |
 | ↳ `-o FILE` | Without it: `runs/<time>-<name>.sonde`, named by the program. With it: the run there. A file there is refused (64) unless `--force`. Recorded beside it and put in place at the end: two runs given one file each keep their own (the second under a fresh name, said). |
-| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`). The app's welcome demo runs the same job (`sonde demo-job export.py`, played in the app), opens its run on the finding, and *Apply and run again* writes the fix into `export.py` and runs it again. |
+| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`, refused when there as `FILE` is). The app's welcome demo runs the same job (`sonde demo-job export.py`, played in the app), opens its run on the finding, and *Apply and run again* writes the fix into `export.py` and runs it again. |
 | ↳ `--policy allow\|no-delete\|read-only` | What the program may do: [what each refuses, and which applies](recording.md#what-a-recorded-program-may-do). |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
@@ -49,7 +50,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--policy P] [--tls] [-o FILE]` | The same endpoint, standing (default `127.0.0.1:9000`): prints the variables to set, then each request; its summary at Ctrl-C. Loopback only unless `--allow-remote` (then anyone holding the printed keys). |
 | `sonde import s3://B/PREFIX [-e E]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix (the first, the last day's), a run of program `logs of s3://…` (history, baseline, `check`), then shown. Where it got to is kept; an upload not completed yet waits (up to a day of the logs' time) and is read with the import that completes it. Exit 70 when the logs cannot be listed, none could be read, the prefix holds no files or none is a log; nothing new since the last import is said, exit 0. |
-| `sonde import FILE\|FOLDER [-o FILE [--force]]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a run. A folder is every file under it, in name order, as one run. Skipped lines and events (not requests, unreadable, a HAR's other hosts, another service's CloudTrail events) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, the waiting, "one after another" and a throttling finding's in-flight figure are not given. Times not recorded (CloudTrail) are "—". Upload parts with no create in the file are not "never completed". A HAR's `timings.wait` is the first byte. |
+| `sonde import FILE\|FOLDER [-o FILE [--force]]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a run. A folder is every file under it, in name order, as one run. Skipped lines and events (not requests, unreadable, a HAR's other hosts, another service's CloudTrail events) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, the waiting, "one after another" and a throttling finding's in-flight figure are not given. Times not recorded (CloudTrail) are "—". Upload parts with no create in the file are not "never completed". A HAR's `timings.wait` is the first byte; its status 0 (aborted, blocked) is no answer, and not priced. |
 
 ## Read a run
 
@@ -74,9 +75,9 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | Option | |
 |---|---|
 | `--max-requests N`, `--max-waiting T`, `--max-errors N`, `--max-transfer SIZE` | Budget. Times as `2s`, `250ms` or ms; sizes as `10GiB`, `500MB` or bytes (the bytes the store sent). An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
-| `--baseline FILE\|auto\|https://…` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). |
-| `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
-| `--tolerance PCT` | Growth allowed over the baseline (10). |
+| `--baseline FILE\|auto\|https://…\|none` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). `none`: no baseline, not sonde.toml's either. A file that is not there, or an `http://` URL: 64. |
+| `--set-baseline` | Make this run its program's baseline, in the runs folder or written elsewhere with `-o` (refused for a run that failed: 64). |
+| `--tolerance PCT` | Growth allowed over the baseline (10; 0 or more). |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Its `[check]` takes each option above by its name (`max-requests = 5000`, `max-waiting = "2s"`, `baseline = "auto"`); flags win. |
 | `expect` | `sonde.toml` only: findings kept on purpose, each with why, `{ "obs.hot\|data/conf.json" = "rewritten by the scheduler", "obs.listed" = "…" }`: a finding's `identity` (as `show -f json` and the app's "Expected" give it) or a kind for all of it. Never a new warning; `show`, `run` and `check` say the reason with the finding (`expected` in JSON). |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
@@ -164,7 +165,7 @@ requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript,
 | Kind | Found when | Fix |
 |---|---|---|
 | `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
-| `obs.listed` | a prefix listed 5 times or more with nothing written under it between | list once |
+| `obs.listed` | a prefix listed (and answered) 5 times or more with nothing written under it between | list once |
 | `obs.crawl` | 20 prefixes or more each listed fewer than 5 times (partition discovery, a tree walked folder by folder), saving 1% of the run's requests or cost (one finding of the run, `obs.crawl|`) | a manifest, or the table format's metadata |
 | `obs.rangeagain` | the same byte range of an object read 10 times or more past its first read with nothing written to it between (a Parquet footer read by each query), saving 1% of the run's requests or cost (one finding of the run) | keep each range once read |
 | `obs.wholeread` | objects of 1 MiB or more read whole that the run also reads by range (evidence it uses parts), what they read past their ranges 16 MiB or more and a tenth of the run's bytes out; saves bytes, and egress when charged (one finding of the run) | read the ranges used |
@@ -229,7 +230,7 @@ Between a run and the program's run before it that did not fail, by its counts (
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`): a fix that read all 400 files, not 30, is not counted.
+A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`), or shrank by a third or more below what fixing the earlier run's findings would leave (`the workload shrank`): a fix that read all 400 files, not 30, or 30 files, not 400, is not counted.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);

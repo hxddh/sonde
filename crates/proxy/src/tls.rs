@@ -100,20 +100,29 @@ impl Tls {
     }
 }
 
-/// The folder's [`LOCK`], removed when dropped.
-struct Lock(PathBuf);
+/// The folder's [`LOCK`], removed when dropped if it is still this one's
+/// (another may have taken it over as stale): it holds a token of its own.
+struct Lock(PathBuf, String);
 
 impl Lock {
     fn take(dir: &Path) -> Result<Lock, String> {
         let path = dir.join(LOCK);
         let since = std::time::Instant::now();
+        let token = format!("{}-{:016x}", std::process::id(), rand::random::<u64>());
         loop {
             match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&path)
             {
-                Ok(_) => return Ok(Lock(path)),
+                Ok(mut f) => {
+                    use std::io::Write;
+                    if let Err(e) = f.write_all(token.as_bytes()) {
+                        let _ = std::fs::remove_file(&path);
+                        return Err(format!("{}: {e}", path.display()));
+                    }
+                    return Ok(Lock(path, token));
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     // (a time in the future, a clock moved: waited out too)
                     let old = std::fs::metadata(&path)
@@ -135,7 +144,9 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if std::fs::read_to_string(&self.0).is_ok_and(|t| t == self.1) {
+            let _ = std::fs::remove_file(&self.0);
+        }
     }
 }
 
@@ -264,6 +275,27 @@ fn write_file(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lock taken over as stale is the new holder's: the old holder,
+    /// done at last, leaves it be.
+    #[test]
+    fn a_lock_taken_over_is_not_removed_by_its_old_holder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(LOCK);
+        let old = Lock::take(dir.path()).unwrap();
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(hour_ago)
+            .unwrap();
+        let new = Lock::take(dir.path()).unwrap();
+        drop(old);
+        assert!(path.exists(), "the new holder's lock is gone");
+        drop(new);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn made_once_kept_private_and_bundled_with_the_machines_roots() {

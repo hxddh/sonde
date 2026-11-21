@@ -85,7 +85,7 @@ export function SettingsScreen() {
       draft.set(copyOf(now));
     });
   });
-  const write = (draftNext: Settings, undo: Settings | null) => {
+  const write = (draftNext: Settings) => {
     // only what changed here is written: a field changed elsewhere meanwhile
     // (the palette's theme, another window) keeps its new value
     const base = settings();
@@ -97,30 +97,20 @@ export function SettingsScreen() {
       refreshSettings();
       saved = copyOf(next);
       draft.set(copyOf(next));
-      if (undo)
-        notify(t("settings.saved"), {
-          action: t("common.undo"),
-          onAction: () => {
-            draft.set(copyOf(undo));
-            language.set(undo.language);
-            write(undo, null);
-          },
-        });
     } catch (e) {
       report(e);
     }
   };
-  /** Changes the draft; saved a moment later (typing a number saves once). */
+  /** Changes the draft; saved silently a moment later (typing a number saves once), as a system's settings apply. */
   const change = (next: Settings, now = false) => {
     draft.set(next);
     if (timer) clearTimeout(timer);
-    const undo = saved;
     pending = null;
-    if (now) write(next, undo);
+    if (now) write(next);
     else {
       pending = () => {
         pending = null;
-        write(next, undo);
+        write(next);
       };
       timer = setTimeout(() => pending?.(), 700);
     }

@@ -1106,6 +1106,9 @@ fn the_newest_run_is_the_newest_recording_not_an_import() {
     std::fs::write(&log, A_LOG_LINE).unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    // its summary on stderr, as `run` says its own (27.0: on stdout)
+    assert_eq!(stdout(&o), "");
+    assert!(stderr(&o).contains("1 request"), "{}", stderr(&o));
     let shown = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 9, "the demo's, not the import's");
@@ -1203,8 +1206,8 @@ fn a_clean_run_asked_for_its_errors_says_there_are_none() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     // (one request is one operation: said once)
-    assert!(stdout(&o).contains("1 request from"), "{}", stdout(&o));
-    assert!(!stdout(&o).contains("operation"), "{}", stdout(&o));
+    assert!(stderr(&o).contains("1 request from"), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("operation"), "{}", stderr(&o));
     for flags in [vec!["--errors"], vec!["--errors", "--requests"]] {
         let mut args = vec!["show", out.to_str().unwrap()];
         args.extend(flags);
@@ -1296,6 +1299,14 @@ fn demo_file(dirs: &Path) -> std::path::PathBuf {
 
 /// A recorded run of `command` in the runs folder, made of a
 /// fixture's requests.
+/// The folder [`sonde`] runs in, as a run's `cwd` says it.
+fn here() -> String {
+    std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn run_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
     let fixture =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../analysis/tests/fixtures/sdk-python.sonde");
@@ -1304,6 +1315,8 @@ fn run_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::P
     let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
     header["command"] = command.into();
     header["created"] = created.into();
+    // recorded where `sonde` runs: the run a command takes when none is named
+    header["cwd"] = here().into();
     let dir = dirs.join("data/runs");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join(name);
@@ -1938,7 +1951,22 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         let from = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../analysis/tests/fixtures")
             .join(format!("{r}.sonde"));
-        std::fs::copy(from, dir.join(format!("{r}.sonde"))).unwrap();
+        // recorded where `sonde` runs, so that `compare` alone takes them
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut flate2::read::MultiGzDecoder::new(std::fs::File::open(from).unwrap()),
+            &mut text,
+        )
+        .unwrap();
+        let (header, records) = text.split_once('\n').unwrap();
+        let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
+        header["cwd"] = here().into();
+        let mut gz = flate2::write::GzEncoder::new(
+            std::fs::File::create(dir.join(format!("{r}.sonde"))).unwrap(),
+            flate2::Compression::default(),
+        );
+        std::io::Write::write_all(&mut gz, format!("{header}\n{records}").as_bytes()).unwrap();
+        gz.finish().unwrap();
     }
     let shown: Vec<String> = runs
         .iter()
@@ -2198,14 +2226,14 @@ fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
     assert!(err.contains("1 line could not be read"), "{err}");
     assert!(err.contains("1 event left out"), "{err}");
     // no latency in CloudTrail: no p95, no waiting
-    let table = stdout(&o);
+    let table = stderr(&o);
     let row = table.lines().find(|l| l.contains("GetObject")).unwrap();
     assert!(row.contains('—') && !row.contains(" ms"), "{table}");
     // an access log to the second: its waiting would be sonde's spreading
     let log = t.path().join("two.log");
     std::fs::write(&log, A_LOG_LINE.repeat(2)).unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
-    let shown = stdout(&o);
+    let shown = stderr(&o);
     assert!(!shown.contains(", waiting"), "{shown}");
     assert!(shown.contains("so the waiting, is not known"), "{shown}");
 }
@@ -2412,6 +2440,19 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         "{}",
         stderr(&ck)
     );
+    // (named once, first in what check writes)
+    let taken = stdout(&ck)
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("run "))
+        .and_then(|l| l.split(" · ").next())
+        .unwrap()
+        .to_string();
+    assert!(
+        !stderr(&ck).contains(&taken),
+        "the path said twice: {}",
+        stderr(&ck)
+    );
     // show, compare and share take the same run: this folder's, not the newest
     let shown = sonde_in(t.path(), &a, &["show", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
@@ -2424,17 +2465,32 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         stdout(&compared),
         stderr(&compared)
     );
-    // nothing recorded here: the newest run, said so (and it failed)
-    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
-    assert_eq!(ck.status.code(), Some(1), "{}", stdout(&ck));
-    assert!(
-        stderr(&ck).contains("the newest run (program `sh`; none was recorded in this folder)"),
-        "{}",
-        stderr(&ck)
-    );
-    // and this folder's sonde.toml is not its budget: it is another program's run
+    // nothing recorded here: none taken (27.0 took the newest of any
+    // program, said only on stderr), and what to do
+    for cmd in [&["check", "--max-requests", "100"][..], &["show"]] {
+        let o = sonde_in(t.path(), &c, cmd);
+        assert_eq!(o.status.code(), Some(64), "{cmd:?}: {}", stdout(&o));
+        let err = stderr(&o);
+        assert!(
+            err.contains("no run recorded in this folder")
+                && err.contains("program `sh`")
+                && err.contains("`sonde runs` lists them"),
+            "{err}"
+        );
+    }
+    // and this folder's sonde.toml is not the budget of another program's run
     std::fs::write(c.join("sonde.toml"), "[check]\nmax-requests = 0\n").unwrap();
-    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    let runs: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde_in(t.path(), &c, &["runs", "-f", "json"]))).unwrap();
+    let other = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["program"] == "sh")
+        .and_then(|r| r["path"].as_str())
+        .unwrap_or_else(|| panic!("{runs}"))
+        .to_string();
+    let ck = sonde_in(t.path(), &c, &["check", &other, "--max-requests", "100"]);
     let err = stderr(&ck);
     assert!(
         err.contains("recorded outside the folder of")
@@ -2442,22 +2498,6 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         "{err}"
     );
     assert!(!stdout(&ck).contains("≤ 0"), "{}", stdout(&ck));
-    // the same run named: the same
-    // (named once, first in what check writes)
-    let other = stdout(&ck)
-        .lines()
-        .next()
-        .and_then(|l| l.strip_prefix("run "))
-        .and_then(|l| l.split(" · ").next())
-        .unwrap()
-        .to_string();
-    assert!(!err.contains(&other), "the path said twice: {err}");
-    let ck = sonde_in(t.path(), &c, &["check", &other]);
-    assert!(
-        stderr(&ck).contains("its [check] is not applied"),
-        "{}",
-        stderr(&ck)
-    );
     assert_eq!(ck.status.code(), Some(1), "the run failed: {}", stdout(&ck));
     std::fs::remove_file(c.join("sonde.toml")).unwrap();
     // a project's name for its program: given to the commands that run it,
@@ -2955,4 +2995,205 @@ fn an_import_from_several_callers_says_how_many() {
         said.contains("1 request from aws-sdk-java 2.29 to "),
         "{said}"
     );
+}
+
+/// 27.0: a baseline not there, or at http://, was exit 70 with nothing to
+/// do; `--set-baseline` refused a run written with -o, though `no baseline
+/// yet` sends one there; a negative tolerance was taken; `--baseline none`
+/// was a file of that name.
+#[test]
+fn check_s_baseline_and_tolerance_mistakes_are_usage_errors() {
+    let t = tempfile::tempdir().unwrap();
+    let run = t.path().join("x.sonde");
+    let x = run.to_str().unwrap();
+    let r = sonde_in(
+        t.path(),
+        t.path(),
+        &[
+            &["run", "--demo", "-o", x, "--"][..],
+            &one_request(t.path()),
+        ]
+        .concat(),
+    );
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let missing = sonde_in(
+        t.path(),
+        t.path(),
+        &["check", x, "--baseline", "nope.sonde"],
+    );
+    assert_eq!(missing.status.code(), Some(64), "{}", stderr(&missing));
+    assert!(
+        stderr(&missing).contains("no run nope.sonde")
+            && stderr(&missing).contains("`sonde runs` lists them"),
+        "{}",
+        stderr(&missing)
+    );
+    let http = sonde_in(
+        t.path(),
+        t.path(),
+        &["check", x, "--baseline", "http://example.test/b.sonde"],
+    );
+    assert_eq!(http.status.code(), Some(64), "{}", stderr(&http));
+    assert!(stderr(&http).contains("only https"), "{}", stderr(&http));
+    for bad in ["-5", "NaN", "inf"] {
+        let o = sonde_in(
+            t.path(),
+            t.path(),
+            &["check", x, "--baseline", x, &format!("--tolerance={bad}")],
+        );
+        assert_eq!(o.status.code(), Some(64), "{bad}: {}", stderr(&o));
+    }
+    std::fs::write(t.path().join("sonde.toml"), "[check]\ntolerance = -1\n").unwrap();
+    let o = sonde_in(t.path(), t.path(), &["check", x, "--baseline", x]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("0 or more"), "{}", stderr(&o));
+    std::fs::remove_file(t.path().join("sonde.toml")).unwrap();
+    // a run written with -o is a baseline as one in the runs folder is
+    let set = sonde_in(
+        t.path(),
+        t.path(),
+        &["check", x, "--set-baseline", "--max-requests", "100"],
+    );
+    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
+    std::fs::write(
+        t.path().join("sonde.toml"),
+        "[check]\nbaseline = \"auto\"\nmax-requests = 100\n",
+    )
+    .unwrap();
+    let against = |extra: &[&str]| -> serde_json::Value {
+        let o = sonde_in(
+            t.path(),
+            t.path(),
+            &[&["check", x, "-f", "json"][..], extra].concat(),
+        );
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let held = against(&[]);
+    assert!(held["noBaseline"].is_null(), "{held}");
+    let baseline_rows = |v: &serde_json::Value| {
+        v["check"]["verdicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["against"] == "baseline")
+            .count()
+    };
+    assert!(baseline_rows(&held) > 0, "{held}");
+    // `none`: no baseline, sonde.toml's neither
+    let alone = against(&["--baseline", "none"]);
+    assert_eq!(baseline_rows(&alone), 0, "{alone}");
+    assert!(alone["noBaseline"].is_null(), "{alone}");
+}
+
+/// 27.0's tour wrote over `x-fixed.sonde` beside `-o x.sonde` unasked.
+#[test]
+fn the_tour_refuses_a_fixed_run_that_is_there() {
+    let t = tempfile::tempdir().unwrap();
+    let out = t.path().join("x.sonde");
+    std::fs::write(t.path().join("x-fixed.sonde"), "mine").unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "-o", out.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("x-fixed.sonde"), "{}", stderr(&o));
+    assert_eq!(
+        std::fs::read_to_string(t.path().join("x-fixed.sonde")).unwrap(),
+        "mine"
+    );
+    assert!(!out.exists());
+    let o = sonde(
+        t.path(),
+        &["run", "--demo", "-o", out.to_str().unwrap(), "--force"],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(out.is_file());
+}
+
+/// 27.0 stored us-east-1 for every endpoint added without --region.
+#[test]
+fn an_endpoint_added_takes_its_url_s_region_else_the_environment_s() {
+    let t = tempfile::tempdir().unwrap();
+    let region_of = |id: &str| -> String {
+        let v: serde_json::Value =
+            serde_json::from_slice(&sonde(t.path(), &["endpoints", "list", "-f", "json"]).stdout)
+                .unwrap();
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .and_then(|e| e["region"].as_str())
+            .unwrap_or_else(|| panic!("{v}"))
+            .to_string()
+    };
+    let add = |args: &[&str], env: Option<&str>| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sonde"));
+        c.args(args)
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path());
+        if let Some(r) = env {
+            c.env("AWS_REGION", r);
+        }
+        let o = c.output().unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    };
+    add(
+        &[
+            "endpoints",
+            "add",
+            "eu",
+            "https://s3.eu-west-1.amazonaws.com",
+        ],
+        Some("ap-south-1"),
+    );
+    assert_eq!(region_of("eu"), "eu-west-1");
+    add(
+        &["endpoints", "add", "lab", "http://localhost:9000"],
+        Some("ap-south-1"),
+    );
+    assert_eq!(region_of("lab"), "ap-south-1");
+    add(
+        &["endpoints", "add", "plain", "http://localhost:9000"],
+        None,
+    );
+    assert_eq!(region_of("plain"), "us-east-1");
+    add(
+        &[
+            "endpoints",
+            "add",
+            "given",
+            "https://s3.eu-west-1.amazonaws.com",
+            "--region",
+            "eu-north-1",
+        ],
+        None,
+    );
+    assert_eq!(region_of("given"), "eu-north-1");
+}
+
+/// 27.0's `runs prune --keep 0 --yes` deleted a run still being recorded:
+/// the recording then ended on a file that was not there.
+#[test]
+fn prune_keeps_a_run_still_being_recorded() {
+    let t = tempfile::tempdir().unwrap();
+    let finished = t.path().join("data/runs").join(demo_run(t.path()));
+    // not compressed yet, and written to just now: a recording's
+    let live = run_of(
+        t.path(),
+        "live.sonde",
+        "python etl.py",
+        "2030-01-01T00:00:00Z",
+    );
+    let o = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(!finished.exists() && live.is_file(), "{}", stdout(&o));
+    // one left so a day ago was a recording that was killed: let go
+    std::fs::File::options()
+        .write(true)
+        .open(&live)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86400))
+        .unwrap();
+    let o = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(!live.exists(), "{}", stdout(&o));
 }

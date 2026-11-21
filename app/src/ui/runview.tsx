@@ -918,6 +918,19 @@ export function linesOf(lines: LogLine[], e: Pick<EpisodeRow, "start" | "end">):
 }
 
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
+/** From the first request's start to the last one's end (ms): a loop, as an operation may hold more requests than a
+ * call takes arguments (`Math.max(...rows)` throws past about a hundred thousand). */
+export function spanMs(rows: Pick<RecordSummary, "time" | "latencyMs">[]): number {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const r of rows) {
+    const at = new Date(r.time).getTime();
+    first = Math.min(first, at);
+    last = Math.max(last, at + r.latencyMs);
+  }
+  return rows.length ? Math.max(1, last - first) : 0;
+}
+
 export function OperationView(props: { episode: EpisodeRow; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
   // its requests' keys, their shared folders said short: what tells them apart stays in view
   const short = computed(() => shortKeys(props.rows.map((r) => r.target)));
@@ -980,7 +993,7 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
       </If>
       {/* its requests in time, in the one chart frame: a bar from each one's start to its end */}
       <If when={!terminal() && props.rows.length > 1}>
-        <Chart title={t("waterfall.title")} text={t("profile.waterfallText", { n: props.rows.length, time: duration(Math.max(1, ...props.rows.map((r) => new Date(r.time).getTime() + r.latencyMs)) - Math.min(...props.rows.map((r) => new Date(r.time).getTime()))) })}>
+        <Chart title={t("waterfall.title")} text={t("profile.waterfallText", { n: props.rows.length, time: duration(spanMs(props.rows)) })}>
           <Waterfall records={props.rows} onRecord={props.onRecord} />
         </Chart>
       </If>

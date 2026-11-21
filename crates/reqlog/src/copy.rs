@@ -67,7 +67,7 @@ pub fn as_aws_cli(r: &Record) -> String {
         "ListObjectsV2" => "list-objects-v2".to_string(),
         "ListBuckets" => "list-buckets".to_string(),
         "GetCallerIdentity" => return format!("aws sts get-caller-identity{}", region_arg(r)),
-        other => kebab(other),
+        other => shell_quote(&kebab(other)),
     };
     let mut parts = vec!["aws".to_string(), "s3api".into(), op.clone()];
     if let Some(b) = &r.bucket {
@@ -122,7 +122,7 @@ pub fn as_aws_cli(r: &Record) -> String {
         && !e.ends_with(".amazonaws.com")
     {
         parts.push("--endpoint-url".into());
-        parts.push(e);
+        parts.push(shell_quote(&e));
     }
     let mut out = parts.join(" ");
     out.push_str(&region_arg(r));
@@ -136,7 +136,7 @@ fn region_arg(r: &Record) -> String {
     r.rare()
         .region
         .as_ref()
-        .map(|reg| format!(" --region {reg}"))
+        .map(|reg| format!(" --region {}", shell_quote(reg)))
         .unwrap_or_default()
 }
 
@@ -173,13 +173,17 @@ pub fn as_curl(r: &Record) -> String {
     let mut lines = vec![
         "# UNSIGNED: sonde never exports a signature. Sign it with curl itself:".to_string(),
         format!(
-            "#   --aws-sigv4 'aws:amz:{}:s3' --user \"$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY\"",
-            r.rare()
-                .region
-                .clone()
-                .unwrap_or_else(|| "us-east-1".into())
+            "#   --aws-sigv4 {} --user \"$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY\"",
+            shell_quote(&format!(
+                "aws:amz:{}:s3",
+                r.rare().region.as_deref().unwrap_or("us-east-1")
+            ))
         ),
-        format!("curl -sS -i -X {} {}", r.method, shell_quote(&url)),
+        format!(
+            "curl -sS -i -X {} {}",
+            shell_quote(&r.method),
+            shell_quote(&url)
+        ),
     ];
     for h in r.request_headers() {
         if skip.contains(&h.name.to_ascii_lowercase().as_str()) {
@@ -273,6 +277,25 @@ mod tests {
         assert!(!cmd.to_lowercase().contains("authorization:"));
         assert!(cmd.contains("x-amz-request-payer: requester"));
         assert!(cmd.contains("curl -sS -i -X GET"));
+    }
+
+    #[test]
+    fn every_value_from_the_record_is_quoted() {
+        let mut r = rec();
+        r.method = "GET;touch${IFS}x".into();
+        r.kind = "Get$(id)".into();
+        r.rare_mut().region = Some("us-east-1;touch x\n".into());
+        let cli = as_aws_cli(&r);
+        assert!(cli.contains("s3api 'get$(id)'"), "{cli}");
+        assert!(cli.ends_with(" --region 'us-east-1;touch x\n'"), "{cli}");
+        let curl = as_curl(&r);
+        assert!(curl.contains("-X 'GET;touch${IFS}x' "), "{curl}");
+        assert!(
+            curl.contains("--aws-sigv4 'aws:amz:us-east-1;touch x\n:s3'"),
+            "{curl}"
+        );
+        r.kind = "GetCallerIdentity".into();
+        assert!(as_aws_cli(&r).ends_with("--region 'us-east-1;touch x\n'"));
     }
 
     #[test]

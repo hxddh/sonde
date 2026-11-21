@@ -241,10 +241,10 @@ pub fn detect(objects: &[ObjectMeta]) -> Vec<Detection> {
 pub const MAX_MANIFESTS: usize = 500;
 
 pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError> {
-    let objects = src.list(root).await?;
+    let listing = src.list(root).await?;
     let mut l = Layout::new(Format::Slatedb, root);
-    l.objects = objects.len() as u64;
-    l.bytes = objects.iter().map(|o| o.size).sum();
+    l.count(&listing);
+    let (objects, cut) = (listing.objects, listing.cut);
     let rel = |o: &ObjectMeta| o.key.strip_prefix(root).unwrap_or(&o.key).to_string();
     let mut manifests: Vec<(u64, &ObjectMeta)> = vec![];
     let mut wals: BTreeMap<u64, &ObjectMeta> = BTreeMap::new();
@@ -277,7 +277,16 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let mut decoded: Vec<(u64, Option<DateTime<Utc>>, Manifest)> = vec![];
     let mut versions = BTreeSet::new();
     for (id, o) in manifests.iter().skip(skipped) {
-        let bytes = src.get(&o.key, None).await?;
+        let bytes = match src.get(&o.key, None).await {
+            Ok(b) => b,
+            Err(e) => {
+                l.issues.push(issue(
+                    Severity::Error,
+                    ph!("read.failed", key = o.key, error = e),
+                ));
+                continue;
+            }
+        };
         match decode_manifest(&bytes) {
             Ok(m) => {
                 versions.insert(m.version);
@@ -424,11 +433,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let gc_wal_bytes: u64 = gc_wal.iter().map(|o| o.size).sum();
     let unreferenced: Vec<(&String, &&ObjectMeta)> = compacted
         .iter()
-        .filter(|(n, _)| !kept.contains(*n))
+        .filter(|(n, _)| !cut && !kept.contains(*n))
         .collect();
     let missing: Vec<&String> = kept
         .iter()
-        .filter(|n| !compacted.contains_key(*n))
+        .filter(|n| !cut && !compacted.contains_key(*n))
         .collect();
     let now = Utc::now();
     let oldest_gc = gc_wal.iter().filter_map(|o| o.last_modified).min();

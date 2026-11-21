@@ -254,7 +254,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
     match &a.action {
         None => {
             if matches!(format, Format::Json) {
-                println!("{}", output::json(&all));
+                output::print_json(&all);
                 return Ok(0);
             }
             if all.is_empty() {
@@ -356,7 +356,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)
-                .filter(|r| !baselines.contains(&r.name))
+                .filter(|r| !baselines.contains(&r.name) && !being_recorded(&r.path))
                 .copied()
                 .collect();
             if gone.is_empty() {
@@ -366,7 +366,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
                     output::count(all.len(), "run"),
                     keep,
                     if all.len() > *keep {
-                        " and the rest baselines"
+                        " and the rest baselines or still being recorded"
                     } else {
                         ""
                     }
@@ -398,6 +398,17 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
             Ok(0)
         }
     }
+}
+
+/// A run still being recorded: not compressed yet (a finished run is,
+/// [`sonde_analysis::run::compress`]) and written to in the last day (one
+/// left so by a recording that was killed is not kept forever).
+fn being_recorded(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    !sonde_analysis::run::is_compressed(p)
+        && std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|e| e.as_secs() < 24 * 3600))
 }
 
 #[derive(Args)]
@@ -552,5 +563,5 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             output::count(imported.other_services, "event")
         );
     }
-    super::record::show_file(s, &path).await
+    super::record::summary_on_stderr(s, &path)
 }

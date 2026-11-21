@@ -108,6 +108,11 @@ pub fn index_record(payload: &[u8]) -> (i32, i64, i64) {
     )
 }
 
+/// How many ids `a..=b` holds (ids read from storage may be anything).
+fn span(a: i64, b: i64) -> i64 {
+    b.saturating_sub(a).saturating_add(1)
+}
+
 fn parse_key(rel: &str) -> Option<(i64, i64, String)> {
     let mut it = rel.split('/');
     let log = it.next()?.parse().ok()?;
@@ -161,10 +166,10 @@ struct Segment {
 }
 
 pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError> {
-    let objects = src.list(root).await?;
+    let listing = src.list(root).await?;
     let mut l = Layout::new(Format::Woodpecker, root);
-    l.objects = objects.len() as u64;
-    l.bytes = objects.iter().map(|o| o.size).sum();
+    l.count(&listing);
+    let (objects, cut) = (listing.objects, listing.cut);
     let mut segs: BTreeMap<(i64, i64), Segment> = BTreeMap::new();
     for o in &objects {
         let rel = o.key.strip_prefix(root).unwrap_or(&o.key);
@@ -222,8 +227,20 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             .filter_map(|o| o.last_modified)
             .max();
         let (state, nblocks, entries, lac);
-        if let Some(f) = &s.footer {
-            let b = src.get(&f.key, None).await?;
+        let read = match &s.footer {
+            Some(f) => Some((f, src.get(&f.key, None).await)),
+            None => None,
+        };
+        if let Some((f, Err(e))) = &read {
+            l.issues.push(issue(
+                Severity::Error,
+                ph!("read.failed", key = f.key, error = e),
+            ));
+            state = ph!("wp.state.unread");
+            nblocks = String::from("?");
+            entries = String::from("?");
+            lac = String::from("?");
+        } else if let Some((f, Ok(b))) = read {
             let recs = records(&b);
             if recs.iter().any(|r| !r.crc_ok) {
                 l.issues
@@ -248,9 +265,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                             .filter(|r| r.kind == INDEX)
                             .map(|r| index_record(&r.payload))
                             .collect();
-                        let n_entries = idx.last().map(|x| x.2 + 1).unwrap_or(0)
-                            - idx.first().map(|x| x.1).unwrap_or(0);
-                        entries_total += n_entries.max(0);
+                        let n_entries = match (idx.first(), idx.last()) {
+                            (Some(a), Some(b)) => span(a.1, b.2),
+                            _ => 0,
+                        };
+                        entries_total = entries_total.saturating_add(n_entries.max(0));
                         if idx.len() as i32 != ft.total_blocks {
                             l.issues.push(issue(
                                 Severity::Warning,
@@ -267,7 +286,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                         } else {
                             s.blocks.len()
                         };
-                        if (have as i32) < ft.total_blocks {
+                        if !cut && (have as i32) < ft.total_blocks {
                             l.issues.push(issue(
                                 Severity::Error,
                                 ph!(
@@ -307,7 +326,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             let mut last_e = None;
             let ids: Vec<i64> = s.blocks.keys().copied().collect();
             if let (Some(a), Some(b)) = (ids.first(), ids.last())
-                && (b - a + 1) as usize != ids.len()
+                && !cut
+                && span(*a, *b) != ids.len() as i64
             {
                 l.issues.push(issue(
                     Severity::Error,
@@ -315,7 +335,16 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 ));
             }
             for (n, o) in &s.blocks {
-                let head = src.get(&o.key, Some((0, 127))).await?;
+                let head = match src.get(&o.key, Some((0, 127))).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        l.issues.push(issue(
+                            Severity::Error,
+                            ph!("read.failed", key = o.key, error = e),
+                        ));
+                        continue;
+                    }
+                };
                 let recs = records(&head);
                 if let Some(h) = recs.iter().find(|r| r.kind == HEADER) {
                     let v = le_u16(&h.payload, 0);
@@ -346,10 +375,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 }
             }
             let n = match (first_e, last_e) {
-                (Some(a), Some(b)) => b - a + 1,
+                (Some(a), Some(b)) => span(a, b),
                 _ => 0,
             };
-            entries_total += n;
+            entries_total = entries_total.saturating_add(n);
             state = if s.lock {
                 ph!("wp.state.locked")
             } else {
@@ -449,6 +478,20 @@ mod tests {
         let crc = crc32fast::hash(&b[4..]);
         b[0..4].copy_from_slice(&crc.to_le_bytes());
         b
+    }
+
+    #[tokio::test]
+    async fn ids_at_the_ends_of_the_range_are_counted_not_overflowed() {
+        let mut src = crate::MemSource::default();
+        src.put("w/1/0/0.blk", vec![0u8; 8], None);
+        src.put(&format!("w/1/0/{}.blk", i64::MAX), vec![0u8; 8], None);
+        let l = analyze(&src, "w/").await.unwrap();
+        assert!(
+            l.issues.iter().any(|i| i.message.contains("gaps")),
+            "{:?}",
+            l.issues
+        );
+        assert_eq!(span(i64::MIN, i64::MAX), i64::MAX);
     }
 
     #[test]

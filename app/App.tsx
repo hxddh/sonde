@@ -238,7 +238,7 @@ function installMenus() {
     Menu.setApplicationMenu([
       platform.os === "macos" && {
         label: APP,
-        submenu: [{ role: "about" }, { type: "separator" }, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "showAll" }, { type: "separator" }, { role: "quit" }],
+        submenu: [{ role: "about" }, { type: "separator" }, { label: t("menu.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "showAll" }, { type: "separator" }, { role: "quit" }],
       },
       ...appMenus(open),
     ]);
@@ -252,9 +252,10 @@ function installMenus() {
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => !terminal() && toggleSidebar(),
     "mod+o": () => !terminal() && void openRunFile(),
-    // Buckets' sections, in their row's order
-    ...Object.fromEntries(STORE_TABS.map((s, i) => [`mod+alt+${i + 1}`, () => go(s)])),
   });
+  // Buckets' sections, in their row's order; not while typing, where Windows reports AltGr
+  // (which types `²`, `{`, `~` on many layouts) as Ctrl+Alt
+  keymap.bind(Object.fromEntries(STORE_TABS.map((s, i) => [`mod+alt+${i + 1}`, () => go(s)])), { when: "notEditing" });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
 

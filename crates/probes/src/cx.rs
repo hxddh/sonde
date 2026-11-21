@@ -168,13 +168,16 @@ impl ProbeCx {
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
         let r = self.client.create_bucket(&name, object_lock).await;
+        // no answer (or a retry told it is ours): it may exist all the same,
+        // so the runner looks for it to remove
+        let maybe = r.as_ref().is_err_and(|e| {
+            e.status.is_none() || e.code.as_deref() == Some("BucketAlreadyOwnedByYou")
+        });
         let ok = self.record(label, r).is_some_and(|r| r.is_success());
-        if ok {
+        if ok || maybe {
             self.temp_buckets.lock().push(name.clone());
-            Some(name)
-        } else {
-            None
         }
+        ok.then_some(name)
     }
 
     /// Creates an upload; its id.

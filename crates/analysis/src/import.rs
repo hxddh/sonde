@@ -168,7 +168,7 @@ impl Parts {
                 &mut self.other_services,
                 &mut self.hosts,
             )?,
-            Source::Har => har(text, &mut self.other_hosts, &mut self.hosts)?,
+            Source::Har => har(text, &mut malformed, &mut self.other_hosts, &mut self.hosts)?,
         };
         self.source = Some(source);
         self.records.extend(records);
@@ -371,7 +371,9 @@ fn query_of(q: &str) -> Vec<(String, String)> {
 /// only one of the two.
 fn status_of(code: &str) -> u16 {
     match code {
-        "NoSuchKey" | "NoSuchBucket" | "NoSuchUpload" | "NoSuchVersion" => 404,
+        c if c.starts_with("NoSuch") || c.contains("NotFound") => 404,
+        "BucketAlreadyOwnedByYou" | "BucketAlreadyExists" | "OperationAborted" => 409,
+        "MethodNotAllowed" => 405,
         "AccessDenied"
         | "SignatureDoesNotMatch"
         | "InvalidAccessKeyId"
@@ -394,7 +396,7 @@ fn record(
     bucket: Option<String>,
     key: Option<String>,
     query: Vec<(String, String)>,
-    status: u16,
+    status: Option<u16>,
     latency_ms: f64,
 ) -> Record {
     let operation =
@@ -405,7 +407,7 @@ fn record(
         kind: operation.into(),
         bucket: bucket.map(Into::into),
         key: key.map(Into::into),
-        status: Some(status),
+        status,
         latency_ms,
         lists: reqlog::Lists {
             query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
@@ -507,7 +509,8 @@ fn access_log(
             .unwrap_or_default();
         let bucket = (f[1] != "-").then(|| f[1].clone());
         let key = (f[7] != "-").then(|| decode(&f[7]));
-        let status: u16 = f[9].parse().unwrap_or(0);
+        // `-`: no answer was sent, nothing to count as one or to price
+        let status: Option<u16> = f[9].parse().ok().filter(|s| *s > 0);
         let num = |s: &str| s.parse::<u64>().ok();
         let mut r = record(
             time,
@@ -673,7 +676,7 @@ fn cloudtrail(
                 Some((k.to_string(), v))
             })
             .collect();
-        let mut r = record(time, method, bucket, key, query, status_of(code), 0.0);
+        let mut r = record(time, method, bucket, key, query, Some(status_of(code)), 0.0);
         // S3 in the event's region
         if let Some(region) = e["awsRegion"].as_str().filter(|r| !r.is_empty()) {
             *hosts
@@ -711,9 +714,40 @@ fn cloudtrail(
     Ok(out)
 }
 
+/// The bucket a virtual-hosted host names: the labels before a store's own
+/// host (`data.s3.us-east-1.amazonaws.com`, `data.s3-eu-west-1…`,
+/// `logs.acct.r2.cloudflarestorage.com`, `data.storage.googleapis.com`,
+/// `data.nyc3.digitaloceanspaces.com`). None for a path-style host
+/// (`s3.amazonaws.com`, `localhost:9000`).
+fn bucket_of_host(host: &str) -> Option<&str> {
+    let labels: Vec<&str> = host.split('.').collect();
+    // where the store's own host begins, in labels
+    let at = labels
+        .iter()
+        .position(|l| *l == "s3" || l.starts_with("s3-") || l.starts_with("s3express-"));
+    let at = at.or_else(|| {
+        let tail = |suffix: &str, extra: usize| {
+            host.ends_with(suffix).then(|| {
+                labels
+                    .len()
+                    .saturating_sub(suffix.matches('.').count() + extra)
+            })
+        };
+        // R2's account id is a label of the store's host, Spaces' region too
+        tail(".r2.cloudflarestorage.com", 1)
+            .or_else(|| tail(".storage.googleapis.com", 0))
+            .or_else(|| tail(".digitaloceanspaces.com", 1))
+    })?;
+    (at > 0).then(|| {
+        let end = labels[..at].iter().map(|l| l.len() + 1).sum::<usize>() - 1;
+        &host[..end]
+    })
+}
+
 /// A HAR file's requests to S3 (a browser's, say).
 fn har(
     text: &str,
+    malformed: &mut usize,
     other_hosts: &mut usize,
     hosts: &mut std::collections::BTreeMap<String, usize>,
 ) -> Result<Vec<Record>, String> {
@@ -730,20 +764,14 @@ fn har(
         else {
             continue;
         };
-        let time = e["startedDateTime"]
-            .as_str()
-            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-            .map(|t| t.with_timezone(&Utc))
-            .ok_or("an entry without startedDateTime")?;
         let method = req["method"].as_str().unwrap_or("GET");
         let host = url.host_str().unwrap_or("");
         // virtual-hosted (bucket.s3….) or path-style (/bucket/key)
         let path = decode(url.path().trim_start_matches('/'));
-        let (bucket, key) = match host.split_once(".s3") {
-            Some((b, _)) if !b.is_empty() => {
-                (Some(b.to_string()), (!path.is_empty()).then_some(path))
-            }
-            _ => match path.split_once('/') {
+        let hosted = bucket_of_host(host);
+        let (bucket, key) = match hosted {
+            Some(b) => (Some(b.to_string()), (!path.is_empty()).then_some(path)),
+            None => match path.split_once('/') {
                 Some((b, k)) => (Some(b.to_string()), (!k.is_empty()).then(|| k.to_string())),
                 None => ((!path.is_empty()).then_some(path), None),
             },
@@ -793,10 +821,24 @@ fn har(
             *other_hosts += 1;
             continue;
         }
-        if let Some(h) = store_host(host, bucket.as_deref().filter(|_| host.contains(".s3"))) {
+        // an entry of S3's that does not say when: left out, and counted
+        let Some(time) = e["startedDateTime"]
+            .as_str()
+            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&Utc))
+        else {
+            *malformed += 1;
+            continue;
+        };
+        if let Some(h) = store_host(host, hosted) {
             *hosts.entry(h).or_default() += 1;
         }
-        let status = e["response"]["status"].as_u64().unwrap_or(0) as u16;
+        // 0: no answer (aborted, blocked, the connection lost), not one to
+        // count as answered or to price
+        let status = e["response"]["status"]
+            .as_u64()
+            .filter(|s| (1..=999).contains(s))
+            .map(|s| s as u16);
         let mut r = record(
             time,
             method,
@@ -840,15 +882,32 @@ fn har(
             }
         }
         r.rare_mut().url = shown.to_string();
+        if status.is_none() {
+            let why = e["response"]["statusText"].as_str().unwrap_or("");
+            r.rare_mut().transport_error = Some(if why.is_empty() {
+                "no answer".to_string()
+            } else {
+                why.to_string()
+            });
+        }
         let size = |v: &Value| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64);
         r.request_bytes = size(&req["bodySize"]).into();
         r.response_bytes = size(&e["response"]["bodySize"]).into();
         // the wait for the answer's first byte, as HAR times it
         r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0).into();
+        // an error's body, decoded when the HAR kept it as base64
         if let Some(t) = e["response"]["content"]["text"].as_str()
-            && status >= 300
+            && status.is_some_and(|s| s >= 300)
         {
-            r.rare_mut().error_body = Some(t.to_string());
+            let base64 = e["response"]["content"]["encoding"].as_str() == Some("base64");
+            let decoded = base64
+                .then(|| {
+                    use base64::Engine;
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(t).ok()?;
+                    String::from_utf8(bytes).ok()
+                })
+                .flatten();
+            r.rare_mut().error_body = Some(decoded.unwrap_or_else(|| t.to_string()));
         }
         out.push(r);
     }
@@ -1041,6 +1100,86 @@ mod tests {
         assert_eq!(s.records[0].bucket.as_deref(), Some("lake"));
         assert_eq!(s.records[0].key.as_deref(), Some("t/k x"));
         assert_eq!(s.records[0].latency_ms, 7.0);
+    }
+
+    /// 27.0's review: a HAR's status 0 (aborted, blocked) and an access
+    /// log's `-` read as answered and were priced.
+    #[test]
+    fn a_request_without_an_answer_is_imported_as_one() {
+        let har = r#"{"log":{"entries":[{"startedDateTime":"2026-11-09T10:00:00Z","time":5,"request":{"method":"GET","url":"https://lake.s3.amazonaws.com/k","headers":[{"name":"x-amz-date","value":"1"}]},"response":{"status":0,"statusText":"","headers":[]}}]}}"#;
+        let (_, s) = import(har, "page").unwrap();
+        let r = &s.records[0];
+        assert_eq!(r.status, None);
+        assert!(r.is_error() && r.rare().transport_error.is_some());
+        assert!(!crate::profile::reached_store(r));
+        let line = LOG
+            .lines()
+            .next()
+            .unwrap()
+            .replace(" 200 - 4096", " - - 4096");
+        let (_, s) = import(&line, "prod").unwrap();
+        assert_eq!(s.records[0].status, None);
+    }
+
+    /// 27.0's review: CloudTrail's errors other than the few named read as
+    /// 400.
+    #[test]
+    fn cloudtrails_error_codes_read_as_their_status() {
+        for (code, status) in [
+            ("NoSuchLifecycleConfiguration", 404),
+            ("ObjectLockConfigurationNotFoundError", 404),
+            ("BucketAlreadyOwnedByYou", 409),
+            ("OperationAborted", 409),
+            ("BucketAlreadyExists", 409),
+            ("MethodNotAllowed", 405),
+            ("AccessDenied", 403),
+            ("SomethingElse", 400),
+        ] {
+            assert_eq!(status_of(code), status, "{code}");
+        }
+    }
+
+    /// 27.0's review: a store's virtual-hosted host without `.s3` read as
+    /// path-style, and a bucket named `….s3backup` was cut at its `.s3`.
+    #[test]
+    fn a_virtual_hosted_hosts_bucket_is_its_first_labels() {
+        for (host, bucket) in [
+            ("lake.s3.us-east-1.amazonaws.com", Some("lake")),
+            ("lake.s3-eu-west-1.amazonaws.com", Some("lake")),
+            ("data.s3backup.s3.amazonaws.com", Some("data.s3backup")),
+            ("lake.acct.r2.cloudflarestorage.com", Some("lake")),
+            ("lake.storage.googleapis.com", Some("lake")),
+            ("lake.nyc3.digitaloceanspaces.com", Some("lake")),
+            ("s3.amazonaws.com", None),
+            ("s3.us-east-1.amazonaws.com", None),
+            ("acct.r2.cloudflarestorage.com", None),
+            ("storage.googleapis.com", None),
+            ("nyc3.digitaloceanspaces.com", None),
+            ("localhost", None),
+        ] {
+            assert_eq!(bucket_of_host(host), bucket, "{host}");
+        }
+    }
+
+    /// 27.0's review: one entry without a time failed the whole import,
+    /// even another host's; a base64 error body hid its code.
+    #[test]
+    fn a_har_entry_without_a_time_is_left_out_and_a_base64_body_read() {
+        use base64::Engine;
+        let body = base64::engine::general_purpose::STANDARD
+            .encode("<Error><Code>SlowDown</Code></Error>");
+        let har = format!(
+            r#"{{"log":{{"entries":[
+              {{"request":{{"method":"GET","url":"https://example.com/"}},"response":{{"status":200}}}},
+              {{"request":{{"method":"GET","url":"https://lake.s3.amazonaws.com/a"}},"response":{{"status":200}}}},
+              {{"startedDateTime":"2026-11-09T10:00:00Z","time":5,"request":{{"method":"GET","url":"https://lake.s3.amazonaws.com/b"}},"response":{{"status":503,"content":{{"encoding":"base64","text":"{body}"}}}}}}]}}}}"#
+        );
+        let i = import_counted(&har, "page").unwrap();
+        assert_eq!((i.run.records.len(), i.malformed, i.other_hosts), (1, 1, 1));
+        assert_eq!(
+            i.run.records[0].rare().error_body.as_deref(),
+            Some("<Error><Code>SlowDown</Code></Error>")
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 import { batch, cleanup, computed, effect, type JSX, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, type MenuItem, Window } from "nsh/desktop";
-import { count, duration, hm } from "../format";
+import { count, duration, moments } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
@@ -103,22 +103,41 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const budget = computed(() => budgetOf(props.path));
   // this pane's own size (windowSize() follows whichever window has the focus)
   const box = signal({ w: 1000, h: 760 });
-  const lines = computed<LogLine[]>(() => {
-    props.tick();
-    try {
-      return api.runs.logLines(props.path);
-    } catch {
-      return [];
-    }
-  });
+  // its output, read off the interface's thread (a large run is read whole the first time), again as it grows
+  const linesRead = resource(
+    computed(() => `${props.tick()}\n${props.path}`),
+    async () => {
+      const path = untracked(() => props.path);
+      try {
+        return { path, lines: await api.runs.logLines(path) };
+      } catch {
+        return { path, lines: [] as LogLine[] };
+      }
+    },
+  );
+  const lines = (): LogLine[] => {
+    const r = linesRead();
+    return r && r.path === props.path ? r.lines : [];
+  };
   // whether it has any (a boolean: what is drawn does not follow every line that arrives)
   const hasOutput = computed(() => lines().length > 0);
-  // a run with output opens lined up with it
-  const pane = signal<Pane>(untracked(() => (lines().length && !terminal() ? "aligned" : "operations")));
+  // a run opens on its operations; one with output lines up with it once its lines are in,
+  // unless another pane was chosen meanwhile
+  const pane = signal<Pane>("operations");
+  let paneChosen = false;
+  effect(() => {
+    if (pane() !== "operations") paneChosen = true;
+  });
+  effect(() => {
+    const r = linesRead();
+    if (paneChosen || !r || r.path !== props.path) return;
+    paneChosen = true;
+    if (r.lines.length && !terminal()) untracked(() => pane.set("aligned"));
+  });
   // a program opened from the Programs list: its runs
   effect(() => {
     const o = paneOnOpen();
-    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
+    if (o && o.path === props.path) untracked(() => batch(() => ((paneChosen = true), pane.set(o.pane), paneOnOpen.set(null))));
   });
   // the demo's run: its first finding open, its line of code and its fix in view
   effect(() => {
@@ -155,11 +174,27 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const i = op();
     return i === null || !view() ? null : source.episode(i);
   });
-  // read once per request chosen: the inspector asks for it in several places
-  const record = computed(() => {
+  // read once per request chosen, off the interface's thread (a large run's from its file):
+  // the inspector asks for it in several places
+  const recordRead = resource(
+    () => {
+      const id = rec();
+      return id === null ? false : ([id] as const);
+    },
+    async ([id]) => {
+      try {
+        return { id, record: await api.runs.record(props.path, id) };
+      } catch (e) {
+        report(e);
+        return { id, record: null };
+      }
+    },
+  );
+  const record = () => {
     const id = rec();
-    return id === null ? null : api.runs.record(props.path, id);
-  });
+    const r = recordRead();
+    return id !== null && r?.id === id ? r.record : null;
+  };
   /** The run's one selection of time: a stretch of its slices (first and last), picked on the
    * Operations strip (a slice) or on the Time pane's timeline (two presses) — the same on both. */
   const stretch = signal<[number, number] | null>(null);
@@ -312,7 +347,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const mine = info()?.program;
     const same = others.filter((s) => mine && s.program === mine);
     const rest = others.filter((s) => !same.includes(s));
-    const item = (s: RunInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${count(s.requests)}`, onSelect: () => compareWith.set(s.path) });
+    // runs of other days by their date too
+    const when = moments([info()?.created, ...same.slice(0, 20).map((s) => s.created), ...rest.slice(0, 20).map((s) => s.created)]);
+    const item = (s: RunInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${when(s.created)} · ${count(s.requests)}`, onSelect: () => compareWith.set(s.path) });
     void popupMenu(
       [
         ...(others.length
@@ -415,14 +452,14 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   ];
 
   /** A finding whose fix is a tool of Buckets (incomplete uploads): that section, on the bucket and endpoint its requests went to. */
-  const openStoreFix = (o: Observation) => {
+  const openStoreFix = async (o: Observation) => {
     const v = view();
     const to = storeFixOf(o);
     if (!v || !to) return;
     try {
       const first = o.operations[0] === undefined ? null : api.runs.episode(props.path, o.operations[0]);
       const id = first?.records[0];
-      const rec = id === undefined ? null : api.runs.record(props.path, id);
+      const rec = id === undefined ? null : await api.runs.record(props.path, id);
       const ep = v.header.endpoint;
       batch(() => {
         if (ep === "demo" || endpoints().some((e) => e.id === ep)) useEndpoint(ep);
@@ -546,7 +583,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       {(w) => <Button small variant="outline" icon="x" label={`+${duration(w()[0])} – +${duration(w()[1])}`} tip={t("timeline.unzoom")} onPress={() => stretch.set(null)} testID="clear-filter" />}
     </If>
   );
-  const tabs = () => <Segmented testID="run-pane-mode" value={pane()} items={panes()} onChange={(p) => pane.set(p as Pane)} />;
+  const tabs = () => <Segmented testID="run-pane-mode" value={pane()} items={panes()} onChange={(p) => ((paneChosen = true), pane.set(p as Pane))} />;
   // what the run is (its command, its figures), then what is shown of it:
   // the pane chosen takes all the room under its tabs
   const main = (v: () => RunView) => (
@@ -742,6 +779,14 @@ function openRunWindow(path: string) {
   );
 }
 
+/** The list a second later, while a run is live: its row's count from the recording (no folder read each
+ * second); the whole list read again once it has ended. */
+function withLive(list: RunInfo[]): RunInfo[] {
+  const now = api.runs.current();
+  if (!now) return api.runs.list();
+  return list.map((s) => (s.live && s.path === now.path ? { ...s, requests: now.requests } : s));
+}
+
 /** A run in a window of its own: it grows while live, says what it did
  * here (its own toasts and rename), and opens another run in the main
  * window. Its title follows the run's name; it closes when its run
@@ -751,7 +796,7 @@ function RunWindow(props: { path: string }) {
   const others = signal<RunInfo[]>(api.runs.list());
   const timer = setInterval(() => {
     if (away() || !others().some((s) => s.path === props.path && s.live)) return;
-    others.set(api.runs.list());
+    others.set(withLive(others()));
     tick.set(tick() + 1);
   }, 1000);
   cleanup(() => clearInterval(timer));
@@ -847,7 +892,7 @@ export function Runs() {
   // a live run grows: follow it
   const timer = setInterval(() => {
     if (!away() && runs().some((s) => s.live)) {
-      runs.set(api.runs.list());
+      runs.set(withLive(runs()));
       tick.set(tick() + 1);
     }
   }, 1000);

@@ -28,6 +28,9 @@ pub struct Listing {
     prefix: String,
     delimiter: Option<String>,
     state: Arc<Mutex<State>>,
+    /// Told each time a page has come in (or failed): a `load_all` waits on
+    /// it for a page `load_more` is loading.
+    idle: Arc<tokio::sync::Notify>,
     /// Set as the listing goes: a `load_all` under way stops at its next page.
     closed: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -57,6 +60,7 @@ impl Listing {
             prefix,
             delimiter,
             state: Arc::new(Mutex::new(State::default())),
+            idle: Arc::default(),
             closed: Arc::default(),
         }
     }
@@ -66,13 +70,14 @@ impl Listing {
         if this.is_disposed() {
             return Err(err_msg("the listing was closed"));
         }
-        let (ep, b, p, d, state) = this.with(|l| {
+        let (ep, b, p, d, state, idle) = this.with(|l| {
             (
                 l.endpoint.clone(),
                 l.bucket.clone(),
                 l.prefix.clone(),
                 l.delimiter.clone(),
                 l.state.clone(),
+                l.idle.clone(),
             )
         });
         let token = {
@@ -91,6 +96,7 @@ impl Listing {
         .await;
         let mut s = state.lock();
         s.loading = false;
+        idle.notify_waiters();
         match page {
             Ok(Ok(page)) => {
                 s.pages += 1;
@@ -116,31 +122,28 @@ impl Listing {
         if this.is_disposed() {
             return Err(err_msg("the listing was closed"));
         }
-        let (ep, b, p, d, state, closed) = this.with(|l| {
+        let (ep, b, p, d, state, idle, closed) = this.with(|l| {
             (
                 l.endpoint.clone(),
                 l.bucket.clone(),
                 l.prefix.clone(),
                 l.delimiter.clone(),
                 l.state.clone(),
+                l.idle.clone(),
                 l.closed.clone(),
             )
         });
         let st = state.clone();
         let r = background(async move {
             loop {
-                let token = {
-                    let mut s = st.lock();
-                    if s.done || s.loading || s.rows.len() >= max_rows as usize {
-                        return Ok::<(), sonde_core::S3Error>(());
-                    }
-                    s.loading = true;
-                    s.token.clone()
+                let Some(token) = next_turn(&st, &idle, &closed, max_rows as usize).await else {
+                    return Ok::<(), sonde_core::S3Error>(());
                 };
                 let page =
                     browse::list_page(&sonde(), &ep, &b, &p, d.as_deref(), token, None).await;
                 let mut s = st.lock();
                 s.loading = false;
+                idle.notify_waiters();
                 let page = page?;
                 s.pages += 1;
                 s.done = !page.is_truncated || page.next_token.is_none();
@@ -229,6 +232,37 @@ impl Listing {
     }
 }
 
+/// The next page's turn for `load_all`: its token once no other page is
+/// loading (a page `load_more` has under way is waited for, not taken as the
+/// end), or `None` when every page is in, `max_rows` are, or the listing went.
+async fn next_turn(
+    state: &Mutex<State>,
+    idle: &tokio::sync::Notify,
+    closed: &std::sync::atomic::AtomicBool,
+    max_rows: usize,
+) -> Option<Option<String>> {
+    loop {
+        // listening before looking: a page that ends in between is heard
+        let ended = idle.notified();
+        tokio::pin!(ended);
+        ended.as_mut().enable();
+        {
+            let mut s = state.lock();
+            if s.done
+                || s.rows.len() >= max_rows
+                || closed.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return None;
+            }
+            if !s.loading {
+                s.loading = true;
+                return Some(s.token.clone());
+            }
+        }
+        ended.await;
+    }
+}
+
 fn count(s: &State) -> usize {
     s.view.as_ref().map(|v| v.len()).unwrap_or(s.rows.len())
 }
@@ -253,6 +287,36 @@ fn refilter(s: &mut State, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn loading_all_waits_for_the_page_under_way_then_goes_on() {
+        let (state, idle, closed) = (
+            Mutex::new(State {
+                loading: true,
+                ..State::default()
+            }),
+            tokio::sync::Notify::new(),
+            std::sync::atomic::AtomicBool::new(false),
+        );
+        let turn = next_turn(&state, &idle, &closed, 1000);
+        tokio::pin!(turn);
+        // a page is loading: not the end, a wait
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), turn.as_mut())
+                .await
+                .is_err()
+        );
+        {
+            let mut s = state.lock();
+            s.loading = false;
+            s.token = Some("page-2".into());
+        }
+        idle.notify_waiters();
+        assert_eq!(turn.await, Some(Some("page-2".into())));
+        assert!(state.lock().loading, "its own page now");
+        state.lock().done = true;
+        assert_eq!(next_turn(&state, &idle, &closed, 1000).await, None);
+    }
 
     #[test]
     fn a_listing_that_goes_tells_the_load_under_way() {

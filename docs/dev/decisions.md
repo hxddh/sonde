@@ -35,7 +35,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-035 | The look of 2.1 | restyle screen by screen; a design system first | **A design system first**: tokens, one icon family, a styled layer on nsh/base, then pages. |
 | D-036 | Where details go | a third column; pages; an inspector | **An inspector**, a Sheet in a narrow window: the table keeps its room. |
 | D-037 | The window's chrome | the system's title bar; the app's own | **The app's own toolbar** (`titleBar: hidden`), with a menu button on Linux and Windows: no repeated header. |
-| D-038 | Saving settings | a Save button; as they change | **As they change**, with Undo: a change is a decision made. |
+| D-038 | Saving settings | a Save button; as they change | **As they change, silently**: a change is a decision made, and a system's settings apply without a word. |
 | D-039 | A visual check | by hand; in CI | **In CI** (`scripts/shots.sh`): behaviour tests cannot see a clipped column. |
 | D-040 | Direction for 3.0 | more features; fewer places | **Fewer places** (Run, Sessions, Buckets); no new features. |
 | D-041 | Bucket tools | tabs with forms; an overview | **An overview**: cheap facts fetched on open, costly ones when asked; the terminal keeps tabs. |
@@ -220,7 +220,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-236 | Generated TS types and schemas | generated; hand-written | **Hand-written**: the bridge's and CLI's answers are mostly `json!`; generating them would take more code, not less. |
 | D-237 | `show -f json` | everything; compact | **Compact by default** (a finding's first 20 operations and a total, the run's SDK's fix only); `--all` the whole; `--summary` goes. |
 | D-238 | What an agent needs | patches; places | **`kind`, callers as file/line/function/code, `verify`**: sonde names the line and checks the fix; it generates no patches. No MCP server. |
-| D-239 | A fix after more work | counted; not | **Not counted** when requests grew 1.5× (and by 10 or more) with the same command (`workloadChanged`). |
+| D-239 | A fix after more or less work | counted; not | **Not counted** when requests grew 1.5× (and by 10 or more) with the same command, or shrank by a third (and by 10 or more) below what fixing the earlier run's findings would leave (`workloadChanged`): measured from that floor, a real fix, which also cuts requests, still counts. |
 | D-240 | Findings' order | severity; saving | **What they save**: money, then time, then requests. |
 | D-241 | A month | none; per source | **An import's own span; a run's `[program] runs-per-month`**. |
 | D-242 | Replay of a program that reads input | differences; stand-ins | **Stand-ins of the recorded size** for what it read first, written outside the replay's run and removed after. |
@@ -261,3 +261,8 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-277 | A chain's gap (`CHAIN_GAP_US`, `obs.serial`) | 10 ms; wider (100 ms, a second) | **10 ms**: a wider gap chains requests that wait on what an answer held (a Parquet footer read, then the ranges it names), which `Depends` cannot see, as it sees keys and prefixes and not content: a false `obs.serial`, the parallel fix wrong. |
 | D-278 | The Time pane's charts, built | all at once; in slices on timers; a worker; as they come into view | **As they come into view**: the board is Native Shell's virtualized `List` in the pane's scroll (`viewport="parent"`), a row a group's heading or a line of its charts; opening it took 1.6 s, mostly JavaScript building charts not yet in view; now 0.3 s ([performance](performance.md#opening-the-time-pane)). Every chart stays. |
 | D-279 | Naming callers in a Node.js ES module | `--import` an ESM hook (`module.register`, Node.js 20.6+) when the version allows; the `--require` hook alone | **The `--require` hook alone**, at `Module.prototype.load`: Node.js loads the SDK as CommonJS for an `import` too (its `node` export, or `main`), and that path skips `Module._load`; no flag that an older Node.js would refuse, no version to detect, no loader thread. |
+| D-280 | `-f json` on a terminal | through the terminal escaper; raw | **Raw, with DEL, C1 and direction marks as `\uXXXX`**: one output that is valid JSON and inert on a terminal; the escaper's `\x7f` broke parsers. |
+| D-281 | `show` or `check` with no run named, and none of this folder's | the newest run of any program; refuse | **Refuse (64)**, naming the newest run's program: a wrong run judged in silence is worse than a refusal. |
+| D-282 | A signed header value that is not ASCII | forward raw bytes; UTF-8 text, others refused | **UTF-8 text, others refused** with a reason: raw bytes would turn the whole signing path into bytes, for clients AWS rejects anyway. |
+| D-283 | A request naming an object subresource and an `x-id` | `x-id`; the subresource | **The subresource**: `x-id` is the client's to set; the subresource decides what the store does (and what no-delete guards). |
+| D-284 | A layout listing that reached its cap | list on without a cap; say so and stop judging | **Say so and stop judging** missing and orphaned files: past the cut is unknown, and the cap keeps the window responsive. |

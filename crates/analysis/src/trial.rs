@@ -51,6 +51,21 @@ pub enum Standing {
 }
 
 impl Standing {
+    /// Makes it `to` when that is worse: a reason never lowers what an
+    /// earlier one found (broke stays broke).
+    fn raise(&mut self, to: Standing) {
+        let worse = |s: Standing| match s {
+            Standing::Survived => 0,
+            Standing::Untested => 1,
+            Standing::Degraded => 2,
+            Standing::Broke => 3,
+            Standing::Refused => 4,
+        };
+        if worse(to) > worse(*self) {
+            *self = to;
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Standing::Survived => "survived",
@@ -1315,29 +1330,29 @@ pub fn judge(
         why.push(vec![Said::new("trial.why.notMet", &[])]);
     }
     if left_uploads > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.uploads", left_uploads));
     }
     if dropped_reads > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.reads", dropped_reads));
     }
     if orphans > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.orphans", orphans));
     }
     if blind > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.blind", blind));
     }
     if waited > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         let mut args = n_of(waited);
         args.push(("time", ms_text(stall.unwrap_or(0) as f64)));
         why.push(vec![Said::new("trial.why.waited", &args)]);
     }
     if reuploaded > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         let mut args = n_of(reuploaded);
         args.push((
             "its",
@@ -1346,23 +1361,23 @@ pub fn judge(
         why.push(vec![Said::new("trial.why.reuploaded", &args)]);
     }
     if rewrote > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.rewrote", rewrote));
     }
     let plain = dropped_writes - lost_writes;
     if lost_writes > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(said("trial.why.lost", lost_writes));
     }
     if plain > 0 {
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         let mut args = n_of(plain);
         args.push(("was", if plain == 1 { "was" } else { "were" }.to_string()));
         why.push(vec![Said::new("trial.why.writes", &args)]);
     }
     if dropped_writes > 0 && exit == 0 {
         // told of a failed write, it said all was well
-        standing = Standing::Broke;
+        standing.raise(Standing::Broke);
         if let Some(last) = why.last_mut() {
             last.push(Said::new("trial.why.exit0", &[]));
         }
@@ -1372,23 +1387,23 @@ pub fn judge(
         // the half was taken for the whole
         let mut reason = said("trial.why.taken", taken);
         if exit == clean_exit {
-            standing = Standing::Broke;
+            standing.raise(Standing::Broke);
             reason.push(Said::new(
                 "trial.why.taken.whole",
                 &[("exit", exit.to_string())],
             ));
         } else {
-            standing = Standing::Degraded;
+            standing.raise(Standing::Degraded);
         }
         why.push(reason);
     }
     if holes > 0 {
-        standing = Standing::Broke;
+        standing.raise(Standing::Broke);
         why.push(said("trial.why.holes", holes));
     }
     if missed > 0 {
         // it went on without what it wrote: whatever its exit says
-        standing = Standing::Broke;
+        standing.raise(Standing::Broke);
         let mut args = n_of(missed);
         args.push(("was", if missed == 1 { "was" } else { "were" }.to_string()));
         why.push(vec![Said::new("trial.why.missed", &args)]);
@@ -1398,18 +1413,18 @@ pub fn judge(
         args.push(("its", if unrun == 1 { "its" } else { "their" }.to_string()));
         let mut reason = vec![Said::new("trial.why.unrun", &args)];
         if exit == clean_exit {
-            standing = Standing::Broke;
+            standing.raise(Standing::Broke);
             reason.push(Said::new(
                 "trial.why.unrun.exit",
                 &[("exit", exit.to_string())],
             ));
         } else {
-            standing = Standing::Degraded;
+            standing.raise(Standing::Degraded);
         }
         why.push(reason);
     }
     if overwrote > 0 {
-        standing = Standing::Broke;
+        standing.raise(Standing::Broke);
         why.push(said("trial.why.overwrote", overwrote));
     }
     if stale > 0 && unused == stale && faults == 0 && standing == Standing::Survived {
@@ -1419,14 +1434,14 @@ pub fn judge(
     }
     if clean_exit != 0 && standing == Standing::Survived {
         // a program that fails without faults says nothing by its exit
-        standing = Standing::Degraded;
+        standing.raise(Standing::Degraded);
         why.push(vec![Said::new(
             "trial.why.cleanExit",
             &[("exit", clean_exit.to_string())],
         )]);
     }
     if exit != clean_exit && !fenced {
-        standing = Standing::Broke;
+        standing.raise(Standing::Broke);
         why.push(vec![Said::new(
             "trial.why.exit",
             &[
@@ -3928,6 +3943,34 @@ mod tests {
         )];
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 1);
         assert_eq!((t.standing, t.fenced), (Standing::Broke, false));
+    }
+
+    /// 27.0's review: a later reason set degraded over an earlier broke.
+    #[test]
+    fn a_later_reason_never_lowers_a_broke_standing() {
+        let wal = |n: u64| format!("db/wal/{n:020}.sst");
+        let log = "t/_delta_log/00000000000000000001.json";
+        let clean = vec![
+            create(1, 0, log, 200),
+            create(2, 10, &wal(1), 200),
+            part(3, 20, "big", 0, 999, 1000),
+        ];
+        // fenced (its exit not held against it), a hole in what it read
+        // (broke), and a log write given up after its 412 (degraded)
+        let run = vec![
+            race(create(1, 0, log, 412), Some(200)),
+            race(create(2, 10, &wal(1), 412), Some(200)),
+            cut(part(3, 20, "big", 0, 999, 1000), 500),
+            part(4, 30, "big", 600, 999, 1000),
+        ];
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 1);
+        assert!(t.fenced, "{}", t.line());
+        assert!(
+            t.reasons.iter().any(|r| r.contains("bytes are missing")),
+            "{:?}",
+            t.reasons
+        );
+        assert_eq!(t.standing, Standing::Broke, "{}", t.line());
     }
 
     #[test]
