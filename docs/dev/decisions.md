@@ -35,7 +35,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-035 | The look of 2.1 | restyle screen by screen; a design system first | **A design system first**: tokens, one icon family, a styled layer on nsh/base, then pages. |
 | D-036 | Where details go | a third column; pages; an inspector | **An inspector**, a Sheet in a narrow window: the table keeps its room. |
 | D-037 | The window's chrome | the system's title bar; the app's own | **The app's own toolbar** (`titleBar: hidden`), with a menu button on Linux and Windows: no repeated header. |
-| D-038 | Saving settings | a Save button; as they change | **As they change**, with Undo: a change is a decision made. |
+| D-038 | Saving settings | a Save button; as they change | **As they change, silently**: a change is a decision made, and a system's settings apply without a word. |
 | D-039 | A visual check | by hand; in CI | **In CI** (`scripts/shots.sh`): behaviour tests cannot see a clipped column. |
 | D-040 | Direction for 3.0 | more features; fewer places | **Fewer places** (Run, Sessions, Buckets); no new features. |
 | D-041 | Bucket tools | tabs with forms; an overview | **An overview**: cheap facts fetched on open, costly ones when asked; the terminal keeps tabs. |

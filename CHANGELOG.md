@@ -2,6 +2,99 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [28.0.0] - 2026-11-21
+
+sonde's JSON always parses, its savings and imports count what really happened, a pasted command runs only what it says, and the app no longer stops while it opens a large run.
+
+### Changed
+
+- `show`, `check`, `compare` and `share` with no run named refuse (64) when this folder has none, instead of taking
+  another program's newest run.
+- `check --set-baseline` accepts a run written with `-o`; `--baseline none` means no baseline, sonde.toml's included.
+  In the GitHub Action, `baseline: auto` that finds nothing leaves sonde.toml's baseline in place.
+- `endpoints add` and `--url` take the region from an AWS URL, else `AWS_REGION`, before us-east-1.
+- `import` prints its summary on stderr, as `run` does: stdout is only what was asked for.
+- The app's settings apply silently, without a "Settings saved · Undo" toast after each change (`settings.saved`,
+  `common.undo`).
+- The app: Versions of an object is on ⇧⌘H (Ctrl+Y is Redo on Windows and Linux), and Buckets' sections (⌥⌘1–4) no
+  longer fire while typing. File › Run is gone (⌘1 opens Run); the Window menu is macOS's alone; macOS's app menu says
+  "Settings…", Linux's "Quit".
+### Fixed
+
+- `-f json` is always valid JSON: a key's DEL, C1 controls or direction marks are written `\u007f`, `‮`, never
+  as the terminal escapes them.
+- `check --baseline` naming a missing file or an `http://` URL is a usage error (64) that says what to do;
+  `--tolerance` and `[check] tolerance` refuse a negative value or a non-number.
+- What a fix saved is measured right when keys hold a run's own id (`jobs/{id}/state.json`): a drop from 40 reads to
+  36 saves 4, not 39.
+- A smaller workload is no longer read as a fix: with the same command, a run a third or more below what fixing the
+  earlier run's findings would leave says "the workload shrank" and counts no saving.
+- A listing retried after errors counts once in `obs.listed`, and a small upload whose part was retried is still a
+  small upload. A trial's outcome is never lowered by a later reason: broke stays broke.
+- Imports: a HAR's status 0 and an access log's `-` are no answer, not priced; CloudTrail's `NoSuch*` and `*NotFound`
+  errors are 404, conflicts 409; buckets are read from R2, GCS and Spaces hosts and from names that hold `.s3`; a HAR
+  entry with no time is skipped and counted instead of failing the import; a base64 error body is read.
+- "Copy as curl" and "copy as aws cli" quote every value taken from a record, so a crafted method, region or
+  operation name in a shared run cannot run commands where it is pasted; a store's region is taken only as letters,
+  digits and dashes.
+- A request signed with a non-ASCII UTF-8 header (`x-amz-meta-name: café`, as the Go SDK and minio-go send) is no
+  longer refused; a value that is not UTF-8 is refused with the reason.
+- An upload sent as unsigned aws-chunked counts its payload, not its framing. A virtual-hosted bucket in capitals or
+  with a final dot (`b.LOCALHOST.`) is read as that bucket.
+- Under `no-delete`, a rename can no longer pass as a PutObject through the SDKs' `x-id` marker.
+- A store's error body that stops part way is a transport error, not forwarded with a wrong length; only its first
+  64 KiB is held. The proxy raises its open-files limit and no longer spins when out of them. A transport error
+  naming a presigned URL is redacted; two sondes renewing the certificate no longer remove each other's lock.
+- Replay sends DeleteObjects and settings documents with the Content-MD5 of what it sends, keeps a `?` in a copy
+  source's key, and leaves out pages that go on from the original store's version or upload markers.
+- A layout whose listing stopped at its cap says so and no longer calls the files past it missing; a GET that fails
+  no longer ends a SlateDB, lakeFS or Woodpecker analysis; a local folder gives nothing outside it.
+- A listing ends with an error when a store hands back a page marker again, instead of running forever; probe
+  cleanup aborts uploads on every page and removes a temporary bucket whose creation went unanswered.
+- `consistency.list-after-write` no longer fails a store that kept a write the client saw fail.
+- `run --demo -o x.sonde` no longer overwrites `x-fixed.sonde` without `--force`; `runs prune` keeps a run still being
+  recorded.
+- The app no longer stops while it opens, receives or is handed a large run (a drop, a double-click, `sonde://open`):
+  the run is read off the window's thread, and a live run no longer reads the whole runs folder every second.
+- Stop pressed just after Run stops the program as soon as it starts; "Stopped" is said only when it did.
+- Counts, sizes, durations and costs use the region's separators alike, and one minus sign.
+- Time no longer shows the previous stretch's figures under a new one; Load all waits for a page being loaded
+  instead of doing nothing; a search or size scan replaced as it starts no longer runs on.
+- Compare… names runs of other days by their date; an operation of more than about 100,000 requests opens.
+### 中文
+
+sonde 的 JSON 总能解析，修复节省和导入按真实发生的计算，粘贴的命令只执行它写的内容，应用打开大运行时不再卡住。
+
+- 变更：未指定运行且本目录没有运行时，`show`、`check`、`compare`、`share` 直接拒绝（64），不再取别的程序的运行。
+- 变更：`check --set-baseline` 接受用 `-o` 写出的运行；`--baseline none` 表示不用基线（包括 sonde.toml 里的）；
+  Action 的 `baseline: auto` 找不到时保留 sonde.toml 的基线。
+- 变更：`endpoints add` 与 `--url` 先从 AWS 地址、再从 `AWS_REGION` 取区域，最后才用 us-east-1。
+- 变更：`import` 的摘要与 `run` 一样输出到 stderr。
+- 变更：应用的设置改后静默生效，不再弹出“设置已保存 · 撤销”。
+- 变更：对象的版本改为 ⇧⌘H（Ctrl+Y 在 Windows 和 Linux 上是重做）；输入时不再触发桶的分区快捷键（⌥⌘1–4）；
+  移除“文件 › 运行”（⌘1 打开运行）；“窗口”菜单仅 macOS 有；macOS 应用菜单为“设置…”，Linux 为“Quit”。
+- 修复：`-f json` 始终是合法 JSON：键里的 DEL、C1 和方向控制符写作 `\u007f`、`‮`。
+- 修复：`check --baseline` 指向不存在的文件或 `http://` 地址时为用法错误（64）并说明下一步；`--tolerance` 拒绝负数和非数。
+- 修复：键里带运行自己的 id 时，修复省下的量算对了（40→36 省 4，而不是 39）；工作量变小不再被当成修复。
+- 修复：出错后重试的列举只算一次；分片被重试过的小上传仍算小上传；试验结果不会被后面的原因降级。
+- 修复：导入：HAR 状态 0 和访问日志的 `-` 视为没有响应、不计费；CloudTrail 的 NoSuch*/NotFound 为 404、冲突为 409；
+  能从 R2、GCS、Spaces 主机和含 `.s3` 的桶名读出桶；缺时间的 HAR 条目跳过并计数；base64 错误体可读。
+- 修复："复制为 curl / aws cli"对取自记录的每个值加引号，分享的运行不能借此在粘贴处执行命令。
+- 修复：带非 ASCII UTF-8 签名头的请求不再被拒；未签名 aws-chunked 上传按负载计字节；大写或末尾带点的虚拟主机桶名能被识别；
+  no-delete 下重命名不能借 `x-id` 冒充 PutObject。
+- 修复：中途中断的存储错误体记为传输错误；代理提高文件句柄上限且耗尽时不再空转；含预签名 URL 的传输错误被脱敏；
+  两个 sonde 同时续期证书不再删掉对方的锁。
+- 修复：回放附上 Content-MD5、保留复制源键里的 `?`、略过沿用原存储标记的翻页；布局列举截断时会说明且不再误报缺失；
+  一次 GET 失败不再中止 SlateDB、lakeFS、Woodpecker 分析；本地目录不会读出其外的文件。
+- 修复：存储重复返回翻页标记时列举报错结束；探测清理处理每一页上传和未应答的临时桶；
+  `consistency.list-after-write` 不再误判。
+- 修复：`run --demo -o x.sonde` 不再未经 `--force` 覆盖 `x-fixed.sonde`；`runs prune` 保留正在录制的运行。
+- 修复：打开、拖入、双击或经 `sonde://open` 打开大运行时，应用不再卡住；录制中不再每秒读取整个运行目录。
+- 修复：点击运行后立即停止，程序一启动就会停止；只有真正停止时才显示“已停止”。
+- 修复：计数、大小、时长和费用统一使用地区的分隔符和同一个负号。
+- 修复：时间页不再在新时段下显示上一时段的数字；“全部加载”会等正在加载的一页；被取代的搜索或容量扫描不再继续运行。
+- 修复：“比较…”中不同日期的运行显示日期；超过约十万个请求的操作能打开。
+
 ## [27.0.0] - 2026-11-20
 
 sonde's findings and costs now follow the order requests were sent, nothing secret leaves in a share, and the Time pane opens at once.
