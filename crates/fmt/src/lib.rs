@@ -246,7 +246,7 @@ fn round_up(s: &str) -> String {
 /// A character that does something to a terminal rather than show itself:
 /// C0 (tab and newline among them), DEL, C1, and the marks that turn text's
 /// direction (a key can be made to read as another).
-fn controls(c: char) -> bool {
+pub fn controls(c: char) -> bool {
     c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 

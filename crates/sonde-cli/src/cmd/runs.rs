@@ -254,7 +254,7 @@ pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
     match &a.action {
         None => {
             if matches!(format, Format::Json) {
-                println!("{}", output::json(&all));
+                output::print_json(&all);
                 return Ok(0);
             }
             if all.is_empty() {

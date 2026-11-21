@@ -104,7 +104,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
         Some(ProbeAction::List { .. }) => {
             let c = probes::catalog();
             match format {
-                Format::Json => println!("{}", output::json(&c)),
+                Format::Json => output::print_json(&c),
                 _ => println!(
                     "{}",
                     output::table(
@@ -120,7 +120,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
         Some(ProbeAction::Runs { .. }) => {
             let r = probes::store::list(s.paths());
             match format {
-                Format::Json => println!("{}", output::json(&r)),
+                Format::Json => output::print_json(&r),
                 _ => println!(
                     "{}",
                     output::table(
@@ -146,7 +146,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let (b, af) = (load(s, before)?, load(s, after)?);
             let d = probes::store::diff(&b, &af);
             match format {
-                Format::Json => println!("{}", output::json(&d)),
+                Format::Json => output::print_json(&d),
                 _ if d.is_empty() => println!("no change"),
                 _ => println!(
                     "{}",

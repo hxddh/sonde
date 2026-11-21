@@ -105,7 +105,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
         EndpointAction::List { .. } => {
             let e = s.endpoints();
             match format {
-                Format::Json => println!("{}", output::json(&e)),
+                Format::Json => output::print_json(&e),
                 _ => println!(
                     "{}",
                     output::table(
@@ -129,7 +129,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             let ep = to_test(s, endpoint.as_deref())?;
             let r = s.test_endpoint(&ep).await;
             match format {
-                Format::Json => println!("{}", output::json(&r)),
+                Format::Json => output::print_json(&r),
                 _ => {
                     println!(
                         "{}: {} in {:.0} ms",

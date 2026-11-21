@@ -237,12 +237,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     if let Some(by) = a.by {
         let split = sonde_analysis::split::split(all, by, &prices);
         match a.format {
-            Format::Json => println!(
-                "{}",
-                output::json(&serde_json::json!({
+            Format::Json => output::print_json(&serde_json::json!({
                     "run": run.header,
                     "split": split,
-                }))
+                })
             ),
             _ => print_split(
                 &split,
@@ -276,7 +274,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 .iter()
                 .map(|o| finding_json(o, a.all, sdk, cwd))
                 .collect();
-            let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
+            let out = crate::output::JsonWriter::new(std::io::BufWriter::with_capacity(
+                1 << 16,
+                crate::output::Stdout,
+            ));
             let mut w = sonde_analysis::share::JsonOut::new(out, true);
             w.begin_object()?;
             w.field("run", &run.header)?;

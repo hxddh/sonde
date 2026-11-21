@@ -188,9 +188,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         store_cost(s, &ep, replayed.as_ref().map_or(&[][..], |r| &r.records)),
     ];
     match a.format {
-        Format::Json => println!(
-            "{}",
-            output::json(&serde_json::json!({
+        Format::Json => output::print_json(&serde_json::json!({
                 "plan": plan,
                 "run": path,
                 "comparison": c,
@@ -203,7 +201,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                 "remainingVersions": run.remaining_versions,
                 "remainingMarkers": run.remaining_markers,
                 "unabortedUploads": run.unaborted_uploads,
-            }))
+            })
         ),
         _ => {
             let out = std::io::stdout().is_terminal();
@@ -344,7 +342,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
                 "relies": relied,
             })).collect::<Vec<_>>(),
         });
-        println!("{}", output::json(&doc));
+        output::print_json(&doc);
     } else {
         let mut rows: Vec<Vec<String>> = vec![{
             let mut r = vec!["answers that differ".to_string(), "—".to_string()];

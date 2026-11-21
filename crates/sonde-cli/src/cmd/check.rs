@@ -761,7 +761,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         if let Some(code) = failed {
             doc["programExit"] = serde_json::json!(code);
         }
-        println!("{}", output::json(&doc));
+        output::print_json(&doc);
         return Ok(if passed { 0 } else { 1 });
     }
     let color = std::io::stdout().is_terminal();

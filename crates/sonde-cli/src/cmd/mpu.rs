@@ -133,7 +133,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                 super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), false).await?,
             )?;
             match format {
-                Format::Json => println!("{}", output::json(&r)),
+                Format::Json => output::print_json(&r),
                 _ if r.uploads.is_empty() => {
                     println!("no incomplete uploads in {}/{}", t.bucket, t.prefix);
                     println!("Lifecycle: {}", r.lifecycle.message);
