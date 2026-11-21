@@ -1013,13 +1013,9 @@ fn admit_v2(
         }
     }
     // a virtual-hosted request names its bucket in the Host
-    let name = host
-        .rsplit_once(':')
-        .map_or(host, |(h, _)| h)
-        .to_ascii_lowercase();
-    let mut resource = match name.strip_suffix(".localhost") {
-        Some(bucket) if !bucket.is_empty() => format!("/{bucket}{}", parts.uri.path()),
-        _ => parts.uri.path().to_string(),
+    let mut resource = match host_bucket(host) {
+        Some(bucket) => format!("/{bucket}{}", parts.uri.path()),
+        None => parts.uri.path().to_string(),
     };
     let mut subs: Vec<&(String, String)> = query
         .iter()
@@ -1121,17 +1117,10 @@ fn decode(s: &str) -> String {
 /// Bucket and key from the Host header and the path. `<bucket>.localhost`
 /// hosts are virtual-hosted style; anything else is path style.
 pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) {
-    let host = host.rsplit_once(':').map_or(host, |(h, p)| {
-        if p.chars().all(|c| c.is_ascii_digit()) {
-            h
-        } else {
-            host
-        }
-    });
     let rest = path.strip_prefix('/').unwrap_or(path);
     let non_empty = |s: &str| (!s.is_empty()).then(|| decode(s));
-    if let Some(bucket) = host.strip_suffix(".localhost").filter(|b| !b.is_empty()) {
-        return (Some(bucket.to_string()), non_empty(rest));
+    if let Some(bucket) = host_bucket(host) {
+        return (Some(bucket), non_empty(rest));
     }
     match rest.split_once('/') {
         Some((b, k)) => (non_empty(b), non_empty(k)),
@@ -1142,17 +1131,22 @@ pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) 
 /// Whether a path-style path starts with an empty segment (`//bucket/key`):
 /// it names no bucket here, but the store may fold the slashes and find one.
 pub fn empty_first_segment(host: &str, path: &str) -> bool {
-    let host = host.rsplit_once(':').map_or(host, |(h, p)| {
-        if p.chars().all(|c| c.is_ascii_digit()) {
-            h
-        } else {
-            host
-        }
-    });
-    let virtual_hosted = host
-        .strip_suffix(".localhost")
-        .is_some_and(|b| !b.is_empty());
-    !virtual_hosted && path.starts_with("//")
+    host_bucket(host).is_none() && path.starts_with("//")
+}
+
+/// The bucket a virtual-hosted Host names (`<bucket>.localhost`), read as
+/// [`admit`] reads a host: in any case, with or without a port or the
+/// final dot of a fully qualified name.
+fn host_bucket(host: &str) -> Option<String> {
+    let name = host
+        .rsplit_once(':')
+        .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()))
+        .map_or(host, |(h, _)| h)
+        .to_ascii_lowercase();
+    let name = name.strip_suffix('.').unwrap_or(&name);
+    name.strip_suffix(".localhost")
+        .filter(|b| !b.is_empty())
+        .map(str::to_string)
 }
 
 /// Whether a request's bucket is `.` or `..`: no bucket is, and a store
@@ -2715,6 +2709,15 @@ mod tests {
             parse_target("data.localhost:9000", "/"),
             (Some("data".into()), None)
         );
+        // as admit reads a host: any case, a final dot
+        for host in ["mybucket.LOCALHOST:9000", "mybucket.localhost.:9000"] {
+            assert_eq!(
+                parse_target(host, "/key"),
+                (Some("mybucket".into()), Some("key".into())),
+                "{host}"
+            );
+            assert!(!empty_first_segment(host, "//key"), "{host}");
+        }
     }
 
     #[test]
