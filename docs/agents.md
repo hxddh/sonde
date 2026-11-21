@@ -14,7 +14,7 @@ sonde show after.sonde -f json                   # since.findings[].state: did i
 ```
 
 `run` leaves stdout to the program and prints its summary on stderr; read `show -f json`, not text (text may change
-in any release). `-o` keeps a handle on the run (`sonde runs` and the app list it too); without it, `show` takes the newest run of the program here.
+in any release). `-o` keeps a handle on the run (`sonde runs` and the app list it too); without it, `show` takes the newest run of the program here, and refuses (64) when there is none ([which run](cli.md#which-run)).
 
 ## The fields
 

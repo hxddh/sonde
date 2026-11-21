@@ -54,7 +54,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
     };
     let h = sonde_core::guard::human_bytes;
     match a.format {
-        Format::Json => println!("{}", output::json(&r)),
+        Format::Json => output::print_json(&r),
         _ => {
             println!(
                 "{}/{}: {} total ({}/month), via {}\n",

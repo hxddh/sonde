@@ -197,12 +197,11 @@ workflow_file() {
 
 # The run the latest earlier run of this workflow kept on the base
 # branch (a pull request's) or on this branch (a push); for a pull request
-# with none, its merge-base recorded here ([merge_base]); `auto` (said as
-# "no baseline yet" by every format of `check`) when there is none. Another
-# input is passed on as it is.
+# with none, its merge-base recorded here ([merge_base]); nothing when there
+# is none (sonde.toml's `[check] baseline` then applies). `none` (no baseline
+# at all, `check --baseline none`) and another input are passed on as they are.
 baseline() {
   case "${SONDE_BASELINE:-auto}" in
-    none | "") return ;;
     auto) ;;
     *)
       out baseline "$SONDE_BASELINE"
@@ -249,12 +248,10 @@ baseline() {
       out baseline "$work/merge-base-run/merge-base.sonde"
       return
     fi
-    warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget alone"
-    out baseline auto
+    warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
     return
   fi
-  warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget alone"
-  out baseline auto
+  warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
 }
 
 # `sonde check`'s flags, as the step's inputs give them, in ARGS.
@@ -283,7 +280,7 @@ report() {
   local args=("$SONDE_FILE") file="$work/report/sonde-report.html"
   mkdir -p "$(dirname "$file")"
   case "${SONDE_BASELINE:-}" in
-    "" | auto) ;;
+    "" | none) ;;
     *) args+=(--baseline "$SONDE_BASELINE") ;;
   esac
   [ "${SONDE_REDACT:-false}" != true ] || args+=(--redact)

@@ -224,7 +224,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         return Ok(4);
     }
     match format {
-        Format::Json => println!("{}", output::json(&layouts)),
+        Format::Json => output::print_json(&layouts),
         _ => {
             for (i, l) in layouts.iter().enumerate() {
                 if i > 0 {

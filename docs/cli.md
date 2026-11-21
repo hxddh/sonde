@@ -7,10 +7,10 @@
 | | |
 |---|---|
 | Global options | `--config-dir` (`$SONDE_CONFIG_DIR`), `--data-dir` (`$SONDE_DATA_DIR`) |
-| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (us-east-1), `--path-style`, `--ca-file`. Not on commands that only read files. sonde's own pace is `concurrency` and `rate-limit` in `config.toml` (`--concurrency`, `--rate` also taken, not listed). |
+| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (else an AWS URL's, `s3.<region>.amazonaws.com`; else `AWS_REGION`, `AWS_DEFAULT_REGION`; else us-east-1; `endpoints add` takes it so too), `--path-style`, `--ca-file`. Not on commands that only read files. sonde's own pace is `concurrency` and `rate-limit` in `config.toml` (`--concurrency`, `--rate` also taken, not listed). |
 | `-f`, `--format` | `text` (default) or `json`; `check` also writes `markdown` and `github`. A command that writes only text has none. |
 | Confirmation | What changes a store or deletes runs (`runs prune`, `bucket abort-uploads`, `bucket lifecycle`, `compare --replay`) is a dry run, exit 4; `--yes` does it. |
-| Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. A failed request prints its error, request id and the request line from the log. Keys, commands and other text sonde did not write reach the terminal with their control characters written out (`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor. A closed standard output (`sonde check \| head`) ends the output, not the command: the exit code is the command's own. |
+| Streams | The answer on stdout; hints, progress and the summary of `run` and `import` on stderr. Ctrl+C cancels the running job. A failed request prints its error, request id and the request line from the log. Keys, commands and other text sonde did not write reach the terminal with their control characters written out (`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor. JSON escapes them as JSON does (`\u007f`, `\u202e`). A closed standard output (`sonde check \| head`) ends the output, not the command: the exit code is the command's own. |
 | A run argument | A path or a name, resolved in order: a file; `runs/<name>[.sonde]`; `runs/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | Which run | When none is named: [below](#which-run). |
 | A program | `--name`, else `sonde.toml`'s `[program] name` for the program it `runs`, else what the command runs: the script an interpreter runs (`etl` for `python3 etl.py 5`), a module (`pytest` for `python -m pytest`), the command a shell is given (`aws` for `sh -c 'aws s3 cp …'`), a container's image (`aws-cli` for `docker run amazon/aws-cli …`), else the program (`load` for `./load --all`; `python3` for inline code, `python3 -c …`). Its arguments are not part of it: a run with others is another run of it, and the [fix loop](#the-fix-loop) says the command changed. Runs, baselines and trial verdicts go by it. |
@@ -19,11 +19,12 @@
 
 ### Which run
 
-When none is named, `show`, `compare`, `share` and `check` take the first there is of:
+When none is named, `show`, `compare`, `share` and `check` take:
 
-1. the newest run of `[program] name` (none: an error);
-2. the newest recorded in this folder (the run's `cwd`);
-3. the newest of any.
+1. the newest run of `[program] name`;
+2. else the newest recorded in this folder (the run's `cwd`).
+
+None is a usage error (64), never another folder's run: name the run (`sonde runs` lists them).
 
 Only runs from `run` or `proxy` count (never a replay, import or trial), in the runs folder or written elsewhere with
 `-o` (as `sonde runs` lists them). `check` says which it took. A `sonde.toml` is applied only to its own program's
@@ -37,7 +38,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | `sonde` | Three lines: the tour, a real run, where to read more. |
 | `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); when nothing was sent, how to point the program's own client at sonde, that client first. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). With no endpoint configured it goes where an AWS SDK would: the default credential chain and region (`AWS_REGION`, the profile's, else us-east-1; `AWS_ENDPOINT_URL` if set), said on stderr. An unknown option before `--`, or no endpoint and no AWS credentials, is a usage error (64); a command that cannot start leaves no run (70). |
 | ↳ `-o FILE` | Without it: `runs/<time>-<name>.sonde`, named by the program. With it: the run there. A file there is refused (64) unless `--force`. Recorded beside it and put in place at the end: two runs given one file each keep their own (the second under a fresh name, said). |
-| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`). The app's welcome demo runs the same job (`sonde demo-job export.py`, played in the app), opens its run on the finding, and *Apply and run again* writes the fix into `export.py` and runs it again. |
+| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`, refused when there as `FILE` is). The app's welcome demo runs the same job (`sonde demo-job export.py`, played in the app), opens its run on the finding, and *Apply and run again* writes the fix into `export.py` and runs it again. |
 | ↳ `--policy allow\|no-delete\|read-only` | What the program may do: [what each refuses, and which applies](recording.md#what-a-recorded-program-may-do). |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
@@ -74,9 +75,9 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | Option | |
 |---|---|
 | `--max-requests N`, `--max-waiting T`, `--max-errors N`, `--max-transfer SIZE` | Budget. Times as `2s`, `250ms` or ms; sizes as `10GiB`, `500MB` or bytes (the bytes the store sent). An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
-| `--baseline FILE\|auto\|https://…` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). |
-| `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
-| `--tolerance PCT` | Growth allowed over the baseline (10). |
+| `--baseline FILE\|auto\|https://…\|none` | The run is held to its requests, waiting, cost and errors with `--tolerance` of room, and to no warning it did not have. `auto`: the baseline set for the run's program (in the index, shared with the app). A URL is fetched (CI artifact, presigned). `none`: no baseline, not sonde.toml's either. A file that is not there, or an `http://` URL: 64. |
+| `--set-baseline` | Make this run its program's baseline, in the runs folder or written elsewhere with `-o` (refused for a run that failed: 64). |
+| `--tolerance PCT` | Growth allowed over the baseline (10; 0 or more). |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Its `[check]` takes each option above by its name (`max-requests = 5000`, `max-waiting = "2s"`, `baseline = "auto"`); flags win. |
 | `expect` | `sonde.toml` only: findings kept on purpose, each with why, `{ "obs.hot\|data/conf.json" = "rewritten by the scheduler", "obs.listed" = "…" }`: a finding's `identity` (as `show -f json` and the app's "Expected" give it) or a kind for all of it. Never a new warning; `show`, `run` and `check` say the reason with the finding (`expected` in JSON). |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |

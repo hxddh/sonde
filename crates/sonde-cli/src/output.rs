@@ -169,8 +169,87 @@ pub fn kv(rows: &[(String, String)]) -> String {
         .join("\n")
 }
 
+/// JSON as every command writes it: pretty, and what serde_json leaves raw
+/// in a string that a terminal would act on (DEL, C1, the marks that turn
+/// text's direction) as `\uXXXX`. The same text is then valid JSON and
+/// safe on a terminal: [`sonde_fmt::terminal`] finds nothing in it to write
+/// out.
 pub fn json(v: &impl serde::Serialize) -> String {
-    serde_json::to_string_pretty(v).unwrap_or_default()
+    let text = serde_json::to_string_pretty(v).unwrap_or_default();
+    match json_safe(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(o) => o,
+    }
+}
+
+/// [`json`]'s value on stdout, as it is: JSON never passes through
+/// [`print_out`], whose escapes are not JSON's.
+pub fn print_json(v: &impl serde::Serialize) {
+    let mut text = json(v);
+    text.push('\n');
+    if let Err(e) = Stdout.write_all(text.as_bytes()) {
+        panic!("failed printing to stdout: {e}");
+    }
+}
+
+/// Serialized JSON with what a terminal acts on escaped as JSON escapes it.
+/// (serde_json escapes C0 itself; what is left can only be in a string.)
+fn json_safe(text: &str) -> std::borrow::Cow<'_, str> {
+    let acts = |c: char| c == '\u{7f}' || (!c.is_ascii() && sonde_fmt::controls(c));
+    if !text.chars().any(acts) {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
+        if acts(c) {
+            out.push_str(&format!("\\u{:04x}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out.into()
+}
+
+/// A writer of JSON that escapes as [`json`] does, for JSON written as it
+/// is made (`show -f json`). A character cut between two writes waits for
+/// its rest.
+pub struct JsonWriter<W: Write> {
+    out: W,
+    tail: Vec<u8>,
+}
+
+impl<W: Write> JsonWriter<W> {
+    pub fn new(out: W) -> Self {
+        JsonWriter {
+            out,
+            tail: Vec::new(),
+        }
+    }
+}
+
+impl<W: Write> Write for JsonWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.tail.extend_from_slice(buf);
+        let whole = match std::str::from_utf8(&self.tail) {
+            Ok(_) => self.tail.len(),
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            // not UTF-8 at all: not serde_json's, written as it is
+            Err(_) => {
+                self.out.write_all(&self.tail)?;
+                self.tail.clear();
+                return Ok(buf.len());
+            }
+        };
+        let text = std::str::from_utf8(&self.tail[..whole]).expect("checked above");
+        self.out.write_all(json_safe(text).as_bytes())?;
+        self.tail.drain(..whole);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.write_all(&std::mem::take(&mut self.tail))?;
+        self.out.flush()
+    }
 }
 
 /// Rows as an aligned table, as `print!` writes them.
@@ -184,6 +263,30 @@ pub fn bytes(b: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 27.0 wrote a key's DEL and U+202E as `\x7f` and `\u{202e}`: no JSON.
+    #[test]
+    fn json_escapes_what_a_terminal_acts_on_as_json_does() {
+        let key = "a\u{7f}b\u{202e}c\u{9b}d\u{2066}é";
+        let text = super::json(&serde_json::json!({ key: key }));
+        assert!(
+            !text.contains(['\u{7f}', '\u{202e}', '\u{9b}', '\u{2066}']),
+            "{text}"
+        );
+        assert_eq!(sonde_fmt::terminal(&text), text);
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back[key], key);
+        // written as it is made, a character cut between writes
+        use std::io::Write;
+        let mut w = super::JsonWriter::new(Vec::new());
+        let raw = serde_json::to_vec(&key).unwrap();
+        for b in &raw {
+            w.write_all(std::slice::from_ref(b)).unwrap();
+        }
+        w.flush().unwrap();
+        let out = String::from_utf8(w.out).unwrap();
+        assert_eq!(out, super::json(&key));
+    }
+
     /// 24.0 broke a `--by key` row at a key's newline.
     #[test]
     fn a_key_s_newline_is_written_out_in_a_table() {

@@ -72,14 +72,10 @@ pub struct Cli {
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
     #[arg(long, global = true, help_heading = "Global options")]
     url: Option<String>,
-    /// Region for --url.
-    #[arg(
-        long,
-        global = true,
-        default_value = "us-east-1",
-        help_heading = "Global options"
-    )]
-    pub region: String,
+    /// Region for --url and `endpoints add` (default: an AWS URL's, else
+    /// AWS_REGION or AWS_DEFAULT_REGION, else us-east-1).
+    #[arg(long, global = true, help_heading = "Global options")]
+    pub region: Option<String>,
     /// Path-style addressing for --url.
     #[arg(long, global = true, help_heading = "Global options")]
     pub path_style: bool,

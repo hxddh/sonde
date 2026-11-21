@@ -214,6 +214,12 @@ impl Bench {
             "{args:?}: {}",
             String::from_utf8_lossy(&o.stderr)
         );
+        // (what a terminal acts on is escaped as JSON escapes it, never sent)
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            !text.contains(['\u{7f}', '\u{202e}', '\u{9b}']),
+            "{args:?}: {text}"
+        );
         let v: Value = serde_json::from_slice(&o.stdout).unwrap_or_else(|e| {
             panic!(
                 "{args:?}: {e}\n{}",
@@ -227,7 +233,12 @@ impl Bench {
     }
 }
 
-/// A store with a bucket, an object and an upload never completed.
+/// What a terminal acts on, in a key: DEL and the mark that turns text's
+/// direction.
+const PLANTED: &str = "logs/\u{202e}gpj\u{7f}.";
+
+/// A store with a bucket, an object (and one with [`PLANTED`] in its key)
+/// and an upload never completed.
 async fn store() -> MiniS3 {
     let store = MiniS3::start(true).await;
     let cfg = ClientConfig::new("t", &store.url, "us-east-1").unwrap();
@@ -242,6 +253,10 @@ async fn store() -> MiniS3 {
         S3Request::new("PutObject", http::Method::PUT)
             .bucket("data")
             .key("logs/a.json")
+            .body(Body::from("{}")),
+        S3Request::new("PutObject", http::Method::PUT)
+            .bucket("data")
+            .key(&format!("{PLANTED}json"))
             .body(Body::from("{}")),
         S3Request::new("CreateMultipartUpload", http::Method::POST)
             .bucket("data")
@@ -469,6 +484,35 @@ async fn every_json_output_is_as_its_schema_says() {
         assert_eq!(s["engine"], "SlateDB DbReader", "{listed}");
         assert_eq!(s["where"], "main.rs:2", "{listed}");
         holds("show", &shown);
+    }
+    // a key with what a terminal acts on (DEL, a mark that turns text's
+    // direction): every output is still JSON, the key in it as it is (27.0
+    // wrote `\x7f` and `\u{202e}`, which no JSON reader takes)
+    {
+        let mut planted = sonde_analysis::run::RunFile::open(&run).unwrap();
+        for r in planted.records.iter_mut().filter(|r| r.key.is_some()) {
+            r.key = Some(format!("{PLANTED}{}", r.id).into());
+        }
+        let file = b.path("data/runs/planted.sonde");
+        sonde_analysis::import::save(&planted, &file).unwrap();
+        let p = file.to_str().unwrap();
+        let split = b.json(&["show", p, "--by", "key", "-f", "json"], 0).await;
+        assert!(split.to_string().contains(PLANTED), "{split}");
+        holds("show-by", &split);
+        holds(
+            "show",
+            &b.json(&["show", p, "--all", "-f", "json"], 0).await,
+        );
+        holds(
+            "check",
+            &b.json(&["check", p, "--baseline", s, "-f", "json"], 0)
+                .await,
+        );
+        holds(
+            "compare",
+            &b.json(&["compare", s, p, "-f", "json"], 0).await,
+        );
+        holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
     }
     for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
         holds(

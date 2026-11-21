@@ -188,7 +188,7 @@ async fn diff(
             if !relied.is_empty() {
                 doc["relies"] = serde_json::json!(relied);
             }
-            println!("{}", output::json(&doc));
+            output::print_json(&doc);
         }
         _ => {
             let color = std::io::stdout().is_terminal();
@@ -316,7 +316,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         c.findings.clear();
     }
     if matches!(a.format, Format::Json) {
-        println!("{}", output::json(&c));
+        output::print_json(&c);
         return Ok(0);
     }
     let color = std::io::stdout().is_terminal();
