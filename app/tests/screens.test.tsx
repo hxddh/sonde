@@ -60,6 +60,18 @@ test("versions open from the object: a deleted key's, found by its name", async 
   expect(app.shows("text:On")).toBe(true);
 });
 
+test("Buckets' sections answer ⌥⌘1–4, but not while typing (Windows reports AltGr, which types, as Ctrl+Alt)", async () => {
+  const app = await withDemo("demo");
+  await app.type("id:listing-filter", "a");
+  await app.keyboard.press("mod+alt+2");
+  expect(app.shows("id:screen-browse")).toBe(true);
+  expect(app.shows("id:screen-capacity")).toBe(false);
+  // (Return leaves the field)
+  await app.submit("id:listing-filter");
+  await app.keyboard.press("mod+alt+2");
+  await app.waitFor("id:screen-capacity", { timeout: 5000 });
+});
+
 test("capacity: why the bucket is this big", async () => {
   const app = await withDemo("demo");
   await place(app, "capacity");
@@ -236,20 +248,21 @@ test("reduced motion: the objects and the section row are there at once, still",
   expect(app.shows("id:store-section-capacity")).toBe(true);
 });
 
-test("a number typed in Settings is saved a moment after the last key", async () => {
+test("a number typed in Settings is saved a moment after the last key, silently", async () => {
   const app = await open("../App.tsx", { ...desktop, clock: {} });
+  const { api } = await import("../src/native");
+  const price = () => api.settings().prices["default-per-gib-month"];
   await place(app, "settings");
   await app.waitFor("id:price");
   await app.clear("id:price");
   await app.type("id:price", "0.02");
   // the clock stands still: nothing saved yet, however long the test takes
-  expect(app.shows("text:Settings saved")).toBe(false);
   await app.clock!.runFor(400);
-  expect(app.shows("text:Settings saved")).toBe(false);
-  // 0.7 s after the last key it is saved, with Undo (the toast shows in the window that has the focus, else the main one)
+  expect(price()).not.toBe(0.02);
+  // 0.7 s after the last key it is saved, as a system's settings apply: no toast says so
   await app.clock!.runFor(400);
-  await app.waitFor("text:Settings saved >> nth=0");
-  await app.press("text:Undo >> nth=0");
+  await app.waitUntil(() => price() === 0.02);
+  expect(app.shows("text:Settings saved")).toBe(false);
 });
 
 // --- what failed, said: the engine's answers stood in for (open's `modules`), so no store has to fail for it

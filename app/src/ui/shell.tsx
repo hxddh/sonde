@@ -2,7 +2,7 @@
 // toolbar), the sidebar with the places and the current place's list, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
+import { computed, ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Select, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
@@ -47,15 +47,20 @@ export function ShowSidebar() {
 export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" };
 export const AREA_KEY: Record<Area, string> = { run: "mod+1", runs: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
 
-/** File › Open Recent: the newest runs, by the name the list gives them. */
-function recentMenu(): MenuItem[] {
+/** The newest runs, read again only as the list changes: a menu rebuilt for a place's check mark reads none. */
+const recentRuns = computed<RunInfo[]>(() => {
   runsTick();
-  let list: RunInfo[] = [];
   try {
-    list = api.runs.list().slice(0, 10);
+    return api.runs.list().slice(0, 10);
   } catch {
     // no runs directory yet
+    return [];
   }
+});
+
+/** File › Open Recent: the newest runs, by the name the list gives them. */
+function recentMenu(): MenuItem[] {
+  const list = recentRuns();
   if (!list.length) return [{ label: t("timeline.empty"), disabled: true }];
   return list.map((s) => ({
     label: `${runName(s)} — ${date(s.created)}`,
@@ -73,16 +78,16 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
     {
       label: t("menu.file"),
       submenu: [
-        { label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") },
         { label: t("runs.openFile"), shortcut: "mod+o", onSelect: () => void openRunFile() },
         { label: t("runs.openRecent"), submenu: recentMenu() },
         { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
-        ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: t("menu.quit") } as const]),
+        ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: platform.os === "windows" ? t("menu.exit") : t("menu.quit") } as const]),
       ],
     },
     { label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
-    { label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] },
+    // (the system's own Window menu: macOS's; elsewhere the window's title bar has these)
+    ...(mac ? [{ label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] as MenuItem[] }] : []),
   ];
 }
 

@@ -241,10 +241,9 @@ export function start(cmd: string, endpoint: string): boolean {
   return true;
 }
 
-/** Ends the running program. */
+/** Ends the running program (one still starting, as soon as it runs): said "Stopped" only when it was. */
 export function stop() {
-  killed = true;
-  api.runs.kill();
+  if (api.runs.kill()) killed = true;
 }
 
 /** Text typed into the program's terminal. */

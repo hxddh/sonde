@@ -294,7 +294,7 @@ export function openLink(url: string) {
     const path = kv === undefined ? undefined : part(kv.slice(5).replace(/\+/g, "%20"));
     if (!path || !linkable(path)) return;
     if (range) rangeOnOpen.set({ name: path.split(/[\\/]/).pop() ?? path, range });
-    openPaths([path]);
+    void openPaths([path]);
   } else if (what === "run") {
     const name = part(rest.slice(1));
     const s = api.runs.list().find((x) => x.name === name);
@@ -325,7 +325,7 @@ export function openLink(url: string) {
  * open is opened. */
 export function openLaunch(args: string[], cwd: string) {
   const files = once(launchFiles(args, cwd));
-  if (files.length) openPaths(files);
+  if (files.length) void openPaths(files);
 }
 
 /** The files the system opened the app with (a double click on a `.sonde`,
@@ -333,7 +333,7 @@ export function openLaunch(args: string[], cwd: string) {
  * opened as a drop on the window is. */
 export function openSystemFiles(paths: string[]) {
   const files = once(paths.filter(Boolean));
-  if (files.length) openPaths(files);
+  if (files.length) void openPaths(files);
 }
 
 /** Of `paths`, those not handed over a moment ago. Where the app runs once,
@@ -359,7 +359,7 @@ export function launchFiles(args: string[], cwd: string): string[] {
 
 /** Opens run files dropped on the window; anything else is said to be no run. */
 export function openDropped(uris: string[]) {
-  openPaths(
+  void openPaths(
     uris.flatMap((uri) => {
       const path = pathOf(uri);
       if (/^file:/i.test(uri)) return [path];
@@ -379,8 +379,8 @@ export function wouldOpen(uris: string[]): { opens: number; others: number } {
   return { opens, others: uris.length - opens };
 }
 
-/** Opens run files by path; anything else is said to be no run. */
-export function openPaths(paths: string[]) {
+/** Opens run files by path, each read off the interface's thread; anything else is said to be no run. */
+export async function openPaths(paths: string[]) {
   let last: string | null = null;
   for (const path of paths) {
     const name = path.split(/[\\/]/).pop() ?? path;
@@ -389,7 +389,7 @@ export function openPaths(paths: string[]) {
       continue;
     }
     try {
-      last = api.runs.importPath(path);
+      last = await api.runs.importPath(path);
     } catch (e) {
       // a log or JSON that is no traffic sonde reads: said as plainly as any other file
       if (name.toLowerCase().endsWith(".sonde")) report(e);
