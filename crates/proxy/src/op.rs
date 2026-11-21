@@ -112,7 +112,14 @@ pub fn classify<K: AsRef<str>, V: AsRef<str>>(
                 _ => "Unknown",
             }
         }
-        (Some(_), Some(_)) if !plain_object(query) => {
+        // a subresource sonde knows names the request, whatever else is in
+        // the query (`?renameObject&zzz&x-id=PutObject` is a rename)
+        (Some(_), Some(_))
+            if !plain_object(query)
+                && !query
+                    .iter()
+                    .any(|(k, _)| OBJECT_SUBRESOURCES.contains(&k.as_ref())) =>
+        {
             // a subresource sonde does not know: the SDKs' own marker, when
             // it names an operation sonde does, or none (never the plain
             // read, write or delete it would otherwise look like)
@@ -413,6 +420,17 @@ mod tests {
         assert_eq!(
             classify("PUT", Some("b"), None, &q(&["encryption"]), none),
             "PutBucketEncryption"
+        );
+        // whatever else the query holds, and whatever the SDKs' marker says
+        assert_eq!(
+            classify(
+                "PUT",
+                Some("b"),
+                Some("k"),
+                &q(&["renameObject", "zzz", "x-id=PutObject"]),
+                &src
+            ),
+            "RenameObject"
         );
         // a rename takes its source's key away; re-encrypting keeps the data
         assert!(is_destructive("RenameObject"));
