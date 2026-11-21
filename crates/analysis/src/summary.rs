@@ -161,8 +161,10 @@ pub fn summarize(records: &[Record]) -> Summary {
         e.0.misses += u64::from(is_miss(r));
         e.0.bytes_up += up;
         e.0.bytes_down += down;
-        e.0.max_ms = e.0.max_ms.max(r.latency_ms);
-        e.1.push(r.latency_ms);
+        // taken as everywhere: never negative, never past a day
+        let took = crate::signals::took_ms(r);
+        e.0.max_ms = e.0.max_ms.max(took);
+        e.1.push(took);
     }
     if let (Some(f), Some(l)) = (first, last) {
         s.seconds = (l - f).num_microseconds().unwrap_or(0) as f64 / 1e6;
@@ -615,6 +617,21 @@ mod tests {
         bucket.rare_mut().error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
         assert!(is_miss(&key) && !is_failure(&key));
         assert!(!is_miss(&bucket) && is_failure(&bucket));
+    }
+
+    /// 27.0's review: a time past a day (a clock's jump in an imported log)
+    /// was the summary's as it was, and a day in the timeline's.
+    #[test]
+    fn a_requests_time_is_taken_as_the_timeline_takes_it() {
+        let rs = [
+            rec("GetObject", 200, 1e12, 0),
+            rec("GetObject", 200, -5.0, 10),
+        ];
+        let s = summarize(&rs);
+        let sig = crate::signals::signals(&rs, &Default::default());
+        assert_eq!(s.operations[0].max_ms, reqlog::MAX_LATENCY_MS);
+        assert_eq!(Some(s.operations[0].p99_ms), sig.latency.p99_ms);
+        assert_eq!(s.operations[0].p50_ms, 0.0);
     }
 
     #[test]

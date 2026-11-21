@@ -31,7 +31,7 @@ From `show -f json` ([schema](schemas/show.schema.json)):
 | `findings[].identity`, `expected` | The same finding across runs; `expected`: why the project keeps it on purpose (`[check] expect` in `sonde.toml` names it by identity): leave it alone, do not "fix" it. |
 | `verify` | The command that records the program again, in `run.cwd`. |
 | `since.findings[].state` | Against the program's run before: `fixed`, `less`, `more`, `new`, `back`, `open`. A fixed one has `measured` and `savedText`: the saving, measured. |
-| `since.change.commandChanged`, `workloadChanged` | The command changed, or the workload grew by half or more: what moved is not counted as a fix. Check the job did the same work. |
+| `since.change.commandChanged`, `workloadChanged` | The command changed, or the workload grew or shrank ([cli.md](cli.md)): what moved is not counted as a fix. Check the job did the same work. |
 | `trials[]` | Verdicts under faults (`sonde run --trial -- …`): `standing` is `survived`, `degraded`, `broke`, `untested` or `refused` ([trials](trials.md)). Not survived: `where`, the request it turns on (`kind`, `key`, and `caller`, the line that sent it), and `advice`, what to change: `text` in English, and as a phrase (`key`, e.g. `trial.advice.retries`, its `args`, e.g. `sdk`, `setting`). |
 
 `--all` adds every operation and each finding's operations and fixes whole; it is large on a large run.
