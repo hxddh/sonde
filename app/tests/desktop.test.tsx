@@ -4,7 +4,7 @@ import { expect, open, test } from "nsh/test";
 import { openDemo, openExample, desktop, place } from "./helpers";
 import type { Signals } from "../src/types";
 
-test("a first launch welcomes; its demo runs, opens on its finding, and the fix applied says what it saved", async () => {
+test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in the inspector, and the fix applied says what it saved", async () => {
   const app = await open("../App.tsx", desktop);
   expect(app.shows("id:welcome")).toBe(true);
   // (on Windows the real cursor moves on a focus change and can cancel a simulated press: pressed again only while
@@ -14,16 +14,23 @@ test("a first launch welcomes; its demo runs, opens on its finding, and the fix 
     await app.press("id:welcome-demo");
     await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
   }
-  // one press: the job ran, and its run is open on its finding — the line that sent it and the fix
+  // one press: the job ran, and its run is open on its first diagnosis — in the inspector, the line that sent it and
+  // the fix for the program's own SDK alone (no SDK to choose: one fix shown), Apply the screen's one primary
   await app.waitFor("id:screen-runs", { timeout: 20000 });
-  await app.waitFor("id:finding-advice", { timeout: 20000 });
+  await app.waitFor("id:inspector >> id:fix", { timeout: 20000 });
   await app.waitFor("id:fix-callers >> text:/^export\\.py:\\d+ read_reports/");
-  // the fix applied and the job run again: the finding fixed, its saving measured beside the predicted one
-  await app.press("id:finding-apply");
-  await app.waitFor("text:/^Since the run before: 1 fixed: .*, saved 3 requests \\(predicted 3\\)/", { timeout: 20000 });
-  // (no finding left: its operations all shown, none narrowed away)
-  expect(app.shows("text:Nothing here yet")).toBe(false);
+  expect(app.shows("id:fix-code")).toBe(true);
   expect(app.shows("id:finding-advice")).toBe(false);
+  expect(app.shows("id:clear-filter")).toBe(true);
+  // the run's sentence is where its time went
+  expect(app.shows("text:/^Time [\\d.]+ m?s: your program's own /")).toBe(true);
+  // the fix applied and the job run again: the finding fixed, the time it saved measured beside the predicted (or
+  // within the runs' noise)
+  await app.press("id:finding-apply");
+  await app.waitFor("text:/^Since the run before: fixed: .* — (.* less|.* more|within noise)/", { timeout: 20000 });
+  // (no finding left: its operations all shown, none narrowed away, no fix in an inspector)
+  expect(app.shows("text:Nothing here yet")).toBe(false);
+  expect(app.shows("id:fix")).toBe(false);
   expect(app.shows("id:sidebar")).toBe(true);
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:sidebar")).toBe(false);
@@ -280,15 +287,15 @@ test("prefixes are named by what tells them apart: the shared start once, the en
 
 test("a trial reads as figures (the faults and retries, the wait, the load), and what went wrong is said once, by its reasons", async () => {
   const { trialText, trialReasons } = await import("../src/ui/history");
-  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0 };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
-  // why: Rust's phrases in the reader's language (two make one sentence), its English where a reason has no phrase
-  const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2, reasons: ["2 writes failed and were never sent again, and the program exited 0", "an older reason"] };
-  expect(trialReasons(why)).toEqual(why.reasons);
+  // why: its finding's phrases in the reader's language (two make one sentence); none, nothing is said
+  const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2 };
+  expect(trialReasons(why)).toEqual([]);
   const said = [[{ key: "trial.why.writes", args: { n: "2", s: "s", it: "them", was: "were" } }, { key: "trial.why.exit0" }], []];
-  expect(trialReasons({ ...why, reasonsText: said })).toEqual(why.reasons);
-  const text = [trialText(why), ...trialReasons({ ...why, reasonsText: said })].join(" · ");
+  expect(trialReasons({ ...why, finding: { why: said } })).toEqual(["2 writes failed and were never sent again, and the program exited 0"]);
+  const text = [trialText(why), ...trialReasons({ ...why, finding: { why: said } })].join(" · ");
   expect(text.match(/never sent again/g)?.length).toBe(1);
   // too few waits to tell jitter from step: neither is said
   const { jitter: _, ...unsaid } = base;
@@ -300,14 +307,14 @@ test("a trial reads as figures (the faults and retries, the wait, the load), and
 });
 
 test("a trial is followed scenario by scenario: waiting, running, done with its standing", async () => {
-  const { trialSteps, foldTrial, trialDone, worstStanding, scenarioLabel } = await import("../src/trials");
+  const { trialSteps, foldTrial, trialDone, scenarioLabel } = await import("../src/trials");
   let steps = trialSteps([{ name: "slowdown", about: "503 SlowDown" }, { name: "lost-answer", about: "" }]);
   expect(steps.map((s) => s.state)).toEqual(["waiting", "waiting"]);
   steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
   // the program's output and its recording change nothing in the list
   steps = foldTrial(steps, { data: "hello\n", scenario: "slowdown" });
   expect(steps.map((s) => s.state)).toEqual(["running", "waiting"]);
-  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0, reasons: ["1 write never sent again"] } as import("../src/types").Trial;
+  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0 } as import("../src/types").Trial;
   steps = foldTrial(steps, { scenario: "slowdown", state: "done", trial });
   // a late "running" does not take a verdict back; a scenario not chosen is left out
   steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
@@ -316,10 +323,6 @@ test("a trial is followed scenario by scenario: waiting, running, done with its 
   expect(steps[0].trial?.standing).toBe("broke");
   expect(steps.length).toBe(2);
   expect(trialDone(steps)).toBe(1);
-  expect(worstStanding([{ standing: "survived" }, { standing: "broke" }])).toBe("broke");
-  expect(worstStanding([{ standing: "survived" }, { standing: "degraded" }])).toBe("degraded");
-  expect(worstStanding([{ standing: "survived" }, { standing: "untested" }])).toBe(null);
-  expect(worstStanding(undefined)).toBe(null);
   // a project's own scenario keeps its name
   expect(scenarioLabel("lost-answer")).toBe("A write's answer is lost");
   expect(scenarioLabel("my-own")).toBe("my-own");
@@ -699,15 +702,15 @@ test("a stretch of time in a link: read from a query or a hash, as slices of the
 
 test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {
   const { trialText } = await import("../src/ui/history");
-  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0, reasons: [] } as unknown as import("../src/types").Trial;
+  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0 } as unknown as import("../src/types").Trial;
   expect(trialText({ ...base, requests: 1, cleanRequests: 7 })).toBe("1 fault, 0 retried · 1 of the clean run's 7 requests");
   expect(trialText({ ...base, requests: 14, cleanRequests: 7 })).toBe("1 fault, 0 retried · 2.0× the requests");
 });
 
 test("a scenario's verdicts over the program's runs read in a few words; the refused have a tone of their own", async () => {
-  const { trialSince, STANDING, toTryAgain } = await import("../src/ui/history");
+  const { trialSince, STANDING } = await import("../src/ui/history");
   const { date, hm } = await import("../src/format");
-  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0 };
   const at = ["2026-11-10T09:00:00Z", "2026-11-11T09:00:00Z", "2026-11-12T09:00:00Z"];
   // one verdict has no history to tell
   expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }] })).toBe(null);
@@ -721,9 +724,6 @@ test("a scenario's verdicts over the program's runs read in a few words; the ref
   // a refusal by the policy is never a failure's red, nor a degraded run's amber
   expect(STANDING.refused).toBe("refused");
   expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);
-  // "Try again what broke" takes up what did not survive, the refused with it
-  const verdicts = (["survived", "degraded", "broke", "untested", "refused"] as const).map((standing) => ({ ...base, scenario: standing, standing }));
-  expect(toTryAgain(verdicts).map((x) => x.scenario)).toEqual(["degraded", "broke", "refused"]);
 });
 
 test("what looks pressable answers a press: a chart without the pointer, its how to read, a figure, New run, the sidebar's toggle", async () => {

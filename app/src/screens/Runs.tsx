@@ -19,19 +19,19 @@ import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { applyDemoFix, isDemoJob } from "../demo";
 import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, endpoints, findingOnOpen, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, useEndpoint } from "../store";
-import type { LogLine, Observation, RunInfo, RunView, Trial } from "../types";
+import type { Diagnosis, LogLine, Observation, RunInfo, RunView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
 import { Await, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, PANE, windowFace, glideLayout } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
-import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, RunHeader, RunList } from "../ui/runparts";
-import { findingMarks, operationsText, runMeta, storeFixOf } from "../ui/runview";
+import { linesOf, OperationDetail, OperationsTable, OutputTable, RunHeader, RunList } from "../ui/runparts";
+import { Diagnoses, diagnosesOf, findingMarks, FixDetail, headOf, operationsText, runMeta, storeFixOf } from "../ui/runview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/runview";
 import { HistoryPane, scenarioLabel } from "../ui/history";
-import { TrialDialog } from "../ui/trial";
+import { TrialDialog, trialsKept, trying } from "../ui/trial";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GROUP_BY, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
@@ -46,10 +46,6 @@ type Pane = "operations" | "time" | "runs";
 
 const program = programOf;
 
-/** Around the findings' card in the pane's body: the body's padding, the findings' heading and the gaps (points). */
-const FINDINGS_HEAD = 28 + 36 + 12;
-/** The least the operations keep under the findings: their titles and two rows, with the card's border. */
-const OPERATIONS_LEAST = 31 + 2 * 30 + 2;
 /** How many operations "Copy operations as a table" takes: what a paste into a sheet or a ticket holds well. */
 const COPY_ROWS = 20000;
 /** The budget a run's program has in its project's sonde.toml (null: none, or no folder to find it from). */
@@ -74,6 +70,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const rec = signal<number | null>(null);
   const opHighlight = signal<number[]>([]);
   const outHighlight = signal<number[]>([]);
+  // the diagnosis chosen: its operations narrowed, its fix in the inspector
   const filter = signal<number | null>(null);
   // a kind of request chosen (Group by's row, the Time pane's by-kind table): the operations that sent one
   const kind = signal<string | null>(null);
@@ -85,8 +82,6 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   });
   const replaying = signal(false);
   const tryingFaults = signal(false);
-  // "Try again what broke", from the Runs pane: the scenarios that did not survive
-  const tryingAgain = signal<Trial[] | null>(null);
   // Group by: each operation, or the operations split by a dimension
   const groupBy = signal<GroupBy>("none");
   // a signal pressed in the header: the Time pane, on its chart
@@ -95,7 +90,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
 
-  const read = analysis(() => props.path, props.tick);
+  // read again as it grows, and when a trial of it ends (what broke is among its findings)
+  const read = analysis(() => props.path, () => `${props.tick()}:${trialsKept()}`);
   const view = read.view;
   // the run against its program's run before: its findings' states, what was fixed
   const since = sinceLastOf(() => props.path);
@@ -132,13 +128,26 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const o = paneOnOpen();
     if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
   });
-  // the demo's run: its first finding open, its line of code and its fix in view
+  // the demo's run: its first diagnosis chosen, its line of code and its fix in the inspector
   effect(() => {
     const o = findingOnOpen();
     const v = view();
     // (once the run is read: a run with no finding there opens on all its operations)
-    if (o && v && o.path === props.path) untracked(() => batch(() => (o.index < v.observations.length && filter.set(o.index), findingOnOpen.set(null))));
+    if (o && v && o.path === props.path) untracked(() => batch(() => (o.index < diagnosesOf(v).length && filter.set(o.index), findingOnOpen.set(null))));
   });
+  /** The diagnosis chosen, while the run has it. */
+  const diagnosis = () => {
+    const v = view();
+    const i = filter();
+    return v && i !== null ? (diagnosesOf(v)[i] ?? null) : null;
+  };
+  /** The finding whose operations the chosen diagnosis narrows the table to: its headline, when it has any. */
+  const narrowedTo = (): number | null => {
+    const v = view();
+    const d = diagnosis();
+    const o = v && d ? headOf(v, d) : undefined;
+    return d && o && (o.operationsTotal ?? o.operations.length) > 0 ? d.findings[0] : null;
+  };
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);
   effect(() => {
@@ -209,10 +218,10 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const z = stretch();
     return z && z[0] === z[1] ? z[0] : null;
   };
-  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice —
+  /** The operations shown: all, those the chosen diagnosis is about, and those running in the chosen slice —
    * narrowed where they are kept, whatever order the table has them in. */
   effect(() => {
-    const f = filter();
+    const f = narrowedTo();
     const w = window();
     const k = kind();
     const failed = failedIn() !== null;
@@ -271,10 +280,13 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     });
     showOperation();
   };
+  /** Closes what the inspector shows: an operation or a request (back to the chosen diagnosis's fix, if one is
+   * chosen), else the fix, letting the diagnosis go. */
   const closeInspector = () => {
     glideLayout();
     // at once: the inspector goes whole, not its request first and then what held it
     batch(() => {
+      if (op() === null && rec() === null) filter.set(null);
       op.set(null);
       rec.set(null);
       opHighlight.set([]);
@@ -357,7 +369,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const tryable = ranCommand(view()?.header.command) && !view()?.trial;
     return [
       // the same command under faults is asked first what will run (a trial is no run of its own)
-      ...(tryable ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running(), run: () => tryingFaults.set(true) }] : []),
+      ...(tryable ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running() || trying(), run: () => tryingFaults.set(true) }] : []),
       ...(isAvailable ? [{ id: "compare-open", label: t("compare.open"), icon: "git-compare-arrows" as const, run: (anchor?: ViewRef) => compareMenu(anchor) }] : []),
       // the same requests on another store: will it work there? (one level, in ⋯ and the palette)
       { id: "run-another", label: t("compare.another"), icon: "repeat-2" as const, disabled: !!running(), run: () => replaying.set(true) },
@@ -409,7 +421,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     <If
       when={record()}
       else={
-        <If when={episode()} else={<Empty icon="list-filter" text={t("runs.pickOperation")} />}>
+        <If when={episode()} else={<If when={diagnosis()} else={<Empty icon="list-filter" text={t("runs.pickOperation")} />}>{(d) => fix(d)}</If>}>
           {(e) => <OperationDetail path={props.path} episode={e()} shared={view()?.sharedNotes ?? []} onRecord={(id) => rec.set(id)} onBack={back ? () => op.set(null) : undefined} />}
         </If>
       }
@@ -468,25 +480,38 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   };
 
   const findings = (v: () => RunView) => (
-    <Observations
-      onStore={openStoreFix}
+    <Diagnoses
       view={v()}
       dense={dense()}
-      // a narrow pane keeps the line for what was found; what it saves is in the finding once chosen
+      // a narrow pane keeps the line for what was found; what it saves is in the inspector
       narrow={!roomy() || inspecting()}
-      onExpect={(o) => copy(`expect = { ${JSON.stringify(o.identity)} = ${JSON.stringify(t("expect.reason"))} }`, t("expect.copied"))}
-      filter={filter()}
-      onFilter={(f) => filter.set(f)}
+      selected={filter()}
+      onSelect={(i) => {
+        // the fix opening moves the table over, smoothly; an operation or a request shown gives way to it
+        if (!inspecting()) glideLayout();
+        batch(() => (filter.set(i), op.set(null), rec.set(null), opHighlight.set([])));
+      }}
       states={statesOf(since())}
+      // a short window keeps a few rows in view (the rest scroll): the operations need their rows
+      maxHeight={box().h < BREAK.short ? SIZES.findingsShort : Math.max(SIZES.findingsLeast, Math.round(box().h * SIZES.findingsShare))}
+    />
+  );
+  /** A diagnosis in the inspector: its fix, and what can be done with it. */
+  const fixState = (d: Diagnosis) => {
+    const id = headOf(view()!, d)?.identity;
+    const f = id ? statesOf(since())[id] : undefined;
+    return f && f.state !== "open" && f.state !== "fixed" ? f.state : null;
+  };
+  const fix = (d: () => Diagnosis) => (
+    <FixDetail
+      view={view()!}
+      diagnosis={d()}
+      state={fixState(d())}
+      onStore={openStoreFix}
+      onExpect={(o) => copy(`expect = { ${JSON.stringify(o.identity)} = ${JSON.stringify(t("expect.reason"))} }`, t("expect.copied"))}
       onOpenCode={(place) => api.runs.openCode(props.path, place).catch(report)}
       // the demo's job: its fix applied to its code, and run again
-      onApply={isDemoJob(v().header) ? () => void applyDemoFix(v().header.cwd) : undefined}
-      // a short window keeps two findings in view (the rest scroll): the operations need their rows;
-      // a finding chosen there gets the room to read what to change
-      // (a finding chosen there opens its advice in what the pane's body has left once the operations
-      // have their titles and two rows: the advice scrolls within the findings, the table keeps rows)
-      // (rounded down to whole findings by the findings themselves: no row is cut through its text)
-      maxHeight={box().h < BREAK.short ? (filter() === null ? SIZES.findingsShort : Math.max(SIZES.findingsShortOpen, bodyHeight() - FINDINGS_HEAD - OPERATIONS_LEAST)) : Math.max(SIZES.findingsLeast, Math.round(box().h * (filter() === null ? SIZES.findingsShare : SIZES.findingsShareOpen)))}
+      onApply={isDemoJob(view()!.header) ? () => void applyDemoFix(view()!.header.cwd) : undefined}
     />
   );
   /** When: the run's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
@@ -497,7 +522,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   );
   const body = (v: () => RunView) => {
     if (pane() === "time") return <TimePane view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTrials={() => tryingFaults.set(true)} />;
     // a program that ended having sent nothing: how to point it at sonde
     if (!live() && v().operationsTotal === 0 && lastRun()?.path === props.path) return <NoRequests />;
     // with output (or a program running now): the output beside the operations, each lighting up the other
@@ -541,7 +566,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       <If when={!live() && ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
-          variant="primary"
+          // one primary a screen: a diagnosis's Apply, while it shows, is
+          variant={applying() ? "outline" : "primary"}
           icon="play"
           label={t("runs.runAgain")}
           onPress={async () => {
@@ -563,7 +589,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
 
   const filterNote = () => {
     const v = view();
-    const f = filter();
+    const f = narrowedTo();
     const w = window();
     const k = kind();
     if (!v || (f === null && !w && k === null)) return null;
@@ -621,23 +647,24 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           </If>
         </If>
       </View>
-      <View class="min-h-0 flex-1 px-4 pb-4 pt-3" onLayout={({ bounds }) => bodyHeight.set(Math.round(bounds.size.height))}>
+      <View class="min-h-0 flex-1 px-4 pb-4 pt-3">
         {body(v)}
       </View>
     </View>
   );
 
-  // the room under the tabs, as it is laid out: what the findings may take of it
-  const bodyHeight = signal(0);
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;
-  const inspecting = () => !!(episode() || record());
+  const inspecting = () => !!(episode() || record() || diagnosis());
+  /** The inspector shows a diagnosis's Apply (the demo's job): the screen's one primary. */
+  const applying = () => !episode() && !record() && !!diagnosis() && isDemoJob(view()?.header) && !!headOf(view()!, diagnosis()!)?.fixes?.length;
+  const inspectorTitle = () => (record() ? t("inspector.request") : episode() ? t("inspector.operation") : diagnosis() ? t("fix.title") : t("inspector.operation"));
   // the findings a line each, the one chosen in full, so the operations keep the room; a tall window has it for both
   const dense = () => live() || hasOutput() || box().h < BREAK.tall;
 
   const inspector = () => (
     <View testID="inspector" class={`flex-1 bg-inspector ${roomy() ? "border-l border-border" : ""}`}>
-      <PanelHeader icon={record() ? "radio" : "layers"} title={record() ? t("inspector.request") : t("inspector.operation")} onClose={closeInspector} closeTestID="inspector-close">
+      <PanelHeader icon={record() ? "radio" : episode() || !diagnosis() ? "layers" : "sparkles"} title={inspectorTitle()} onClose={closeInspector} closeTestID="inspector-close">
         {/* the operation's commands, as its context menu has them: reached by the keyboard too */}
         <If when={!record() && op() !== null}>
           <More testID="operation-more" actions={() => (op() === null ? [] : operationActions(op()!))} />
@@ -667,7 +694,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
               else={
                 <View class="flex-1">
                   {main(v)}
-                  <SidePanel open={inspecting()} onClose={closeInspector} size="narrow" label={record() ? t("inspector.request") : t("inspector.operation")} returnFocus={() => opsAnchor}>
+                  <SidePanel open={inspecting()} onClose={closeInspector} size="narrow" label={inspectorTitle()} returnFocus={() => opsAnchor}>
                     {inspector()}
                   </SidePanel>
                 </View>
@@ -692,13 +719,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
         )}
       </If>
       <If when={tryingFaults()}>
-        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} onOpen={open} onAgain={(fresh) => batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), open(fresh)))} />
-      </If>
-      <If when={tryingAgain()}>
-        {(again) => (
-          // a fresh run, then what did not survive: the fresh run opens on its Runs pane
-          <TrialDialog path={props.path} again={again()} onClose={() => tryingAgain.set(null)} onOpen={open} onAgain={(fresh) => batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), open(fresh)))} />
-        )}
+        {/* started, the run's History follows it */}
+        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onStarted={() => pane.set("runs")} />
       </If>
       <ReplayDialog
         path={props.path}

@@ -1935,25 +1935,6 @@ pub fn load_with_history(run: &std::path::Path, program: Option<&str>) -> Vec<Tr
     trials
 }
 
-/// The scenarios (as asked) whose last verdict for `program` was not
-/// "survived" nor "untested": what to try again.
-pub fn to_try_again(dir: &std::path::Path, program: &str) -> Vec<String> {
-    read_verdicts(dir)
-        .remove(program)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, seen)| {
-            seen.last().is_some_and(|s| {
-                matches!(
-                    s.standing,
-                    Standing::Broke | Standing::Degraded | Standing::Refused
-                )
-            })
-        })
-        .map(|(asked, _)| asked)
-        .collect()
-}
-
 /// A day as the history says it: `12 Nov`, with the year when not this one's.
 fn day(at: chrono::DateTime<chrono::Utc>) -> String {
     use chrono::Datelike;
@@ -4433,12 +4414,8 @@ mod tests {
         assert_eq!(broke.standing, Standing::Broke);
         let mut fixed = broke.clone();
         fixed.standing = Standing::Survived;
-        assert!(to_try_again(dir, "p").is_empty(), "nothing kept yet");
         record(dir, "p", "r1.sonde", at(0), std::slice::from_ref(&broke)).unwrap();
-        assert_eq!(to_try_again(dir, "p"), ["slowdown"]);
-        assert!(to_try_again(dir, "q").is_empty(), "another program's");
         record(dir, "p", "r2.sonde", at(1), std::slice::from_ref(&fixed)).unwrap();
-        assert!(to_try_again(dir, "p").is_empty());
         let shown = |run: &str, t: &Trial| {
             let mut v = vec![t.clone()];
             with_history(dir, "p", run, &mut v);

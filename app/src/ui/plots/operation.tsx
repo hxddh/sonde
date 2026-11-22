@@ -93,12 +93,3 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
 /** Whether a run's requests have times (a CloudTrail file's have none). */
 export const timed = (p: Profile | null | undefined) => p?.timed !== false;
 
-/** A run in a sentence: what it did, where its time went. What acting on
- * its findings would save is said once, with the findings (`whatIfText`), never here too. */
-export function runStory(p: Profile): string {
-  const top = p.groups[0];
-  const busiest = [...p.groups].sort((a, b) => b.requests - a.requests)[0];
-  const total = p.groups.reduce((n, g) => n + g.requests, 0) || 1;
-  if (!timed(p)) return busiest ? t("story.untimed", { what: groupName(busiest), pct: pct(busiest.requests / total) }) : "";
-  return top ? t("story.time", { busy: duration(p.waitingMs), wall: duration(p.wallMs), what: groupName(top), pct: pct(top.share) }) : "";
-}

@@ -249,20 +249,40 @@ pub fn write_run_json(
     header.command = header.command.as_deref().map(crate::program::scrub_command);
     // the folder names this machine's user
     header.cwd = None;
+    // the findings as the app shows a run's: its plan of diagnoses, ranked by the time they save, and where the
+    // program's time went
+    let summary = summarize(&s.records);
+    let profile = crate::profile::profile(&s.records, prices);
+    let timed = !s.header.whole_seconds;
+    let mut observations = crate::episode::observations_of(&s.header, &s.records, &eps);
+    crate::fixes::rank_by_saving(&mut observations, &s.records, &profile, timed);
+    let month = crate::month::month(
+        &s.header,
+        summary.seconds,
+        profile.cost.amount,
+        &profile.cost.currency,
+    );
+    let diagnoses = crate::fixes::diagnose(
+        &mut observations,
+        &eps,
+        &s.records,
+        &profile,
+        timed,
+        month.as_ref(),
+    );
+    let time = crate::summary::time_account(&s.records, &summary, &profile, &s.header);
     let mut w = JsonOut::new(out, false);
     w.begin_object()?;
     if let Some(c) = compared {
         w.field("compare", c)?;
     }
+    w.field("diagnoses", &diagnoses)?;
     w.array("operations", &eps)?;
     w.field("format", &"sonde-share")?;
     w.field("header", &header)?;
     w.field("lines", &crate::logs::lines(&s.logs))?;
-    w.field(
-        "observations",
-        &crate::episode::observations_of(&s.header, &s.records, &eps),
-    )?;
-    w.field("profile", &crate::profile::profile(&s.records, prices))?;
+    w.field("observations", &observations)?;
+    w.field("profile", &profile)?;
     w.key("records")?;
     w.begin_array()?;
     match full {
@@ -282,7 +302,8 @@ pub fn write_run_json(
             .collect::<Vec<_>>(),
     )?;
     w.field("signals", &crate::signals::signals(&s.records, prices))?;
-    w.field("summary", &summarize(&s.records))?;
+    w.field("summary", &summary)?;
+    w.field("time", &time)?;
     w.field("version", &2)?;
     w.end_object()?;
     w.finish()?;
@@ -603,6 +624,17 @@ mod tests {
                     .eq_ignore_ascii_case("authorization"))
         );
         assert_eq!(run_json(&full, &prices), doc);
+        // its findings as the app shows the run's: the plan of diagnoses, where the time went
+        let a = crate::view::Analysis::of(&full, &prices);
+        assert_eq!(
+            doc["diagnoses"],
+            serde_json::to_value(&a.diagnoses).unwrap()
+        );
+        assert_eq!(doc["time"], serde_json::to_value(&a.time).unwrap());
+        assert_eq!(
+            doc["observations"],
+            serde_json::to_value(&a.observations).unwrap()
+        );
     }
 
     #[test]

@@ -432,8 +432,60 @@ test("a finding an engine's setting acts on shows the setting first: what, to wh
   expect(app.shows("id:fix-setting >> text:10s")).toBe(true);
   expect(app.shows("id:fix-setting >> text:src/main.rs:4")).toBe(true);
   expect(app.shows("id:fix-setting-copy")).toBe(true);
-  // its tab is the engine's, not "Bucket"
-  expect(app.shows("id:fix-sdk >> text:SlateDB DbReader")).toBe(true);
+  // one fix: no SDK to choose
+  expect(app.shows("id:fix-sdk")).toBe(false);
+});
+
+test("a run's plan: a diagnosis a line with the time it saves, its other findings once chosen, its fix in the inspector for the program's own SDK", async () => {
+  const run = bigRun(50);
+  const view = run.modules["Runs.view"];
+  const fixes = [
+    { sdk: "python", code: "s3.get_object(Bucket=b, Key=k)  # python fix" },
+    { sdk: "java", code: "s3.getObject(r -> r.bucket(b).key(k)); // java fix" },
+    { sdk: "go", code: "client.GetObject(ctx, in) // go fix" },
+  ];
+  const head = { level: "warn", text: "HEAD before every GET", operations: [0, 1], operationsTotal: 2, firstStart: "2026-11-07T00:00:00Z", sdk: "aws-sdk-java/2.25", fixes, identity: "obs.headget|b/" };
+  const member = { level: "info", text: "50 small objects read one by one", operations: [0, 1], operationsTotal: 2, identity: "obs.smallreads|b/" };
+  const other = { level: "info", text: "a prefix listed again", operations: [2], operationsTotal: 1, identity: "obs.listed|b/" };
+  const modules = {
+    ...run.modules,
+    "Runs.view": async (path: string) => ({
+      ...(await view(path)),
+      observations: [head, member, other],
+      diagnoses: [
+        { id: "dx-1", findings: [0, 1], identities: [head.identity, member.identity], savesMs: 680, saving: [{ key: "obs.savesWall", args: { time: "680 ms", wall: "1.13 s", pct: "60" } }], savingText: "≈680 ms of 1.13 s (60%)" },
+        { id: "dx-2", findings: [2], identities: [other.identity] },
+      ],
+      time: { wallMs: 1130, ownMs: 300, waitingMs: 830, phrases: [], text: "time 1.13 s: your program's own 300 ms (27%) · S3 round trips 830 ms (50 requests, median 4 ms)" },
+    }),
+  };
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: modules } });
+  await openExample(app);
+  await app.waitFor("id:observation-0", { timeout: 10000 });
+  // the run's sentence is its time account
+  expect(app.shows("text:/^Time 1\\.13 s: your program's own/")).toBe(true);
+  // two diagnoses, not three findings: each a line, the first with the time it saves
+  expect(app.shows("id:observation-1")).toBe(true);
+  expect(app.shows("id:observation-2")).toBe(false);
+  expect(app.shows("id:observation-saving-0")).toBe(true);
+  expect(app.shows("text:≈680 ms of 1.13 s (60%)")).toBe(true);
+  expect(app.shows("text:50 small objects read one by one")).toBe(false);
+  // chosen: its other finding under it, its operations narrowed (the table's chip, the one place), its fix in the inspector
+  await app.press("id:observation-0");
+  await app.waitFor("id:inspector >> id:fix", { timeout: 10000 });
+  expect(app.shows("id:diagnosis-also")).toBe(true);
+  expect(app.shows("text:50 small objects read one by one")).toBe(true);
+  expect(app.shows("id:clear-filter")).toBe(true);
+  // the program's own SDK's fix alone, the others behind a small menu
+  expect(app.shows("id:fix-code >> text:/java fix/")).toBe(true);
+  expect(app.shows("text:/python fix/")).toBe(false);
+  expect(app.shows("id:fix-sdk")).toBe(true);
+  // no Apply where the app cannot make the change (not the demo's job): no second primary
+  expect(app.shows("id:finding-apply")).toBe(false);
+  // closed, the diagnosis is let go and the operations shown whole
+  await app.press("id:inspector-close");
+  await app.waitFor("id:inspector", { state: "gone", timeout: 5000 });
+  expect(app.shows("id:clear-filter")).toBe(false);
 });
 
 test("a run's row says how many requests, then what sent them, before where they went", async () => {

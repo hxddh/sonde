@@ -10,7 +10,7 @@ import type { EpisodeRow, RecordingView } from "../types";
 import { Button, Card, Dot, Heading, IconTile, Options, Prose, Row, TEXT } from "./kit";
 import { OperationView } from "./runview";
 
-export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, RunHeader, RunList, statusTone } from "./runview";
+export { clock, episodeTone, linesOf, OperationsTable, OutputTable, RunHeader, RunList, statusTone } from "./runview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
 

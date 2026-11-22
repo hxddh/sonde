@@ -4,7 +4,7 @@
 and reads them as operations — an Iceberg commit, a SlateDB manifest write, a multipart upload — with what stands
 out, what it cost, and whether the program survives when the store misbehaves.
 
-![A finding: the line of code that sent the requests, what to change, and Apply and run again](docs/images/fix.png)
+![A run's plan: its first diagnosis chosen, and in the inspector the line of code that sent the requests, the change for the program's SDK, and Apply and run again](docs/images/fix.png)
 
 ## What it does
 
@@ -24,7 +24,7 @@ A desktop app (macOS, Linux, Windows) and a CLI, in English and Chinese.
 
 | | |
 |---|---|
-| ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial: what the program did under each fault](docs/images/trial.png) |
+| ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial on the run's History: how the program stood under each fault](docs/images/trial.png) |
 | ![Time: one timeline, each chart in its frame](docs/images/time.png) | ![Buckets: objects and their details](docs/images/store.png) |
 | ![A run: the program's output beside its S3 requests, as operations](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
 

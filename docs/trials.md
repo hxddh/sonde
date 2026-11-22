@@ -187,7 +187,7 @@ slowdown now`, `· open`, `! new` (*since the trial before*; in `show`, among `s
 |---|---|
 | History | Each verdict is added to its program's in its runs folder's index: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
-| App | *Try again what broke*, on a trial's result and in a program's history. |
+| App | A trial's verdicts fill the run's History as they come and stay there (*Run trials again*); what did not survive is among the run's findings. |
 
 ## Where the results go
 
