@@ -79,19 +79,11 @@ fn a_fixed_finding_says_what_it_saved_against_what_was_predicted() {
     assert_eq!(head.state, State::Fixed, "{c:#?}");
     assert!(head.identity.starts_with("obs.headget"));
     assert_eq!(head.predicted.requests, 20);
-    assert_eq!(head.measured.map(|m| m.requests), Some(20));
-    // what it saved is the run's wall time, not its requests
-    let fell = c.wall_ms.0 - c.wall_ms.1;
-    assert_eq!(head.measured.unwrap().ms, fell);
-    let way = if fell >= 0.0 { "less" } else { "more" };
-    assert_eq!(
-        head.saved_text.as_deref(),
-        Some(format!("{} {way}", sonde_fmt::duration(fell.abs())).as_str())
-    );
-    assert!(
-        !head.within_noise,
-        "two runs compared by hand know no noise"
-    );
+    assert_eq!(head.saved_requests, Some(20));
+    // what it saved is its own requests: the run's time is the run's, said
+    // once (its prediction of time is its plan's, not read here)
+    assert_eq!(head.saved_text.as_deref(), Some("20 fewer requests"));
+    assert!(!c.within_noise, "two runs compared by hand know no noise");
     assert_eq!(c.resolved.len(), 1);
     assert_eq!(state_of(&c.findings, "obs.small"), State::Open);
 
@@ -104,12 +96,12 @@ fn a_fixed_finding_says_what_it_saved_against_what_was_predicted() {
         .unwrap();
     assert_eq!(small.state, State::Fixed);
     assert_eq!(
-        (small.predicted.requests, small.measured.map(|m| m.requests)),
+        (small.predicted.requests, small.saved_requests),
         (12, Some(12))
     );
     // not counted against the run before: nothing measured
     let unmeasured = compare_runs(&b, &run(RUNS[3], None));
-    assert!(unmeasured.findings[0].measured.is_none());
+    assert!(unmeasured.findings[0].saved_requests.is_none());
 }
 
 /// The program's kept findings over the five runs, each taken in as
@@ -141,7 +133,7 @@ fn a_programs_findings_are_kept_open_fixed_and_new_again_over_its_runs() {
     let head = &kept["etl"].findings["obs.headget|etl-bucket/run/in/"];
     assert_eq!(head.state, State::Fixed);
     assert_eq!(head.since, RUNS[2]);
-    assert_eq!(head.measured.map(|m| m.requests), Some(20));
+    assert_eq!(head.saved_requests, Some(20));
     since(RUNS[3]);
     let undone = since(RUNS[4]);
     // none of it in the run before, at any threshold: its count rose from 0
@@ -210,14 +202,14 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
     assert_eq!(c.findings.len(), 1);
     let hot = &c.findings[0];
     assert_eq!(hot.state, State::Less);
-    assert_eq!(hot.text, "b/hot was read 3 times (100% of all requests)");
-    assert_eq!(
-        hot.was.as_ref().unwrap().text,
-        "b/hot was read 12 times (100% of all requests)"
-    );
-    assert_eq!(hot.measured.map(|m| m.requests), Some(9));
-    // the run took 90 ms less: said as time, with no prediction of time
-    assert_eq!(hot.saved_text.as_deref(), Some("90 ms less"));
+    // under its threshold now, no finding: said as the finding read, with
+    // its counts (what is left is no finding to act on)
+    assert_eq!(hot.text, "b/hot was read 12 times (100% of all requests)");
+    assert!(hot.was.is_none());
+    assert_eq!(hot.counts, Some([12, 3]));
+    assert_eq!(hot.saved_requests, Some(9));
+    // its own requests, never the run's time
+    assert_eq!(hot.saved_text.as_deref(), Some("9 fewer requests"));
     // less is not resolved
     assert!(c.resolved.is_empty());
 
@@ -225,7 +217,7 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
     b.measure(&once, &a);
     let c = compare_runs(&a, &b);
     assert_eq!(c.findings[0].state, State::Fixed);
-    assert_eq!(c.findings[0].measured.map(|m| m.requests), Some(11));
+    assert_eq!(c.findings[0].saved_requests, Some(11));
     assert_eq!(c.resolved.len(), 1);
 }
 
@@ -455,7 +447,7 @@ fn a_changed_command_is_said_and_saves_nothing() {
         .find(|f| f.identity.starts_with("obs.hot"))
         .unwrap();
     assert_eq!(f.state, State::Less);
-    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    assert!(f.saved_requests.is_none() && f.saved.is_none(), "{f:#?}");
     let fixed = at(3, 1, &hot(1));
     let f = fixed
         .findings
@@ -463,7 +455,7 @@ fn a_changed_command_is_said_and_saves_nothing() {
         .find(|f| f.identity.starts_with("obs.hot"))
         .unwrap();
     assert_eq!(f.state, State::Fixed);
-    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    assert!(f.saved_requests.is_none() && f.saved.is_none(), "{f:#?}");
     // the same command again: a fix is counted as before
     let again = at(4, 1, &hot(1));
     assert!(again.change.unwrap().command_changed.is_none());
@@ -483,7 +475,7 @@ fn a_workload_that_grew_is_said_and_saves_nothing() {
     let c = after.change.as_ref().unwrap();
     assert_eq!(
         c.workload_changed.as_deref(),
-        Some("requests 30 → 400, 13.3×")
+        Some("objects 1 → 400, 400.0×")
     );
     assert_eq!(c.uncounted(false).as_deref(), Some("the workload grew"));
     let f = after
@@ -492,7 +484,7 @@ fn a_workload_that_grew_is_said_and_saves_nothing() {
         .find(|f| f.identity.starts_with("obs.hot"))
         .unwrap();
     assert_eq!(f.state, State::Fixed);
-    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    assert!(f.saved_requests.is_none() && f.saved.is_none(), "{f:#?}");
     // a real fix, fewer requests: counted
     ran(dir.path(), 3, &hot(30), Some(0));
     let fixed = ran(dir.path(), 4, &hot(1), Some(0));
@@ -533,7 +525,7 @@ fn a_workload_that_shrank_is_said_and_saves_nothing() {
     let c = after.change.as_ref().unwrap();
     assert_eq!(
         c.workload_changed.as_deref(),
-        Some("requests 800 → 60, 0.1×")
+        Some("objects 400 → 30, 0.1×")
     );
     assert_eq!(c.uncounted(false).as_deref(), Some("the workload shrank"));
     let f = after
@@ -541,7 +533,7 @@ fn a_workload_that_shrank_is_said_and_saves_nothing() {
         .iter()
         .find(|f| f.identity.starts_with("obs.headget"))
         .unwrap();
-    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    assert!(f.saved_requests.is_none() && f.saved.is_none(), "{f:#?}");
     // the HEADs dropped, the 400 files read: a fix, counted
     ran(dir.path(), 3, &head_get(400, true), Some(0));
     let fixed = ran(dir.path(), 4, &head_get(400, false), Some(0));
@@ -552,7 +544,7 @@ fn a_workload_that_shrank_is_said_and_saves_nothing() {
         .iter()
         .find(|f| f.identity.starts_with("obs.headget"))
         .unwrap();
-    assert_eq!(f.measured.map(|m| m.requests), Some(400));
+    assert_eq!(f.saved_requests, Some(400));
 }
 
 /// 27.0's review: a key that holds the run's own id (`jobs/{id}/state.json`)
@@ -572,7 +564,7 @@ fn what_a_fix_saved_counts_keys_that_hold_a_runs_id_as_the_same() {
     let c = compare_runs(&a, &b);
     let hot = &c.findings[0];
     assert_eq!(hot.state, State::Less, "{c:#?}");
-    assert_eq!(hot.measured.map(|m| m.requests), Some(4));
+    assert_eq!(hot.saved_requests, Some(4));
 }
 
 /// Less is kept: over its threshold again it is more, by its counts.
@@ -620,15 +612,20 @@ fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
     let c = compare_runs(&a, &b);
     assert_eq!(serial(&c.findings).state, State::Open);
     assert!(c.resolved.is_empty() && c.appeared.is_empty());
-    // half of them: less, and saved its own waiting, not the whole drop
+    // half of them: less, saving no request; said by the time it was
+    // predicted to save, never the run's whole drop
     let fewer = chain(10, 5);
     let mut b = run_of(&fewer);
     b.measure(&fewer, &a);
     let c = compare_runs(&a, &b);
     let s = serial(&c.findings);
     assert_eq!(s.state, State::Less);
-    let ms = s.measured.unwrap().ms;
-    assert_eq!(ms, a.profile.wall_ms - b.profile.wall_ms);
+    assert_eq!(s.saved_requests, Some(0));
+    let predicted = sonde_fmt::duration(s.predicted.ms);
+    assert_eq!(
+        s.saved_text.as_deref(),
+        Some(format!("predicted {predicted} less").as_str())
+    );
 }
 
 /// A run reading keys laid out as tables and jobs lay them out, each named
@@ -993,62 +990,47 @@ fn hot_every(n: u64, gap: i64) -> Vec<Record> {
         .collect()
 }
 
-/// 28.0's eval: "fixed, saved 20 requests" while the run took 30% longer.
-/// What a fix saved is the run's wall time, said against the program's own
-/// noise: the spread of its earlier runs of the command; with fewer than
-/// two, no band is known and none is said.
+/// 29.0's eval: the noise band was the spread of the last runs, an earlier
+/// fix among them, so a real fix read "within noise". The band is read
+/// from the runs before alike in their findings (no fix between them), as
+/// the largest move from one to the next; the run's time is said once,
+/// for the run, never as a finding's saving.
 #[test]
-fn a_fix_is_judged_by_the_runs_time_against_its_own_noise() {
+fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
     let dir = tempfile::tempdir().unwrap();
-    // two runs of 115 ms and 335 ms: the program varies by 220 ms
+    // one run alike before: no band
     ran(dir.path(), 1, &hot_every(12, 30), Some(0));
-    let second = ran(dir.path(), 2, &hot_every(12, 10), Some(0));
+    let second = ran(dir.path(), 2, &hot_every(12, 31), Some(0));
     assert_eq!(second.change.as_ref().unwrap().noise_ms, None);
-    let open = second
-        .findings
-        .iter()
-        .find(|f| f.identity.starts_with("obs.hot"))
-        .unwrap();
-    assert_eq!(open.state, State::Open);
-    // fixed, 110 ms sooner: under the 220 ms it varies by
-    let fixed = ran(dir.path(), 3, &hot_every(1, 10), Some(0));
+    // two runs alike (335 ms, 346 ms): they vary by 11 ms
+    ran(dir.path(), 3, &hot_every(12, 30), Some(0));
+    // fixed, 330 ms sooner: well past the band, and no time on the finding
+    let fixed = ran(dir.path(), 4, &hot_every(1, 10), Some(0));
     let c = fixed.change.as_ref().unwrap();
-    assert_eq!(c.noise_ms, Some(220.0));
+    assert_eq!(c.noise_ms, Some(11.0));
+    assert!(!c.within_noise);
     let f = fixed
         .findings
         .iter()
         .find(|f| f.identity.starts_with("obs.hot"))
         .unwrap();
     assert_eq!(f.state, State::Fixed);
-    assert_eq!(f.measured.unwrap().ms, 110.0);
-    assert!(f.within_noise, "{f:#?}");
-    assert_eq!(f.saved_text.as_deref(), Some("within noise"));
-
-    // a program with one earlier run: no band, the time said as it moved
+    assert_eq!(f.saved_requests, Some(11));
+    assert_eq!(f.saved_text.as_deref(), Some("11 fewer requests"));
+    // the fix is no noise: the next run's band is not read across it
+    let after = ran(dir.path(), 5, &hot_every(1, 10), Some(0));
+    assert_eq!(after.change.as_ref().unwrap().noise_ms, None);
+    let again = ran(dir.path(), 6, &hot_every(1, 10), Some(0));
+    let c = again.change.as_ref().unwrap();
+    assert_eq!(c.noise_ms, Some(0.0));
+    // a run that moved by less than its runs vary is within noise
     let dir = tempfile::tempdir().unwrap();
-    ran(dir.path(), 1, &hot_every(12, 10), Some(0));
-    let fixed = ran(dir.path(), 2, &hot_every(1, 10), Some(0));
-    assert_eq!(fixed.change.as_ref().unwrap().noise_ms, None);
-    let f = &fixed.findings[0];
-    assert_eq!(f.state, State::Fixed);
-    assert!(!f.within_noise);
-    assert_eq!(f.saved_text.as_deref(), Some("110 ms less"));
-    // and a fix that made the run slower says so
-    ran(dir.path(), 3, &hot_every(12, 10), Some(0));
-    // the hot key read once, and another key half a second later
-    let mut slow = hot(1);
-    slow.push(Record {
-        time: DateTime::from_timestamp_millis(1_700_000_000_515).unwrap(),
-        ..get(2, "other")
-    });
-    let slower = ran(dir.path(), 4, &slow, Some(0));
-    let f = slower
-        .findings
-        .iter()
-        .find(|f| f.identity.starts_with("obs.hot"))
-        .unwrap();
-    assert_eq!(f.state, State::Fixed, "{:#?}", slower.findings);
-    assert_eq!(f.saved_text.as_deref(), Some("395 ms more"));
+    ran(dir.path(), 1, &hot_every(12, 30), Some(0));
+    ran(dir.path(), 2, &hot_every(12, 40), Some(0));
+    let near = ran(dir.path(), 3, &hot_every(12, 35), Some(0));
+    let c = near.change.as_ref().unwrap();
+    assert_eq!(c.noise_ms, Some(110.0));
+    assert!(c.within_noise, "{c:#?}");
 }
 
 /// 28.0's eval: 6 polls of `_READY` under the 1% a finding needs in a run of
@@ -1156,4 +1138,86 @@ fn a_trials_clean_run_of_another_command_is_not_the_programs_newest() {
     assert!(next.previous.as_deref().unwrap().ends_with("run-01.sonde"));
     assert!(next.change.as_ref().unwrap().command_changed.is_none());
     assert_eq!(state_of(&next.findings, "obs.hot"), State::Open);
+}
+
+/// 29.0's eval: a finding was named once as it was made (`b/t{n}/`, what
+/// the plan and `check` say) and again by the fix loop among the run's
+/// findings at any threshold (`b/t00/`): a run again said it open and new.
+/// A finding is named once; its trace takes its name.
+#[test]
+fn a_finding_has_one_identity_in_the_plan_and_in_the_fix_loop() {
+    let lists = |t00: usize, t01: usize| -> Vec<Record> {
+        let mut out = Vec::new();
+        for (prefix, n) in [("t00/", t00), ("t01/", t01)] {
+            for _ in 0..n {
+                out.push(list(out.len() as u64 + 1, prefix));
+            }
+        }
+        out
+    };
+    // listed again and again, the other prefix twice: under its threshold
+    let ra = lists(8, 2);
+    let eps = sonde_analysis::episode::episodes(&ra);
+    let plan = sonde_analysis::episode::observations(&ra, &eps);
+    let a = run_of(&ra);
+    assert_eq!(kinds(&a), ["obs.listed|b/t{n}/"]);
+    assert_eq!(
+        a.observations[0].identity, plan[0].identity,
+        "the plan's and the loop's"
+    );
+    assert!(
+        a.traces.contains_key("obs.listed|b/t{n}/"),
+        "{:?}",
+        a.traces.keys()
+    );
+    // the same again: open, nothing new
+    let rb = lists(8, 2);
+    let mut b = run_of(&rb);
+    b.measure(&rb, &a);
+    let c = compare_runs(&a, &b);
+    assert!(c.findings.iter().all(|f| f.state == State::Open), "{c:#?}");
+    // listed under its threshold now: less, not fixed and new
+    let rc = lists(3, 2);
+    let mut d = run_of(&rc);
+    d.measure(&rc, &a);
+    let c = compare_runs(&a, &d);
+    assert_eq!(state_of(&c.findings, "obs.listed"), State::Less, "{c:#?}");
+}
+
+/// 29.0's eval: a footer read with one suffix GET in place of a HEAD and
+/// two ranged GETs (91 requests, 31) read "the workload shrank: not counted
+/// as a fix". The workload is the objects asked of, not the requests.
+#[test]
+fn the_same_objects_in_fewer_requests_is_no_smaller_workload() {
+    let ranged = |id: u64, key: &str| {
+        let mut r = get(id, key);
+        r.lists = reqlog::Lists {
+            request_headers: vec![reqlog::Header::new("Range", "bytes=-8")],
+            ..Default::default()
+        }
+        .into();
+        r
+    };
+    let footers = |old: bool| -> Vec<Record> {
+        let mut rs = Vec::new();
+        for i in 0..30 {
+            let key = format!("t/part-{i:03}.parquet");
+            if old {
+                let mut h = get(rs.len() as u64 + 1, &key);
+                h.method = "HEAD".into();
+                h.kind = "HeadObject".into();
+                rs.push(h);
+                rs.push(ranged(rs.len() as u64 + 1, &key));
+            }
+            rs.push(ranged(rs.len() as u64 + 1, &key));
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &footers(true), Some(0));
+    let after = ran(dir.path(), 2, &footers(false), Some(0));
+    let c = after.change.as_ref().unwrap();
+    assert_eq!(c.requests, (90, 30));
+    assert_eq!(c.objects, (30, 30));
+    assert!(c.workload_changed.is_none(), "{c:#?}");
 }

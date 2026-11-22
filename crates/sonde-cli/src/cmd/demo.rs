@@ -58,6 +58,9 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>, force: bool) -> anyhow::
         None,
         Says::Plan,
     );
+    // taken in as `sonde run` takes a run: its plan's savings are what the
+    // fixed job is said against
+    let _ = super::fixloop::since_last(s, &first, &run.header, &run.records, &analysis);
     drop(run);
     println!(
         "\nThe same job with that fix ({}), played and recorded again:",

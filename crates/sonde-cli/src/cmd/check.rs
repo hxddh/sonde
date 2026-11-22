@@ -184,15 +184,7 @@ fn init_project(
     let max_requests = (run.requests as f64 * grow).ceil() as u64;
     // whole figures a person reads and edits
     let waiting = (run.waiting_ms * grow + sonde_analysis::program::WAITING_SLACK_MS).ceil();
-    let known: std::collections::BTreeMap<String, usize> = findings
-        .iter()
-        .map(|o| {
-            (
-                sonde_analysis::profile::finding_identity(o),
-                sonde_analysis::fixloop::count_of(o),
-            )
-        })
-        .collect();
+    let (known, wrong) = sonde_analysis::program::known_of(findings);
     let mut text = vec![
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
@@ -223,55 +215,64 @@ fn init_project(
     );
     text.push(String::new());
     std::fs::write(&path, text.join("\n"))?;
-    // the program's own command, and the store it ran against: a demo
-    // run's is the demo store's (`--demo`), no URL to fill in
+    // the program's own command, and the store it ran against as the run
+    // said it (`--demo`, `-e NAME`, `--url URL`): nothing to fill in
     let command = header
         .command
         .clone()
         .unwrap_or_else(|| "<your command>".into());
-    let run_args = if header.endpoint == "demo" {
-        "--demo".to_string()
-    } else {
-        "--url <the S3 endpoint>".to_string()
-    };
+    let run_args = super::record::store_args(header);
     let uses = action_line();
     if a.format == Format::Json {
-        output::print_json(&serde_json::json!({
+        let mut doc = serde_json::json!({
             "wrote": path.to_string_lossy(),
             "maxRequests": max_requests,
             "findings": known,
             "command": command,
-            "runArgs": run_args,
             "uses": uses.trim().trim_start_matches("- uses: "),
-        }));
+        });
+        if let Some(r) = &run_args {
+            doc["runArgs"] = r.clone().into();
+        }
+        if !wrong.is_empty() {
+            doc["notKnown"] = wrong.iter().map(|(id, _)| id.clone()).collect();
+        }
+        output::print_json(&doc);
         return Ok(0);
     }
     eprintln!(
-        "wrote {}: a [check] this run passes ({}, {} of room) and its {} known",
+        "wrote {}: a [check] {} ({}, {} of room) and its {} known",
         path.display(),
+        if wrong.is_empty() {
+            "this run passes"
+        } else {
+            "this run fails"
+        },
         output::count(run.requests, "request"),
         format_args!("{tolerance}%"),
         output::count(known.len(), "finding"),
     );
+    for (_, text) in &wrong {
+        eprintln!("  not known, a fault to fix (the check fails until it is): {text}");
+    }
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
     let run_line = format!("          run: {command}");
-    let args_line = format!("          run-args: {run_args}");
-    eprintln!(
-        "{}",
-        [
-            "",
-            "In GitHub Actions, the sonde action records the program, checks it against",
-            "the base branch's run and keeps one comment on the pull request (docs/ci.md):",
-            "",
-            uses.as_str(),
-            "        with:",
-            run_line.as_str(),
-            args_line.as_str(),
-            "",
-        ]
-        .join("\n")
-    );
-    eprintln!("Elsewhere: `sonde run -- {command}`, then `sonde check -f markdown`.");
+    let mut step = vec![
+        String::new(),
+        "In GitHub Actions, the sonde action records the program, checks it against".into(),
+        "the base branch's run and keeps one comment on the pull request (docs/ci.md):".into(),
+        String::new(),
+        uses.clone(),
+        "        with:".into(),
+        run_line,
+    ];
+    if let Some(r) = &run_args {
+        step.push(format!("          run-args: {r}"));
+    }
+    step.push(String::new());
+    eprintln!("{}", step.join("\n"));
+    let store = run_args.map(|r| format!("{r} ")).unwrap_or_default();
+    eprintln!("Elsewhere: `sonde run {store}-- {command}`, then `sonde check -f markdown`.");
     Ok(0)
 }
 
@@ -922,6 +923,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(&gated_line(g))
             );
         }
+        if let Some(t) = sonde_analysis::program::loose_line(&c.loose) {
+            println!("::notice title=sonde check::{}", gh_escape(&t));
+        }
         for f in run.2.iter().take(10) {
             // what the project keeps on purpose is said with why, never warned of
             let level = if f.level == "warn" && f.expected.is_none() {
@@ -1041,6 +1045,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     for g in &c.findings {
         println!("{} {}", paint("!", "33", color), gated_line(g));
+    }
+    if let Some(t) = sonde_analysis::program::loose_line(&c.loose) {
+        println!("{} {t}", paint("·", "2", color));
     }
     for e in &c.expected {
         println!(

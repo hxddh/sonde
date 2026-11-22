@@ -4,10 +4,11 @@
 //! two runs it is *fixed* (gone at any threshold), *less* or *more* (still
 //! there at any threshold, its count fallen or grown), *open* (as much) or
 //! *new* (none of it before): judged by its count alone, never by a
-//! threshold relative to the run's size. A fixed or less one says what the
-//! run's wall time and cost moved by against what was predicted, or that
-//! the move is within the program's own noise ([`noise_ms`]). A run's failed
-//! requests are compared by what failed them, as findings of their own.
+//! threshold relative to the run's size. A fixed or less one says the
+//! requests its own asks fell by and the time it was predicted to save; the
+//! run's wall time is said once, for the run, against the program's own
+//! noise ([`noise_ms`]). A run's failed requests are compared by what
+//! failed them, as findings of their own.
 //! Identities are made by rules of a version ([`crate::profile::IDENTITY_RULES`]), kept
 //! with the findings: ones kept under older rules are made again.
 //! Each program's findings are kept in its runs folder's index ([`crate::index`]).
@@ -67,9 +68,8 @@ impl State {
     }
 }
 
-/// Requests not sent, time not taken and money not spent. Predicted, of
-/// a finding; measured, between two runs: the requests its own asks fell
-/// by, and the run's wall time and cost (each may be negative: it grew).
+/// Requests not sent, time not taken and money not spent, as a finding
+/// predicts acting on it saves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Saving {
@@ -114,18 +114,16 @@ pub struct FindingChange {
     /// judged by.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counts: Option<[usize; 2]>,
-    /// What acting on it was predicted to save (in the run it was found in).
+    /// What acting on it was predicted to save (in the run it was found
+    /// in, as its plan said it).
     pub predicted: Saving,
-    /// What it saved, measured between the runs (fixed and less): the
-    /// requests of its own asks, and the run's wall time and cost.
+    /// The requests of its own asks the later run did not send (fixed and
+    /// less), measured between the runs. The run's time is the run's
+    /// ([`RunChange::wall_ms`]), never a finding's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub measured: Option<Saving>,
-    /// The run's wall time moved by less than the program's runs vary
-    /// ([`noise_ms`]): what it saved is not told from noise.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub within_noise: bool,
-    /// The measured saving against the predicted, as it is said: `1.2 s
-    /// less (predicted 1.5 s)`, or `within noise`.
+    pub saved_requests: Option<usize>,
+    /// What it saved, as it is said: `40 fewer requests (predicted 1.5 s
+    /// less)`; none when it neither saved requests nor was predicted to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved: Option<Phrase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -275,59 +273,64 @@ pub fn of_time(o: &Observation) -> bool {
     o.saves_requests == 0 && o.saves_ms > 0.0
 }
 
-/// What a finding saved, as it is said: the run's wall time (and its cost,
-/// from a cent, in `currency`) against what was predicted, `1.2 s less
-/// (predicted 1.5 s)`; `within noise` when the wall time moved by less than
-/// the program's runs vary (`band`, ms: none known, none said). Nothing for
-/// one not measured.
-pub fn say_saved(f: &mut FindingChange, band: Option<f64>, currency: &str) {
-    let Some(m) = f.measured else {
+/// How much of a finding a run had, when its count moves run to run with
+/// the store's or the program's timing (requests one after another, how
+/// many were throttled): none for one whose count is the program's alone.
+pub fn varying_count(o: &Observation) -> Option<usize> {
+    if of_time(o) {
+        Some(o.timed_ids.len())
+    } else if crate::profile::kind_of(&crate::profile::finding_identity(o)) == "obs.throttled" {
+        Some(count_of(o))
+    } else {
+        None
+    }
+}
+
+/// Whether `now` is about as much as `was` for a finding whose count
+/// varies run to run ([`varying_count`]): within a fifth either way.
+pub fn about_as_much(was: usize, now: usize) -> bool {
+    now * 5 >= was * 4 && now * 4 <= was * 5
+}
+
+/// What a finding saved, as it is said, once: the requests its own asks
+/// fell by, and beside them the time it was predicted to save, `40 fewer
+/// requests (predicted 1.5 s less)`. The run's time moved for the run, not
+/// for one finding: it is said once, for the run. Nothing for one not
+/// measured, nor for one that saved no request and predicted no time.
+pub fn say_saved(f: &mut FindingChange) {
+    let Some(n) = f.saved_requests else {
         return;
     };
-    f.within_noise = band.is_some_and(|b| m.ms.abs() < b);
-    let phrase = if f.within_noise {
-        p("fix.noise", &[])
-    } else {
-        let mut time = sonde_fmt::duration(m.ms.abs());
-        if m.cost.abs() >= crate::program::CENT {
-            time = format!(
-                "{time}, {}",
-                crate::program::money_text(m.cost.abs(), currency)
-            );
+    let predicted = (f.predicted.ms >= 0.5).then(|| sonde_fmt::duration(f.predicted.ms));
+    let count = || [("n", n.to_string()), ("s", plural(n))];
+    let phrase = match (n > 0, predicted) {
+        (true, Some(pr)) => {
+            let [a, b] = count();
+            p("fix.saved", &[a, b, ("p", pr)])
         }
-        let predicted = (f.predicted.ms > 0.0).then(|| sonde_fmt::duration(f.predicted.ms));
-        match (m.ms >= 0.0, predicted) {
-            (true, Some(pr)) => p("fix.saved", &[("time", time), ("p", pr)]),
-            (true, None) => p("fix.savedUnpredicted", &[("time", time)]),
-            (false, Some(pr)) => p("fix.lost", &[("time", time), ("p", pr)]),
-            (false, None) => p("fix.lostUnpredicted", &[("time", time)]),
-        }
+        (true, None) => p("fix.savedRequests", &count()),
+        (false, Some(pr)) => p("fix.predicted", &[("p", pr)]),
+        (false, None) => return,
     };
     f.saved_text = Some(phrase.en());
     f.saved = Some(phrase);
 }
 
 /// What acting on `o` (of run `a`) saved by run `b`: of each request it
-/// would save, as many as `b` asks less often, at most those it named; and
-/// what the run's wall time and cost fell by. None when `b` was not counted
-/// against `a` ([`Run::measure`]).
-fn measured(o: &Observation, a: &Run, b: &Run) -> Option<Saving> {
+/// would save, as many as `b` asks less often, at most those it named.
+/// None when `b` was not counted against `a` ([`Run::measure`]).
+fn saved_requests(o: &Observation, a: &Run, b: &Run) -> Option<usize> {
     if !b.measured {
         return None;
     }
-    let requests = a.asks.get(&o.identity).map_or(0, |asks| {
+    Some(a.asks.get(&o.identity).map_or(0, |asks| {
         asks.iter()
             .map(|(asked, saved, all)| {
                 let now = b.counts.get(asked).copied().unwrap_or(0);
                 all.saturating_sub(now).min(*saved)
             })
             .sum()
-    });
-    Some(Saving {
-        requests,
-        ms: a.profile.wall_ms - b.profile.wall_ms,
-        cost: a.profile.cost.amount - b.profile.cost.amount,
-    })
+    }))
 }
 
 /// How much of a finding a run had: its count (times a prefix was listed, a
@@ -346,6 +349,30 @@ fn by_counts(was: usize, now: usize) -> State {
         std::cmp::Ordering::Greater => State::More,
         std::cmp::Ordering::Less => State::Less,
         std::cmp::Ordering::Equal => State::Open,
+    }
+}
+
+/// The finding at any threshold of `run` that is `o` (of the other run,
+/// `id` its identity): by its identity; else, a run with no finding to
+/// name it after, by what it is about as it was (`b/t00/`); else by what it
+/// is about made stable, when `o` was named so and one alone reads so.
+fn trace_of<'a>(run: &'a Run, id: &str, o: &Observation) -> Option<&'a Observation> {
+    use crate::profile::{identity, literal_identity};
+    if let Some(t) = run.traces.get(id) {
+        return Some(t);
+    }
+    let literal = literal_identity(o);
+    if let Some(t) = run.traces.values().find(|t| literal_identity(t) == literal) {
+        return Some(t);
+    }
+    let stable = identity(o);
+    if stable != id {
+        return None;
+    }
+    let mut alike = run.traces.values().filter(|t| identity(t) == stable);
+    match (alike.next(), alike.next()) {
+        (Some(t), None) => Some(t),
+        _ => None,
     }
 }
 
@@ -375,23 +402,24 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         was: (now.text != was.text).then(|| text_of(was)),
         counts: Some([count_of(was), count_of(now)]),
         predicted: Saving::predicted(now),
-        measured: None,
-        within_noise: false,
+        saved_requests: None,
         saved: None,
         saved_text: None,
     };
-    let currency = &b.profile.cost.currency;
     let mut out = Vec::new();
     for (id, &i) in &ia {
         let o = &a.observations[i];
-        let left = ib.get(id).map(|&j| &b.observations[j]).or(b.traces.get(id));
-        // requests one after another: their count moves with their timing,
-        // so within a fifth either way it is as much
-        if of_time(o)
+        let left = ib
+            .get(id)
+            .map(|&j| &b.observations[j])
+            .or_else(|| trace_of(b, id, o));
+        // requests one after another, or throttled: their count moves with
+        // the timing, so within a fifth either way it is as much
+        if let Some(was) = varying_count(o)
             && let Some(t) = left
         {
-            let (was, now) = (o.timed_ids.len(), t.timed_ids.len());
-            if now * 5 >= was * 4 && now * 4 <= was * 5 {
+            let now = varying_count(t).unwrap_or_else(|| count_of(t));
+            if about_as_much(was, now) {
                 let mut c = change(id, State::Open, t, o);
                 c.was = None;
                 out.push(c);
@@ -408,9 +436,13 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             out.push(change(id, state, t, o));
             continue;
         }
+        // less and still a finding: as it reads now. Only under its
+        // threshold now (a trace, no finding of the run's): as the finding
+        // read, not as what is left reads (three files written are no
+        // finding to act on)
         let (text, phrases, was) = match left {
-            Some(t) => (t.text.clone(), t.phrases.clone(), Some(text_of(o))),
-            None => (o.text.clone(), o.phrases.clone(), None),
+            Some(t) if ib.contains_key(id) => (t.text.clone(), t.phrases.clone(), Some(text_of(o))),
+            _ => (o.text.clone(), o.phrases.clone(), None),
         };
         let mut c = FindingChange {
             identity: id.clone(),
@@ -421,12 +453,11 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             was,
             counts: Some([count_of(o), left.map_or(0, count_of)]),
             predicted: Saving::predicted(o),
-            measured: measured(o, a, b),
-            within_noise: false,
+            saved_requests: saved_requests(o, a, b),
             saved: None,
             saved_text: None,
         };
-        say_saved(&mut c, None, currency);
+        say_saved(&mut c);
         out.push(c);
     }
     for (id, &j) in &ib {
@@ -436,7 +467,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         let now = &b.observations[j];
         // under its threshold before and over it now: by its counts, as
         // any other (6 then 6 is as much, not back)
-        let c = match a.traces.get(id) {
+        let c = match trace_of(a, id, now) {
             Some(t) => change(id, by_counts(count_of(t), count_of(now)), now, t),
             None => {
                 let mut c = change(id, State::New, now, now);
@@ -509,8 +540,7 @@ fn error_changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             }),
             counts: Some([was, now]),
             predicted: Saving::default(),
-            measured: None,
-            within_noise: false,
+            saved_requests: None,
             saved: None,
             saved_text: None,
         });
@@ -531,9 +561,44 @@ pub struct Tracked {
     /// The run it came to stand so in, by file name.
     pub since: String,
     pub predicted: Saving,
-    /// What fixing it saved, measured.
+    /// The requests fixing it saved, measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub measured: Option<Saving>,
+    pub saved_requests: Option<usize>,
+}
+
+/// One of a program's last runs, as its noise is read from it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recent {
+    /// Its file name, and when it was recorded (RFC 3339).
+    pub run: String,
+    pub created: String,
+    pub wall_ms: f64,
+    /// Its command and its findings with their counts, hashed: runs alike
+    /// in these differ in time by noise alone.
+    pub findings: String,
+}
+
+/// What a run's [`Recent::findings`] are: its command and each finding's
+/// identity and count, hashed (FNV-1a).
+pub fn findings_of(command: Option<&str>, found: &[Observation]) -> String {
+    let mut each: Vec<String> = found
+        .iter()
+        .filter(|o| !o.identity.is_empty())
+        .map(|o| format!("{}={}", o.identity, count_of(o)))
+        .collect();
+    each.sort_unstable();
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in command
+        .unwrap_or("")
+        .bytes()
+        .chain([0])
+        .chain(each.join("\n").into_bytes())
+    {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
 }
 
 /// A program's findings over its runs.
@@ -550,6 +615,10 @@ pub struct Program {
     /// ([`crate::profile::IDENTITY_RULES`]; none written: 19.0's, 1).
     #[serde(default = "first_rules")]
     pub rules: u32,
+    /// Its last runs, oldest first ([`NOISE_RUNS`] and one more): what its
+    /// noise is read from ([`noise_ms`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<Recent>,
 }
 
 fn first_rules() -> u32 {
@@ -562,6 +631,7 @@ impl Default for Program {
             last: None,
             findings: BTreeMap::new(),
             rules: crate::profile::IDENTITY_RULES,
+            recent: Vec::new(),
         }
     }
 }
@@ -592,8 +662,7 @@ impl Program {
                     was: None,
                     counts: Some([count_of(was), 0]),
                     predicted: Saving::predicted(was),
-                    measured: None,
-                    within_noise: false,
+                    saved_requests: None,
                     saved: None,
                     saved_text: None,
                 })
@@ -608,17 +677,56 @@ impl Program {
         changes.sort_by_key(|c| c.state);
     }
 
+    /// The time each finding fixed or less was predicted to save, as the
+    /// program's plan said it when it was last found (its findings ranked:
+    /// the run before is read for its findings alone, never ranked again).
+    pub fn predict(&self, changes: &mut [FindingChange]) {
+        for c in changes
+            .iter_mut()
+            .filter(|c| matches!(c.state, State::Fixed | State::Less))
+        {
+            if let Some(t) = self.findings.get(&c.identity)
+                && t.predicted.ms > c.predicted.ms
+            {
+                c.predicted.ms = t.predicted.ms;
+                if c.saved.is_some() || c.saved_requests.is_some() {
+                    c.saved = None;
+                    c.saved_text = None;
+                    say_saved(c);
+                }
+            }
+        }
+    }
+
+    /// Keeps `r` among the program's last runs (once, in the order they
+    /// were recorded, the last [`NOISE_RUNS`] and one more). Whether that
+    /// changed them.
+    fn keep_recent(&mut self, r: Recent) -> bool {
+        if self.recent.iter().any(|k| k == &r) {
+            return false;
+        }
+        self.recent.retain(|k| k.run != r.run);
+        self.recent.push(r);
+        self.recent.sort_by(|a, b| a.created.cmp(&b.created));
+        let over = self.recent.len().saturating_sub(NOISE_RUNS + 1);
+        self.recent.drain(..over);
+        true
+    }
+
     /// Takes a run in (`run` its file name, `created` when it was
-    /// recorded): its findings open, and those the change says are fixed
-    /// or less, so. False, and nothing changed, for a
-    /// run no newer than the last taken in.
+    /// recorded, `recent` its wall time and findings as its noise is read):
+    /// its findings open, and those the change says are fixed or less, so.
+    /// False, and nothing changed, for a run no newer than the last taken
+    /// in that adds nothing.
     pub fn take(
         &mut self,
         run: &str,
         created: &str,
         found: &[Observation],
         changes: &[FindingChange],
+        recent: Option<Recent>,
     ) -> bool {
+        let kept = recent.is_some_and(|r| self.keep_recent(r));
         // RFC 3339 of one offset (UTC) orders as text. A run older than the
         // last taken in (runs at once, ending out of order) adds what is
         // not kept yet, and changes nothing a later run said
@@ -632,7 +740,7 @@ impl Program {
             state: State::Open,
             since: run.to_string(),
             predicted,
-            measured: None,
+            saved_requests: None,
         };
         let said: HashMap<&str, State> = changes
             .iter()
@@ -656,7 +764,7 @@ impl Program {
             if now != t.state {
                 t.state = now;
                 t.since = run.to_string();
-                t.measured = None;
+                t.saved_requests = None;
             }
             t.text = o.text.clone();
             t.predicted = Saving::predicted(o);
@@ -679,10 +787,10 @@ impl Program {
             t.state = c.state;
             t.text = c.text.clone();
             t.predicted = c.predicted;
-            t.measured = c.measured;
+            t.saved_requests = c.saved_requests;
         }
         if late {
-            return took;
+            return took || kept;
         }
         self.last = Some((created.to_string(), run.to_string()));
         true
@@ -700,6 +808,8 @@ impl Program {
             return 0;
         }
         self.rules = IDENTITY_RULES;
+        // (their findings were hashed by the older rules)
+        self.recent.clear();
         let mut by: BTreeMap<String, Vec<(String, Tracked)>> = BTreeMap::new();
         for (id, t) in std::mem::take(&mut self.findings) {
             // `#2` of an older run's rank
@@ -784,8 +894,9 @@ pub fn tried_apart(path: &Path, header: &RunHeader) -> bool {
         .is_some_and(|h| tried_otherwise(path, true, command, h.command.as_deref()))
 }
 
-/// The runs of program `key` recorded before `created`, in `dir` (not
-/// `not`, the run itself), the newest first, that did not fail, recorded
+/// The runs of program `key` recorded before `created`, in `dir` or
+/// written elsewhere and listed with it (`-o`: [`crate::index::elsewhere`]),
+/// not `not` (the run itself), the newest first, that did not fail, recorded
 /// requests ([`empty`]) and are no trial of another command than `command`
 /// ([`tried_otherwise`]): what a run is compared with, and what its noise
 /// is read from.
@@ -802,6 +913,7 @@ fn earlier_runs<'a>(
         .flatten()
         .flatten()
         .map(|e| e.path())
+        .chain(crate::index::elsewhere(dir))
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
             let h = crate::run::read_header(&p)?;
@@ -839,29 +951,37 @@ pub fn previous_run(
 /// How many earlier runs a program's noise is read from, at most.
 pub const NOISE_RUNS: usize = 5;
 
-/// How much a program's wall time varies run to run, in ms: the spread
-/// (longest less shortest) of its last [`NOISE_RUNS`] earlier runs of the
-/// same command ([`earlier_runs`], read from the folder's index). None
-/// with fewer than two: no band is known.
-pub fn noise_ms(
-    dir: &Path,
-    key: &str,
-    created: chrono::DateTime<chrono::Utc>,
-    not: &Path,
-    command: Option<&str>,
-) -> Option<f64> {
-    let walls: Vec<f64> = earlier_runs(dir, key, created, not, command)
-        .filter(|(_, h)| crate::program::command_change(h.command.as_deref(), command).is_none())
-        .take(NOISE_RUNS)
-        .filter_map(|(p, _)| Some(crate::summary::counted(&p)?.seconds * 1000.0))
-        .collect();
-    if walls.len() < 2 {
-        return None;
-    }
-    let (lo, hi) = walls
+/// How much a program's wall time varies run to run, in ms, before run
+/// `not` (recorded at `created`): of its runs before it, the newest and
+/// those just before it alike in command and findings (each identity
+/// with its count: no fix between them), [`NOISE_RUNS`] at most, the
+/// largest move from one to the next. A fix between two runs is not
+/// noise. None with fewer than two such runs: no band is known.
+pub fn noise_ms(program: &Program, created: &str, not: &str) -> Option<f64> {
+    let mut earlier = program
+        .recent
         .iter()
-        .fold((f64::MAX, f64::MIN), |(lo, hi), &w| (lo.min(w), hi.max(w)));
-    Some(hi - lo)
+        .rev()
+        .filter(|r| r.created.as_str() < created && r.run != not);
+    let first = earlier.next()?;
+    let walls: Vec<f64> = std::iter::once(first)
+        .chain(earlier.take_while(|r| r.findings == first.findings))
+        .take(NOISE_RUNS)
+        .map(|r| r.wall_ms)
+        .collect();
+    (walls.len() >= 2).then(|| {
+        walls
+            .windows(2)
+            .map(|w| (w[0] - w[1]).abs())
+            .fold(0.0, f64::max)
+    })
+}
+
+/// Says whether the run's wall time moved by less than the program's
+/// runs vary (`noise`, ms): then what moved is not told from noise.
+pub fn within_noise(c: &mut RunChange, noise: Option<f64>) {
+    c.noise_ms = noise;
+    c.within_noise = noise.is_some_and(|b| (c.wall_ms.0 - c.wall_ms.1).abs() < b);
 }
 
 /// A run against the program's run before it.
@@ -976,8 +1096,7 @@ pub fn since_last(
                     was: None,
                     counts: None,
                     predicted: Saving::predicted(o),
-                    measured: None,
-                    within_noise: false,
+                    saved_requests: None,
                     saved: None,
                     saved_text: None,
                 })
@@ -992,8 +1111,14 @@ pub fn since_last(
     // read, changed and kept under the index's lock: the app and the CLI
     // may record at once (nothing recorded here yet: a run written
     // elsewhere with -o)
-    let unsaved = if dir.is_dir() {
-        crate::index::update(dir, |ix| {
+    let recent = Recent {
+        run: name.clone(),
+        created: created.clone(),
+        wall_ms: run.profile.wall_ms,
+        findings: findings_of(command, &run.observations),
+    };
+    let (unsaved, noise) = if dir.is_dir() {
+        match crate::index::update(dir, |ix| {
             let mut kept = ix
                 .folder
                 .findings
@@ -1007,29 +1132,26 @@ pub fn since_last(
             if let Some((_, a)) = &before {
                 kept.mark_gone(&mut findings, a, &run);
             }
-            let changed = kept.take(&name, &created, &run.observations, &findings);
+            // each fixed with the time its plan said it saves
+            kept.predict(&mut findings);
+            let changed = kept.take(&name, &created, &run.observations, &findings, Some(recent));
+            // what the run's wall time moved by is said against the
+            // program's own noise, read from its runs before this one
+            let noise = noise_ms(&kept, &created, &name);
             let changes = match serde_json::to_value(&kept) {
                 Ok(v) if changed => vec![(key.clone(), crate::index::Change::Findings(Some(v)))],
                 _ => Vec::new(),
             };
-            (changes, ())
-        })
-        .err()
-        .map(|e| e.to_string())
+            (changes, noise)
+        }) {
+            Ok(noise) => (None, noise),
+            Err(e) => (Some(e.to_string()), None),
+        }
     } else {
-        None
+        (None, None)
     };
-    // what the run's wall time moved by is said against the program's own
-    // noise, read from its earlier runs of this command
-    let noise = change
-        .as_ref()
-        .and_then(|_| noise_ms(dir, &key, header.created, path, command));
-    let currency = run.profile.cost.currency.clone();
-    for f in &mut findings {
-        say_saved(f, noise, &currency);
-    }
     let change = change.map(|mut c| {
-        c.noise_ms = noise;
+        within_noise(&mut c, noise);
         c.findings = findings.clone();
         c.appeared = said(&findings, &[State::New]);
         c.resolved = said(&findings, &[State::Fixed]);
@@ -1055,8 +1177,7 @@ pub fn by_command(findings: &mut [FindingChange]) {
         .iter_mut()
         .filter(|f| matches!(f.state, State::Fixed | State::Less | State::More))
     {
-        f.measured = None;
-        f.within_noise = false;
+        f.saved_requests = None;
         f.saved = None;
         f.saved_text = None;
     }

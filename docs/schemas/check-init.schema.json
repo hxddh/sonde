@@ -15,9 +15,16 @@
     },
     "findings": {
       "type": "object",
-      "description": "`[check.findings]`: each of the run's findings by identity, with its count. A run with another, or more of one, fails `check`.",
+      "description": "`[check.findings]`: each of the run's findings by identity, with its count, but those in `notKnown`. A run with another, or more of one, fails `check`.",
       "additionalProperties": {
         "type": "integer"
+      }
+    },
+    "notKnown": {
+      "type": "array",
+      "description": "The run's findings that are a fault in what the program does (a read written back, `obs.rmw`): never written as known, so `check` fails until each is fixed.",
+      "items": {
+        "type": "string"
       }
     },
     "command": {
@@ -26,7 +33,7 @@
     },
     "runArgs": {
       "type": "string",
-      "description": "The step's `run-args`: `--demo` for a run on the demo store, else `--url` to fill in."
+      "description": "The step's `run-args`: the store as the run was told it (`--demo`, `-e NAME`, `--url URL`). Absent for a run of no endpoint."
     },
     "uses": {
       "type": "string",
@@ -38,7 +45,6 @@
     "maxRequests",
     "findings",
     "command",
-    "runArgs",
     "uses"
   ]
 }

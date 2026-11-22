@@ -1699,6 +1699,14 @@ pub struct GroupChange {
 #[serde(rename_all = "camelCase")]
 pub struct RunChange {
     pub requests: (usize, usize),
+    /// The objects each run asked of (each key, each prefix listed, once):
+    /// what its workload is judged by ([`workload_changed`]).
+    pub objects: (usize, usize),
+    /// The writes the first run's findings fixed or less named as saved
+    /// (small files written as fewer, deletes one at a time): objects a
+    /// fix does away with, not work left undone.
+    #[serde(skip)]
+    pub freed: usize,
     pub wall_ms: (f64, f64),
     pub waiting_ms: (f64, f64),
     pub errors: (usize, usize),
@@ -1729,7 +1737,7 @@ pub struct RunChange {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_changed: Option<String>,
     /// How much the workload changed between two runs of one program with
-    /// the same command ([`workload_changed`], `requests 120 → 402, 3.4×`):
+    /// the same command ([`workload_changed`], `objects 120 → 402, 3.4×`):
     /// a fix that does more work than before (all 400 files, not 30), or
     /// less (30, not 400), is not a fix to count, and no saving is counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1739,11 +1747,14 @@ pub struct RunChange {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<(String, String)>,
     /// How much the program's wall time varies run to run, in ms
-    /// ([`crate::fixloop::noise_ms`]): a saving under it is within noise.
-    /// None with fewer than two earlier runs of the command, or for two
-    /// runs compared by hand.
+    /// ([`crate::fixloop::noise_ms`]): read from its runs before the later
+    /// one with no fix between them; none with fewer than two.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noise_ms: Option<f64>,
+    /// The run's wall time moved by less than `noise_ms`: what moved is
+    /// not told from noise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub within_noise: bool,
     /// Whether both runs' waiting is known: not when either's times are to
     /// the second (an imported log's), and then `waiting_ms` says nothing.
     pub waiting_known: bool,
@@ -1755,18 +1766,21 @@ pub struct RunChange {
     pub prefixes: Vec<PrefixChange>,
 }
 
-/// A workload that changed between two runs of `(a, b)` requests, said
-/// `requests 120 → 402, 3.4×`: grown by half or more, or shrunk by a third
-/// or more below what a's findings would leave once fixed (`saved`, the
-/// requests they predicted saving), by ten requests at least either way.
-/// None when it did not: a fix makes fewer requests, never fewer than that.
+/// A workload that changed between two runs that asked of `(a, b)`
+/// objects ([`RunChange::objects`]), said `objects 120 → 402, 3.4×`: grown
+/// by half or more, or shrunk by a third or more below what a's findings
+/// fixed or less leave (`saved`, the writes they named as saved:
+/// 120 small files written as 3 is a fix, not less work), by ten objects at
+/// least either way. Objects, not requests: the same files read in fewer
+/// requests is a fix whether or not a finding said so. None when it did
+/// not change.
 pub fn workload_changed((a, b): (usize, usize), saved: usize) -> Option<String> {
     let left = a.saturating_sub(saved);
     let grew = a > 0 && b >= a + 10 && b * 2 >= a * 3;
     let shrank = left >= b + 10 && b * 3 <= left * 2;
     (grew || shrank).then(|| {
         format!(
-            "requests {} → {}, {:.1}×",
+            "objects {} → {}, {:.1}×",
             sonde_fmt::count(a as u64),
             sonde_fmt::count(b as u64),
             b as f64 / a as f64
@@ -1802,14 +1816,7 @@ impl RunChange {
     pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
         self.command_changed = crate::program::command_change(a, b);
         if self.command_changed.is_none() {
-            // what the run before's findings would save, fixed
-            let saved = self
-                .findings
-                .iter()
-                .filter(|f| f.state != crate::fixloop::State::New)
-                .map(|f| f.predicted.requests)
-                .sum();
-            self.workload_changed = workload_changed(self.requests, saved);
+            self.workload_changed = workload_changed(self.objects, self.freed);
         }
         if self.command_changed.is_some() || self.workload_changed.is_some() {
             crate::fixloop::by_command(&mut self.findings);
@@ -1825,7 +1832,7 @@ impl RunChange {
             return Some(format!("the command changed ({c})"));
         }
         self.workload_changed.as_ref().map(|w| {
-            let how = if self.requests.1 > self.requests.0 {
+            let how = if self.objects.1 > self.objects.0 {
                 "the workload grew"
             } else {
                 "the workload shrank"
@@ -1869,6 +1876,12 @@ pub fn finding_identity(o: &Observation) -> String {
     } else {
         o.identity.clone()
     }
+}
+
+/// What a finding is about, as it was (no part made [`stable`]): what
+/// tells one finding from another of its kind in one run.
+pub fn literal_identity(o: &Observation) -> String {
+    identity_as(o, true)
 }
 
 /// [`finding_identity`] worked out, before one is set.
@@ -1934,15 +1947,16 @@ pub fn by_rules(id: &str) -> String {
 }
 
 /// Names each of a run's findings ([`Observation::identity`]) by what it is
-/// about made [`stable`]; but where two findings of the run (of `findings`
-/// and `among`, its findings at any threshold) read the same so, each keeps
-/// what it is about as it was: `t00/` and `t01/` listed again and again are
-/// two findings, not one. Two that read the same even so are told apart by
-/// rank (`#2`).
-pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
+/// about made [`stable`]; but where two of them read the same so, each keeps
+/// as they were the parts of what it is about that tell them apart, the
+/// rest made stable: `t00/` and `t01/` listed again and again are two
+/// findings (`runs/run-{n}/t00/`, whatever the run's own folder), not one.
+/// Two that read the same even so are told apart by rank (`#2`). A run's
+/// findings are named so once, where they are made, and never again.
+pub fn name_findings(findings: &mut [Observation]) {
     use std::collections::HashSet;
     let mut by: HashMap<String, HashSet<String>> = HashMap::new();
-    for o in findings.iter().chain(among) {
+    for o in findings.iter() {
         by.entry(identity_as(o, false))
             .or_default()
             .insert(identity_as(o, true));
@@ -1950,15 +1964,54 @@ pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
     let mut seen: HashMap<String, usize> = HashMap::new();
     for o in findings.iter_mut() {
         let id = identity_as(o, false);
-        let id = if by.get(&id).is_some_and(|l| l.len() > 1) {
-            identity_as(o, true)
-        } else {
-            id
+        let id = match by.get(&id) {
+            Some(group) if group.len() > 1 => told_apart(&identity_as(o, true), group),
+            _ => id,
         };
         let n = seen.entry(id.clone()).or_default();
         *n += 1;
         o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
         o.kind = kind_of(&o.identity).to_string();
+    }
+}
+
+/// A literal identity among others that read the same once stable: each
+/// part (between `/`) all of them share made [`stable`], the parts that
+/// differ kept as they are. As it is when they are not cut alike.
+fn told_apart(literal: &str, group: &std::collections::HashSet<String>) -> String {
+    let parts: Vec<&str> = literal.split('/').collect();
+    let others: Vec<Vec<&str>> = group.iter().map(|g| g.split('/').collect()).collect();
+    if others.iter().any(|o| o.len() != parts.len()) {
+        return literal.to_string();
+    }
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if others.iter().all(|o| o[i] == *p) {
+                stable(p)
+            } else {
+                p.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Names a run's findings at any threshold (`traces`, named among
+/// themselves as they are made) after its findings: a trace of a finding
+/// (what it is about the same, as it was) takes the finding's identity, so
+/// a finding has one identity, as a finding and as a trace.
+pub fn name_traces(traces: &mut [Observation], findings: &[Observation]) {
+    let of: HashMap<String, &str> = findings
+        .iter()
+        .map(|o| (identity_as(o, true), o.identity.as_str()))
+        .collect();
+    for t in traces.iter_mut() {
+        if let Some(id) = of.get(&identity_as(t, true)) {
+            t.identity = id.to_string();
+            t.kind = kind_of(id).to_string();
+        }
     }
 }
 
@@ -2198,6 +2251,8 @@ fn error_classes(records: &[Record]) -> BTreeMap<String, usize> {
 #[derive(Debug, Clone)]
 pub struct Run {
     pub requests: usize,
+    /// The objects it asked of: each key, and each prefix listed, once.
+    pub objects: usize,
     /// Its failed requests (lookups that found nothing are no failure).
     pub errors: usize,
     pub profile: Profile,
@@ -2287,7 +2342,23 @@ impl Run {
     ) -> Run {
         let mut folders: HashMap<String, usize> = HashMap::new();
         let mut name = String::new();
+        let mut objects: std::collections::HashSet<(&str, &str, &str)> =
+            std::collections::HashSet::new();
         for r in records {
+            // (a listing by its prefix: a key it is not)
+            let prefix = match r.key.as_deref() {
+                Some(_) => "",
+                None => r
+                    .query()
+                    .iter()
+                    .find(|(k, _)| k == "prefix")
+                    .map_or("", |(_, v)| v.as_ref()),
+            };
+            objects.insert((
+                r.bucket.as_deref().unwrap_or(""),
+                r.key.as_deref().unwrap_or(""),
+                prefix,
+            ));
             // the folder named in a buffer: a string is kept once per folder
             name.clear();
             let b = r.bucket.as_deref().unwrap_or("");
@@ -2309,11 +2380,9 @@ impl Run {
                 }
             }
         }
-        // a run's findings are told apart among all of them, at any
-        // threshold: as a finding and as a trace, one name
-        let (mut observations, mut traces) = (observations, traces);
-        name_findings(&mut traces, &observations);
-        name_findings(&mut observations, &traces);
+        // a finding keeps the identity it was made with; its trace takes it
+        let mut traces = traces;
+        name_traces(&mut traces, &observations);
         let asks = if asked {
             crate::fixloop::asks_of(records, &observations)
         } else {
@@ -2331,8 +2400,10 @@ impl Run {
                 (finding_identity(&o), o)
             })
             .collect();
+        let objects = objects.len();
         Run {
             requests: records.len(),
+            objects,
             errors: records
                 .iter()
                 .filter(|r| r.is_error() && !is_miss(r))
@@ -2404,6 +2475,16 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     });
     let findings = crate::fixloop::changes(a, b);
     use crate::fixloop::{State, said};
+    // the writes the fixed findings did away with (`PutObject b/k?`), each
+    // an object
+    let freed = findings
+        .iter()
+        .filter(|f| matches!(f.state, State::Fixed | State::Less))
+        .filter_map(|f| a.asks.get(&f.identity))
+        .flatten()
+        .filter(|(asked, _, _)| !["Get", "Head", "List"].iter().any(|r| asked.starts_with(r)))
+        .map(|(_, n, _)| n)
+        .sum();
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
@@ -2430,6 +2511,8 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     RunChange {
         prefixes,
         requests: (a.requests, b.requests),
+        objects: (a.objects, b.objects),
+        freed,
         wall_ms: (pa.wall_ms, pb.wall_ms),
         waiting_ms: (pa.waiting_ms, pb.waiting_ms),
         errors: (a.errors, b.errors),
@@ -2447,6 +2530,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         workload_changed: None,
         endpoints: None,
         noise_ms: None,
+        within_noise: false,
         waiting_known: true,
     }
 }
@@ -2566,19 +2650,27 @@ mod tests {
             expected: None,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
-        name_findings(&mut two, &[]);
+        name_findings(&mut two);
         assert_eq!(two[0].identity, "obs.listed|b/t00/");
         assert_eq!(two[1].identity, "obs.listed|b/t01/");
-        // one over its threshold, the other under it: still two
-        let mut one = vec![listed("b/t00/")];
-        name_findings(&mut one, &[listed("b/t01/")]);
-        assert_eq!(one[0].identity, "obs.listed|b/t00/");
+        // what tells them apart is kept, a run's own folder is not
+        let mut runs = vec![listed("b/runs/run-17/t00/"), listed("b/runs/run-17/t01/")];
+        name_findings(&mut runs);
+        assert_eq!(runs[0].identity, "obs.listed|b/runs/run-{n}/t00/");
+        assert_eq!(runs[1].identity, "obs.listed|b/runs/run-{n}/t01/");
+        // one over its threshold, the other under it: the finding is named
+        // once, as it is made, and its trace takes its name
         let mut alone = vec![listed("b/t00/")];
-        name_findings(&mut alone, &[]);
+        name_findings(&mut alone);
         assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
+        let mut traces = vec![listed("b/t00/"), listed("b/t01/")];
+        name_findings(&mut traces);
+        name_traces(&mut traces, &alone);
+        assert_eq!(traces[0].identity, "obs.listed|b/t{n}/");
+        assert_eq!(traces[1].identity, "obs.listed|b/t01/");
         // the same key twice is told apart by rank
         let mut same = vec![listed("b/t00/"), listed("b/t00/")];
-        name_findings(&mut same, &[]);
+        name_findings(&mut same);
         assert_eq!(same[1].identity, "obs.listed|b/t{n}/#2");
     }
 

@@ -134,12 +134,14 @@ impl Analysis {
     }
 
     /// `path` (a run, its `header` and `records`, analysed as this) against
-    /// its program's run before it ([`crate::fixloop::since_last`]). Its
+    /// its program's run before it, its history in `dir`
+    /// ([`crate::fixloop::since_last`]). Its
     /// operations are not made again, and its findings at any threshold
     /// only when there is a run before to judge: 18.0 made both for every
     /// `show`, a third more time and memory at a million requests.
     pub fn since_last(
         &self,
+        dir: &std::path::Path,
         path: &std::path::Path,
         header: &crate::run::RunHeader,
         records: &[reqlog::Record],
@@ -149,9 +151,8 @@ impl Analysis {
         if !header.is_recording() {
             return None;
         }
-        let dir = crate::fixloop::folder_of(path);
         let traces = match crate::fixloop::previous_run(
-            &dir,
+            dir,
             &key,
             header.created,
             path,
@@ -167,7 +168,7 @@ impl Analysis {
             self.observations.clone(),
             traces,
         );
-        crate::fixloop::since_last(&dir, path, header, records, run, prices)
+        crate::fixloop::since_last(dir, path, header, records, run, prices)
     }
 
     pub fn of(s: &RunFile, prices: &RequestPrices) -> Analysis {

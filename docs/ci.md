@@ -37,8 +37,9 @@ No store, no secrets: `run-args: --demo` runs the program against the built-in s
 requests and findings; its times are not meaningful, so no check holds a demo run's waiting.
 
 To start, `sonde check RUN --init` writes a `sonde.toml` from a run, its findings known by count
-(`[check.findings]`): a pull request that adds a finding, or more of one, fails, with no baseline yet. It prints this
-step with the run's own command.
+(`[check.findings]`, but a fault such as a read written back, which fails until fixed): a pull request that adds a
+finding, or more of one, fails, with no baseline yet; one that fixes a finding is told to tighten it. It prints this
+step with the run's own command and store.
 
 | Step | Does |
 |---|---|
