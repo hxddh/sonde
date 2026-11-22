@@ -80,9 +80,12 @@ fn a_fixed_finding_says_what_it_saved_against_what_was_predicted() {
     assert!(head.identity.starts_with("obs.headget"));
     assert_eq!(head.predicted.requests, 20);
     assert_eq!(head.saved_requests, Some(20));
-    // what it saved is its own requests: the run's time is the run's, said
-    // once (its prediction of time is its plan's, not read here)
-    assert_eq!(head.saved_text.as_deref(), Some("20 fewer requests"));
+    // what it saved is its own requests, beside the time its plan
+    // predicted: the run's time is the run's, said once
+    assert_eq!(
+        head.saved_text.as_deref(),
+        Some("20 fewer requests (predicted 97 ms less)")
+    );
     assert!(!c.within_noise, "two runs compared by hand know no noise");
     assert_eq!(c.resolved.len(), 1);
     assert_eq!(state_of(&c.findings, "obs.small"), State::Open);
@@ -1004,7 +1007,7 @@ fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
     assert_eq!(second.change.as_ref().unwrap().noise_ms, None);
     // two runs alike (335 ms, 346 ms): they vary by 11 ms
     ran(dir.path(), 3, &hot_every(12, 30), Some(0));
-    // fixed, 330 ms sooner: well past the band, and no time on the finding
+    // fixed, 330 ms sooner: well past the band; the finding says its prediction
     let fixed = ran(dir.path(), 4, &hot_every(1, 10), Some(0));
     let c = fixed.change.as_ref().unwrap();
     assert_eq!(c.noise_ms, Some(11.0));
@@ -1016,7 +1019,10 @@ fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
         .unwrap();
     assert_eq!(f.state, State::Fixed);
     assert_eq!(f.saved_requests, Some(11));
-    assert_eq!(f.saved_text.as_deref(), Some("11 fewer requests"));
+    assert_eq!(
+        f.saved_text.as_deref(),
+        Some("11 fewer requests (predicted 55 ms less)")
+    );
     // the fix is no noise: the next run's band is not read across it
     let after = ran(dir.path(), 5, &hot_every(1, 10), Some(0));
     assert_eq!(after.change.as_ref().unwrap().noise_ms, None);

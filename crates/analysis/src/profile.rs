@@ -2506,7 +2506,11 @@ impl Run {
         // (one after another, as [`crate::view::Analysis::of_records`])
         let profile = profile(records, prices);
         let episodes = crate::episode::episodes(records);
-        let observations = crate::episode::observations_of(header, records, &episodes);
+        let mut observations = crate::episode::observations_of(header, records, &episodes);
+        // ranked as a plan ranks them: what each is predicted to save
+        let reckoning = crate::fixes::Reckoning::of(records, &profile, !header.whole_seconds);
+        crate::fixes::rank_by_saving(&mut observations, &reckoning);
+        drop(reckoning);
         let traces = crate::episode::traces_of(header, records, &episodes);
         drop(episodes);
         Run::with(records, profile, observations, traces)

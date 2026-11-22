@@ -2081,15 +2081,14 @@ impl Runs {
     /// program's when it is the program's newest run.
     pub async fn since_last(path: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
-            let s = open_run(&path)?;
-            let prices = crate::state::request_prices_for(&s.header.endpoint);
-            let run = sonde_analysis::profile::Run::analysed(&s.header, &s.records, &prices);
-            Ok(to_json(sonde_analysis::fixloop::since_last(
+            // the run's findings as its plan ranks them: what each was
+            // predicted to save is said beside what it saved
+            let (s, a) = analysis_of(&path)?;
+            Ok(to_json(a.since_last(
                 &sonde_analysis::fixloop::folder_of(Path::new(&path)),
                 Path::new(&path),
                 &s.header,
                 &s.records,
-                run,
                 &crate::state::request_prices_for,
             )))
         })
