@@ -101,10 +101,12 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     computed(() => `${props.tick()}\n${props.path}`),
     async () => {
       const path = untracked(() => props.path);
+      // (read while the program still ran: more may come)
+      const ran = untracked(() => running()?.path === path);
       try {
-        return { path, lines: await api.runs.logLines(path) };
+        return { path, ran, lines: await api.runs.logLines(path) };
       } catch {
-        return { path, lines: [] as LogLine[] };
+        return { path, ran, lines: [] as LogLine[] };
       }
     },
   );
@@ -118,9 +120,11 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const live = () => running()?.path === props.path;
   // a run opens on its operations; a program running now on its Output, its terminal
   const pane = signal<Pane>(untracked(live) ? "output" : "operations");
-  // a run with no output (a program that ended having printed nothing) has no Output to stay on
+  // a run with no output (a program that ended having printed nothing) has no Output to stay on: once its lines are
+  // read after it ended (not before: a read while it ran, or one under way as it ends, says nothing of its last lines)
   effect(() => {
-    if (pane() === "output" && !live() && !hasOutput() && !linesRead.loading()) untracked(() => pane.set("operations"));
+    const r = linesRead();
+    if (pane() === "output" && !live() && r && r.path === props.path && !r.ran && r.lines.length === 0 && !linesRead.loading()) untracked(() => pane.set("operations"));
   });
   // a trial tried again: its fresh run, on its runs
   effect(() => {
