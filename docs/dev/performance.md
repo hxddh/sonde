@@ -35,6 +35,13 @@ The same 1 KiB GET against a local RustFS, 2 000 times direct and 2 000 through 
 
 Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in the `record` job.
 
+**The program's sockets send at once** (`TCP_NODELAY`, as the store-facing ones always did). Without it an answer of
+a few pieces (8–64 KiB) waited ~40 ms on Nagle and the program's delayed ACK, a wait no record could see
+(`crates/proxy/tests/timing.rs`: 44 ms a GET through sonde against 0.1 ms direct, the record saying 1.1 ms; now
+1.1–1.6 ms, the record within 0.5 ms). `footer_v1.py` (91 serial requests, boto3, moto behind 25 ms), measured 2026-11-22: 4.3–4.5 s
+through 29.0, "your program's own 1.5–1.6 s"; 2.9–3.2 s through 30.0, own 0.2–0.3 s; ~3.0 s direct (3.3–3.6 s less
+Python's 0.5 s start).
+
 ## Large runs
 
 **A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `show --since` of two, about 500 MiB
