@@ -129,6 +129,11 @@ export function runMeta(view: Pick<RunView, "header" | "profile" | "sdk">): stri
   return [view.header.endpoint, date(view.header.created), gitText(view.header.git), fromWhom(view)].filter(Boolean).join(" · ");
 }
 
+/** The time account's phrases said in its tooltip, not its line: where most of the time went (the program's own, or
+ * moving bytes), the demo's times are indicative. */
+const ASIDE = ["time.program", "time.bytes", "time.indicative"];
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** A run's header, one form at every size: its command (where and when it ran in its tooltip), its commands, the run
  * in a sentence, what marks it, and its figures in one line — requests, errors, median, bytes, at once — each
  * opening its chart, its detail (p95 and p99, each way's bytes) in its tooltip. */
@@ -142,12 +147,21 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
-  // where the program's time went, in a sentence (a program's run: its own work and its round trips)
+  // where the program's time went, in a line (a program's run: its own work and its round trips), without the counts
+  // the figures under it say; what reads it (where most of it went, the demo's times) in its tooltip
   const story = () => {
     const x = props.view.time;
-    const said = x ? say(x.phrases, x.text) : "";
-    return said.charAt(0).toUpperCase() + said.slice(1);
+    if (!x) return "";
+    const account = x.phrases.find((p) => p.key === "time.account");
+    const rest = x.phrases.filter((p) => p !== account && !ASIDE.includes(p.key));
+    return account ? t("run.time", account.args ?? {}) + say(rest, "") : capital(say(x.phrases, x.text));
   };
+  const aside = () =>
+    (props.view.time?.phrases ?? [])
+      .filter((p) => ASIDE.includes(p.key))
+      .map((p) => capital(say([p], "").replace(/^[\s·]+/, "").replace(/^[(（](.*)[)）]$/, "$1")))
+      .filter(Boolean)
+      .join(". ");
   const tiles = () => {
     const x = signalsOf(props.view);
     return x ? signalTiles(x, props.view.summary.misses) : [];
@@ -173,9 +187,11 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
         </View>
         {props.actions?.()}
       </View>
-      {/* the run in a sentence: where its time went (two lines at most) */}
+      {/* the run in a sentence: where its time went, whole */}
       <If when={story()}>
-        <Text testID="run-story" class="text-body leading-5 text-foreground line-clamp-2">{story()}</Text>
+        <View tooltip={aside() ? <Tip text={aside()} /> : undefined}>
+          <Text testID="run-story" accessibilityLabel={[story(), aside()].filter(Boolean).join(". ")} class="text-body leading-5 text-foreground">{story()}</Text>
+        </View>
       </If>
       {props.children}
       {/* its figures in one line, quiet words, each opening its chart; what is not said is in its tooltip */}
@@ -598,7 +614,6 @@ export function OperationsTable(props: {
   ref?: (r: DataTableRef) => void;
   /** The operations marked (chosen, or running when an output line was printed), by index. */
   highlight?: number[];
-  compact?: boolean;
   /** A run still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
   follow?: boolean;
   /** Group by's choices: the operation's title opens them (a menu of the system's) */
@@ -645,12 +660,12 @@ export function OperationsTable(props: {
   const layout = () =>
     operationColumns(
       width(),
-      // beside the output or a terminal there is no room for a tag most rows do not have
-      // (no "when" bar beside the time: the time says when, and the strip over the table where in the run)
-      { format: formats() && !props.compact, bar: false, notes: !props.compact },
+      // (no "when" bar beside the time: the time says when, and the strip over the table where in the run;
+      // a narrow table drops what ranks last)
+      { format: formats(), bar: false, notes: true },
       { bar: kept("bar", 150), notes: kept("notes", 320) },
     );
-  const titleWidth = () => (width() > 0 ? layout().title : props.compact ? COLUMN.titleCompact : COLUMN.title);
+  const titleWidth = () => (width() > 0 ? layout().title : COLUMN.title);
   const columns = () => {
     const l = layout();
     const column = (key: OpColumn) => {
@@ -763,7 +778,7 @@ export function OperationsTable(props: {
       rowHeight={rowHeight(ROW.table)}
       resizableColumns
       onColumnResize={({ key, width }) => {
-        if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
+        if (key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
       }}
       classes={tableClasses}
       rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? SELECTED : ""))}

@@ -68,7 +68,7 @@ export interface SharedRun extends WholeRun {
   compare?: { name: string; change: RunChange; signals: [Signals, Signals]; profiles: [Profile, Profile] };
 }
 
-type Pane = "compare" | "operations" | "time";
+type Pane = "compare" | "operations" | "output" | "time";
 
 export function RunViewer(props: { data: SharedRun }) {
   // the page's run in the shape a view has, and its operations answered from the page as the
@@ -160,7 +160,7 @@ export function RunViewer(props: { data: SharedRun }) {
     opHighlight.set([]);
   };
 
-  const operations = () => <OperationsTable view={d} source={source} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={d.lines.length > 0 || inspecting()} />;
+  const operations = () => <OperationsTable view={d} source={source} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's run page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the run and what stands out over its operations
@@ -176,30 +176,27 @@ export function RunViewer(props: { data: SharedRun }) {
       return (
         <View class="min-h-0 flex-1 gap-2">
           <Muted class="text-small">{t("viewer.against", { name: c.name })}</Muted>
-          <RunChangeView change={c.change} signals={c.signals} profiles={c.profiles} />
+          <RunChangeView change={c.change} profiles={c.profiles} />
         </View>
       );
     if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} range={hashRange} onRange={keepRange} />;
-    // with output: the output beside the operations, each lighting up the other
-    if (!d.lines.length)
+    // Output: the output beside the operations, each lighting up the other
+    if (pane() === "output" && d.lines.length)
       return (
-        <View class="min-h-0 flex-1 gap-3">
-          {strip()}
-          {findings()}
-          {operations()}
-        </View>
-      );
-    return (
-      <View class="min-h-0 flex-1 gap-3">
-        {findings()}
         <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("runs.resizeOutput")}>
           <ResizablePanel minSize={PANE.outputLeast}>
             <View class="flex-1 pr-2">{output()}</View>
           </ResizablePanel>
-          <ResizablePanel minSize={PANE.besideLeast}>
+          <ResizablePanel minSize={PANE.outputLeast}>
             <View class="flex-1 pl-2">{operations()}</View>
           </ResizablePanel>
         </ResizablePanelGroup>
+      );
+    return (
+      <View class="min-h-0 flex-1 gap-3">
+        {strip()}
+        {findings()}
+        {operations()}
       </View>
     );
   };
@@ -226,6 +223,7 @@ export function RunViewer(props: { data: SharedRun }) {
           items={[
             ...(props.data.compare ? [{ value: "compare", title: t("viewer.compared"), icon: "git-compare-arrows" as const }] : []),
             { value: "operations", title: t("runs.operations"), icon: "list-filter" as const },
+            { value: "output", title: t("runs.output"), icon: "scroll-text" as const, disabled: !d.lines.length, why: t("runs.noOutput") },
             { value: "time", title: t("profile.pane"), icon: "chart-pie" as const, disabled: !d.profile },
           ]}
           onChange={(p) => pane.set(p as Pane)}

@@ -24,9 +24,9 @@ A desktop app (macOS, Linux, Windows) and a CLI, in English and Chinese.
 
 | | |
 |---|---|
-| ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial on the run's History: how the program stood under each fault](docs/images/trial.png) |
+| ![A run's Operations: its figures, the strip of its time, what stands out, operations](docs/images/run-view.png) | ![A trial on the run's History: a row per fault, how the program stood under it](docs/images/trial.png) |
 | ![Time: one timeline, each chart in its frame](docs/images/time.png) | ![Buckets: objects and their details](docs/images/store.png) |
-| ![A run: the program's output beside its S3 requests, as operations](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
+| ![A run's Output: the program's output beside its S3 requests, as operations](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
 
 ## Where it helps
 

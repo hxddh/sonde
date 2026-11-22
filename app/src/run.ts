@@ -6,7 +6,7 @@ import { announce, batch, effect, lifecycle, Notifications, signal, Storage } fr
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openRun, report, runsChanged, wasRead } from "./store";
+import { area, endpoint, go, notify, openRun, report, runsChanged, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/runview";
@@ -109,12 +109,9 @@ export function resize(cols: number, rows: number) {
   if (running()) api.runs.resize(cols, rows);
 }
 
-async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
+async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
   try {
     const v = await api.runs.view(r.path);
-    // run again from a run's view: this run, compared with the one before it, where its view opens
-    // (a run that made no request has nothing to compare)
-    if (before && !killed && v.summary.requests > 0) compareOnOpen.set({ before, after: r.path });
     // a run that made no request leaves nothing to read: it is not kept, unless asked
     if (v.summary.requests === 0) {
       let keep = false;
@@ -177,21 +174,21 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
   }
 }
 
-/** Runs `cmd` against `endpoint`, its requests recorded. */
-/** Runs a run's command again, on its endpoint; once it ends, the new
- * run opens compared with the one before: change the program, then see what
- * the change did. */
-export function runAgain(path: string, cmd: string, endpoint: string, dir?: string | null) {
+/** Runs a run's command again, on its endpoint, where it ran before (when the run says): change the program, then
+ * its new run (the newest, shown as it goes) says what the change did since the run before. */
+export function runAgain(cmd: string, endpoint: string, dir?: string | null) {
   if (running() || !cmd.trim()) return;
   command.set(cmd);
-  // where it ran before, when the run says
   if (dir) cwd.set(dir);
-  // compared with the run before only once this one has started
-  if (start(cmd, endpoint)) againOf = path;
+  start(cmd, endpoint);
 }
-let againOf: string | null = null;
 
-/** Starts it; whether it started. */
+/** A run asked for while another program runs: said, with its Stop (one program at a time). */
+export function busy() {
+  notify(t("run.busy"), { kind: "warning", action: t("run.stop"), onAction: stop });
+}
+
+/** Runs `cmd` against `endpoint`, its requests recorded; whether it started. */
 export function start(cmd: string, endpoint: string): boolean {
   askToNotify();
   if (running() || !cmd.trim()) return false;
@@ -231,14 +228,10 @@ export function start(cmd: string, endpoint: string): boolean {
         lastRun.set({ ...r, command: cmd, killed, endpoint });
       });
       runsChanged();
-      const before = againOf;
-      againOf = null;
       // this run's own: a new run may start before the analysis is back
-      void tellTheUser(r, cmd, killed, r.path ? before : null);
+      void tellTheUser(r, cmd, killed);
     })
     .catch((e) => {
-      // a run that never started compares with nothing
-      againOf = null;
       running.set(null);
       report(e);
     });

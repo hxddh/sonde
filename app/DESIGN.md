@@ -7,13 +7,13 @@ The app's own decisions on top of Native Shell's Design Guides
 ## The product
 
 One task: see what a program does to S3. Two places — **Runs** (with no run chosen, the command bar; a program
-started there is the newest run, its terminal beside its operations as they arrive; what a run did, what stands out
+started there is the newest run, on its Output: its terminal beside its operations as they arrive; what a run did, what stands out
 and how it stands against the run before, grouped, compared and replayed), **Buckets** (the store's side, in one row
 of sections: objects, size, incomplete uploads, layouts; an object's versions open from its inspector). The window has
 two columns and no more: the **sidebar** (the places, and under them the current place's own list — the runs, the
 buckets) and the place; a detail
 opens beside the place as an inspector, and nothing else moves when it does. Everything configured once lives in
-**Settings** (a window; whether a program works on another store is asked from its run: Compare › On another
+**Settings** (a window; whether a program works on another store is asked from its run: ⋯ › On another
 store…); what sonde itself is doing lives in **Activity** (a side panel). The core result is *what stands out in a run*: it gets the space, the words and
 the next action; counts and chips support it, they do not replace it.
 
@@ -32,8 +32,8 @@ the next action; counts and chips support it, they do not replace it.
   under its name ("This run", "Objects", an object's name) with their shortcuts, and the shortcuts are bound while it
   shows. A dialog is for a short decision only.
 - **One door each.** A thing is reached one way per surface: recent runs from Runs' sidebar list and the palette's
-  "Recent runs"; the demo from the welcome and the palette, the example from the palette; a new run from the sidebar's
-  New run (⌘N); Activity from the View menu, ⌘⇧A and the palette (the toolbar shows it only while sonde is at work);
+  "Recent runs"; the demo from the welcome and the palette, the example from the palette; a new run from ⌘N (File ›
+  New Run, the palette) or the sidebar's Runs pressed in Runs, and the command bar is Runs with no run chosen; Activity from the View menu, ⌘⇧A and the palette (the toolbar shows it only while sonde is at work);
   Buckets' sections from their row (and `⌥⌘1`–`⌥⌘4`, not while typing; a finding whose fix is one of them leads to
   the same section).
 - **No control that does nothing.** A press with something missing says what (Run with no endpoint, Save with no
@@ -109,11 +109,11 @@ piece wraps one nsh export with the theme's tokens:
 | `Disclosure` | `Accordion` | a section that opens under its heading |
 | `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end. A `Modal` that asks or warns gives its sentence as `describe`: a screen reader hears it after the dialog's name |
 | `FocusRest` | `Input` | where the keyboard rests in a window on Linux when no field has it (FINDINGS 22): each window's first element, nothing to see or hear |
-| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a run's line, in a comparison). No third figure. `Tiles` lays tiles in rows of equal count |
+| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). No third figure. `Tiles` lays tiles in rows of equal count |
 | `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
 | `Notice` | — | the one banner: a note, a caution or what went wrong, with what can be done at its end |
 | `Await` | — | anything fetched, in its three states said truly: on its way, failed (why, Try again), there |
-| `PageHeader`, `SideHeader`, `Back` | — | the head of a page (without a title where the window's title bar says it), of a list in the sidebar, and the one way back |
+| `PageHeader`, `SideHeader`, `Back` | — | the head of a page (without a title where the window's title bar says it), of a list in the sidebar (Buckets'), and the one way back |
 | `Path` | `Text` | a path or key cut in its middle (the text's own `ellipsis-middle`), heard whole |
 | `TABLE`, `ROW`, `SimpleTable` | `DataTable` | every table's classes and row heights; rows of text, every row there (it scrolls past `max`), sorted by a press on a title, figures at their cell's end (`end`), one column taking the room the others leave (`fill`), a cell drawn its own way (`cell`) |
 | `Badge`, `Dot`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only; `Empty` is the one way to say nothing is here (`compact` inside a chart, a list or a card) |
@@ -207,10 +207,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
-- **Nothing appears and goes.** What a place may show has its room from the start: the runs' search field, a
-  pane's three tabs (History is dimmed for a run that has none, it does not go). A value arrives in its place; the
-  layout does not change to make it. A run's output is not a tab: where it has some, Operations shows it beside the
-  table (its terminal, while the program runs); Group by is the operations' title, and says it is on over them.
+- **Nothing appears and goes.** What a place may show has its room from the start: a run's four tabs (Output is
+  dimmed for a run with none, History for a run that has none; neither goes). A value arrives in its place; the
+  layout does not change to make it. Operations is the same on every run (the strip, what stands out, the
+  operations: every Time chart is kept); Output is the output beside the operations (its terminal, while the program
+  runs; the inspector comes in from the edge there); Group by is the operations' title, and says it is on over them.
 - **One settings width.** Settings and Endpoints are `FORM` wide, so their edges line up across the tabs.
 - **Tables fit their own width.** The operation's name takes the room the others leave; notes, then bars go as
   the table (not the window) narrows — from the end only: DataTable keeps a column's state by its place. A
@@ -414,9 +415,9 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   figures, beside the charts it summarises.
 - **Errors**: the counts by class, and beside them the rate (the share of each slice's requests that failed);
   every answer in a table with headings, none left out (it scrolls), a fault scenario's in the injected tone.
-- **Two runs**: five tiles say each fact once (requests, errors, latency, waiting, cost), each with both runs'
-  lines; equal figures are said once with no change beside them, in a tile, a dumbbell or a prefix ("5", never
-  "5 → 5"); a figure marked too few to tell (`~`) is neither green nor red; between two different programs nothing
+- **Two runs**: no tiles; each chart's sentence carries the figures before → after (over time: the requests and the
+  time each took, then the waiting, errors and cost; latency: the median and p95); equal figures are said once with
+  no change beside them, in a sentence, a dumbbell or a prefix ("5", never "5 → 5"); a figure marked too few to tell (`~`) is neither green nor red; between two different programs nothing
   is better or worse, and nothing is green or red. A dumbbell's figures stand on its own line, over an axis. The
   title says one day once, then the two times.
 - **Motion**: an appear of 420 ms ease-out per new data (`appearGeneration`), updates gliding in 260 ms; nothing
@@ -467,10 +468,10 @@ it, as `sonde run --trial` takes it, and what it does and how hard it presses in
 (`scenario.about.<name>`; a project's own scenario keeps the line its `sonde.toml` gives). The trial's dialog
 says the limit the program runs under and lets it be changed; **Stop** ends a running trial and is its own
 word (nothing dismisses the dialog while it runs), the time it has taken counts beside its progress, and a
-finished scenario opens its own run. Verdicts are drawn one way (`TrialVerdicts`) in the dialog and on the History
-pane: grouped by what to change (Rust's phrase), each advice said once over the scenarios it is for, a line each — the
+finished scenario opens its own run. Verdicts are in one place, the History's Under faults: a line per scenario — the
 scenario and its id, why it is not "survived" and its history ("Broke in 3 of 3 runs, since 08:33") in one quiet line
-cut at its end, its standing at the row's end.
+cut at its end, its standing at the row's end, a chevron to its run; what to change is the trial finding's fix, in the
+inspector.
 A run and its trials are apart: a run's row says nothing of its trials (its History does), never a red "Broke" on a
 run that exited as it did. The run header says what found nothing beside what failed
 ("0%", and under it "67% not found"). A dialog that acts is titled and committed by its act and count ("Abort 2

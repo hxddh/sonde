@@ -11,14 +11,13 @@ import { core, say } from "../phrases";
 import { verdictLabel, verdictTone } from "../labels";
 import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, runsChanged } from "../store";
-import type { LatencyChange, Profile, Relied, RunInfo, Signals } from "../types";
+import type { LatencyChange, Profile, Relied, RunInfo } from "../types";
 import { Icon } from "./icon";
-import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
+import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, TABLE, Title, TYPE, EMPHASIS, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { RunChangeView } from "./runchange";
 import { StateBadge } from "./runview";
 import { fileName, runName } from "./manage";
-import { brief, FEW, handful, signalsOf } from "../signals";
-import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
+import { Chart, cost, groupName, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -123,14 +122,13 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
     () => `${props.a}\n${props.b}`,
     () => api.runs.compareRuns(props.a, props.b),
   );
-  // both runs by their four signals, as each run's header has them, and their profiles (the two over time)
+  // both runs' profiles (the two over time)
   const views = resource(
     () => `${props.a}\n${props.b}`,
     async () => {
       try {
         const [a, b] = await Promise.all([api.runs.view(props.a), api.runs.view(props.b)]);
-        const [x, y] = [signalsOf(a), signalsOf(b)];
-        return { signals: x && y ? ([x, y] as [Signals, Signals]) : null, profiles: a.profile && b.profile ? ([a.profile, b.profile] as [Profile, Profile]) : null };
+        return { profiles: a.profile && b.profile ? ([a.profile, b.profile] as [Profile, Profile]) : null };
       } catch {
         // the figures below still say what changed
         return null;
@@ -209,7 +207,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
         <If when={replayOf() && answers()}>{(d) => answersPart(d() as Answers)}</If>
         {/* the two runs in five tiles (each fact once), then what changed by kind, by prefix and in latency */}
         <Await loading={runs.loading()} error={runs.error()} retry={() => runs.refetch()}>
-          <If when={runs()}>{(r) => <RunChangeView change={r()} inline signals={views()?.signals} profiles={views()?.profiles} />}</If>
+          <If when={runs()}>{(r) => <RunChangeView change={r()} inline profiles={views()?.profiles} />}</If>
         </Await>
         <If when={answers()}>
           {(d) => (

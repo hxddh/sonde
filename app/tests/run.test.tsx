@@ -1,5 +1,5 @@
 // Runs: a program run from its command bar, its run the newest in the list,
-// its terminal and then its output lined up beside its operations.
+// on its Output: its terminal and then its output lined up beside its operations.
 
 import { expect, open, test } from "nsh/test";
 import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, reach, runCommand, runText, runView, runAction, runMenu } from "./helpers";
@@ -13,13 +13,13 @@ async function demo() {
   return app;
 }
 
-test("run a command: its requests become operations; once it ends, its own view lines them up with its output", async () => {
+test("run a command: its requests become operations; once it ends, its Output lines them up with its output", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo fetching; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo done");
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  // the run is the newest in the list and opens in its own view; once it ended, its output beside its operations
+  // the run is the newest in the list and opens on its Output; once it ended, its output beside its operations
   // (an exit of 0 is no news: nothing said)
   await runView(app);
   expect(app.shows("id:screen-runs")).toBe(true);
@@ -45,18 +45,31 @@ test("a program that runs a while is read as it goes: its terminal beside its op
   await app.type("id:run-command", `for i in $(seq 30); do ${get}; sleep 0.2; done`);
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  // still running: its run's own view, the program's terminal beside its operations, read again as they arrive
+  // still running: its run's own view on its Output, the program's terminal beside its operations, read again as
+  // they arrive
   await app.waitFor("id:run-terminal", { timeout: 15000 });
   await app.waitFor("id:run-summary", { timeout: 10000 });
   expect(app.shows("id:run-stop")).toBe(true);
   expect(app.shows("id:run-again")).toBe(false);
   // the newest row of the list, said live
   expect(app.shows("id:run-0 >> label:Live")).toBe(true);
-  // ended: Run again in Stop's place; it printed nothing, so its operations stand alone, its terminal gone
+  // Operations, while it runs: the strip over what stands out and the operations, as on every run
+  await app.press("id:run-pane-mode-operations");
+  await app.waitFor("id:run-shape", { timeout: 10000 });
+  expect(app.shows("id:run-terminal")).toBe(false);
+  // another program, while this one runs: Run says why it cannot
+  await app.press("id:nav-runs");
+  await app.waitFor("id:run-command");
+  await app.press("id:run-start");
+  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
+  await app.press("id:run-0");
+  // ended: Run again in Stop's place; it printed nothing, so it has no Output to stay on: its operations, with the strip
   await app.waitFor("id:run-stop", { state: "gone", timeout: 30000 });
   await app.waitFor("id:run-again", { timeout: 10000 });
   expect(app.shows("id:run-terminal")).toBe(false);
   expect(app.shows("id:output")).toBe(false);
+  expect(app.enabled("id:run-pane-mode-output")).toBe(false);
+  expect(app.shows("id:run-shape")).toBe(true);
 });
 
 test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
@@ -164,11 +177,9 @@ test("a run as a timeline, replayed from the app, and the answers compared", asy
   expect(app.shows("text:Were the same requests slower on one store?")).toBe(true);
 });
 
-test("runs are looked after: renamed, searched, deleted, dropped on the window", async () => {
+test("runs are looked after: renamed, found, deleted, dropped on the window", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "runs");
-  // five runs or more by now (the tests before): enough for a search field
-  await app.waitFor("id:run-search");
   // Runs opens on its command bar: no run chosen yet
   await app.waitFor("id:run-command", { timeout: 10000 });
   // each row says where its run went and how many requests it sent
@@ -183,14 +194,12 @@ test("runs are looked after: renamed, searched, deleted, dropped on the window",
   await app.type("id:rename-input", "Nightly compaction");
   await app.press("id:rename-save");
   await app.waitFor("text:Nightly compaction");
-  // search narrows the list
-  await app.type("id:run-search", "nightly");
-  await app.waitFor("id:run-0");
-  expect(app.count("label:/^Nightly compaction$/")).toBe(1);
-  // the list narrows a frame or two after the last key
-  await app.waitUntil(() => !app.shows("id:run-1"), { timeout: 2000 });
-  await app.clear("id:run-search");
-  await app.waitFor("id:run-1");
+  // found by its title in the palette (⌘K): the sidebar has no search field of its own
+  expect(app.shows("id:run-search")).toBe(false);
+  await app.press("id:palette");
+  await app.type("id:palette-command", "nightly");
+  await app.waitFor("id:palette-dialog >> text:Nightly compaction");
+  await app.keyboard.press("escape");
   // its path, for dropping it back on the window
   await app.rightClick("id:run-0");
   await app.chooseMenuItem("Copy file path");
@@ -276,12 +285,11 @@ test("a run's time: where it went, and two runs before and after", async () => {
   await app.chooseMenuItem(run);
   await app.waitFor("id:compare");
   await app.waitFor("id:run-change", { timeout: 10000 });
-  // the two runs in five tiles, each fact once: no second strip of the same figures
-  await app.waitFor("id:compare-figures", { timeout: 10000 });
-  expect(app.shows("id:compare-requests")).toBe(true);
-  expect(app.shows("text:/^172 → /")).toBe(true);
-  expect(app.shows("id:compare-latency")).toBe(true);
-  expect(app.shows("id:compare-cost")).toBe(true);
+  // no tiles: the charts' sentences carry the figures before → after (the requests and the time each took first)
+  await app.waitFor("id:compare-by-kind", { timeout: 10000 });
+  expect(app.shows("id:compare-figures")).toBe(false);
+  expect(app.shows("text:/^172 → [\\d,]+ requests, /")).toBe(true);
+  expect(app.shows("text:/Request cost /")).toBe(true);
   expect(app.shows("id:compare-signals")).toBe(false);
   expect(app.shows("id:other-program")).toBe(true);
   expect(app.shows("text:/^Gone · /")).toBe(false);
@@ -291,7 +299,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
   const app = await demo();
   const cmd = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null";
   for (let i = 0; i < 2; i++) {
-    if (!app.shows("id:run-command")) await app.press("id:new-run");
+    if (!app.shows("id:run-command")) await app.press("id:nav-runs");
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
     await runCommand(app);
@@ -362,7 +370,7 @@ test("relative times read in the app's language", async () => {
 });
 
 
-test("run again from a run: the program after a change, the newest run, compared with the run before", async () => {
+test("run again from a run: the program after a change, the newest run, shown as itself (Compare is its since sentence's link)", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
   // (the button follows the field a frame later)
@@ -370,14 +378,19 @@ test("run again from a run: the program after a change, the newest run, compared
   await app.press("id:run-start");
   await runView(app);
   // the Runs place has no list of programs beside its runs: a program over its runs is a run's History
-  await place(app, "runs");
   expect(app.shows("id:runs-by")).toBe(false);
+  // the run in a line: its time account without the counts its figures say, where most of it went in its tooltip
+  expect(app.shows("text:/^Time .*: your program's own .* · S3 round trips [^(·]*$/")).toBe(true);
+  expect(app.shows("text:/indicative/")).toBe(false);
   await app.waitFor("id:run-again", { timeout: 10000 });
   await app.press("id:run-again");
-  // it ran as the newest run, and its view opened compared with this one: the same program, so findings compare too
-  await app.waitFor("id:compare", { timeout: 30000 });
-  await app.waitFor("id:run-change", { timeout: 10000 });
-  expect(app.shows("id:other-program")).toBe(false);
+  // it ran as the newest run, and its own view stays once it ended: no comparison opened in its place
+  await app.wait(500);
+  await app.waitUntil(() => !app.shows("id:run-0 >> label:Live") && app.shows("id:run-again"), { timeout: 30000 });
+  await app.wait(1500);
+  expect(app.shows("id:compare")).toBe(false);
+  expect(app.shows("id:run-pane")).toBe(true);
+  expect(app.shows("id:run-0 >> label:Live")).toBe(false);
 });
 
 test("a run tried under faults: said before it runs, followed on its History as it goes, its trial opened and marked as one", async () => {
@@ -485,7 +498,7 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   const app = await demo();
   const cmd = fixable();
   for (let i = 0; i < 2; i++) {
-    if (!app.shows("id:run-command")) await app.press("id:new-run");
+    if (!app.shows("id:run-command")) await app.press("id:nav-runs");
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
     await runCommand(app);
@@ -534,6 +547,8 @@ test("what broke under faults is a finding of the run, its fix in the inspector;
   };
   await slowdownAlone();
   await app.waitFor("label:Broke: The store asks to slow down", { timeout: 10000 });
+  // a row per scenario: what to change is the trial finding's fix (in the inspector), not a row of its own here
+  expect(app.shows("id:trial-advice")).toBe(false);
   // where it turned: the request it broke at
   expect(app.shows("text:/ · at PutObject \\S*again\\.txt$/")).toBe(true);
   // no dialog of results, no "Try again what broke": the plan is asked anew
@@ -676,8 +691,7 @@ test("Run with no command says why on press", async () => {
 test("a count of thousands is grouped in the sidebar, in English and Chinese (1,500 requests)", async () => {
   const app = await open("../App.tsx", desktop);
   await importRun(app, "grouped.sonde", runText(1500, "python grouped_counts.py", "2026-01-03T09:00:00Z"));
-  // (its row, among however many runs the tests before made)
-  await app.type("id:run-search", "grouped_counts");
+  // (its row, among however many runs the tests before made: the run opened, its row in view)
   // (the row's line starts with its count)
   const row = (n: string) => app.texts().some((x) => x.trim().startsWith(n));
   await app.waitUntil(() => row("1,500 requests ·"), { timeout: 10000 });
@@ -685,20 +699,28 @@ test("a count of thousands is grouped in the sidebar, in English and Chinese (1,
   await language(app, "zh");
   try {
     await app.press("id:nav-runs");
-    await app.clear("id:run-search");
-    await app.type("id:run-search", "grouped_counts");
     await app.waitUntil(() => row("1,500 个请求 ·"), { timeout: 10000 });
   } finally {
     await language(app, "en");
   }
 }, 120000);
 
-test("a run with output shows it beside its operations, on Operations: no tab of its own", async () => {
+test("a run with output keeps its strip on Operations; its Output lines the output up beside the operations", async () => {
   const app = await open("../App.tsx", desktop);
   await importRun(app, "printed.sonde", runText(400, "python printed_lines.py", "2026-01-04T09:00:00Z"));
+  // every Time chart is kept: the strip over the operations, on a run with output too
+  await app.waitFor("id:run-shape", { timeout: 5000 });
+  expect(app.shows("id:operations")).toBe(true);
+  expect(app.shows("id:output")).toBe(false);
+  await app.press("id:run-pane-mode-output");
   await app.waitFor("id:output", { timeout: 5000 });
   expect(app.shows("id:operations")).toBe(true);
-  expect(app.shows("id:run-pane-mode-aligned")).toBe(false);
+  expect(app.shows("id:run-shape")).toBe(false);
+  // an operation chosen there: its inspector from the edge, the output and the operations keep their columns
+  await app.press("id:operations >> text:/^GetObject/ >> nth=0");
+  await app.waitFor("id:operation-detail");
+  expect(app.shows("role:dialog >> id:inspector-close")).toBe(true);
+  await app.press("id:inspector-close");
   // scrolled, the header stays as it was
   await app.scroll("id:output", 1500);
   await app.wait(300);

@@ -4,9 +4,9 @@
 // from its figures and what stands out (each a filter) down to its
 // operations — outcome, time, family, place in time — and an inspector
 // beside them that goes from an operation to its requests to one request in
-// full. When sonde ran the program, its output lines up beside the
-// operations (its terminal, while it runs): choose one and the other lights
-// up. A run also shows as a timeline, replays on another endpoint, compares
+// full. When sonde ran the program, its Output tab lines its output up
+// beside the operations (its terminal, while it runs): choose one and the
+// other lights up. A run also shows as a timeline, replays on another endpoint, compares
 // with another run, and opens in a window of its own.
 
 import { batch, cleanup, computed, effect, type JSX, resource, Scroll, signal, untracked, View, type ViewRef } from "nsh";
@@ -18,11 +18,11 @@ import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { applyDemoFix, isDemoJob } from "../demo";
-import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, endpoints, findingOnOpen, go, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, useEndpoint } from "../store";
+import { type PlaceCommand, offerCommands, away, chooseBucket, copy, endpoints, findingOnOpen, go, newRunAsked, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, useEndpoint } from "../store";
 import type { Diagnosis, LogLine, Observation, RunInfo, RunView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, RunSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, PANE, windowFace, glideLayout } from "../ui/kit";
+import { Await, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, Segmented, RunSkeleton, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, PANE, windowFace, glideLayout } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -39,10 +39,10 @@ import type { SignalId } from "../signals";
 import { RunShape, SHAPE_STRIP, TICK_ROOM, faultMoments, began } from "../ui/plots";
 import { RecordDetail } from "../ui/request";
 import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
-import { lastRun, running, runAgain, stop } from "../run";
+import { busy, lastRun, running, runAgain, stop } from "../run";
 import { NewRun, NoRequests, ProgramTerminal } from "./Run";
 
-type Pane = "operations" | "time" | "runs";
+type Pane = "operations" | "output" | "time" | "runs";
 
 const program = programOf;
 
@@ -75,11 +75,6 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   // a kind of request chosen (Group by's row, the Time pane's by-kind table): the operations that sent one
   const kind = signal<string | null>(null);
   const compareWith = signal<string | null>(null);
-  // run again from here: the new run opens compared with this one
-  effect(() => {
-    const c = compareOnOpen();
-    if (c && c.after === props.path) untracked(() => batch(() => (compareWith.set(c.before), compareOnOpen.set(null))));
-  });
   const replaying = signal(false);
   const tryingFaults = signal(false);
   // Group by: each operation, or the operations split by a dimension
@@ -121,8 +116,12 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const hasOutput = computed(() => lines().length > 0);
   // the program running now, recorded as this run: its terminal stands where its output will
   const live = () => running()?.path === props.path;
-  // a run opens on its operations (its output beside them, where it has any)
-  const pane = signal<Pane>("operations");
+  // a run opens on its operations; a program running now on its Output, its terminal
+  const pane = signal<Pane>(untracked(live) ? "output" : "operations");
+  // a run with no output (a program that ended having printed nothing) has no Output to stay on
+  effect(() => {
+    if (pane() === "output" && !live() && !hasOutput() && !linesRead.loading()) untracked(() => pane.set("operations"));
+  });
   // a trial tried again: its fresh run, on its runs
   effect(() => {
     const o = paneOnOpen();
@@ -436,9 +435,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const groupMenu = () => GROUP_BY.map((g) => ({ label: t(`split.by.${g}`), checked: groupBy() === g, onSelect: () => groupTo(g) }));
   // (each part is given the view as an accessor and reads it where it draws: a live run's
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
-  const operations = (v: () => RunView, beside: boolean) => (
+  const operations = (v: () => RunView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-      <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} groupMenu={groupMenu} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={beside} follow={props.others().some((x) => x.path === props.path && x.live)} />
+      <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} groupMenu={groupMenu} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
   // the program's output: its terminal while it runs, its lines once it has ended
@@ -451,12 +450,13 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const v0 = () => view();
   // a run of a program has runs (a trial is no run of its own: its verdict is on the run it is a trial of)
   const hasRuns = () => ranCommand(v0()?.header.command) && !v0()?.trial;
-  // the three tabs are there for every run, whatever it holds: one with nothing to show is
+  // the four tabs are there for every run, whatever it holds: one with nothing to show is
   // dimmed and says why, it does not go (and the others do not move)
   const panes = () => [
     { value: "operations", title: t("runs.operations"), icon: "list-filter" as const },
+    { value: "output", title: t("runs.output"), icon: "scroll-text" as const, disabled: !live() && !hasOutput(), why: t("runs.noOutput") },
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
-    { value: "runs", title: t("history.pane"), icon: "activity" as const, disabled: !hasRuns(), why: t("runs.noRuns") },
+    { value: "runs", title: t("history.pane"), icon: "clock" as const, disabled: !hasRuns(), why: t("runs.noRuns") },
   ];
 
   /** A finding whose fix is a tool of Buckets (incomplete uploads): that section, on the bucket and endpoint its requests went to. */
@@ -525,30 +525,24 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTrials={() => tryingFaults.set(true)} />;
     // a program that ended having sent nothing: how to point it at sonde
     if (!live() && v().operationsTotal === 0 && lastRun()?.path === props.path) return <NoRequests />;
-    // with output (or a program running now): the output beside the operations, each lighting up the other
-    if (live() || hasOutput())
+    // Output: the program's output (its terminal, while it runs) beside the operations, each lighting up the other
+    if (pane() === "output" && (live() || hasOutput()))
       return (
-        <View class="min-h-0 flex-1 gap-3">
-          {findings(v)}
-          <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("runs.resizeOutput")}>
-            <ResizablePanel minSize={PANE.outputLeast}>
-              <View class="flex-1 pr-2">{output()}</View>
-            </ResizablePanel>
-            <ResizablePanel minSize={PANE.besideLeast}>
-              <View class="flex-1 pl-2">
-                <If when={groupBy() !== "none"} else={operations(v, true)}>
-                  <SplitTable path={props.path} by={groupBy() as Exclude<GroupBy, "none">} onKind={(k) => kind.set(k)} />
-                </If>
-              </View>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </View>
+        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("runs.resizeOutput")}>
+          <ResizablePanel minSize={PANE.outputLeast}>
+            <View class="flex-1 pr-2">{output()}</View>
+          </ResizablePanel>
+          <ResizablePanel minSize={PANE.outputLeast}>
+            <View class="flex-1 pl-2">{operations(v)}</View>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       );
+    // Operations, on every run: when (the strip), what stands out, and the operations
     return (
       <View class="min-h-0 flex-1 gap-3">
         {strip(v)}
         {findings(v)}
-        <If when={groupBy() !== "none"} else={operations(v, false)}>
+        <If when={groupBy() !== "none"} else={operations(v)}>
           <SplitTable path={props.path} by={groupBy() as Exclude<GroupBy, "none">} onKind={(k) => kind.set(k)} />
         </If>
       </View>
@@ -561,7 +555,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       <If when={live()}>
         <Button small variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
       </If>
-      {/* the program again, after a change: it opens compared with this run */}
+      {/* the program again, after a change: its new run opens, saying what changed since this one */}
       {/* the built-in demo is not saved: running a demo run again starts it */}
       <If when={!live() && ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
@@ -571,11 +565,12 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           icon="play"
           label={t("runs.runAgain")}
           onPress={async () => {
+            // one program at a time: a press while another runs says so, with its Stop
+            if (running()) return busy();
             const h = view()!.header;
             if (!endpoints().some((e) => e.id === h.endpoint) && !(await startDemo())) return;
-            runAgain(props.path, h.command!, h.endpoint, h.cwd);
+            runAgain(h.command!, h.endpoint, h.cwd);
           }}
-          disabled={!!running()}
           testID="run-again"
         />
       </If>
@@ -640,9 +635,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
         {tabs()}
         <View class="flex-1" />
         {/* what narrows the operations, said where they are; and how they are grouped, its ✕ the way back */}
-        <If when={pane() === "operations"} else={<If when={pane() === "time"}>{timeChip()}</If>}>
+        <If when={pane() === "operations" || pane() === "output"} else={<If when={pane() === "time"}>{timeChip()}</If>}>
           {chip()}
-          <If when={groupBy() !== "none"}>
+          <If when={pane() === "operations" && groupBy() !== "none"}>
             <Button small variant="outline" icon="x" label={`${t("split.groupBy")}: ${t(`split.by.${groupBy()}`)}`} tip={t("split.by.none")} onPress={() => groupBy.set("none")} testID="clear-group" />
           </If>
         </If>
@@ -660,10 +655,12 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const applying = () => !episode() && !record() && !!diagnosis() && isDemoJob(view()?.header) && !!headOf(view()!, diagnosis()!)?.fixes?.length;
   const inspectorTitle = () => (record() ? t("inspector.request") : episode() ? t("inspector.operation") : diagnosis() ? t("fix.title") : t("inspector.operation"));
   // the findings a line each, the one chosen in full, so the operations keep the room; a tall window has it for both
-  const dense = () => live() || hasOutput() || box().h < BREAK.tall;
+  const dense = () => box().h < BREAK.tall;
+  // the inspector beside the run where there is room, from the edge where not; on Output (two columns already) from the edge
+  const beside = () => roomy() && pane() !== "output";
 
   const inspector = () => (
-    <View testID="inspector" class={`flex-1 bg-inspector ${roomy() ? "border-l border-border" : ""}`}>
+    <View testID="inspector" class={`flex-1 bg-inspector ${beside() ? "border-l border-border" : ""}`}>
       <PanelHeader icon={record() ? "radio" : episode() || !diagnosis() ? "layers" : "sparkles"} title={inspectorTitle()} onClose={closeInspector} closeTestID="inspector-close">
         {/* the operation's commands, as its context menu has them: reached by the keyboard too */}
         <If when={!record() && op() !== null}>
@@ -690,7 +687,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
         {(v) => (
           <If when={compareWith()} else={
             <If
-              when={roomy()}
+              when={beside()}
               else={
                 <View class="flex-1">
                   {main(v)}
@@ -821,9 +818,8 @@ function RunWindow(props: { path: string }) {
   );
 }
 
-/** What the place was showing, kept while another place is on screen: the run chosen and the search. */
+/** What the place was showing, kept while another place is on screen: the run chosen. */
 const selected = signal<string | null>(null);
-const query = signal("");
 
 export function Runs() {
   const runs = signal<RunInfo[]>(api.runs.list());
@@ -845,6 +841,10 @@ export function Runs() {
   untracked(() => {
     const was = selected();
     selected.set(openRun() ?? (was && runs().some((s) => s.path === was) ? was : null));
+  });
+  // a new run asked for (⌘N, the sidebar's Runs pressed here): the command bar, whatever run was shown
+  effect(() => {
+    if (newRunAsked()) untracked(() => batch(() => (selected.set(null), newRunAsked.set(false))));
   });
   const choose = (p: string | null) => {
     if (p === passing && p !== null) {
@@ -881,14 +881,9 @@ export function Runs() {
   }, 1000);
   cleanup(() => clearInterval(timer));
 
-  const shown = () => {
-    const q = query().trim().toLowerCase();
-    if (!q) return runs();
-    return runs().filter((s) => [s.title, s.command, s.endpoint, s.name].some((f) => f?.toLowerCase().includes(q)));
-  };
   const openInWindow = openRunWindow;
   const remove = async (s: RunInfo) => {
-    const list = shown();
+    const list = runs();
     const at = list.findIndex((x) => x.path === s.path);
     // the one after it takes its place, before the list changes
     await removeRun(s, () => {
@@ -915,20 +910,13 @@ export function Runs() {
       at,
     );
   };
+  // (the place's name is the row over it, and a run is found by ⌘K: no heading, no field)
   const list = () => (
-    <View class="flex-1">
-      <SideHeader title={t("nav.runs")}>
-        <IconButton icon="plus" label={t("run.new")} shortcut="mod+n" selected={!selected()} onPress={() => selected.set(null)} testID="new-run" />
-      </SideHeader>
-      {/* always there: a field that came and went moved the list */}
-      <View class="px-2 pb-2">
-        <SearchField small testID="run-search" value={query()} placeholder={t("runs.search")} onChange={(v) => query.set(v)} />
-      </View>
+    <View class="flex-1 pt-2">
       <If when={runs().length > 0} else={<Empty compact text={t("timeline.empty")} />}>
-        <If when={shown().length > 0} else={<Empty compact text={t("runs.noMatch")} />}>
           <View class="min-h-0 flex-1 px-2">
           <RunList
-            runs={shown()}
+            runs={runs()}
             past={past()}
             selected={selected()}
             onSelect={choose}
@@ -941,7 +929,6 @@ export function Runs() {
             ]}
           />
           </View>
-        </If>
       </If>
     </View>
   );
@@ -973,9 +960,6 @@ export function Runs() {
     const p = selected();
     if (p && p !== running()?.path && !runs().some((s) => s.path === p || s.trials?.some((x) => x.run === p))) untracked(() => selected.set(null));
   });
-
-  // a new run: the command bar, from anywhere in the place (and in the palette)
-  offerCommands(() => t("nav.runs"), () => [{ id: "new-run", label: t("run.new"), icon: "plus", shortcut: "mod+n", run: () => (selected.set(null), go("runs")) }]);
 
   // the runs are the sidebar's list while this place shows
   cleanup(showInSidebar("runs", list));

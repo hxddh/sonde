@@ -10,7 +10,7 @@ import { t } from "./src/i18n";
 import { endForQuit, followNotifications, running } from "./src/run";
 import { Runs } from "./src/screens/Runs";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openRun, openRunFile, report, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
+import { type Area, area, areaOf, endpoints, go, init, newRun, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openRun, openRunFile, report, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs, watchJobs } from "./src/ui/activity";
 import { BREAK, FocusRest, PANE, Recoverable, SidePanel, SPLIT_HANDLE, TEXT, Title, windowFace } from "./src/ui/kit";
@@ -146,6 +146,7 @@ function installMenus() {
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => toggleSidebar(),
     "mod+o": () => void openRunFile(),
+    "mod+n": newRun,
   });
   // Buckets' sections, in their row's order; not while typing, where Windows reports AltGr
   // (which types `²`, `{`, `~` on many layouts) as Ctrl+Alt

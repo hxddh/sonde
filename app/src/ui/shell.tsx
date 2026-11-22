@@ -10,7 +10,7 @@ import { t } from "../i18n";
 import { areaLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, shellWidth, endpoint, endpoints, go, openRun, openRunFile, settings, runsTick, sideList, useEndpoint } from "../store";
+import { type Area, area, shellWidth, endpoint, endpoints, go, newRun, openRun, openRunFile, settings, runsTick, sideList, useEndpoint } from "../store";
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./runview";
@@ -78,6 +78,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
     {
       label: t("menu.file"),
       submenu: [
+        { label: t("run.new"), shortcut: "mod+n", onSelect: newRun },
         { label: t("runs.openFile"), shortcut: "mod+o", onSelect: () => void openRunFile() },
         { label: t("runs.openRecent"), submenu: recentMenu() },
         { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
@@ -229,13 +230,15 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
 
 function Place(props: { area: Area; open: (a: Area) => void }) {
   const on = () => area() === props.area;
+  // Runs pressed in Runs: a new run, its command bar (as ⌘N), said in its tip
+  const anew = () => on() && props.area === "runs";
   return (
     <BaseButton
       testID={`nav-${props.area}`}
       accessibilityLabel={areaLabel(props.area)}
       selected={on()}
-      onPress={() => props.open(props.area)}
-      tooltip={<Tip text={areaLabel(props.area)} shortcut={AREA_KEY[props.area]} />}
+      onPress={() => (anew() ? newRun() : props.open(props.area))}
+      tooltip={<Tip text={anew() ? t("run.new") : areaLabel(props.area)} shortcut={anew() ? "mod+n" : AREA_KEY[props.area]} />}
       class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${PRESS.surface} ${FOCUS}`}
     >
       <Icon name={AREA_ICON[props.area]} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
