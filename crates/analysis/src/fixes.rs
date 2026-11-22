@@ -80,7 +80,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nsize := out.ContentLength",
+                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nsize := aws.ToInt64(out.ContentLength)",
             ),
             f(
                 "js",
@@ -110,11 +110,11 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// list the prefix once; look keys up in the result\np := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &prefix})",
+                "// list the prefix once; look keys up in the result\nkeys := map[string]bool{}\nfor p := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &prefix}); p.HasMorePages(); {\n    page, err := p.NextPage(ctx)\n    if err != nil { return err }\n    for _, o := range page.Contents { keys[*o.Key] = true }\n}",
             ),
             f(
                 "js",
-                "// list the prefix once; look keys up in the result\nfor await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: p })) keys.push(...(page.Contents ?? []));",
+                "// list the prefix once; look keys up in the result\nconst keys = new Set();\nfor await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: p })) for (const o of page.Contents ?? []) keys.add(o.Key);",
             ),
             f(
                 "rust",
@@ -124,19 +124,19 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.deletes" => vec![
             f(
                 "python",
-                "# up to 1,000 keys a request\nfor i in range(0, len(keys), 1000):\n    s3.delete_objects(Bucket=b, Delete={\"Objects\": [{\"Key\": k} for k in keys[i:i + 1000]], \"Quiet\": True})",
+                "# up to 1,000 keys a request; a key not deleted is in Errors, not raised\nfor i in range(0, len(keys), 1000):\n    out = s3.delete_objects(Bucket=b, Delete={\"Objects\": [{\"Key\": k} for k in keys[i:i + 1000]], \"Quiet\": True})\n    if out.get(\"Errors\"):\n        raise RuntimeError(f\"not deleted: {out['Errors']}\")",
             ),
             f(
                 "java",
-                "// up to 1,000 keys a request\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n}",
+                "// up to 1,000 keys a request; a key not deleted is in errors(), not thrown\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    DeleteObjectsResponse out = s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n    if (!out.errors().isEmpty()) throw new IllegalStateException(\"not deleted: \" + out.errors());\n}",
             ),
             f(
                 "go",
-                "// up to 1,000 keys a request\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    _, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n}",
+                "// up to 1,000 keys a request; a key not deleted is in out.Errors, not err\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    out, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n    if err != nil { return err }\n    if len(out.Errors) > 0 { return fmt.Errorf(\"%d not deleted, the first %s: %s\", len(out.Errors), aws.ToString(out.Errors[0].Key), aws.ToString(out.Errors[0].Message)) }\n}",
             ),
             f(
                 "js",
-                "// up to 1,000 keys a request\nfor (let i = 0; i < keys.length; i += 1000)\n  await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));",
+                "// up to 1,000 keys a request; a key not deleted is in Errors, not thrown\nfor (let i = 0; i < keys.length; i += 1000) {\n  const out = await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));\n  if (out.Errors?.length) throw new Error(`not deleted: ${JSON.stringify(out.Errors)}`);\n}",
             ),
             f(
                 "rust",
@@ -164,19 +164,19 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.polled" => vec![
             f(
                 "python",
-                "# a waiter asks every 5 s, not in a loop as fast as it can\ns3.get_waiter(\"object_exists\").wait(Bucket=b, Key=k, WaiterConfig={\"Delay\": 5, \"MaxAttempts\": 60})",
+                "# back off between tries (1 s, doubling, up to a minute) until a deadline:\n# fewer requests, not less time (it may see the key a wait late); better, an event from its writer\nimport time\nfrom botocore.exceptions import ClientError\nwait, deadline = 1, time.monotonic() + 600\nwhile True:\n    try:\n        s3.head_object(Bucket=b, Key=k)\n        break\n    except ClientError as e:\n        if e.response[\"Error\"][\"Code\"] != \"404\" or time.monotonic() > deadline:\n            raise\n        time.sleep(wait)\n        wait = min(wait * 2, 60)",
             ),
             f(
                 "java",
-                "// a waiter backs off between tries\ns3.waiter().waitUntilObjectExists(r -> r.bucket(b).key(k));",
+                "// a waiter asks every 5 s, 20 times at most: fewer requests, not less time (it may see the key 5 s late)\ns3.waiter().waitUntilObjectExists(r -> r.bucket(b).key(k));",
             ),
             f(
                 "go",
-                "// a waiter backs off between tries\nerr := s3.NewObjectExistsWaiter(s3c).Wait(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k}, 10*time.Minute)",
+                "// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time\nerr := s3.NewObjectExistsWaiter(s3c).Wait(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k}, 10*time.Minute)",
             ),
             f(
                 "js",
-                "// a waiter backs off between tries\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
+                "// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
             ),
         ],
         "obs.small.parts" => vec![
@@ -186,7 +186,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "java",
-                "// one PUT under the threshold\nS3TransferManager.builder().s3Client(S3AsyncClient.crtBuilder().minimumPartSizeInBytes(64L << 20).build()).build();",
+                "// one PUT under the threshold\nS3TransferManager.builder().s3Client(S3AsyncClient.crtBuilder().thresholdInBytes(64L << 20).build()).build();",
             ),
             f(
                 "go",
@@ -496,28 +496,28 @@ fn at_once(op: &str) -> Vec<Fix> {
         "PUT" => (
             "s3.put_object(Bucket=b, Key=k, Body=bodies[k])",
             "s3Async.putObject(r -> r.bucket(b).key(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
-            "PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})",
+            "_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})\n        return err",
             "PutObjectCommand({ Bucket: b, Key: k, Body: bodies[k] })",
             "store.put(&p, payloads[&p].clone()).await",
         ),
         "HEAD" => (
             "s3.head_object(Bucket=b, Key=k)",
             "s3Async.headObject(r -> r.bucket(b).key(k))",
-            "HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})",
+            "_, err := s3c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})\n        return err",
             "HeadObjectCommand({ Bucket: b, Key: k })",
             "store.head(&p).await",
         ),
         "DELETE" => (
             "s3.delete_object(Bucket=b, Key=k)",
             "s3Async.deleteObject(r -> r.bucket(b).key(k))",
-            "DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})",
+            "_, err := s3c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})\n        return err",
             "DeleteObjectCommand({ Bucket: b, Key: k })",
             "store.delete(&p).await",
         ),
         _ => (
             "s3.get_object(Bucket=b, Key=k)[\"Body\"].read()",
             "s3Async.getObject(r -> r.bucket(b).key(k), AsyncResponseTransformer.toBytes())",
-            "GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})",
+            "out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n        if err != nil { return err }\n        defer out.Body.Close()\n        _, err = io.ReadAll(out.Body)\n        return err",
             "GetObjectCommand({ Bucket: b, Key: k })",
             "store.get(&p).await?.bytes().await",
         ),
@@ -533,13 +533,13 @@ fn at_once(op: &str) -> Vec<Fix> {
         owned(
             "java",
             format!(
-                "// {head}\nList<CompletableFuture<?>> all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
+                "// {head}\nvar all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
             ),
         ),
         owned(
             "go",
             format!(
-                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{ k := k; g.Go(func() error {{ _, err := s3c.{go}; return err }}) }}\nerr := g.Wait()"
+                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nerr := g.Wait()"
             ),
         ),
         owned(
@@ -1245,6 +1245,40 @@ mod tests {
             for_sdk(&for_key("obs.rename"), Some("hadoop 3.3")).map(|f| f.sdk),
             Some("config")
         );
+    }
+
+    #[test]
+    fn each_fix_does_what_its_sdk_needs_for_it() {
+        let code = |key: &str, sdk: &str| {
+            for_key(key)
+                .into_iter()
+                .find(|f| f.sdk == sdk)
+                .unwrap()
+                .code
+        };
+        // a batch delete answers a key it did not delete in its errors, not
+        // as an error: every SDK's fix looks
+        for (sdk, errors) in [
+            ("python", "out.get(\"Errors\")"),
+            ("java", "out.errors()"),
+            ("go", "out.Errors"),
+            ("js", "out.Errors"),
+        ] {
+            assert!(code("obs.deletes", sdk).contains(errors), "{sdk}");
+        }
+        // a poll backed off asks fewer times; it is no sooner
+        for f in for_key("obs.polled") {
+            assert!(
+                f.code.contains("fewer requests, not less time"),
+                "{}",
+                f.code
+            );
+        }
+        // eight GETs at once: each body read and closed (Go's connection is
+        // kept only so)
+        assert!(at_once("GET")[2].code.contains("defer out.Body.Close()"));
+        // one PUT under the threshold: the CRT's threshold, not its part size
+        assert!(code("obs.small.parts", "java").contains("thresholdInBytes"));
     }
 
     #[test]

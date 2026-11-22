@@ -174,7 +174,8 @@ The program broke under 1 of 1.
     at etl.py:12 save (1 request)
     fix for boto3:
       # boto3 1.43 did not send it again: turn its retries on (…)
-      boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
+      from botocore.config import Config
+      s3 = boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
 ```
 
 ## Trying again
