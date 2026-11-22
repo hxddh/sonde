@@ -2,6 +2,92 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [29.0.0] - 2026-11-22
+
+sonde answers with one plan: where the run's time went, then what to change, each change with the time it saves; a run again says only what changed, and sonde is smaller — fewer commands, one place for runs, no terminal UI.
+
+### Changed
+
+- Findings are one plan of diagnoses, ranked by the run's time saved ("≈1.9 s of 6.1 s (31%)", money beside it from
+  a cent): findings with one root cause (the same objects) are one diagnosis with one saving and one fix, and
+  requests one after another join the diagnosis that owns them ("and send the other 62 requests 8 at once"),
+  counting only what no other fix removes and what can go at once, its fix for the real operation. Small-object fixes
+  pick JSONL, Parquet or tar by what the objects hold.
+- A reading opens with where the time went: the program's own, the S3 round trips (count and median), the bytes
+  when moving them took most; when most of it is the program's own, it says so. The demo store's times are marked
+  indicative.
+- What a fix saved is the run's time and money against the prediction ("1.2 s less (predicted 1.5 s)"), or "within
+  noise" when the run moved less than the program's own earlier runs of the command vary. Findings are judged by
+  their counts alone: `back` is gone (new or more).
+- A fault scenario not survived is a finding (`trial`) with its line of code and the fix for the SDK, read fixed or
+  open by the next trial; `run --again` is removed (a trial runs every scenario).
+- `check --init` records the run's open findings by count (`[check.findings]`), writes the program's own command
+  (`--demo` for a demo run) and honours `-f json`; `check` fails on a new finding or one that grew.
+- A program run again says what changed since its run before: fixed with what it saved, each diagnosis still open on
+  a line with its code line, new ones in full; `sonde show` has the whole plan. `run --trial` prints the clean run's
+  head line, one verdict per scenario and what did not survive.
+- `show -f json` is lean: each diagnosis carries its text, code lines (`at`), fix and saving, so `diagnoses[0]` is
+  the next step; `findings` only with `--all`; no `phrases`, `impact`, `level` or `summary.kinds`; `since` is null on
+  a first run and says each finding's change once (`since.findings`, its `measured` now `saved`); figures rounded.
+- `show RUN --since OTHER` compares two runs (it replaces `compare`); `sonde replay RUN -e E` replays one;
+  `sonde run --listen [ADDR]` serves an endpoint with no program (it replaces `proxy`); `sonde endpoints test E
+  --probes BUCKET` runs the probes (it replaces `probe`). `endpoints add ID --profile P` with no URL takes the
+  profile's endpoint and region; `check -f markdown` reads the report's link from `SONDE_REPORT_URL`.
+- The app: Runs is where a program is run — with no run chosen it is the command bar, and a running program is the
+  newest run, its terminal beside its operations; the places are Runs, Buckets and Settings, and Activity opens from
+  the View menu, ⌘⇧A or the palette. A run's header is its command, where its time went and one line of figures;
+  output stands beside the operations; Group by is on the operations' title; a chart's title says how to read it;
+  endpoints are tested from their ⋯.
+- The app: a run's findings are its plan, a diagnosis a line with the time it saves; choosing one narrows the
+  operations and opens its fix in the inspector — the line of code, the change for the program's own SDK (others in a
+  menu), Apply — and "Run again" steps back to outline. A trial's verdicts fill the run's History as they come, and
+  what broke is among the run's diagnoses; "Run trials again" asks the plan anew.
+### Removed
+
+- The terminal UI (`sonde tui`) and its release build.
+- `sonde compare` and `compare ORIGINAL REPLAY`, `sonde proxy`, `sonde probe` with `probe list/runs/diff` and saved
+  probe runs, and exit code 3 (probes that could not run exit 70).
+- `--rate`, `--concurrency`, `run --live`, `endpoints import`, `check --report-url`, `bucket size --cached` and
+  `--no-multipart`, `show --by sdk|status`; config `concurrency`, `rate-limit`, `exports-dir`, `downloads-dir` and
+  `[settings.prices.by-class]` (old files still load; the keys are ignored).
+- Schemas `compare`, `compare-answers`, `probe-list`, `probe-runs`, `probe-diff` (`compare-replay` is `replay`,
+  `probe` is `endpoints-probes`).
+- The app's Run place, Output tab, the run header's tiles and the chart cards' ⓘ.
+- The app's trial results dialog and "Try again what broke"; a finding's inline advice and SDK tabs.
+### Fixed
+
+- A finding under its threshold in a large run and over it in a small one read "back" with the same count.
+- A trial's clean run of another command was compared with the program's runs and became the run the next one was
+  compared with.
+- `show --by key` puts a listing under its prefix, not its bucket; "1 object"; no lines for amounts under a cent.
+
+### 中文
+
+sonde 现在给出一份改动计划：先说运行的时间花在哪里，再说改哪里、各省多少时间；再次运行只说变化；sonde 也更小了——命令更少、运行只有一个位置、去掉终端界面。
+
+- 变更：发现合并为一份按节省的运行时间排序的诊断计划（"≈1.9 s / 6.1 s（31%）"，满一分钱才附金额）；同一根因（同一批对象）
+  的发现合为一条诊断，只给一个节省值和一个修复；串行请求并入所属诊断，只计其他修复不会去掉、且能同时发出的请求，
+  修复按实际操作给出；小对象修复按内容选 JSONL、Parquet 或 tar。
+- 变更：读数先说明时间花在哪里（程序自身、S3 往返、传输）；大部分时间在程序自身时会直说；演示存储的耗时标为仅供参考。
+- 变更：修复节省改为整次运行的耗时和费用（"少了 1.2 s（预计 1.5 s）"），变化小于该程序以往同一命令运行的波动时显示"在波动范围内"；
+  发现只按计数判断，去掉"又出现"。
+- 变更：未扛住的故障场景成为一条 `trial` 发现，带代码行和 SDK 修复，下次试验判定已修复或未修复；移除 `run --again`。
+- 变更：`check --init` 记录当前未修复的发现及计数（`[check.findings]`）、写入程序自己的命令并支持 `-f json`；`check` 遇到新发现或计数增长即失败。
+- 变更：再次运行只说变化（已修复及节省、未修复的每条一行、新出现的完整列出），完整计划见 `sonde show`；`run --trial` 只打印首行、每个场景一行结论和未通过项。
+- 变更（不兼容）：`show -f json` 精简，每条诊断直接带文字、代码行（`at`）、修复和节省；`findings` 仅在 `--all` 下输出；
+  去掉 phrases、`impact`、`level`、`summary.kinds`；首次运行 `since` 为 null；`measured` 改名 `saved`；数值取整。
+- 变更：`show RUN --since OTHER` 取代 `compare`；`sonde replay RUN -e E` 重放；`sonde run --listen` 取代 `proxy`；
+  `sonde endpoints test E --probes BUCKET` 取代 `probe`；`endpoints add --profile` 不带 URL 时取 profile 的端点与区域。
+- 变更：应用中"运行记录"即运行程序之处，未选中运行时是命令栏，运行中的程序是最新一条运行；位置只有运行记录、桶和设置，
+  "活动"从"显示"菜单、⌘⇧A 或命令面板打开；运行标题为命令、时间去向和一行数字；输出在操作旁；图表标题说明如何阅读。
+- 变更：应用中运行的发现即计划，每个诊断一行并附可节省的时间；选中后筛选操作，并在检查器中打开修复（代码行、程序自身 SDK 的改法，
+  其他 SDK 在菜单里、应用），"再次运行"改为次要按钮；试验结论实时填入运行的"历史"，失败项出现在诊断中；"再次试验"重新显示计划。
+- 移除：终端界面（`sonde tui`）；`compare`、`proxy`、`probe` 及其子命令和保存的探测记录、退出码 3；`--rate`、`--concurrency`、
+  `run --live`、`endpoints import`、`check --report-url`、`bucket size --cached/--no-multipart`、`show --by sdk|status` 及相关配置项；
+  应用的"运行"位置、"输出"标签页、标题指标卡和图表上的 ⓘ。
+- 修复：大运行中低于阈值、小运行中超过阈值的发现被显示为"又出现"；命令不同的试验干净运行被当作程序的上一次运行；
+  `show --by key` 把列举归到前缀下；"1 object" 单数；不足一分钱的金额不再单列。
+
 ## [28.0.0] - 2026-11-21
 
 sonde's JSON always parses, its savings and imports count what really happened, a pasted command runs only what it says, and the app no longer stops while it opens a large run.

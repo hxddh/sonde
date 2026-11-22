@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v28
+      - uses: hxddh/sonde@v29
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -64,7 +64,7 @@ step with the run's own command.
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `28.0.0`, `28`, `28.0` (the newest 28.0.x), `latest`, `path`. Tag `@v28` installs the newest 28.x; `@v28.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
+| `version` | the action's tag; at a branch or commit, its own major | `29.0.0`, `29`, `29.0` (the newest 29.0.x), `latest`, `path`. Tag `@v29` installs the newest 29.x; `@v29.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
