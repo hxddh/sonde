@@ -2062,18 +2062,21 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         .iter()
         .map(|r| stdout(&sonde(t.path(), &["show", r])))
         .collect();
-    // the head line names the SDK; each finding its saving, line and fix
+    // the head line names the SDK; where the time went; the first diagnosis
+    // its saving (time of the run), line and fix; the others a line each
     let first = &shown[0];
     assert!(
         first.contains("91 requests (73 operations) from boto3 1.44 to moto"),
         "{first}"
     );
     for said in [
-        "    saving: 20 fewer requests (22% of the run)",
+        "  time 739 ms: your program's own 250 ms (34%) · S3 round trips 489 ms (91 requests, median 3.3 ms)",
+        "    saving: ≈178 ms of 739 ms (24%)",
+        "    also: and send the other 41 requests 8 at once",
         "    at etl.py:19 <module> (20 requests)",
         "    fix for boto3:",
         "      obj = s3.get_object(Bucket=b, Key=k)",
-        "    at etl.py:33 <module> (18 requests)",
+        " · ≈50 ms of 739 ms (7%) (at etl.py:33 <module>)",
     ] {
         assert!(first.contains(said), "no {said:?} in:\n{first}");
     }
@@ -2986,13 +2989,14 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
     let s = run.to_str().unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    // one diagnosis: its saving is the run's, said as requests (no times)
     let shown = stdout(&sonde(t.path(), &["show", s]));
     let line = shown
         .lines()
-        .find(|l| l.starts_with("in all"))
+        .find(|l| l.starts_with("    saving:"))
         .unwrap_or_else(|| panic!("{shown}"));
-    assert!(line.contains("16 → 8 requests"), "{line}");
-    assert!(!line.contains("waiting"), "{line}");
+    assert_eq!(line, "    saving: 8 fewer requests (50% of the run)");
+    assert!(!shown.contains(" ms of "), "{shown}");
     let j: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", s, "-f", "json"]))).unwrap();
     assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);

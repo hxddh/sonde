@@ -1511,7 +1511,7 @@ pub struct Observation {
 /// `n` of `total` as a whole percent, rounded: one rule for every share a
 /// finding says (29 of 1,500 is 2%, as the 30 reads they are of). Never 0%
 /// for some, nor 100% for less than all.
-fn share_pct(n: usize, total: usize) -> usize {
+pub(crate) fn share_pct(n: usize, total: usize) -> usize {
     let total = total.max(1);
     let pct = (n * 100 + total / 2) / total;
     match n {
@@ -2284,6 +2284,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("n", n.to_string()),
                         ("m", objects.to_string()),
+                        ("os", plural(objects)),
                         ("size", human(again_bytes)),
                         (
                             "prefix",
@@ -2370,6 +2371,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("n", whole.len().to_string()),
                         ("m", whole_objects.len().to_string()),
+                        ("os", plural(whole_objects.len())),
                         ("size", human(whole_bytes)),
                         (
                             "prefix",
@@ -2920,21 +2922,55 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             out.push(warn(phrase, of_records(&mut ids.into_iter())).weigh(impact, 0, total));
         }
     }
-    // requests one after another, each waiting for the one before
+    // requests one after another, each waiting for the one before: of
+    // those another finding does not take away already, and those that
+    // could go at once (not a key asked again while not there, a poll; not a
+    // conditional write, which waits for what it is conditional on)
     {
-        use crate::profile::{CHAIN_CONCURRENCY, chains};
-        let found = chains(records);
-        let serial: usize = found.iter().map(|c| c.requests).sum();
-        let wall: f64 = found.iter().map(|c| c.end_ms - c.start_ms).sum();
-        let fast: f64 = found.iter().map(|c| c.at_once_ms).sum();
-        // only the waiting goes: the program's own work between requests stays
-        let waiting: f64 = found.iter().map(|c| c.waiting_ms).sum();
+        use crate::profile::{CHAIN_CONCURRENCY, CHAIN_MIN, chains};
+        let taken: std::collections::HashSet<u64> = out
+            .iter()
+            .flat_map(|o| o.saved_ids.iter().copied())
+            .collect();
+        let lat = |r: &Record| (r.latency_us().max(0) as f64) / 1000.0;
+        let (mut serial, mut wall, mut fast, mut waiting) = (0usize, 0.0, 0.0, 0.0);
+        let mut chained: Vec<u64> = Vec::new();
+        for c in chains(records) {
+            let mut asked: std::collections::HashSet<(&str, &str)> = Default::default();
+            let mut dropped = 0.0;
+            let mut kept: Vec<&Record> = Vec::new();
+            for r in c.ids.iter().filter_map(|id| by_id.get(id)) {
+                let place = (
+                    r.bucket.as_deref().unwrap_or(""),
+                    r.key.as_deref().unwrap_or(""),
+                );
+                let poll = r.status == Some(404) && !asked.insert(place);
+                let conditional = is_write(r)
+                    && (header(r, "if-none-match").is_some() || header(r, "if-match").is_some());
+                if taken.contains(&r.id) || poll || conditional {
+                    dropped += lat(r);
+                } else {
+                    asked.insert(place);
+                    kept.push(r);
+                }
+            }
+            if kept.len() < CHAIN_MIN {
+                continue;
+            }
+            // the same requests at once: the waves of the longest ones
+            let mut ms: Vec<f64> = kept.iter().map(|r| lat(r)).collect();
+            ms.sort_by(|a, b| b.total_cmp(a));
+            serial += kept.len();
+            wall += (c.end_ms - c.start_ms - dropped).max(0.0);
+            fast += ms.iter().step_by(CHAIN_CONCURRENCY).sum::<f64>();
+            // only the waiting goes: the program's own work between requests stays
+            waiting += ms.iter().sum::<f64>();
+            chained.extend(kept.iter().map(|r| r.id));
+        }
         let saved = (waiting - fast).max(0.0);
-        if !found.is_empty() && (saved >= 100.0 || (any && saved > 0.0)) {
+        if serial > 0 && (saved >= 100.0 || (any && saved > 0.0)) {
             let busy = crate::profile::waiting_ms(records).max(1e-9);
             let time = sonde_fmt::duration;
-            let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
-            let chained = ids.clone();
             let mut o = warn(
                 p(
                     "obs.serial",
@@ -2945,27 +2981,14 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                         ("fast", time(fast)),
                     ],
                 ),
-                of_records(&mut ids.into_iter()),
+                of_records(&mut chained.iter().copied()),
             );
             if saved * 4.0 < busy {
                 o.level = "info";
             }
             o.impact = serial;
-            let s = p(
-                "obs.savesTime",
-                &[
-                    ("time", time(saved)),
-                    (
-                        "pct",
-                        ((saved * 100.0 / busy).round() as usize)
-                            .min(100)
-                            .to_string(),
-                    ),
-                ],
-            );
-            o.saving_text = Some(s.en());
-            o.saving = Some(s);
-            o.saves_ms = saved;
+            // (said as time of the run once that is known: `fixes::rank_by_saving`)
+            o.saves_ms = (saved * 10.0).round() / 10.0;
             o.timed_ids = chained;
             out.push(o);
         }
@@ -2984,9 +3007,6 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         if any {
             continue;
         }
-        if let Some(first) = o.phrases.first() {
-            o.fixes = crate::fixes::for_key(first.key);
-        }
         // who in the program sent its requests
         let rs: Vec<&Record> = o
             .episodes
@@ -2994,6 +3014,12 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .filter_map(|&i| episodes.get(i))
             .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id)))
             .collect();
+        if let Some(first) = o.phrases.first() {
+            // requests at once by those one after another, not all of their operations'
+            let timed: Vec<&Record> = o.timed_ids.iter().filter_map(|id| by_id.get(id)).collect();
+            let of = if timed.is_empty() { &rs } else { &timed };
+            o.fixes = crate::fixes::for_finding(first.key, of);
+        }
         (o.callers, o.sdk) = sonde_proxy::callers::of(&rs);
         // the engine's own setting, where its requests are an engine's
         let formats: Vec<(Option<Format>, usize)> = o

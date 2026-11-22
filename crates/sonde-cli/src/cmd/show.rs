@@ -328,7 +328,9 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             )?;
             w.field("cost", &prof.cost)?;
             w.field("month", &analysis.month)?;
+            w.field("time", &analysis.time)?;
             w.field("whatIf", &analysis.what_if)?;
+            w.field("diagnoses", &analysis.diagnoses)?;
             w.field("findings", &findings)?;
             w.field("verify", &verify_command(&run.header))?;
             w.field("since", &since)?;

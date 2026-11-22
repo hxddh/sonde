@@ -328,7 +328,7 @@ impl Cost {
     /// What `show` and `run` say of the money past the requests: the bytes
     /// out (charged, or what they would be if read from outside the region)
     /// and what the run left stored, a month; none when neither comes to a
-    /// cent and no version was kept.
+    /// cent and no version kept costs a cent a month.
     pub fn line(&self) -> Option<String> {
         use crate::program::{CENT, money_text};
         let money = |v: f64| money_text(v, &self.currency);
@@ -358,7 +358,9 @@ impl Cost {
                 money(st.per_month)
             ));
         }
-        if st.versioned && st.noncurrent > 0 {
+        // (versions of a known size under a cent a month: nothing to act on)
+        let worth = st.noncurrent_bytes == 0 || st.noncurrent_per_month >= CENT;
+        if st.versioned && st.noncurrent > 0 && worth {
             let s = if st.noncurrent == 1 { "" } else { "s" };
             parts.push(if st.noncurrent_bytes > 0 {
                 format!(

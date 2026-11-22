@@ -22,12 +22,13 @@ From `show -f json` ([schema](schemas/show.schema.json)):
 
 | Field | What |
 |---|---|
-| `findings[]` | What to change, those that save the most first. Empty: nothing found. |
+| `diagnoses[]` | The plan: findings that share a root cause as one change, those that save the most time first. `findings` are places in `findings[]`, the first the one whose fix to apply; `savesMs` (all of them at once), `saving`; `id` the same diagnosis across runs. |
+| `findings[]` | What to change, in the diagnoses' order. Empty: nothing found. |
 | `findings[].kind` | One of the [kinds](cli.md#findings): `obs.hot` (a key read again and again), `obs.small` (small objects one PUT each), `obs.deletes` (deletes one at a time), `obs.rmw` (written back with no `If-Match`), `obs.polled` (a missing key polled), `obs.throttled`, … `obs.rmw` saves nothing: it is a lost update to prevent. |
 | `findings[].callers[]` | Where its requests were sent from: `file` (relative to `run.cwd`), `line`, `function`, `requests`, and `code`, the line itself. Python's boto3, the AWS SDK for JavaScript v3 (CommonJS or ES modules, any Node.js it runs on) and for Java 2 name callers. |
 | `findings[].fixes[].setting` | When the requests are an engine's or a tool's (SlateDB, DuckDB, rclone, s5cmd, Trino, Hadoop s3a): the one setting to change, `engine`, `key`, `value`, and `where` (`file:line` under `run.cwd`) when the program's folder sets it now. Set `key` to `value` there; no code to adapt. [Which](cli.md#engine-settings). |
 | `findings[].fixes[]` | Otherwise the change for the run's SDK (`sdk`, `code`), with placeholders (`b` the bucket, `k` the key): adapt it to the code at `callers[]`. None when an engine sent the requests and none of its settings acts on it. |
-| `findings[].savesRequests`, `savesMs`, `savesCost` | What acting on it saves, predicted. |
+| `findings[].savesRequests`, `savesMs`, `savesCost` | What acting on it alone saves, predicted (`savesMs`: time of the run). |
 | `findings[].identity`, `expected` | The same finding across runs; `expected`: why the project keeps it on purpose (`[check] expect` in `sonde.toml` names it by identity): leave it alone, do not "fix" it. |
 | `verify` | The command that records the program again, in `run.cwd`. |
 | `since.findings[].state` | Against the program's run before (or the run `--since RUN` names): `fixed`, `less`, `more`, `new`, `back`, `open`. A fixed one has `measured` and `savedText`: the saving, measured. |

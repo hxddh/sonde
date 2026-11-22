@@ -361,14 +361,9 @@ fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() 
         f.text,
         "40 requests ran one after another for 839 ms, each waiting for the one before: 8 at once would take about 100 ms"
     );
-    assert!(
-        f.saving_text
-            .as_deref()
-            .unwrap()
-            .starts_with("about 700 ms sooner"),
-        "{:?}",
-        f.saving_text
-    );
+    // 800 ms waited, 100 ms at once (said as time of the run once ranked)
+    assert!((f.saves_ms - 700.0).abs() < 1e-6, "{}", f.saves_ms);
+    assert!(f.fixes.iter().any(|x| x.code.contains("get_object")));
     // the same reads 8 at a time make no chain
     let together: Vec<Record> = (0..40u64)
         .map(|i| {
@@ -417,4 +412,235 @@ fn the_pages_of_one_listing_are_not_the_prefix_listed_again() {
     // five listings from the start are
     let again: Vec<Record> = (1..=5).map(|i| page(i, "ListObjects", None)).collect();
     assert!(findings(&again).iter().any(|o| key(o) == "obs.listed"));
+}
+
+fn put(id: u64, at_ms: i64, key: &str) -> Record {
+    rec(id, at_ms, "PutObject", Some(key), 200, 20.0)
+}
+
+/// 28.0 told requests one after another of those another finding takes
+/// away already (a HEAD before each GET), and of polls; and its fix was a
+/// pool of get_object whatever the requests were.
+#[test]
+fn requests_one_after_another_are_those_left_once_the_rest_is_fixed() {
+    // 40 objects, a HEAD then a GET each, one after another
+    let mut recs = Vec::new();
+    for i in 0..40u64 {
+        let k = format!("in/{i}.csv");
+        recs.push(rec(
+            i * 2 + 1,
+            i as i64 * 42,
+            "HeadObject",
+            Some(&k),
+            200,
+            20.0,
+        ));
+        recs.push(rec(
+            i * 2 + 2,
+            i as i64 * 42 + 21,
+            "GetObject",
+            Some(&k),
+            200,
+            20.0,
+        ));
+    }
+    let obs = findings(&recs);
+    let serial = obs
+        .iter()
+        .find(|o| key(o) == "obs.serial")
+        .expect("a chain");
+    // the 40 GETs: the HEADs go with the GET alone
+    assert!(
+        serial.text.starts_with("40 requests ran one after another"),
+        "{}",
+        serial.text
+    );
+    // a key asked for again and again while not there is a poll, not a chain
+    let polls: Vec<Record> = (0..40u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64 * 21,
+                "HeadObject",
+                Some("out/_READY"),
+                404,
+                20.0,
+            )
+        })
+        .collect();
+    assert!(!findings(&polls).iter().any(|o| key(o) == "obs.serial"));
+    // writes one after another: the fix writes at once
+    let puts: Vec<Record> = (0..40u64)
+        .map(|i| put(i + 1, i as i64 * 21, &format!("big/{i}.bin")))
+        .collect();
+    let obs = findings(&puts);
+    let serial = obs
+        .iter()
+        .find(|o| key(o) == "obs.serial")
+        .expect("a chain");
+    let py = serial.fixes.iter().find(|f| f.sdk == "python").unwrap();
+    assert!(
+        py.code.contains("put_object") && !py.code.contains("get_object"),
+        "{}",
+        py.code
+    );
+}
+
+/// One root cause, one diagnosis: 600 tiny objects written one each, then
+/// each checked with HEAD and read with GET, one after another (the eval's
+/// four findings of 28.0).
+#[test]
+fn findings_of_one_root_cause_are_one_diagnosis_saving_what_all_at_once_saves() {
+    use sonde_analysis::run::RunHeader;
+    use sonde_analysis::view::Analysis;
+    let mut recs = Vec::new();
+    let mut id = 0u64;
+    let mut at = 0i64;
+    for i in 0..600 {
+        id += 1;
+        recs.push(put(id, at, &format!("tiny/{i:04}.json")));
+        at += 21;
+    }
+    for i in 0..600 {
+        let k = format!("tiny/{i:04}.json");
+        id += 1;
+        recs.push(rec(id, at, "HeadObject", Some(&k), 200, 20.0));
+        at += 21;
+        id += 1;
+        recs.push(rec(id, at, "GetObject", Some(&k), 200, 20.0));
+        at += 21;
+    }
+    // and a config read again and again: a cause of its own
+    for _ in 0..30 {
+        id += 1;
+        recs.push(rec(id, at, "GetObject", Some("conf.json"), 200, 2.0));
+        at += 30;
+    }
+    let header = RunHeader::new(
+        "aws",
+        "https://s3",
+        "us-east-1",
+        Some("python3 job.py".into()),
+    );
+    let a = Analysis::of_records(&header, &recs, &Default::default());
+    let kinds = |d: &sonde_analysis::fixes::Diagnosis| -> Vec<&str> {
+        d.findings
+            .iter()
+            .map(|&i| a.observations[i].kind.as_str())
+            .collect()
+    };
+    let first = &a.diagnoses[0];
+    let mut members = kinds(first);
+    members.sort_unstable();
+    assert_eq!(
+        members,
+        ["obs.headget", "obs.small", "obs.smallreads"],
+        "{:#?}",
+        a.diagnoses
+    );
+    // the members keep their identities; the id is made of them
+    assert_eq!(first.identities.len(), 3);
+    assert!(first.id.starts_with("dx-"));
+    // one saving, of them all at once: never more than the waiting, never their sum
+    let sum: f64 = first
+        .findings
+        .iter()
+        .map(|&i| a.observations[i].saves_ms)
+        .sum();
+    assert!(first.saves_ms > 0.0 && first.saves_ms <= a.profile.waiting_ms + 1e-6);
+    assert!(first.saves_ms <= sum + 1e-6, "{} of {sum}", first.saves_ms);
+    assert!(
+        first.saving_text.starts_with('≈') && first.saving_text.contains(" of "),
+        "{}",
+        first.saving_text
+    );
+    // records, packed as lines: no tar shard beside a JSONL batch
+    let head = &a.observations[first.findings[0]];
+    assert!(head.fixes.iter().all(|f| !f.code.contains("tarfile")));
+    // the config read is another diagnosis, after: it saves less time
+    assert!(
+        a.diagnoses[1..].iter().any(|d| kinds(d) == ["obs.hot"]),
+        "{:#?}",
+        a.diagnoses
+    );
+    // the same findings, the same id
+    let again = Analysis::of_records(&header, &recs, &Default::default());
+    assert_eq!(again.diagnoses[0].id, first.id);
+}
+
+/// 28.0 ranked money first: a poll saving a millionth of a dollar above
+/// requests one after another saving most of the run.
+#[test]
+fn diagnoses_are_ranked_by_the_time_they_save() {
+    use sonde_analysis::run::RunHeader;
+    use sonde_analysis::view::Analysis;
+    let mut recs: Vec<Record> = (0..60u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64 * 101,
+                "GetObject",
+                Some(&format!("data/{i}")),
+                200,
+                100.0,
+            )
+        })
+        .collect();
+    // 200 small writes, quick: cheap in time, dear in money
+    for i in 0..200u64 {
+        recs.push(put(61 + i, 7000 + i as i64 * 3, &format!("out/{i}.json")));
+        recs.last_mut().unwrap().latency_ms = 1.0;
+    }
+    let header = RunHeader::new(
+        "aws",
+        "https://s3",
+        "us-east-1",
+        Some("python3 job.py".into()),
+    );
+    let a = Analysis::of_records(&header, &recs, &Default::default());
+    let head = |d: &sonde_analysis::fixes::Diagnosis| a.observations[d.findings[0]].kind.as_str();
+    let order: Vec<&str> = a.diagnoses.iter().map(head).collect();
+    assert_eq!(order.first(), Some(&"obs.serial"), "{order:?}");
+    assert!(order.contains(&"obs.small"), "{order:?}");
+    // the money of the writes is under a cent: not said
+    let small = a.diagnoses.iter().find(|d| head(d) == "obs.small").unwrap();
+    assert!(!small.saving_text.contains("USD"), "{}", small.saving_text);
+}
+
+/// The time account: the program's own time, the round trips, and on the
+/// demo store, times said as indicative.
+#[test]
+fn a_run_says_where_its_time_went() {
+    use sonde_analysis::run::RunHeader;
+    use sonde_analysis::view::Analysis;
+    // 10 requests of 10 ms, 100 ms apart: 100 ms of 910 waiting
+    let recs: Vec<Record> = (0..10u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64 * 100,
+                "GetObject",
+                Some(&format!("k{i}")),
+                200,
+                10.0,
+            )
+        })
+        .collect();
+    let demo = RunHeader::new("demo", "http://demo", "", Some("python3 job.py".into()));
+    let t = Analysis::of_records(&demo, &recs, &Default::default())
+        .time
+        .unwrap();
+    assert_eq!((t.wall_ms, t.waiting_ms, t.most), (910.0, 100.0, "program"));
+    assert_eq!(
+        t.text,
+        "time 910 ms: your program's own 810 ms (89%) · S3 round trips 100 ms (10 requests, median 10 ms) · most of the time is your program's own, not S3's (the demo store's times are indicative)"
+    );
+    // a log's times, to the second: none said
+    let mut log = RunHeader::new("aws", "", "", Some("imported".into()));
+    log.whole_seconds = true;
+    assert!(
+        Analysis::of_records(&log, &recs, &Default::default())
+            .time
+            .is_none()
+    );
 }

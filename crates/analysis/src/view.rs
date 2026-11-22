@@ -86,6 +86,10 @@ pub struct Analysis {
     pub profile: Profile,
     pub signals: Signals,
     pub what_if: Option<WhatIf>,
+    /// The findings as diagnoses, in order: one each root cause.
+    pub diagnoses: Vec<crate::fixes::Diagnosis>,
+    /// Where its time went.
+    pub time: Option<crate::summary::TimeAccount>,
     /// Its money a month, when that can be said ([`crate::month`]).
     pub month: Option<crate::month::Month>,
     /// The SDK that sent most of its requests (`boto3 1.44`).
@@ -158,20 +162,29 @@ impl Analysis {
         let profile = crate::profile::profile(records, prices);
         let episodes = episodes(records);
         let mut observations = observations_of(header, records, &episodes);
-        crate::fixes::rank_by_saving(&mut observations, records, &profile.prices);
+        // (an imported log's times are to the second: its waiting is not known)
+        let timed = !header.whole_seconds;
+        crate::fixes::rank_by_saving(&mut observations, records, &profile, timed);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
             .collect();
-        // (an imported log's times are to the second: its waiting is not known)
-        let what_if =
-            crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
+        let what_if = crate::fixes::what_if(records, &profile, &observations, timed);
         let month = crate::month::month(
             header,
             summary.seconds,
             profile.cost.amount,
             &profile.cost.currency,
         );
+        let diagnoses = crate::fixes::diagnose(
+            &mut observations,
+            &episodes,
+            records,
+            &profile,
+            timed,
+            month.as_ref(),
+        );
+        let time = crate::summary::time_account(records, &summary, &profile, header);
         let owner = crate::episode::Owners::of(&episodes);
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
@@ -209,6 +222,8 @@ impl Analysis {
             shared_notes,
             profile,
             what_if,
+            diagnoses,
+            time,
             month,
             owner,
             kinds,
@@ -427,6 +442,8 @@ impl Analysis {
         v.insert("profile".into(), to(&self.profile));
         v.insert("signals".into(), to(&self.signals));
         v.insert("whatIf".into(), to(&self.what_if));
+        v.insert("diagnoses".into(), to(&self.diagnoses));
+        v.insert("time".into(), to(&self.time));
         v.insert("month".into(), to(&self.month));
         v.insert("injected".into(), json!(self.injected));
         v.insert("sdk".into(), json!(self.sdk));

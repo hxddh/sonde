@@ -56,6 +56,121 @@ pub struct Summary {
     pub refusals: Vec<Refusal>,
 }
 
+/// Where a run's time went: the program's own (no request in flight), the
+/// round trips to the store (a request in flight), and of those the bytes
+/// moving, when they are most of it. What a reading opens with.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeAccount {
+    /// From the first request to the end of the last one.
+    pub wall_ms: f64,
+    /// With no request in flight: the program's own work.
+    pub own_ms: f64,
+    /// With a request in flight.
+    pub waiting_ms: f64,
+    pub requests: u64,
+    pub median_ms: f64,
+    /// Bytes moved, up and down …
+    pub bytes: u64,
+    /// … and the part of the waiting spent moving them (after the first
+    /// byte), when the store says when that came.
+    pub transfer_ms: f64,
+    /// What most of the time went to: `program`, `requests` or `bytes`.
+    pub most: &'static str,
+    /// Its times say little (the built-in demo store's): indicative only.
+    pub indicative: bool,
+    pub phrases: Vec<crate::phrase::Phrase>,
+    pub text: String,
+}
+
+/// The time account of a program's run ([`TimeAccount`]); none for an
+/// imported log or a replay (no program's time), or when it sent nothing.
+pub fn time_account(
+    records: &[Record],
+    summary: &Summary,
+    profile: &crate::profile::Profile,
+    header: &crate::run::RunHeader,
+) -> Option<TimeAccount> {
+    use crate::phrase::{p, plural};
+    // (a log's or a replay's time is no program's own)
+    let program = header
+        .command
+        .as_deref()
+        .is_none_or(|c| !c.starts_with("replay of ") && !c.starts_with("imported from "));
+    if !program || header.whole_seconds || records.is_empty() || profile.waiting_ms <= 0.0 {
+        return None;
+    }
+    let time = sonde_fmt::duration;
+    let wall_ms = (summary.seconds * 1000.0).max(profile.waiting_ms);
+    let waiting_ms = profile.waiting_ms;
+    let own_ms = wall_ms - waiting_ms;
+    // the share of each request's time after its first byte
+    let (mut moving, mut all) = (0.0, 0.0);
+    for r in records {
+        if let Some(first) = r.first_byte_ms.get()
+            && r.latency_ms > 0.0
+        {
+            moving += (r.latency_ms - first).max(0.0);
+            all += r.latency_ms;
+        }
+    }
+    let transfer_ms = if all > 0.0 {
+        waiting_ms * moving / all
+    } else {
+        0.0
+    };
+    let most = if own_ms > waiting_ms {
+        "program"
+    } else if transfer_ms * 2.0 > waiting_ms {
+        "bytes"
+    } else {
+        "requests"
+    };
+    let pct = |v: f64| ((v * 100.0 / wall_ms).round() as usize).to_string();
+    let n = summary.requests;
+    let bytes = summary.bytes_up + summary.bytes_down;
+    let mut phrases = vec![p(
+        "time.account",
+        &[
+            ("wall", time(wall_ms)),
+            ("own", time(own_ms)),
+            ("ownPct", pct(own_ms)),
+            ("waiting", time(waiting_ms)),
+            ("n", n.to_string()),
+            ("s", plural(n as usize)),
+            ("median", time(profile.p50_ms)),
+        ],
+    )];
+    match most {
+        "program" => phrases.push(p("time.program", &[])),
+        "bytes" => phrases.push(p(
+            "time.bytes",
+            &[
+                ("size", sonde_fmt::bytes(bytes)),
+                ("time", time(transfer_ms)),
+            ],
+        )),
+        _ => {}
+    }
+    let indicative = header.endpoint == "demo";
+    if indicative {
+        phrases.push(p("time.indicative", &[]));
+    }
+    Some(TimeAccount {
+        wall_ms,
+        own_ms,
+        waiting_ms,
+        requests: n,
+        median_ms: profile.p50_ms,
+        bytes,
+        transfer_ms,
+        most,
+        indicative,
+        text: crate::phrase::en(&phrases),
+        phrases,
+    })
+}
+
 /// A request the recording's policy refused, as a summary names it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Refusal {
@@ -258,7 +373,7 @@ pub const COUNTED_VERSION: u32 = 4;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+8");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+9");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a run's counts: when the run is removed or replaced.
@@ -932,7 +1047,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0x0822_6e51_7eb3_f1a6;
+        const FIGURES: u64 = 0xcd55_63db_711f_7f4b;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

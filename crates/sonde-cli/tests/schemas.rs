@@ -383,6 +383,8 @@ async fn every_json_output_is_as_its_schema_says() {
         let q = q.to_str().unwrap();
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
+        // a log's time is no program's: no time account
+        assert!(shown["time"].is_null(), "{}", shown["time"]);
         holds("show", &shown);
         holds(
             "show",
@@ -416,6 +418,28 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     let summary = b.json(&["show", s, "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
+    // the plan: every finding in one diagnosis, by its place; where the time went
+    let findings = summary["findings"].as_array().unwrap().len();
+    let mut placed: Vec<u64> = summary["diagnoses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| {
+            d["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i.as_u64().unwrap())
+        })
+        .collect();
+    placed.sort_unstable();
+    assert_eq!(
+        placed,
+        (0..findings as u64).collect::<Vec<_>>(),
+        "{}",
+        summary["diagnoses"]
+    );
+    assert!(summary["time"]["wallMs"].is_number(), "{}", summary["time"]);
     // a trial's `where` and `advice` are in the output, and typed by the schema
     let t = &summary["trials"][0];
     assert_eq!(t["where"]["kind"], "PutObject", "{t}");
