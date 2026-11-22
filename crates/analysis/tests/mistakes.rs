@@ -140,7 +140,10 @@ fn small_objects_written_one_each_are_found_priced_and_fixed_by_a_batch() {
     // priced: 1,800 writes at S3's price
     let mut ranked = vec![o.clone()];
     let p = sonde_analysis::profile::profile(&job.0, &RequestPrices::default());
-    sonde_analysis::fixes::rank_by_saving(&mut ranked, &job.0, &p, true);
+    sonde_analysis::fixes::rank_by_saving(
+        &mut ranked,
+        &sonde_analysis::fixes::Reckoning::of(&job.0, &p, true),
+    );
     assert!(
         (ranked[0].saves_cost - 0.009).abs() < 1e-9,
         "{}",
@@ -490,7 +493,9 @@ fn acting_on_a_cache_and_get_alone_keeps_one_read_of_the_key() {
     assert!(os.iter().any(|o| o.kind == "obs.hot"), "{os:#?}");
     assert!(os.iter().any(|o| o.kind == "obs.headget"), "{os:#?}");
     let p = sonde_analysis::profile::profile(rs, &RequestPrices::default());
-    let w = sonde_analysis::fixes::what_if(rs, &p, &os, true).unwrap();
+    let w =
+        sonde_analysis::fixes::what_if(&sonde_analysis::fixes::Reckoning::of(rs, &p, true), &os)
+            .unwrap();
     assert_eq!(w.requests, (61, 2));
 }
 

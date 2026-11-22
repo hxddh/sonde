@@ -418,11 +418,12 @@ fn put(id: u64, at_ms: i64, key: &str) -> Record {
     rec(id, at_ms, "PutObject", Some(key), 200, 20.0)
 }
 
-/// 28.0 told requests one after another of those another finding takes
-/// away already (a HEAD before each GET), and of polls; and its fix was a
-/// pool of get_object whatever the requests were.
+/// 28.0 told requests one after another of polls, and its fix was a pool of
+/// get_object whatever the requests were. 29.0 told them of those no other
+/// finding took away (not a HEAD before each GET): sent at once is a change
+/// of its own (30.0), weighed on all the requests it sends at once.
 #[test]
-fn requests_one_after_another_are_those_left_once_the_rest_is_fixed() {
+fn requests_one_after_another_are_all_those_that_could_go_at_once() {
     // 40 objects, a HEAD then a GET each, one after another
     let mut recs = Vec::new();
     for i in 0..40u64 {
@@ -449,9 +450,9 @@ fn requests_one_after_another_are_those_left_once_the_rest_is_fixed() {
         .iter()
         .find(|o| key(o) == "obs.serial")
         .expect("a chain");
-    // the 40 GETs: the HEADs go with the GET alone
+    // the 40 HEADs and the 40 GETs: dropping the HEADs is another change
     assert!(
-        serial.text.starts_with("40 requests ran one after another"),
+        serial.text.starts_with("80 requests ran one after another"),
         "{}",
         serial.text
     );
@@ -532,14 +533,16 @@ fn findings_of_one_root_cause_are_one_diagnosis_saving_what_all_at_once_saves() 
     let first = &a.diagnoses[0];
     let mut members = kinds(first);
     members.sort_unstable();
+    // and the writes one after another (the reads back wait for them), last
     assert_eq!(
         members,
-        ["obs.headget", "obs.small", "obs.smallreads"],
+        ["obs.headget", "obs.serial", "obs.small", "obs.smallreads"],
         "{:#?}",
         a.diagnoses
     );
+    assert_eq!(first.serial, first.findings.last().copied());
     // the members keep their identities; the id is made of them
-    assert_eq!(first.identities.len(), 3);
+    assert_eq!(first.identities.len(), 4);
     assert!(first.id.starts_with("dx-"));
     // one saving, of them all at once: never more than the waiting, never their sum
     let sum: f64 = first

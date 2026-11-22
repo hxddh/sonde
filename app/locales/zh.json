@@ -1157,6 +1157,7 @@
  "phrase.time.account": "耗时 %{wall}：程序自身 %{own}（%{ownPct}%）· S3 往返 %{waiting}（%{n} 个请求，中位数 %{median}）",
  "phrase.time.program": " · 大部分时间花在程序自身，而不是 S3",
  "phrase.time.bytes": " · 传输 %{size} 占往返中的 %{time}",
+ "phrase.time.injected": " · 另有 %{time} 是 sonde 扣住或代答的请求（试验注入的故障，不是 S3 的）",
  "phrase.time.indicative": "（演示存储的耗时仅供参考）",
  "phrase.obs.errors": "%{n} 个请求因 %{class} 失败",
  "phrase.split.slow": "%{pct}% 的慢请求（超过 %{ms}）",

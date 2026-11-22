@@ -1658,10 +1658,10 @@ impl Owners {
 }
 
 /// Each record by its id: looked up in place when the records are in the
-/// order of their ids (a recording's are), else through a [`ById`].
+/// order of their ids (a recording's are), else through a [`ById`] of places.
 pub(crate) enum RecordsById<'a> {
     InOrder(&'a [Record]),
-    Table(ById<&'a Record>),
+    Table(&'a [Record], ById<u32>),
 }
 
 impl<'a> RecordsById<'a> {
@@ -1669,19 +1669,27 @@ impl<'a> RecordsById<'a> {
         if records.is_sorted_by(|a, b| a.id < b.id) {
             return RecordsById::InOrder(records);
         }
-        RecordsById::Table(ById::of(records.len(), || {
-            records.iter().map(|r| (r.id, r))
-        }))
+        RecordsById::Table(
+            records,
+            ById::of(records.len(), || {
+                records.iter().enumerate().map(|(i, r)| (r.id, i as u32))
+            }),
+        )
+    }
+
+    /// Its place in the records.
+    pub(crate) fn place(&self, id: &u64) -> Option<usize> {
+        match self {
+            RecordsById::InOrder(records) => records.binary_search_by_key(id, |r| r.id).ok(),
+            RecordsById::Table(_, t) => t.get(id).map(|&i| i as usize),
+        }
     }
 
     pub(crate) fn get(&self, id: &u64) -> Option<&'a Record> {
-        match self {
-            RecordsById::InOrder(records) => records
-                .binary_search_by_key(id, |r| r.id)
-                .ok()
-                .map(|i| &records[i]),
-            RecordsById::Table(t) => t.get(id).copied(),
-        }
+        let records = match self {
+            RecordsById::InOrder(r) | RecordsById::Table(r, _) => *r,
+        };
+        self.place(id).map(|i| &records[i])
     }
 }
 
@@ -2732,8 +2740,9 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             let key = cycles[0].0.clone();
             let mut ids: Vec<u64> = cycles.into_iter().flat_map(|c| c.1).collect();
             ids.sort_unstable();
+            // a warning: another writer's change is lost, which is wrong, not slow
             out.push(
-                info(
+                warn(
                     p(
                         "obs.rmw",
                         &[("key", key), ("n", n.to_string()), ("s", plural(n))],
@@ -2922,21 +2931,19 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             out.push(warn(phrase, of_records(&mut ids.into_iter())).weigh(impact, 0, total));
         }
     }
-    // requests one after another, each waiting for the one before: of
-    // those another finding does not take away already, and those that
-    // could go at once (not a key asked again while not there, a poll; not a
-    // conditional write, which waits for what it is conditional on)
+    // requests one after another, each waiting for the one before: all of
+    // those that could go at once, whatever another finding says of them
+    // (sent at once is a change of its own, weighed on its own). Not a
+    // key asked again while not there, a poll; not a conditional write, which
+    // waits for what it is conditional on; not one that needs one before it
     {
         use crate::profile::{CHAIN_CONCURRENCY, CHAIN_MIN, chains};
-        let taken: std::collections::HashSet<u64> = out
-            .iter()
-            .flat_map(|o| o.saved_ids.iter().copied())
-            .collect();
         let lat = |r: &Record| (r.latency_us().max(0) as f64) / 1000.0;
         let (mut serial, mut wall, mut fast, mut waiting) = (0usize, 0.0, 0.0, 0.0);
         let mut chained: Vec<u64> = Vec::new();
         for c in chains(records) {
             let mut asked: std::collections::HashSet<(&str, &str)> = Default::default();
+            let waits: std::collections::HashSet<u64> = c.waits.iter().copied().collect();
             let mut dropped = 0.0;
             let mut kept: Vec<&Record> = Vec::new();
             for r in c.ids.iter().filter_map(|id| by_id.get(id)) {
@@ -2947,7 +2954,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 let poll = r.status == Some(404) && !asked.insert(place);
                 let conditional = is_write(r)
                     && (header(r, "if-none-match").is_some() || header(r, "if-match").is_some());
-                if taken.contains(&r.id) || poll || conditional {
+                if poll || conditional || waits.contains(&r.id) {
                     dropped += lat(r);
                 } else {
                     asked.insert(place);
@@ -3288,6 +3295,8 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
             o.text = phrase.en();
             o.phrases = vec![phrase];
             o.fixes = crate::fixes::rekeyed(std::mem::take(&mut o.fixes), "obs.rmw.log");
+            // (whether it is lost the log does not say: a note)
+            o.level = "info";
         }
     }
     out

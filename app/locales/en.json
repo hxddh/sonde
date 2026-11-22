@@ -1157,6 +1157,7 @@
  "phrase.time.account": "time %{wall}: your program's own %{own} (%{ownPct}%) · S3 round trips %{waiting} (%{n} request%{s}, median %{median})",
  "phrase.time.program": " · most of the time is your program's own, not S3's",
  "phrase.time.bytes": " · moving %{size} took %{time} of the round trips",
+ "phrase.time.injected": " · %{time} more held or answered by sonde (the trial's faults, not S3's)",
  "phrase.time.indicative": " (the demo store's times are indicative)",
  "phrase.obs.errors": "%{n} request%{s} failed with %{class}",
  "phrase.split.slow": "%{pct}% of the slow requests (over %{ms}) are ",

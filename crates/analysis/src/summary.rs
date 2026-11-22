@@ -66,8 +66,13 @@ pub struct TimeAccount {
     pub wall_ms: f64,
     /// With no request in flight: the program's own work.
     pub own_ms: f64,
-    /// With a request in flight.
+    /// With a request in flight, S3's: not a request a trial's fault held
+    /// or answered (`injected_ms`).
     pub waiting_ms: f64,
+    /// With only requests a trial's fault held or answered in flight: sonde's
+    /// time, not S3's nor the program's.
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    pub injected_ms: f64,
     pub requests: u64,
     pub median_ms: f64,
     /// Bytes moved, up and down …
@@ -83,8 +88,13 @@ pub struct TimeAccount {
     pub text: String,
 }
 
+fn is_zero_ms(v: &f64) -> bool {
+    *v == 0.0
+}
+
 /// The time account of a program's run ([`TimeAccount`]); none for an
-/// imported log or a replay (no program's time), or when it sent nothing.
+/// imported log, a replay or a recording with no command (`run --listen`:
+/// its idle time is no program's own), or when it sent nothing.
 pub fn time_account(
     records: &[Record],
     summary: &Summary,
@@ -92,18 +102,28 @@ pub fn time_account(
     header: &crate::run::RunHeader,
 ) -> Option<TimeAccount> {
     use crate::phrase::{p, plural};
-    // (a log's or a replay's time is no program's own)
-    let program = header
-        .command
-        .as_deref()
-        .is_none_or(|c| !c.starts_with("replay of ") && !c.starts_with("imported from "));
+    // (a log's, a replay's or a standing endpoint's time is no program's own)
+    let program = header.command.as_deref().is_some_and(|c| {
+        !c.starts_with("replay of ")
+            && !c.starts_with("imported from ")
+            && !c.starts_with(crate::program::LOGS_OF)
+    });
     if !program || header.whole_seconds || records.is_empty() || profile.waiting_ms <= 0.0 {
         return None;
     }
     let time = sonde_fmt::duration;
     let wall_ms = (summary.seconds * 1000.0).max(profile.waiting_ms);
-    let waiting_ms = profile.waiting_ms;
-    let own_ms = wall_ms - waiting_ms;
+    let own_ms = wall_ms - profile.waiting_ms;
+    // a trial's held or answered requests: sonde's time, where no other was in flight
+    let injected = |r: &&Record| r.rare().injected.is_some();
+    let injected_ms = match records.iter().any(|r| injected(&r)) {
+        true => {
+            profile.waiting_ms
+                - crate::profile::waiting_ms_of(records.iter().filter(|r| !injected(r)))
+        }
+        false => 0.0,
+    };
+    let waiting_ms = profile.waiting_ms - injected_ms;
     // the share of each request's time after its first byte
     let (mut moving, mut all) = (0.0, 0.0);
     for r in records {
@@ -152,6 +172,9 @@ pub fn time_account(
         )),
         _ => {}
     }
+    if injected_ms >= 0.5 {
+        phrases.push(p("time.injected", &[("time", time(injected_ms))]));
+    }
     let indicative = header.endpoint == "demo";
     if indicative {
         phrases.push(p("time.indicative", &[]));
@@ -160,6 +183,7 @@ pub fn time_account(
         wall_ms,
         own_ms,
         waiting_ms,
+        injected_ms,
         requests: n,
         median_ms: profile.p50_ms,
         bytes,
@@ -373,7 +397,7 @@ pub const COUNTED_VERSION: u32 = 4;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+9");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+10");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a run's counts: when the run is removed or replaced.
@@ -1047,7 +1071,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0xcd55_63db_711f_7f4b;
+        const FIGURES: u64 = 0x54e2_5313_20ce_c589;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

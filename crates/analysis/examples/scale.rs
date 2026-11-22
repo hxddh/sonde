@@ -1,7 +1,7 @@
 //! How the analysis scales: a synthetic run of N requests (default a
 //! million) written, compressed, read back and analysed, each step timed.
 //!
-//!     cargo run --release -p sonde-proxy --example scale -- 1000000
+//!     cargo run --release -p sonde-analysis --example scale -- 1000000
 //!
 //! A path after the count keeps the run there (the nightly run gives it to
 //! sonde-nsh's timed test of the bridge, `SONDE_BIG_RUN`).
@@ -11,6 +11,7 @@ use std::time::Instant;
 use chrono::DateTime;
 use reqlog::Record;
 use sonde_analysis::episode::{episodes, observations};
+use sonde_analysis::fixes::{Reckoning, diagnose, rank_by_saving, what_if};
 use sonde_analysis::profile::{RequestPrices, profile};
 use sonde_analysis::run::{RunFile, RunHeader, RunWriter, compress};
 
@@ -36,19 +37,29 @@ fn main() {
                 2 => ("ListObjectsV2", "GET"),
                 _ => ("GetObject", "GET"),
             };
-            w.write(&Record {
+            let mut r = Record {
                 id: i as u64 + 1,
                 time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 300)
                     .unwrap(),
                 method: method.into(),
                 kind: op.into(),
                 bucket: Some("lake".into()),
-                key: Some(format!("t/part={}/f-{:06}.parquet", i % 97, i / 7).into()),
+                // a key read again and again, a HEAD before each GET of the
+                // next key: findings for the plan to weigh
+                key: Some(match i % 10 {
+                    9 => "conf/settings.json".into(),
+                    1 => format!("t/part={}/f-{:06}.parquet", (i + 2) % 97, (i + 2) / 7).into(),
+                    _ => format!("t/part={}/f-{:06}.parquet", i % 97, i / 7).into(),
+                }),
                 status: Some(if i % 501 == 0 { 404 } else { 200 }),
                 latency_ms: 2.0 + (i % 13) as f64,
                 response_bytes: Some(4096).into(),
                 ..Default::default()
-            });
+            };
+            if i % 10 == 9 {
+                r.lists_mut().response_headers = vec![reqlog::Header::new("ETag", "\"e1\"")];
+            }
+            w.write(&r);
         }
         w.flush().unwrap();
     }
@@ -75,7 +86,7 @@ fn main() {
     let eps = episodes(&s.records);
     println!("episodes: {:.2?} ({})", t.elapsed(), eps.len());
     let t = Instant::now();
-    let obs = observations(&s.records, &eps);
+    let mut obs = observations(&s.records, &eps);
     println!("observations: {:.2?} ({})", t.elapsed(), obs.len());
     let t = Instant::now();
     let p = profile(&s.records, &RequestPrices::default());
@@ -84,5 +95,17 @@ fn main() {
         t.elapsed(),
         p.groups.len(),
         p.chains.len()
+    );
+    // the plan: each finding's saving, theirs in all, the diagnoses
+    let t = Instant::now();
+    let r = Reckoning::of(&s.records, &p, true);
+    rank_by_saving(&mut obs, &r);
+    let all = what_if(&r, &obs);
+    let plan = diagnose(&mut obs, &eps, &r, None);
+    println!(
+        "plan: {:.2?} ({} diagnoses, waiting {:?})",
+        t.elapsed(),
+        plan.len(),
+        all.and_then(|w| w.waiting_ms)
     );
 }
