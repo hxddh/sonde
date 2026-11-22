@@ -121,6 +121,9 @@ for k in en:
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
 GONE: dict[str, str] = {
+    "phrase.fix.back": "a finding is new or more by its counts; back is gone",
+    "phrase.fix.savedTime": "what a fix saved is the run's time and money (phrase.fix.saved)",
+    "phrase.obs.savesTime": "every finding's saving is the run's time (phrase.obs.savesWall)",
     "app.tagline": "the terminal UI's home list is gone (29.0)",
     "app.tuiKeys": "the terminal UI is gone (29.0)",
     "nav.run": "the Run place is merged into Runs (29.0)",
