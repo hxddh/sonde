@@ -8,7 +8,7 @@ import { vendorName } from "../labels";
 import { api, asError } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
+import { Actions, Badge, Button, Card, Check, Choice, Dot, Empty, Field, FORM, Heading, IconButton, IconTile, More, Muted, Notice, Page, PageHeader, Row, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
 type Draft = {
@@ -251,11 +251,13 @@ export function Endpoints() {
     return (
       <View testID={`endpoint-${e.id}`} class="gap-2">
         <View class="flex-row items-center gap-3">
-          <If when={!terminal()}>
-            <IconTile icon="server" tint="foreground" />
-          </If>
+          <IconTile icon="server" tint="foreground" />
           <View class="min-w-0 flex-1 gap-1">
             <View class="flex-row items-center gap-2">
+              {/* how its last test went: a dot, its words in the result under the row */}
+              <If when={r()}>
+                {(x) => <Dot tone={x() === "running" ? "live" : (x() as ConnectivityReport).ok ? "ok" : "fail"} label={x() === "running" ? t("endpoints.testing") : (x() as ConnectivityReport).ok ? t("endpoints.reachable", { ms: duration((x() as ConnectivityReport).latencyMs) }) : t("endpoints.unreachable")} />}
+              </If>
               <Heading class="min-w-0 shrink line-clamp-1">{e.name}</Heading>
               <Badge label={vendorName(e)} />
               <If when={endpoint() === e.id}>
@@ -264,12 +266,15 @@ export function Endpoints() {
             </View>
             <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
-          <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
-          {/* its edit and removal, always there: a list of a few endpoints has the room */}
-          <View class="flex-row items-center gap-1">
-            <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
-            <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
-          </View>
+          {/* its test, edit and removal, behind its ⋯ */}
+          <More
+            testID={`endpoint-more-${e.id}`}
+            actions={() => [
+              { label: t("endpoints.test"), icon: "activity", run: () => void test(e.id), disabled: r() === "running" },
+              { label: t("common.edit"), icon: "pencil", run: () => mode.set({ edit: e }) },
+              { label: t("endpoints.removeMenu"), icon: "trash", run: () => void remove(e) },
+            ]}
+          />
         </View>
         <If when={typeof r() === "object" ? (r() as ConnectivityReport) : null}>{(rep) => <TestResult report={rep()} />}</If>
       </View>
@@ -277,7 +282,7 @@ export function Endpoints() {
   };
   return (
     <Page testID="screen-endpoints">
-      <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
+      <View class={`${FORM} gap-6`}>
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}

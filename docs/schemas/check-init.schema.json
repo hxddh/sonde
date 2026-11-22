@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/check-init.schema.json",
+  "title": "sonde check --init -f json",
+  "description": "The `sonde.toml` written from a run, and the CI step that holds every run to it.",
+  "type": "object",
+  "properties": {
+    "wrote": {
+      "type": "string",
+      "description": "The file written."
+    },
+    "maxRequests": {
+      "type": "integer",
+      "description": "`[check] max-requests`: the run's requests with `--tolerance` of room."
+    },
+    "findings": {
+      "type": "object",
+      "description": "`[check.findings]`: each of the run's findings by identity, with its count. A run with another, or more of one, fails `check`.",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "command": {
+      "type": "string",
+      "description": "The program's command, as the run recorded it: the step's `run`."
+    },
+    "runArgs": {
+      "type": "string",
+      "description": "The step's `run-args`: `--demo` for a run on the demo store, else `--url` to fill in."
+    },
+    "uses": {
+      "type": "string",
+      "description": "The action at this sonde's major version (`hxddh/sonde@v29`)."
+    }
+  },
+  "required": [
+    "wrote",
+    "maxRequests",
+    "findings",
+    "command",
+    "runArgs",
+    "uses"
+  ]
+}

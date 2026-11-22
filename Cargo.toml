@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "28.0.0"
+version = "29.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
@@ -48,7 +48,6 @@ s3raw = { path = "crates/s3raw" }
 sonde-core = { path = "crates/sonde-core" }
 probes = { path = "crates/probes" }
 decoders = { path = "crates/decoders" }
-sonde-nsh = { path = "crates/sonde-nsh" }
 sonde-proxy = { path = "crates/proxy" }
 sonde-analysis = { path = "crates/analysis" }
 
@@ -96,10 +95,6 @@ tempfile = "3"
 # Native Shell, pinned to one commit of longbridge/nsh (docs/dev/decisions.md D-207): its tag
 # v0.6.1 (2f51d86). The one place for the pin: CI reads nsh-core's (.github/actions/nsh).
 nsh-core = { git = "https://github.com/longbridge/nsh", rev = "2f51d8611677c8a6bbad937b39756e8d0cc45350" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "2f51d8611677c8a6bbad937b39756e8d0cc45350" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "2f51d8611677c8a6bbad937b39756e8d0cc45350" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "2f51d8611677c8a6bbad937b39756e8d0cc45350" }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "2f51d8611677c8a6bbad937b39756e8d0cc45350" }
 
 [profile.release]
 lto = "thin"

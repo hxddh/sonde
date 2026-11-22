@@ -6,8 +6,7 @@
 //! |---|---|
 //! | 0 | done, nothing to report |
 //! | 1 | a probe failed (a guarantee broke), or the check found a problem |
-//! | 2 | probes behaved differently from AWS (no failure) |
-//! | 3 | probes could not run (errors only) |
+//! | 2 | probes behaved differently from AWS (no failure), a replay answered differently |
 //! | 4 | findings worth attention (stale uploads, a missing lifecycle rule, layout warnings) |
 //! | 64 | usage error |
 //! | 65 | a run (or another file given to read) is not what it should be |
@@ -66,7 +65,7 @@ pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
     #[arg(long, global = true, help_heading = "Global options")]
     config_dir: Option<std::path::PathBuf>,
-    /// Data directory: runs, scans, probe runs, audit log (default: $SONDE_DATA_DIR or the platform's).
+    /// Data directory: runs, scans, audit log (default: $SONDE_DATA_DIR or the platform's).
     #[arg(long, global = true, help_heading = "Global options")]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
@@ -82,12 +81,6 @@ pub struct Cli {
     /// A PEM CA bundle for --url.
     #[arg(long, global = true, help_heading = "Global options")]
     pub ca_file: Option<std::path::PathBuf>,
-    /// Requests per second per job (`rate-limit` in config.toml).
-    #[arg(long, global = true, hide = true)]
-    rate: Option<f64>,
-    /// Requests in flight per job (`concurrency` in config.toml).
-    #[arg(long, global = true, hide = true)]
-    concurrency: Option<usize>,
     #[command(subcommand)]
     command: Command,
 }
@@ -96,31 +89,24 @@ pub struct Cli {
 enum Command {
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
-    /// A local S3 endpoint that records what talks to it until Ctrl-C.
-    Proxy(cmd::record::ProxyArgs),
     /// Production traffic as a run: an S3 server access log, CloudTrail events or a HAR, a file or s3://.
     Import(cmd::runs::ImportArgs),
     /// The recorded runs, newest first; prune old ones.
     Runs(cmd::runs::RunsArgs),
     /// Print a recorded run: its operations, findings and figures.
     Show(cmd::record::ShowArgs),
-    /// Two runs before and after a change, a run and its replay, or a run replayed elsewhere (--replay).
-    Compare(cmd::record::CompareArgs),
     /// A run against a budget or a baseline run: exit 1 when it is over (for CI).
     Check(cmd::record::CheckArgs),
     /// A run as one HTML file anyone opens in a browser.
     Share(cmd::share::ShareArgs),
-    /// Compatibility probes.
-    Probe(cmd::probe::ProbeArgs),
+    /// A run's requests sent again to another endpoint, and the answers compared.
+    Replay(cmd::replay::ReplayArgs),
     /// A bucket's size and why, and its incomplete uploads.
     Bucket(cmd::bucket::BucketArgs),
     /// What a prefix holds, decoded: SlateDB, Iceberg, lakeFS, Woodpecker, turbopuffer, WarpStream, or any prefix's write cadence.
     Layout(cmd::layout::LayoutArgs),
     /// Configured endpoints.
     Endpoints(cmd::endpoints::EndpointArgs),
-    /// The terminal UI.
-    #[cfg(feature = "tui")]
-    Tui(cmd::tui::TuiArgs),
     /// The tour's job in FILE, played against AWS_ENDPOINT_URL (what the app's demo runs).
     #[command(hide = true)]
     DemoJob {
@@ -172,12 +158,11 @@ fn generate() -> ExitCode {
 }
 
 /// The commands as `sonde --help` lists them: by what they are for, not in
-/// one list of fourteen.
+/// one list of eleven.
 const GROUPS: &[(&str, &[&str])] = &[
-    ("Record", &["run", "proxy", "import"]),
-    ("Read a run", &["runs", "show", "compare", "check", "share"]),
-    ("Buckets", &["bucket", "layout", "probe", "endpoints"]),
-    ("More", &["tui"]),
+    ("Record", &["run", "import", "replay"]),
+    ("Read a run", &["runs", "show", "check", "share"]),
+    ("Buckets", &["bucket", "layout", "endpoints"]),
 ];
 
 /// The top-level command with its help grouped. Each line is the command's
@@ -220,11 +205,11 @@ fn grouped(cmd: clap::Command) -> clap::Command {
 }
 
 /// The commands that only read what is on this machine: a run's file,
-/// the configuration. The options that say which store to talk to, and how
-/// fast, are not theirs.
+/// the configuration. The options that say which store to talk to are not
+/// theirs.
 const READS_FILES: &[&str] = &["runs", "show", "check", "share"];
 
-/// The options of the endpoint and of the pace, which a command that reads
+/// The options of the endpoint, which a command that reads
 /// files has no use for: left out of its help (they are still taken, as
 /// every global option is).
 const OF_THE_STORE: &[&str] = &["url", "region", "path_style", "ca_file"];
@@ -292,10 +277,6 @@ fn main() -> ExitCode {
             return ExitCode::from(if e.use_stderr() { 64 } else { 0 });
         }
     };
-    #[cfg(feature = "tui")]
-    if let Command::Tui(args) = &cli.command {
-        return cmd::tui::run(&cli, args);
-    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -310,20 +291,16 @@ fn main() -> ExitCode {
         };
         let code = match &cli.command {
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
-            Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
             Command::Runs(a) => cmd::runs::run(&sonde, a).await,
             Command::Import(a) => cmd::runs::import(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Share(a) => cmd::share::run(&sonde, a).await,
-            Command::Compare(a) => cmd::record::compare(&sonde, a).await,
+            Command::Replay(a) => cmd::replay::run(&sonde, a).await,
             Command::Check(a) => cmd::record::check(&sonde, a).await,
-            Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,
             Command::Bucket(a) => cmd::bucket::run(&sonde, &cli, a).await,
             Command::Layout(a) => cmd::layout::run(&sonde, &cli, a).await,
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
             Command::DemoJob { file } => cmd::demo::job(file).await,
-            #[cfg(feature = "tui")]
-            Command::Tui(_) => unreachable!(),
         };
         match code {
             Ok(c) => c,
@@ -386,8 +363,8 @@ mod tests {
                 c.get_name()
             );
         }
-        // and no group names a command that is gone (tui is there by feature)
-        for name in grouped.iter().filter(|n| **n != "tui") {
+        // and no group names a command that is gone
+        for name in &grouped {
             assert!(
                 cmd.get_subcommands().any(|c| c.get_name() == *name),
                 "{name} is no command"

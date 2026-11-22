@@ -41,7 +41,7 @@
         },
         "byKind": {
           "type": "array",
-          "description": "Each kind of request's share.",
+          "description": "Each kind of request: its requests, errors, latencies, waiting and its share, cost (the one table of kinds).",
           "items": {
             "$ref": "#/$defs/group"
           }
@@ -86,14 +86,14 @@
       "items": {
         "$ref": "#/$defs/observation"
       },
-      "description": "The findings, those that save the most money first, then those that save time, then the rest."
+      "description": "With `--all`: the findings whole, in the order of their diagnoses (`diagnoses[].findings` are places in it): every operation each is about, each SDK's fix."
     },
     "verify": {
       "type": [
         "string",
         "null"
       ],
-      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new, back or open. Null for a run that is no program's (an import, a replay)."
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
@@ -108,6 +108,85 @@
         "null"
       ],
       "properties": {
+        "program": {
+          "type": "string",
+          "description": "The program, as its runs are grouped (empty when the run is no run of a program, with `--since`)."
+        },
+        "previous": {
+          "type": "string",
+          "description": "The earlier run compared, by path: the program's run before, or the run `--since` names."
+        },
+        "change": {
+          "$ref": "#/$defs/change"
+        },
+        "findings": {
+          "type": "array",
+          "description": "Each finding of either run, where it stands: fixed first, then less, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`); a trial's finding against the program's trial before.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string",
+                "description": "The same finding across runs: its kind and what it is about ([fix loop](../cli.md#the-fix-loop))."
+              },
+              "state": {
+                "enum": [
+                  "fixed",
+                  "less",
+                  "more",
+                  "new",
+                  "open"
+                ],
+                "description": "Judged by its count alone (`counts`), never by a share of the run: fixed: gone at any threshold; less and more: still there at any threshold, its count fallen or grown; new: none of it in the run before, at any threshold; open: as much in both."
+              },
+              "text": {
+                "type": "string",
+                "description": "Display text, not stable."
+              },
+              "was": {
+                "type": "object",
+                "description": "As it read in the run before, when it reads otherwise now (less, more).",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "description": "Display text, not stable."
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              },
+              "counts": {
+                "type": "array",
+                "description": "How much of it each run had (times listed, requests throttled or failed), the run before first.",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "predicted": {
+                "$ref": "#/$defs/saving",
+                "description": "What acting on it was predicted to save: beside `saved`, when there is one."
+              },
+              "withinNoise": {
+                "type": "boolean",
+                "description": "Present (true) when the run's wall time moved by less than the program's runs vary (`noiseMs`): what it saved is not told from noise."
+              },
+              "savedText": {
+                "type": "string",
+                "description": "Display text, not stable: the run's wall time against the predicted (`1.2 s less (predicted 1.5 s)`), or `within noise`."
+              },
+              "saved": {
+                "$ref": "#/$defs/saving",
+                "description": "What it saved, measured between the runs (fixed, less): the requests of its own asks, and what the run's wall time (`ms`) and cost fell by (negative: they grew)."
+              }
+            },
+            "required": [
+              "identity",
+              "state",
+              "text"
+            ]
+          }
+        },
         "empty": {
           "type": "boolean",
           "description": "True: the run recorded no request (nothing reached sonde); it is not compared."
@@ -117,7 +196,7 @@
           "description": "The exit code of a run that failed: not compared."
         }
       },
-      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, more, back, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
+      "description": "The run against its program's run before it, or against the run `--since` names, as `show` says it under \"since …\": `program`, `previous`, `change` (the figures), `findings` (each with its `state`: fixed, less, more, new, open; a trial's finding against the program's trial before: fixed, new, open); or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null when nothing was compared (a program's first run: its findings, all new, are the plan), and for a run that is no run of a program with no `--since`."
     },
     "operations": {
       "type": "array",
@@ -132,6 +211,24 @@
       "items": {
         "$ref": "#/$defs/record"
       }
+    },
+    "time": {
+      "description": "Where the run's time went (the time account a reading opens with); null for an imported log or a replay (no program's own time), or a run that sent nothing.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timeAccount"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "diagnoses": {
+      "type": "array",
+      "description": "The plan: findings that share a root cause are one diagnosis, with one saving and one fix (its headline finding's). Those that save the most time first, then money, then requests; the rest after: the first is the one to make. Each finding is in one diagnosis.",
+      "items": {
+        "$ref": "#/$defs/diagnosis"
+      }
     }
   },
   "required": [
@@ -141,8 +238,9 @@
     "waiting",
     "cost",
     "month",
+    "time",
     "whatIf",
-    "findings",
+    "diagnoses",
     "verify",
     "trials"
   ],
@@ -292,9 +390,6 @@
           "type": "number",
           "description": "Time with one of these in flight."
         },
-        "sumMs": {
-          "type": "number"
-        },
         "waitedMs": {
           "type": "number"
         },
@@ -334,28 +429,13 @@
       "type": "object",
       "description": "A finding.",
       "properties": {
-        "level": {
-          "type": "string",
-          "description": "`warn` (likely a problem) or `info`.",
-          "enum": [
-            "warn",
-            "info"
-          ]
-        },
         "text": {
           "type": "string",
           "description": "Display text, not stable: in English."
         },
-        "phrases": {
-          "type": "array",
-          "description": "Display text, not stable: the same, as phrases.",
-          "items": {
-            "$ref": "#/$defs/phrase"
-          }
-        },
         "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in the run's operations): the first 20 (all with `--all`).",
+          "description": "The operations it is about (their places in the run's operations), every one.",
           "items": {
             "type": "integer"
           }
@@ -363,10 +443,6 @@
         "operationsTotal": {
           "type": "integer",
           "description": "How many operations it is about."
-        },
-        "impact": {
-          "type": "integer",
-          "description": "Requests it is about."
         },
         "identity": {
           "type": "string",
@@ -395,12 +471,10 @@
             "obs.rename",
             "obs.markers",
             "obs.throttled",
-            "obs.serial"
+            "obs.serial",
+            "trial"
           ],
           "description": "What kind of finding it is, as `identity` begins (docs/cli.md#findings)."
-        },
-        "saving": {
-          "$ref": "#/$defs/phrase"
         },
         "savingText": {
           "type": "string",
@@ -410,7 +484,8 @@
           "type": "integer"
         },
         "savesMs": {
-          "type": "number"
+          "type": "number",
+          "description": "Time of the run acting on it alone saves, in ms: the run without its requests, its waiting reckoned again (requests one after another: their waiting less the same at once). Absent for a run whose times are not known."
         },
         "savesBytes": {
           "type": "integer",
@@ -422,85 +497,16 @@
         },
         "fixes": {
           "type": "array",
-          "description": "How to fix it: the engine's setting where its requests are an engine's (SlateDB, DuckDB, rclone, …), else the fix for the run's SDK, or a store's setting (each SDK's with `--all`).",
+          "description": "How to fix it, each SDK's: the engine's setting where its requests are an engine's (SlateDB, DuckDB, rclone, …), else the fix for each SDK, or a store's setting.",
           "items": {
-            "type": "object",
-            "properties": {
-              "sdk": {
-                "type": "string",
-                "description": "`python`, `java`, `go`, `js`, `rust` (object_store), or `config` for a store's or an engine's setting."
-              },
-              "code": {
-                "type": "string",
-                "description": "The change, its first line a comment that says it. An SDK's has placeholders (`b` the bucket, `k` the key); an engine's names the real ones."
-              },
-              "setting": {
-                "type": "object",
-                "description": "The engine's setting it changes: the one edit to make.",
-                "properties": {
-                  "engine": {
-                    "type": "string",
-                    "description": "The engine or tool: `SlateDB DbReader`, `DuckDB`, `rclone`, `Hadoop s3a`, …"
-                  },
-                  "key": {
-                    "type": "string",
-                    "description": "The setting's own name: `manifest_poll_interval`, `--s3-no-head-object`, `fs.s3a.committer.name`."
-                  },
-                  "value": {
-                    "type": "string",
-                    "description": "The value to give it, as the engine reads it."
-                  },
-                  "where": {
-                    "type": "string",
-                    "description": "`file:line` (relative to `run.cwd`) where the program's folder sets it now; absent when sonde finds none."
-                  }
-                },
-                "required": [
-                  "engine",
-                  "key",
-                  "value"
-                ]
-              }
-            },
-            "required": [
-              "sdk",
-              "code"
-            ]
+            "$ref": "#/$defs/fix"
           }
         },
         "callers": {
           "type": "array",
           "description": "Where its requests were sent from, most first (three at most): a place in the program's code when the run named callers; for an imported log, who sent them (an IAM principal).",
           "items": {
-            "type": "object",
-            "properties": {
-              "place": {
-                "type": "string",
-                "description": "As the program or the log said it: `etl.py:25 process`, `arn:aws:iam::1:role/etl`."
-              },
-              "file": {
-                "type": "string",
-                "description": "The file, relative to the folder the program ran in (`run.cwd`), when `place` is a place in code."
-              },
-              "line": {
-                "type": "integer"
-              },
-              "function": {
-                "type": "string"
-              },
-              "requests": {
-                "type": "integer",
-                "description": "How many of its requests were sent from there."
-              },
-              "code": {
-                "type": "string",
-                "description": "The line of code itself, when the file is there to read."
-              }
-            },
-            "required": [
-              "place",
-              "requests"
-            ]
+            "$ref": "#/$defs/caller"
           }
         },
         "sdk": {
@@ -508,68 +514,9 @@
         }
       },
       "required": [
-        "level",
         "text",
-        "phrases",
         "operations",
-        "impact",
         "operationsTotal"
-      ]
-    },
-    "kindSummary": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string"
-        },
-        "count": {
-          "type": "integer"
-        },
-        "errors": {
-          "type": "integer"
-        },
-        "misses": {
-          "type": "integer",
-          "description": "404s that answer a lookup."
-        },
-        "errorShare": {
-          "type": "number"
-        },
-        "p50Ms": {
-          "type": "number"
-        },
-        "p95Ms": {
-          "type": "number"
-        },
-        "p99Ms": {
-          "type": "number"
-        },
-        "maxMs": {
-          "type": "number"
-        },
-        "bytesUp": {
-          "type": "integer"
-        },
-        "bytesDown": {
-          "type": "integer"
-        },
-        "few": {
-          "type": "boolean",
-          "description": "Too few requests for its percentiles to say much."
-        }
-      },
-      "required": [
-        "kind",
-        "count",
-        "errors",
-        "misses",
-        "errorShare",
-        "p50Ms",
-        "p95Ms",
-        "p99Ms",
-        "maxMs",
-        "bytesUp",
-        "bytesDown"
       ]
     },
     "phrase": {
@@ -688,13 +635,6 @@
         "bytesDown": {
           "type": "integer"
         },
-        "kinds": {
-          "type": "array",
-          "description": "Each kind of request.",
-          "items": {
-            "$ref": "#/$defs/kindSummary"
-          }
-        },
         "errorCodes": {
           "type": "array",
           "description": "Each error's status or code and its count.",
@@ -726,7 +666,6 @@
         "seconds",
         "bytesUp",
         "bytesDown",
-        "kinds",
         "errorCodes"
       ]
     },
@@ -818,7 +757,7 @@
     },
     "trial": {
       "type": "object",
-      "description": "A trial's verdict (docs/trials.md).",
+      "description": "A trial's verdict, a row of its table (docs/trials.md): why it is not `survived`, where and what to change are a finding of the run's (`findings[]`, kind `trial`).",
       "properties": {
         "scenario": {
           "type": "string"
@@ -854,54 +793,6 @@
         },
         "attempts": {
           "type": "integer"
-        },
-        "where": {
-          "type": "object",
-          "description": "The request the verdict turns on, when it is not `survived`.",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "description": "The S3 call (`PutObject`)."
-            },
-            "key": {
-              "type": "string",
-              "description": "`bucket/key`, or the bucket and what was listed."
-            },
-            "caller": {
-              "type": "string",
-              "description": "The line of the program that sent it (`etl.py:12 in save`), when the run named callers."
-            }
-          },
-          "required": [
-            "kind",
-            "key"
-          ]
-        },
-        "advice": {
-          "type": "object",
-          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …), its arguments, and its English.",
-          "properties": {
-            "key": {
-              "type": "string",
-              "description": "The phrase's key in the app's locales (en, zh)."
-            },
-            "args": {
-              "type": "object",
-              "description": "Its arguments, as text.",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
-            "text": {
-              "type": "string",
-              "description": "The advice in English: no lookup needed."
-            }
-          },
-          "required": [
-            "key",
-            "args",
-            "text"
-          ]
         },
         "history": {
           "type": "array",
@@ -1266,6 +1157,446 @@
         "from",
         "cost",
         "currency"
+      ]
+    },
+    "change": {
+      "type": "object",
+      "description": "Two runs, the earlier and this one: each figure a pair (earlier, this run).",
+      "properties": {
+        "requests": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "wallMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "waitingMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "errors": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "cost": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "currency": {
+          "type": "string"
+        },
+        "peakInFlight": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "groups": {
+          "type": "array",
+          "description": "With `--since` or `--all`: kinds of request, the largest change first.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "missed": {
+                "type": "boolean"
+              },
+              "requests": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "items": false
+              },
+              "waitingMs": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "items": false
+              }
+            },
+            "required": [
+              "kind",
+              "missed",
+              "requests",
+              "waitingMs"
+            ]
+          }
+        },
+        "sameProgram": {
+          "type": "boolean",
+          "description": "Both are runs of one program: their findings compare."
+        },
+        "waitingKnown": {
+          "type": "boolean",
+          "description": "Whether both runs' waiting is known: false when either's times are to the second (an imported log's); `waitingMs` then says nothing."
+        },
+        "commandChanged": {
+          "type": "string",
+          "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `measured` or `saved`."
+        },
+        "workloadChanged": {
+          "type": "string",
+          "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`requests 120 → 402, 3.4×`): grown by half or more, or shrunk by a third or more below what fixing the first run's findings would leave. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+        },
+        "noiseMs": {
+          "type": "number",
+          "description": "How much the program's wall time varies run to run, in ms: the spread of its last runs of the same command (up to 5). A saving under it is within noise. Absent with fewer than two earlier runs (no band), or with `--since`."
+        },
+        "endpoints": {
+          "type": "array",
+          "description": "The two runs' endpoints, when they differ: the same workload on two stores.",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "prefixes": {
+          "type": "array",
+          "description": "With `--since` or `--all`: the busiest prefixes.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "prefix": {
+                "type": "string"
+              },
+              "requests": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "items": false
+              }
+            },
+            "required": [
+              "prefix",
+              "requests"
+            ]
+          }
+        },
+        "failed": {
+          "type": "integer",
+          "description": "The exit code of a run compared that failed (the later's, when both did): its findings are not compared, and `findings`, `resolved` and `appeared` are empty."
+        }
+      },
+      "required": [
+        "requests",
+        "wallMs",
+        "waitingMs",
+        "errors",
+        "cost",
+        "currency",
+        "peakInFlight",
+        "sameProgram",
+        "waitingKnown"
+      ]
+    },
+    "saving": {
+      "type": "object",
+      "description": "Requests not sent, time not taken (ms) and money not spent (`cost`, in the run's currency).",
+      "properties": {
+        "requests": {
+          "type": "integer"
+        },
+        "ms": {
+          "type": "number"
+        },
+        "cost": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "requests",
+        "ms",
+        "cost"
+      ]
+    },
+    "timeAccount": {
+      "type": "object",
+      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving.",
+      "properties": {
+        "wallMs": {
+          "type": "number",
+          "description": "From the first request to the end of the last."
+        },
+        "ownMs": {
+          "type": "number",
+          "description": "With no request in flight: the program's own work."
+        },
+        "waitingMs": {
+          "type": "number",
+          "description": "With a request in flight."
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "medianMs": {
+          "type": "number",
+          "description": "The median request's time."
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Bytes moved, up and down."
+        },
+        "transferMs": {
+          "type": "number",
+          "description": "Of the waiting, the part spent moving bytes (after the first byte), when the store says when that came; else 0."
+        },
+        "most": {
+          "type": "string",
+          "enum": [
+            "program",
+            "requests",
+            "bytes"
+          ],
+          "description": "What most of the time went to."
+        },
+        "indicative": {
+          "type": "boolean",
+          "description": "True: its times say little (the built-in demo store's)."
+        },
+        "text": {
+          "type": "string",
+          "description": "Display text, not stable."
+        }
+      },
+      "required": [
+        "wallMs",
+        "ownMs",
+        "waitingMs",
+        "requests",
+        "medianMs",
+        "bytes",
+        "transferMs",
+        "most",
+        "indicative",
+        "text"
+      ]
+    },
+    "diagnosis": {
+      "type": "object",
+      "description": "Findings that share a root cause (at least half of each one's objects are the other's), as one change, with what an agent needs to make it: what (`text`, `kind`), where (`at`), the `fix`, what it saves. Requests one after another join the diagnosis that owns most of them.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The same diagnosis across runs: made of its findings' identities (`dx-` and a hash)."
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "With `--all`: its findings, as places in `findings`: the headline first (its text, callers and fix are the diagnosis's), its requests one after another (`serial`) last."
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Its findings' identities, in the same order."
+        },
+        "serial": {
+          "type": "integer",
+          "description": "With `--all`: the place in `findings` of its requests one after another (`obs.serial`), when they joined it (said in `also`)."
+        },
+        "savesMs": {
+          "type": "number",
+          "description": "Time of the run acting on it saves: its findings' requests taken out together and the waiting reckoned again (never their sum)."
+        },
+        "savesCost": {
+          "type": "number",
+          "description": "What it saves in the run's currency (times `month.times`: a month)."
+        },
+        "savesRequests": {
+          "type": "integer"
+        },
+        "savingText": {
+          "type": "string",
+          "description": "Display text, not stable."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Its headline finding's kind, as `identities[0]` begins ([kinds](../cli.md#findings)): `obs.small`, `obs.headget`, … `trial`."
+        },
+        "text": {
+          "type": "string",
+          "description": "Display text, not stable: its headline finding, what it is and what to change."
+        },
+        "also": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Display text, not stable: its other findings, each said, and its requests one after another as the rest of the change (`and send the other 87 requests 8 at once`)."
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Its findings the project keeps on purpose (`[check] expect` in sonde.toml), by identity, each with why: leave them."
+        },
+        "at": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/caller"
+          },
+          "description": "Where its headline's requests were sent from, most first: `file` and `line` (relative to `run.cwd`), `function`, `code` (the line itself). Edit there."
+        },
+        "fix": {
+          "$ref": "#/$defs/fix",
+          "description": "The change to make, for the SDK that sent its requests (an engine's: its `setting`). Absent when none is known."
+        }
+      },
+      "required": [
+        "id",
+        "identities",
+        "kind",
+        "text"
+      ]
+    },
+    "caller": {
+      "type": "object",
+      "properties": {
+        "place": {
+          "type": "string",
+          "description": "As the program or the log said it: `etl.py:25 process`, `arn:aws:iam::1:role/etl`."
+        },
+        "file": {
+          "type": "string",
+          "description": "The file, relative to the folder the program ran in (`run.cwd`), when `place` is a place in code."
+        },
+        "line": {
+          "type": "integer"
+        },
+        "function": {
+          "type": "string"
+        },
+        "requests": {
+          "type": "integer",
+          "description": "How many of its requests were sent from there."
+        },
+        "code": {
+          "type": "string",
+          "description": "The line of code itself, when the file is there to read."
+        }
+      },
+      "required": [
+        "place",
+        "requests"
+      ]
+    },
+    "fix": {
+      "type": "object",
+      "properties": {
+        "sdk": {
+          "type": "string",
+          "description": "`python`, `java`, `go`, `js`, `rust` (object_store), or `config` for a store's or an engine's setting."
+        },
+        "code": {
+          "type": "string",
+          "description": "The change, its first line a comment that says it. An SDK's has placeholders (`b` the bucket, `k` the key); an engine's names the real ones."
+        },
+        "setting": {
+          "type": "object",
+          "description": "The engine's setting it changes: the one edit to make.",
+          "properties": {
+            "engine": {
+              "type": "string",
+              "description": "The engine or tool: `SlateDB DbReader`, `DuckDB`, `rclone`, `Hadoop s3a`, …"
+            },
+            "key": {
+              "type": "string",
+              "description": "The setting's own name: `manifest_poll_interval`, `--s3-no-head-object`, `fs.s3a.committer.name`."
+            },
+            "value": {
+              "type": "string",
+              "description": "The value to give it, as the engine reads it."
+            },
+            "where": {
+              "type": "string",
+              "description": "`file:line` (relative to `run.cwd`) where the program's folder sets it now; absent when sonde finds none."
+            }
+          },
+          "required": [
+            "engine",
+            "key",
+            "value"
+          ]
+        }
+      },
+      "required": [
+        "sdk",
+        "code"
       ]
     }
   }

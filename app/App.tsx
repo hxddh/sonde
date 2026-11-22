@@ -1,45 +1,42 @@
-// sonde: one app, three forms. Four places — Run, Runs, Store and
-// Settings — and a command palette over everything. Desktop windows get a
-// sidebar and the place beside it; a terminal gets a home list and a
-// navigation stack, the F10 menu bar and `:` for the palette.
+// sonde: two places — Runs and Buckets — with Settings in a window of their
+// own, Activity from the edge, and a command palette over everything. The
+// window has a sidebar and the place beside it.
 
-import { appInfo, batch, effect, keymap, mount, platform, setColorScheme, signal, Text, untracked, UrlScheme, View } from "nsh";
-import { createNavStack, NavPage, NavStack, ResizablePanel, ResizablePanelGroup } from "nsh/base";
+import { appInfo, batch, effect, keymap, mount, platform, setColorScheme, signal, Text, UrlScheme, View } from "nsh";
+import { ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
-import { areaLabel } from "./src/labels";
 import { endForQuit, followNotifications, running } from "./src/run";
-import { Run } from "./src/screens/Run";
 import { Runs } from "./src/screens/Runs";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openRun, openRunFile, report, section, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
+import { type Area, area, areaOf, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openRun, openRunFile, report, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
-import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Back, BREAK, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH, windowFace } from "./src/ui/kit";
-import { count } from "./src/format";
+import { Activity, activityAnchor, activityOpen, runningJobs, watchJobs } from "./src/ui/activity";
+import { BREAK, FocusRest, PANE, Recoverable, SidePanel, SPLIT_HANDLE, TEXT, Title, windowFace } from "./src/ui/kit";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
-import { scrubCommand } from "./src/ui/runview";
 
 const mac = platform.os === "macos";
 
 /** The app's name, as it was built (nsh.json's `name`). */
 const APP = appInfo().name ?? "";
 
-/** The view of an area: a plain function, called in a binding, so the view follows `area()`.
- * Until there is an endpoint, Run and Store open on the welcome. */
-/** What the window shows: the area, and whether it welcomes instead. A
- * place is drawn afresh when it changes, inside a boundary of its own. */
-const view = () => `${area()}|${endpoints().length === 0}`;
+/** A run opened while there is no endpoint yet (a file, the example): Runs shows it rather than the welcome. */
+const runOpened = signal(false);
+effect(() => {
+  if (openRun()) runOpened.set(true);
+});
 
-function screen(a: Area) {
-  if ((a === "run" || a === "store") && endpoints().length === 0) return <Welcome />;
+/** What the window shows: the area, and whether it welcomes instead (no endpoint yet, and no run opened). A
+ * place is drawn afresh when it changes, inside a boundary of its own. */
+const view = () => `${area()}|${endpoints().length === 0 && (area() === "store" || !runOpened())}`;
+
+function screen(a: Area, welcome: boolean) {
+  if (welcome && (a === "runs" || a === "store")) return <Welcome />;
   switch (a) {
-    case "run":
-      return <Run />;
     case "runs":
       return <Runs />;
     case "store":
@@ -51,20 +48,13 @@ function screen(a: Area) {
   }
 }
 
-function Context() {
-  const ep = () => endpoints().find((e) => e.id === endpoint());
-  return (
-    <Text class={`${TEXT.note} line-clamp-1`}>
-      {ep() ? `${ep()!.name}${area() === "store" && bucket() ? ` › ${bucket()}` : ""}` : t("common.chooseEndpoint")}
-    </Text>
-  );
-}
+/** Goes to a place. */
+const open = (a: Area) => go(a);
 
-// --- desktop -------------------------------------------------------------
-
-function DesktopShell() {
+function Shell() {
   // a program or a job at work shows on the Dock's icon and the taskbar button
   const win = currentWindow();
+  watchJobs();
   effect(() => {
     const busy = running() !== null || runningJobs() > 0;
     win.set({ progress: busy ? { state: "indeterminate" } : null });
@@ -115,7 +105,7 @@ function DesktopShell() {
           {mac ? <Toolbar open={open} /> : null}
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           <Each of={[view()]} key={(x) => x}>
-            {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
+            {(x) => <Recoverable>{screen(x().split("|")[0] as Area, x().split("|")[1] === "true")}</Recoverable>}
           </Each>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -136,101 +126,6 @@ function DesktopShell() {
   );
 }
 
-// --- terminal ------------------------------------------------------------
-
-type Route = { name: "home" } | { name: "area"; area: Area };
-const nav = createNavStack<Route>([{ name: "home" }]);
-
-function TermHeader(props: { title: string }) {
-  return (
-    <View class="flex-row items-center gap-2 border-b border-border px-1">
-      <If when={nav.routes().length > 1}>
-        <Back onPress={() => nav.pop()} />
-      </If>
-      <Title>{props.title}</Title>
-      <View class="flex-1">
-        <Context />
-      </View>
-    </View>
-  );
-}
-
-function Home() {
-  // 1–5 open a place from the home list (not while typing, not under another page)
-  const digits: Record<string, () => void> = {};
-  AREAS.forEach((a, i) => {
-    digits[`${i + 1}`] = () => {
-      if (nav.routes().length === 1) open(a);
-    };
-  });
-  keymap.bind(digits, { when: "notEditing" });
-  return (
-    <NavPage title={APP} header={<TermHeader title={APP} />}>
-      <View class="flex-1 gap-1 p-1">
-        <Text class="text-muted-foreground">{`${t("app.tagline")} — ${t("app.tuiKeys")}`}</Text>
-        <Each of={AREAS}>
-          {(a, i) => (
-            <ListRow plain testID={`nav-${a()}`} label={areaLabel(a())} onPress={() => open(a())} class="px-1">
-              <Text class={`${WIDTH.digit} text-muted-foreground`}>{count(i() + 1)}</Text>
-              <Text class="flex-1 text-foreground">{areaLabel(a())}</Text>
-              <If when={a() === "run" && running()}>
-                <Text class="text-primary">● {scrubCommand(running()!.command)}</Text>
-              </If>
-            </ListRow>
-          )}
-        </Each>
-      </View>
-    </NavPage>
-  );
-}
-
-/** Goes to a place; in a terminal, as a page over the home list. */
-function open(a: Area) {
-  go(a);
-  if (terminal()) {
-    const top = nav.routes()[nav.routes().length - 1];
-    if (top.name === "area") nav.replace({ name: "area", area: a });
-    else nav.push({ name: "area", area: a });
-  }
-}
-
-/** The place the terminal last showed: a change of it, not its first value, opens a page. */
-let opened: Area | null = null;
-
-function TerminalShell() {
-  opened = untracked(area);
-  // a place chosen elsewhere (the palette, a button) becomes the page on top
-  effect(() => {
-    const a = area();
-    const top = nav.routes()[nav.routes().length - 1];
-    if (top.name === "area" && top.area !== a) nav.replace({ name: "area", area: a });
-    // from the home list (the palette's `:` then a place): the place opens over it
-    else if (top.name === "home" && a !== opened) untracked(() => nav.push({ name: "area", area: a }));
-    opened = a;
-  });
-  return (
-    <View class="flex-1 bg-background">
-      <NavStack state={nav} class="flex-1">
-        {(route) =>
-          route.name === "home" ? (
-            <Home />
-          ) : (
-            <NavPage title={areaLabel(route.area)} header={<TermHeader title={areaLabel(route.area)} />}>
-              <View class="flex-1">
-                <Each of={[view()]} key={(x) => x}>
-                  {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
-                </Each>
-              </View>
-            </NavPage>
-          )
-        }
-      </NavStack>
-      <Palette />
-      <Toaster />
-    </View>
-  );
-}
-
 // --- menus, shortcuts, window -------------------------------------------------
 
 function installMenus() {
@@ -244,19 +139,17 @@ function installMenus() {
     ]);
   });
   keymap.bind({
-    "mod+1": () => open("run"),
-    "mod+2": () => open("runs"),
-    "mod+3": () => open("store"),
+    "mod+1": () => open("runs"),
+    "mod+2": () => open("store"),
     "mod+,": () => open("settings"),
     "mod+shift+a": () => open("activity"),
     "mod+k": () => paletteOpen.set(!paletteOpen()),
-    "mod+b": () => !terminal() && toggleSidebar(),
-    "mod+o": () => !terminal() && void openRunFile(),
+    "mod+b": () => toggleSidebar(),
+    "mod+o": () => void openRunFile(),
   });
   // Buckets' sections, in their row's order; not while typing, where Windows reports AltGr
   // (which types `²`, `{`, `~` on many layouts) as Ctrl+Alt
   keymap.bind(Object.fromEntries(STORE_TABS.map((s, i) => [`mod+alt+${i + 1}`, () => go(s)])), { when: "notEditing" });
-  if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
 
 /** The sidebar's width, as the user left it. */
@@ -268,38 +161,36 @@ const dragging = signal<{ opens: number; others: number } | null>(null);
 function App() {
   init();
   // links into the app (sonde show --app, a shared page) and a pressed notification
-  if (platform.idiom !== "terminal") {
-    try {
-      UrlScheme.on("open", ({ url }) => openLink(url));
-    } catch {
-      // no links here
-    }
-    // sonde runs once (nsh.json's `singleInstance`): a second launch brings this window
-    // forward and hands over what it was asked to open
-    try {
-      Application.on("secondInstance", ({ args, cwd }) => openLaunch(args, cwd));
-      // a .sonde file opened from the system (a double click, Open With, a drop on the app's
-      // icon; nsh.json's `fileTypes`): as one dropped on the window, the launch's own included
-      Application.on("openFiles", ({ paths }) => openSystemFiles(paths));
-      // the user quits (the Quit item, its key, the Dock): the program being recorded is ended and its run
-      // written whole first, however long that takes, then the app quits (Native Shell's quit request)
-      Application.on("quitRequest", () => void endForQuit().finally(() => Application.quit()));
-      // the system ends the app (logging out, shutting down) without asking: the same, in the 200 ms it waits
-      Application.on("quit", () => endForQuit());
-    } catch {
-      // a host that is not the app's own (a test runner)
-    }
-    followNotifications((path) => {
-      openRun.set(path);
-      go("runs");
-    });
+  try {
+    UrlScheme.on("open", ({ url }) => openLink(url));
+  } catch {
+    // no links here
   }
+  // sonde runs once (nsh.json's `singleInstance`): a second launch brings this window
+  // forward and hands over what it was asked to open
+  try {
+    Application.on("secondInstance", ({ args, cwd }) => openLaunch(args, cwd));
+    // a .sonde file opened from the system (a double click, Open With, a drop on the app's
+    // icon; nsh.json's `fileTypes`): as one dropped on the window, the launch's own included
+    Application.on("openFiles", ({ paths }) => openSystemFiles(paths));
+    // the user quits (the Quit item, its key, the Dock): the program being recorded is ended and its run
+    // written whole first, however long that takes, then the app quits (Native Shell's quit request)
+    Application.on("quitRequest", () => void endForQuit().finally(() => Application.quit()));
+    // the system ends the app (logging out, shutting down) without asking: the same, in the 200 ms it waits
+    Application.on("quit", () => endForQuit());
+  } catch {
+    // a host that is not the app's own (a test runner)
+  }
+  followNotifications((path) => {
+    openRun.set(path);
+    go("runs");
+  });
   effect(() => {
     const theme = settings()?.theme ?? "system";
     setColorScheme(theme === "light" || theme === "dark" ? theme : "system");
   });
   installMenus();
-  return platform.idiom === "terminal" ? <TerminalShell /> : <DesktopShell />;
+  return <Shell />;
 }
 
 mount(App);

@@ -53,26 +53,20 @@ impl RunOptions {
     }
 }
 
-/// Starts one job per endpoint; their ids, in order.
-pub fn spawn(s: &Arc<Sonde>, endpoints: &[String], opts: RunOptions) -> Vec<String> {
-    endpoints
-        .iter()
-        .map(|ep| {
-            let (s2, ep2, o) = (s.clone(), ep.clone(), opts.clone());
-            // cooperative: a cancelled run still removes what its probe wrote
-            s.jobs().spawn_cooperative(
-                "probe",
-                ph!("job.probes", endpoint = ep),
-                4,
-                s.settings().rate_limit,
-                move |ctx| async move {
-                    let run = run_endpoint(&s2, &ep2, &o, &ctx).await?;
-                    let _ = crate::store::save(s2.paths(), &run);
-                    Ok(serde_json::to_value(run).unwrap_or_default())
-                },
-            )
-        })
-        .collect()
+/// Starts the probes on `endpoint` as a job; its id.
+pub fn spawn(s: &Arc<Sonde>, endpoint: &str, opts: RunOptions) -> String {
+    let (s2, ep, o) = (s.clone(), endpoint.to_string(), opts);
+    // cooperative: a cancelled run still removes what its probe wrote
+    s.jobs().spawn_cooperative(
+        "probe",
+        ph!("job.probes", endpoint = endpoint),
+        4,
+        None,
+        move |ctx| async move {
+            let run = run_endpoint(&s2, &ep, &o, &ctx).await?;
+            Ok(serde_json::to_value(run).unwrap_or_default())
+        },
+    )
 }
 
 pub async fn run_endpoint(
@@ -464,7 +458,7 @@ fn record_fixture(vendor: &str, probe: &str, verdict: Verdict, steps: &Steps) {
     };
     let dir = std::path::Path::new(&dir).join(probe);
     let _ = std::fs::create_dir_all(&dir);
-    let f = crate::store::Fixture {
+    let f = crate::model::Fixture {
         probe: probe.into(),
         vendor: vendor.into(),
         expect: verdict,
@@ -711,7 +705,7 @@ mod tests {
         fake.stall.store(true, Ordering::SeqCst);
         let dir = tempfile::tempdir().unwrap();
         let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
-        let ids = spawn(&s, &["fake".to_string()], one_probe());
+        let id = spawn(&s, "fake", one_probe());
         // the probe wrote its object and waits on the GET that never answers
         for _ in 0..500 {
             if !fake.keys.lock().is_empty() {
@@ -720,8 +714,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(fake.keys.lock().len(), 1, "the probe wrote");
-        assert!(s.jobs().cancel(&ids[0]));
-        let e = tokio::time::timeout(Duration::from_secs(20), s.jobs().wait(&ids[0]))
+        assert!(s.jobs().cancel(&id));
+        let e = tokio::time::timeout(Duration::from_secs(20), s.jobs().wait(&id))
             .await
             .expect("the job ended")
             .unwrap_err();
@@ -741,8 +735,8 @@ mod tests {
         fake.deny_delete.store(true, Ordering::SeqCst);
         let dir = tempfile::tempdir().unwrap();
         let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
-        let ids = spawn(&s, &["fake".to_string()], one_probe());
-        let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&ids[0]))
+        let id = spawn(&s, "fake", one_probe());
+        let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&id))
             .await
             .expect("the job ended")
             .unwrap();
@@ -758,7 +752,7 @@ mod tests {
         );
         assert!(
             s.jobs()
-                .info(&ids[0])
+                .info(&id)
                 .unwrap()
                 .progress
                 .message
@@ -846,8 +840,8 @@ mod tests {
         fake.deny_list.store(true, Ordering::SeqCst);
         let dir = tempfile::tempdir().unwrap();
         let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
-        let ids = spawn(&s, &["fake".to_string()], one_probe());
-        let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&ids[0]))
+        let id = spawn(&s, "fake", one_probe());
+        let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&id))
             .await
             .expect("the job ended")
             .unwrap();
@@ -858,7 +852,7 @@ mod tests {
             "{:?}",
             r.observations
         );
-        let message = s.jobs().info(&ids[0]).unwrap().progress.message;
+        let message = s.jobs().info(&id).unwrap().progress.message;
         assert!(message.starts_with("done; could not check"), "{message}");
         assert!(s.guard().audit_entries(1)[0].errors[0].starts_with(UNCHECKED));
     }

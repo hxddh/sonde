@@ -1,7 +1,7 @@
 // Updates: is there a newer sonde, and installing it. The desktop app
 // replaces itself and restarts, or waits to when sonde quits (Native Shell's
 // updater, from the project's GitHub Releases, its notes in the app's
-// language); elsewhere — a system install, the terminal binary — it links to
+// language); elsewhere — a system install — it links to
 // the release.
 
 import { appInfo, effect, openUrl, signal, untracked } from "nsh";

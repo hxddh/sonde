@@ -1,6 +1,5 @@
 //! `config.toml`: settings and endpoints.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -169,14 +168,13 @@ impl EndpointConfig {
     }
 }
 
-/// Storage prices, per GiB-month, by storage class.
+/// Storage and request prices.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Prices {
-    /// Used for classes not listed.
+    /// Storage per GiB-month: S3 Standard's, and of a class not in
+    /// [`CLASS_PRICES`].
     pub default_per_gib_month: f64,
-    #[serde(default)]
-    pub by_class: BTreeMap<String, f64>,
     #[serde(default = "usd")]
     pub currency: String,
     /// Requests that write or list (PUT, COPY, POST, LIST), per thousand.
@@ -206,20 +204,22 @@ fn usd() -> String {
     "USD".into()
 }
 
+/// AWS's storage prices of the classes other than Standard, per
+/// GiB-month (us-east-1). Standard, and a class not listed, is
+/// [`Prices::default_per_gib_month`].
+pub const CLASS_PRICES: &[(&str, f64)] = &[
+    ("STANDARD_IA", 0.0125),
+    ("ONEZONE_IA", 0.01),
+    ("GLACIER_IR", 0.004),
+    ("GLACIER", 0.0036),
+    ("DEEP_ARCHIVE", 0.00099),
+    ("EXPRESS_ONEZONE", 0.11),
+];
+
 impl Default for Prices {
     fn default() -> Self {
-        let mut by_class = BTreeMap::new();
-        by_class.insert("STANDARD".into(), 0.023);
-        by_class.insert("INTELLIGENT_TIERING".into(), 0.023);
-        by_class.insert("STANDARD_IA".into(), 0.0125);
-        by_class.insert("ONEZONE_IA".into(), 0.01);
-        by_class.insert("GLACIER_IR".into(), 0.004);
-        by_class.insert("GLACIER".into(), 0.0036);
-        by_class.insert("DEEP_ARCHIVE".into(), 0.00099);
-        by_class.insert("EXPRESS_ONEZONE".into(), 0.11);
         Prices {
             default_per_gib_month: 0.023,
-            by_class,
             currency: usd(),
             per_1000_writes: writes_per_1000(),
             per_1000_reads: reads_per_1000(),
@@ -231,9 +231,8 @@ impl Default for Prices {
 impl Prices {
     pub fn per_gib_month(&self, class: Option<&str>) -> f64 {
         class
-            .and_then(|c| self.by_class.get(c))
-            .copied()
-            .unwrap_or(self.default_per_gib_month)
+            .and_then(|c| CLASS_PRICES.iter().find(|(n, _)| *n == c))
+            .map_or(self.default_per_gib_month, |(_, p)| *p)
     }
 }
 
@@ -256,18 +255,15 @@ pub struct RunPrices {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct Settings {
-    /// Requests in flight per job.
-    pub concurrency: usize,
-    /// Requests per second per job (`None`: unlimited).
-    pub rate_limit: Option<f64>,
     pub prices: Prices,
     /// `system`, `light` or `dark`.
     pub theme: String,
     /// `auto`, `en` or `zh`.
     pub language: String,
-    pub exports_dir: Option<PathBuf>,
-    pub downloads_dir: Option<PathBuf>,
 }
+
+/// Requests in flight per job of sonde's own (a scan, a listing): fixed.
+pub const CONCURRENCY: usize = 16;
 
 /// How old an incomplete upload is before it is stale: a week, as the
 /// lifecycle rule sonde adds aborts them.
@@ -276,13 +272,9 @@ pub const STALE_UPLOAD_DAYS: u32 = 7;
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            concurrency: 16,
-            rate_limit: None,
             prices: Prices::default(),
             theme: "system".into(),
             language: "auto".into(),
-            exports_dir: None,
-            downloads_dir: None,
         }
     }
 }
@@ -319,9 +311,6 @@ impl Config {
             if !ids.insert(&e.id) {
                 return Err(format!("endpoint id {:?} appears twice", e.id));
             }
-        }
-        if self.settings.concurrency == 0 || self.settings.concurrency > 1024 {
-            return Err("settings.concurrency: 1 to 1024".into());
         }
         Ok(())
     }
@@ -383,8 +372,7 @@ mod tests {
 
     const SAMPLE: &str = r#"
 [settings]
-concurrency = 8
-rate-limit = 50.0
+theme = "dark"
 
 [settings.prices]
 default-per-gib-month = 0.02
@@ -411,12 +399,12 @@ credentials = { kind = "profile", name = "prod" }
     fn parse_and_round_trip() {
         let c = Config::parse(SAMPLE).unwrap();
         assert_eq!(c.endpoints.len(), 2);
-        assert_eq!(c.settings.concurrency, 8);
-        assert_eq!(
-            c.settings.prices.per_gib_month(Some("STANDARD")),
-            0.02,
-            "listed classes replaced by the file's empty map"
-        );
+        assert_eq!(c.settings.theme, "dark");
+        // Standard, and a class sonde does not know, at the file's price;
+        // the others at AWS's
+        assert_eq!(c.settings.prices.per_gib_month(Some("STANDARD")), 0.02);
+        assert_eq!(c.settings.prices.per_gib_month(Some("NEW_CLASS")), 0.02);
+        assert_eq!(c.settings.prices.per_gib_month(Some("GLACIER")), 0.0036);
         assert_eq!(
             c.endpoints[1].credentials,
             CredentialSource::Profile {
@@ -440,8 +428,6 @@ credentials = { kind = "profile", name = "prod" }
             .unwrap();
         // (as read, not checked: its CA file is an example's)
         let c: Config = toml::from_str(example).unwrap();
-        assert_eq!(c.settings.concurrency, 16);
-        assert_eq!(c.settings.rate_limit, Some(50.0));
         assert_eq!(c.endpoints.len(), 2);
         assert!(!c.endpoints[1].buckets.is_empty());
     }
@@ -465,6 +451,29 @@ credentials = { kind = "profile", name = "prod" }
             err.contains("CA file /nonexistent/lab-ca.pem does not exist"),
             "{err}"
         );
+    }
+
+    /// 29.0 took sonde's own pace, its folders and its prices by class out of
+    /// `config.toml`: a file that still has them reads, and is saved
+    /// without them.
+    #[test]
+    fn the_keys_29_took_out_are_read_past_and_not_saved() {
+        let old = "[settings]\nconcurrency = 4\nrate-limit = 5.0\nexports-dir = '/x'\ndownloads-dir = '/y'\n[settings.prices]\ndefault-per-gib-month = 0.02\n[settings.prices.by-class]\nGLACIER = 1.0\n";
+        let c = Config::parse(old).unwrap();
+        assert_eq!(c.settings.prices.per_gib_month(Some("GLACIER")), 0.0036);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        c.save(&p).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        for gone in [
+            "concurrency",
+            "rate-limit",
+            "exports-dir",
+            "downloads-dir",
+            "by-class",
+        ] {
+            assert!(!text.contains(gone), "{gone} in:\n{text}");
+        }
     }
 
     #[test]

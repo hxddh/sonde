@@ -12,9 +12,7 @@ Two files, each setting in one of them:
 | Endpoints and their credentials | `config.toml` | `[[endpoint]]` |
 | Prices (storage, requests, bytes out) | `config.toml` | `[settings.prices]` |
 | Whether a run's bytes out leave the store's region | `config.toml` | `[[endpoint]] egress` |
-| sonde's own requests in flight and per second | `config.toml` | `[settings] concurrency`, `rate-limit` |
 | Theme, language | `config.toml` | `[settings] theme`, `language` |
-| Where exports and downloads go | `config.toml` | `[settings] exports-dir`, `downloads-dir` |
 | The program's name | `sonde.toml` | `[program] name` |
 | Its budget and baseline | `sonde.toml` | `[check]` |
 | What a recorded program may do | `sonde.toml` | `[record] policy` |
@@ -30,9 +28,9 @@ in the contract ([contract](contract.md)).
 | | Linux | macOS | Windows |
 |---|---|---|---|
 | Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` | `%SONDE_CONFIG_DIR%`, else `%XDG_CONFIG_HOME%\sonde`, else `%APPDATA%\sonde` |
-| Data (runs, scans, probe runs, audit log) | `$SONDE_DATA_DIR`, else `$XDG_DATA_HOME/sonde`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` | `%SONDE_DATA_DIR%`, else `%APPDATA%\sonde` |
-| Exports | `<data>/exports` unless `exports-dir` | same | same |
-| Downloads | `~/Downloads/sonde` unless `downloads-dir` | same | same |
+| Data (runs, scans, audit log) | `$SONDE_DATA_DIR`, else `$XDG_DATA_HOME/sonde`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` | `%SONDE_DATA_DIR%`, else `%APPDATA%\sonde` |
+| Exports | `<data>/exports` | same | same |
+| Downloads | `~/Downloads/sonde` | same | same |
 
 The CLI also takes `--config-dir` and `--data-dir`.
 
@@ -47,24 +45,15 @@ The CLI also takes `--config-dir` and `--data-dir`.
 
 ```toml
 [settings]
-concurrency = 16            # sonde's own requests in flight per job (not in the app)
-rate-limit = 50.0           # sonde's own requests per second per job; omit for none (not in the app)
 theme = "system"            # system, light, dark
 language = "auto"           # auto, en, zh
-# exports-dir = "/srv/sonde/exports"
-# downloads-dir = "/srv/sonde/downloads"
 
 [settings.prices]           # for multipart, capacity and request costs
-default-per-gib-month = 0.023
+default-per-gib-month = 0.023  # storage: S3 Standard's (other AWS classes at AWS's list prices)
 currency = "USD"
 per-1000-writes = 0.005     # PUT, COPY, POST, LIST
 per-1000-reads = 0.0004     # GET, HEAD and the rest (DELETE is free)
 per-gib-out = 0.09          # bytes out of the store's region (egress)
-[settings.prices.by-class]  # per GiB-month (not in the app)
-STANDARD = 0.023
-STANDARD_IA = 0.0125
-GLACIER = 0.0036
-DEEP_ARCHIVE = 0.00099
 
 [[endpoint]]
 id = "prod"                                    # letters, digits, - _ .
@@ -100,13 +89,13 @@ price you set wins for every endpoint.
 ### One-off endpoint
 
 `sonde --url <URL> [--region R] [--path-style] [--ca-file F]` adds an unsaved endpoint `adhoc` with the default
-credential chain. `--rate` and `--concurrency` are not saved either. A configured endpoint named `adhoc` (or `demo`,
+credential chain. A configured endpoint named `adhoc` (or `demo`,
 while the demo runs) is hidden for that run, not replaced.
 
 ## sonde.toml
 
-Read by `run`, `check`, `proxy` and the app's Run from the folder they run in or the nearest one above it, up to the
-repository's root (`check --config FILE` names another). `show`, `compare` and `share` read it too: `[program] name`
+Read by `run`, `check` and the app's command bar from the folder they run in or the nearest one above it, up to the
+repository's root (`check --config FILE` names another). `show` and `share` read it too: `[program] name`
 to find the program's newest run, and `show` what `[check] expect` keeps. Every key is checked: an unknown key, a
 policy that is not one of three or a scenario sonde cannot run is an error (exit 64), in the CLI and the app alike.
 
@@ -121,6 +110,9 @@ max-requests = 5000
 max-errors = 0
 max-transfer = "50 GiB"   # bytes the store sent
 baseline = "auto"
+
+[check.findings]          # the findings the project knows, by count (`check --init` writes it): more fails
+"obs.hot|data/conf.json" = 12
 
 [record]
 policy = "no-delete"      # what the program may do: allow (default; a trial: no-delete), no-delete, read-only
@@ -137,5 +129,5 @@ on = ["PutObject"]
   `runs-per-month` alone applies to every program run in the folder.
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
 - `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
-  app, the project's policy may narrow Run's own choice, never widen it.
+  app, the project's policy may narrow the command bar's own choice, never widen it.
 - `[[scenario]]`: [trials](trials.md#a-projects-own-scenarios).

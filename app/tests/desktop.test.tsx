@@ -4,7 +4,7 @@ import { expect, open, test } from "nsh/test";
 import { openDemo, openExample, desktop, place } from "./helpers";
 import type { Signals } from "../src/types";
 
-test("a first launch welcomes; its demo runs, opens on its finding, and the fix applied says what it saved", async () => {
+test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in the inspector, and the fix applied says what it saved", async () => {
   const app = await open("../App.tsx", desktop);
   expect(app.shows("id:welcome")).toBe(true);
   // (on Windows the real cursor moves on a focus change and can cancel a simulated press: pressed again only while
@@ -14,16 +14,23 @@ test("a first launch welcomes; its demo runs, opens on its finding, and the fix 
     await app.press("id:welcome-demo");
     await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
   }
-  // one press: the job ran, and its run is open on its finding — the line that sent it and the fix
+  // one press: the job ran, and its run is open on its first diagnosis — in the inspector, the line that sent it and
+  // the fix for the program's own SDK alone (no SDK to choose: one fix shown), Apply the screen's one primary
   await app.waitFor("id:screen-runs", { timeout: 20000 });
-  await app.waitFor("id:finding-advice", { timeout: 20000 });
+  await app.waitFor("id:inspector >> id:fix", { timeout: 20000 });
   await app.waitFor("id:fix-callers >> text:/^export\\.py:\\d+ read_reports/");
-  // the fix applied and the job run again: the finding fixed, its saving measured beside the predicted one
-  await app.press("id:finding-apply");
-  await app.waitFor("text:/^Since the run before: 1 fixed: .*, saved 3 requests \\(predicted 3\\)/", { timeout: 20000 });
-  // (no finding left: its operations all shown, none narrowed away)
-  expect(app.shows("text:Nothing here yet")).toBe(false);
+  expect(app.shows("id:fix-code")).toBe(true);
   expect(app.shows("id:finding-advice")).toBe(false);
+  expect(app.shows("id:clear-filter")).toBe(true);
+  // the run's sentence is where its time went
+  expect(app.shows("text:/^Time [\\d.]+ m?s: your program's own /")).toBe(true);
+  // the fix applied and the job run again: the finding fixed, the time it saved measured beside the predicted (or
+  // within the runs' noise)
+  await app.press("id:finding-apply");
+  await app.waitFor("text:/^Since the run before: fixed: .* — (.* less|.* more|within noise)/", { timeout: 20000 });
+  // (no finding left: its operations all shown, none narrowed away, no fix in an inspector)
+  expect(app.shows("text:Nothing here yet")).toBe(false);
+  expect(app.shows("id:fix")).toBe(false);
   expect(app.shows("id:sidebar")).toBe(true);
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:sidebar")).toBe(false);
@@ -36,12 +43,17 @@ test("the demo opens from the palette, its one door after the welcome", async ()
   await place(app, "endpoints");
   await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
-  await app.press("id:test-demo");
+  // tested from its ⋯: its result under it, and a dot for how it went
+  await app.press("id:endpoint-more-demo");
+  await app.chooseMenuItem("Test connection");
   await app.waitFor("id:test-result", { timeout: 10000 });
   expect(app.texts().some((t) => t.startsWith("Reachable in"))).toBe(true);
-  // with an endpoint, Run is Run
-  await app.press("id:nav-run");
-  await app.waitFor("id:screen-run");
+  expect(app.shows("id:endpoint-demo >> label:/^Reachable in/")).toBe(true);
+  // no button of its own for it
+  expect(app.shows("id:test-demo")).toBe(false);
+  // with an endpoint, Runs opens on its command bar
+  await place(app, "run");
+  await app.waitFor("id:run-new");
 });
 
 test("the toolbar's endpoint opens with a press anywhere on it, chooses, and manages", async () => {
@@ -117,7 +129,9 @@ test("a run file opens from Runs: a picked .sonde, and a refusal for anything el
   // the run is read off the interface's thread: its header comes when the reading ends
   await app.waitFor("text:$ python gen_delta.py s3://lake/delta", { timeout: 10000 });
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
-  await app.press("id:open-file");
+  // (⌘O its one key: no button in the sidebar's head for it)
+  expect(app.shows("id:open-file")).toBe(false);
+  await app.keyboard.press("mod+o");
   await app.waitFor("text:/notes.sonde: not a sonde run/", { timeout: 5000 });
 });
 
@@ -194,7 +208,7 @@ test("every count in the app's words is grouped (1,500 requests); ids, exit code
   expect(t("runs.requestsN", { n: "1,500" })).toBe("1,500 requests");
   // what is no count: a chain's number, a program's exit, a version
   expect(t("chains.row", { i: 1234, n: 1500 })).toBe("Chain 1234 · 1,500 requests");
-  expect(t("run.exited", { code: 3221 })).toBe("exited with 3221");
+  expect(t("run.exitNote", { code: 3221 })).toBe("The program exited with 3221");
   expect(t("updates.found", { version: "2026" })).toBe("sonde 2026 is out.");
   // Rust's phrases as before
   expect(say([{ key: "obs.hot", args: { n: "87139" } }], "x")).not.toMatch(/87139/);
@@ -273,15 +287,15 @@ test("prefixes are named by what tells them apart: the shared start once, the en
 
 test("a trial reads as figures (the faults and retries, the wait, the load), and what went wrong is said once, by its reasons", async () => {
   const { trialText, trialReasons } = await import("../src/ui/history");
-  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0 };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
-  // why: Rust's phrases in the reader's language (two make one sentence), its English where a reason has no phrase
-  const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2, reasons: ["2 writes failed and were never sent again, and the program exited 0", "an older reason"] };
-  expect(trialReasons(why)).toEqual(why.reasons);
+  // why: its finding's phrases in the reader's language (two make one sentence); none, nothing is said
+  const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2 };
+  expect(trialReasons(why)).toEqual([]);
   const said = [[{ key: "trial.why.writes", args: { n: "2", s: "s", it: "them", was: "were" } }, { key: "trial.why.exit0" }], []];
-  expect(trialReasons({ ...why, reasonsText: said })).toEqual(why.reasons);
-  const text = [trialText(why), ...trialReasons({ ...why, reasonsText: said })].join(" · ");
+  expect(trialReasons({ ...why, finding: { why: said } })).toEqual(["2 writes failed and were never sent again, and the program exited 0"]);
+  const text = [trialText(why), ...trialReasons({ ...why, finding: { why: said } })].join(" · ");
   expect(text.match(/never sent again/g)?.length).toBe(1);
   // too few waits to tell jitter from step: neither is said
   const { jitter: _, ...unsaid } = base;
@@ -293,14 +307,14 @@ test("a trial reads as figures (the faults and retries, the wait, the load), and
 });
 
 test("a trial is followed scenario by scenario: waiting, running, done with its standing", async () => {
-  const { trialSteps, foldTrial, trialDone, worstStanding, scenarioLabel } = await import("../src/trials");
+  const { trialSteps, foldTrial, trialDone, scenarioLabel } = await import("../src/trials");
   let steps = trialSteps([{ name: "slowdown", about: "503 SlowDown" }, { name: "lost-answer", about: "" }]);
   expect(steps.map((s) => s.state)).toEqual(["waiting", "waiting"]);
   steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
   // the program's output and its recording change nothing in the list
   steps = foldTrial(steps, { data: "hello\n", scenario: "slowdown" });
   expect(steps.map((s) => s.state)).toEqual(["running", "waiting"]);
-  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0, reasons: ["1 write never sent again"] } as import("../src/types").Trial;
+  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0 } as import("../src/types").Trial;
   steps = foldTrial(steps, { scenario: "slowdown", state: "done", trial });
   // a late "running" does not take a verdict back; a scenario not chosen is left out
   steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
@@ -309,10 +323,6 @@ test("a trial is followed scenario by scenario: waiting, running, done with its 
   expect(steps[0].trial?.standing).toBe("broke");
   expect(steps.length).toBe(2);
   expect(trialDone(steps)).toBe(1);
-  expect(worstStanding([{ standing: "survived" }, { standing: "broke" }])).toBe("broke");
-  expect(worstStanding([{ standing: "survived" }, { standing: "degraded" }])).toBe("degraded");
-  expect(worstStanding([{ standing: "survived" }, { standing: "untested" }])).toBe(null);
-  expect(worstStanding(undefined)).toBe(null);
   // a project's own scenario keeps its name
   expect(scenarioLabel("lost-answer")).toBe("A write's answer is lost");
   expect(scenarioLabel("my-own")).toBe("my-own");
@@ -349,16 +359,6 @@ test("every chart over one stretch of time names the same round moments", async 
   expect(runSpan({ startMs: 0, binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
   // a stretch's own profile: on the run's axis, from where it starts
   expect(runSpan({ startMs: 1000, binMs: 10, wallMs: 467 }, 40)).toEqual([1000, 1467]);
-});
-
-test("a shape in a terminal is block characters, a burst kept, never wider than its room", async () => {
-  const { blocks } = await import("../src/ui/plots");
-  expect(blocks([0, 1, 2, 4])).toBe("▁▃▅█");
-  // forty slices in sixteen columns: each column the most of its slices
-  const burst = Array.from({ length: 40 }, (_, i) => (i === 21 ? 9 : 1));
-  const said = blocks(burst);
-  expect(said.length).toBe(16);
-  expect([...said].filter((c) => c === "█").length).toBe(1);
 });
 
 test("a kind's latency over time weighs exactly the slowest 400 as themselves, whatever ties the spread has", async () => {
@@ -406,7 +406,7 @@ test("a table that narrows drops its columns by rank, whole, and clips none", as
 });
 
 test("tiles go in rows of equal count: four are two and two, never three and one; too narrow for two, a line each", async () => {
-  const { tilesPerRow, tilesFit } = await import("../src/ui/kit");
+  const { tilesPerRow } = await import("../src/ui/kit");
   expect(tilesPerRow(700, 4, 144)).toBe(4);
   // room for three: two and two
   expect(tilesPerRow(500, 4, 144)).toBe(2);
@@ -424,11 +424,6 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(320, 6, 144)).toBe(2);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);
-  // a ranked row holds what fits and never wraps: the last ranked go, two stay
-  expect(tilesFit(0, 5, 168)).toBe(5);
-  expect(tilesFit(1000, 5, 168)).toBe(5);
-  expect(tilesFit(520, 5, 168)).toBe(2);
-  expect(tilesFit(100, 5, 168)).toBe(2);
 });
 
 test("runs of one command are told apart by the argument that differs", async () => {
@@ -707,15 +702,15 @@ test("a stretch of time in a link: read from a query or a hash, as slices of the
 
 test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {
   const { trialText } = await import("../src/ui/history");
-  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0, reasons: [] } as unknown as import("../src/types").Trial;
+  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0 } as unknown as import("../src/types").Trial;
   expect(trialText({ ...base, requests: 1, cleanRequests: 7 })).toBe("1 fault, 0 retried · 1 of the clean run's 7 requests");
   expect(trialText({ ...base, requests: 14, cleanRequests: 7 })).toBe("1 fault, 0 retried · 2.0× the requests");
 });
 
 test("a scenario's verdicts over the program's runs read in a few words; the refused have a tone of their own", async () => {
-  const { trialSince, STANDING, toTryAgain } = await import("../src/ui/history");
+  const { trialSince, STANDING } = await import("../src/ui/history");
   const { date, hm } = await import("../src/format");
-  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0 };
   const at = ["2026-11-10T09:00:00Z", "2026-11-11T09:00:00Z", "2026-11-12T09:00:00Z"];
   // one verdict has no history to tell
   expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }] })).toBe(null);
@@ -729,17 +724,14 @@ test("a scenario's verdicts over the program's runs read in a few words; the ref
   // a refusal by the policy is never a failure's red, nor a degraded run's amber
   expect(STANDING.refused).toBe("refused");
   expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);
-  // "Try again what broke" takes up what did not survive, the refused with it
-  const verdicts = (["survived", "degraded", "broke", "untested", "refused"] as const).map((standing) => ({ ...base, scenario: standing, standing }));
-  expect(toTryAgain(verdicts).map((x) => x.scenario)).toEqual(["degraded", "broke", "refused"]);
 });
 
-test("what looks pressable answers a press: a chart without the pointer, its how to read, a tile, the title bar's place, the sidebar's toggle", async () => {
+test("what looks pressable answers a press: a chart without the pointer, its how to read, a figure, New run, the sidebar's toggle", async () => {
   const app = await open("../App.tsx", desktop);
   await openExample(app);
   await app.waitFor("id:run-summary", { timeout: 10000 });
-  // a tile that opens its chart says so at rest, quietly; a press on it opens the chart
-  expect(app.viewStyle("id:signal-rate-opens")?.opacity ?? 0).toBeGreaterThan(0.5);
+  // a figure of the header opens its chart, its detail where the pointer rests
+  expect(app.enabled("id:signal-rate")).toBe(true);
   // the shape strip with no pointer over it (Return, or a press on no slice): its busiest slice narrows the operations
   await app.press("id:run-shape");
   await app.waitFor("id:clear-filter", { timeout: 5000 });
@@ -752,36 +744,36 @@ test("what looks pressable answers a press: a chart without the pointer, its how
   await app.waitFor("id:record-detail", { timeout: 5000 });
   await app.press("id:inspector-close");
   await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
-  // a chart's how to read opens on a press (not only under the pointer), and Escape closes it
+  // a chart's how to read opens on a press of its title, and Escape closes it
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
   await app.waitFor("id:chart-distribution-how", { timeout: 5000 });
-  // quiet at rest, never hidden: what is pressed is seen
-  expect(app.viewStyle("id:chart-distribution-how")?.effectiveOpacity ?? 0).toBeGreaterThan(0.3);
+  expect(app.viewStyle("id:chart-distribution-how")?.effectiveOpacity ?? 0).toBe(1);
   await app.press("id:chart-distribution-how");
   await app.waitFor("id:chart-distribution-how-text", { timeout: 2000 });
   await app.keyboard.press("escape");
   await app.waitUntil(() => !app.shows("id:chart-distribution-how-text"), { timeout: 2000 });
-  // the title bar's place is a way back to its list: the run let go
-  await app.press("id:crumb-place");
+  // New run lets the run go: the command bar
+  await app.press("id:new-run");
   await app.waitUntil(() => !app.shows("id:run-pane"), { timeout: 2000 });
-  // the sidebar's toggle always toggles, with a run chosen or none: the empty pane then offers the list back
+  await app.waitFor("id:run-command");
+  // the sidebar's toggle always toggles, with a run chosen or none
   expect(app.viewStyle("id:toggle-sidebar")?.effectiveOpacity ?? 0).toBe(1);
   await app.press("id:toggle-sidebar");
   await app.waitUntil(() => !app.shows("id:sidebar"), { timeout: 2000 });
-  await app.press("id:show-sidebar");
+  await app.press("id:toggle-sidebar");
   await app.waitFor("id:sidebar", { timeout: 2000 });
-  expect(app.shows("id:show-sidebar")).toBe(false);
 });
 
-test("a row's actions are there for the pointer: an endpoint's always, a quiet one at rest", async () => {
+test("an endpoint's commands are behind its ⋯, in full at rest: test, edit, remove", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
   await openDemo(app);
-  await app.waitFor("id:edit-demo", { timeout: 10000 });
-  // a list of a few endpoints shows each one's edit and removal in full
-  expect(app.viewStyle("id:edit-demo")?.effectiveOpacity ?? 0).toBe(1);
-  expect(app.viewStyle("id:remove-demo")?.effectiveOpacity ?? 0).toBe(1);
+  await app.waitFor("id:endpoint-more-demo", { timeout: 10000 });
+  expect(app.viewStyle("id:endpoint-more-demo")?.effectiveOpacity ?? 0).toBe(1);
+  await app.press("id:endpoint-more-demo");
+  expect(app.menu()!.map((m) => m.label)).toEqual(["Test connection", "Edit", "Remove…"]);
+  await app.closeMenu();
 });
 
 test("a narrow pane's inspector is a dialog of its own, named by its title", async () => {

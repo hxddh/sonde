@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
-# UI tests, headless: the desktop form (nsh test) and the terminal form
-# (nsh test --target tui, an in-memory terminal). Each run uses fresh
-# config and data directories. `ui-tests.sh perf` runs the performance test
+# UI tests, headless (nsh test). Each run uses fresh config and data
+# directories. `ui-tests.sh perf` runs the performance test
 # alone (100,000 rows loaded and scrolled; CI's nightly run).
 set -eu
 cd "$(dirname "$0")/../app"
@@ -19,11 +18,10 @@ export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-sec
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 if [ "${1:-}" = perf ]; then
-  nsh test tests/perf.test.tsx --target tui --trace
+  nsh test tests/perf.test.tsx --trace
   exit
 fi
 nsh test tests/desktop.test.tsx
 nsh test tests/screens.test.tsx
 nsh test tests/run.test.tsx
-nsh test tests/terminal.test.tsx --target tui
 (cd ../viewer && nsh test tests/viewer.test.tsx)

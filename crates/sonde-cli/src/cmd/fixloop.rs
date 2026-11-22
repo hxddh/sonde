@@ -1,13 +1,13 @@
 //! The fix loop in the terminal: each finding with its saving, its line of
 //! code and the fix for the SDK that sent it; and a run against the
-//! program's run before it (`sonde run`, `show`, `compare`).
+//! program's run before it, or another run (`sonde run`, `show`, `show
+//! --since`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use reqlog::Record;
 use sonde_analysis::episode::Observation;
 use sonde_analysis::fixloop::{FindingChange, SinceLast, State};
-use sonde_analysis::month::Month;
 use sonde_analysis::profile::RunChange;
 use sonde_analysis::program::{money_text, ms_text};
 use sonde_analysis::run::RunHeader;
@@ -17,23 +17,18 @@ use sonde_core::Sonde;
 use super::record::{paint, request_prices_for};
 use crate::output;
 
-/// A finding: what it is, what acting on it saves (in money a month, when
-/// `month` says one), where in the program, and the fix for the SDK that
-/// sent its requests (`sdk`: the run's, when the finding's own requests do
-/// not say).
+/// A finding as the head of its diagnosis: what it is, what acting on the
+/// diagnosis saves (`saving`), what else it is (`also`: its other findings,
+/// each a line), where in the program, and the fix for the SDK that sent its
+/// requests (`sdk`: the run's, when the finding's own requests do not say).
 pub(super) fn finding_lines(
     o: &Observation,
+    saving: Option<&str>,
+    also: &[String],
     sdk: Option<&str>,
-    month: Option<&Month>,
     color: bool,
 ) -> Vec<String> {
-    // one the project keeps on purpose is no warning: said with why
-    let mark = if o.level == "warn" && o.expected.is_none() {
-        paint("!", "33", color)
-    } else {
-        paint("·", "2", color)
-    };
-    let mut out = vec![format!("{mark} {}", o.text)];
+    let mut out = vec![format!("{} {}", mark(o, color), o.text)];
     if let Some(why) = &o.expected {
         out.push(paint(
             &format!("    expected: {why} (sonde.toml)"),
@@ -41,15 +36,11 @@ pub(super) fn finding_lines(
             color,
         ));
     }
-    if let Some(saving) = &o.saving_text {
-        let money = match month {
-            Some(m) if m.of(o.saves_cost) >= sonde_analysis::program::CENT => format!(
-                " · ≈ {} a month",
-                money_text(m.of(o.saves_cost), &m.currency)
-            ),
-            _ => String::new(),
-        };
-        out.push(paint(&format!("    saving: {saving}{money}"), "32", color));
+    if let Some(saving) = saving.filter(|s| !s.is_empty()) {
+        out.push(paint(&format!("    saving: {saving}"), "32", color));
+    }
+    for line in also {
+        out.push(paint(&format!("    also: {line}"), "2", color));
     }
     for c in &o.callers {
         out.push(paint(
@@ -78,8 +69,190 @@ pub(super) fn finding_lines(
     out
 }
 
-/// A finding between two runs, on one line: `✓ fixed  … · saved 20
-/// requests (predicted 20)`; with the command changed or the workload grown
+/// `!` for a warning, `·` for the rest (and for one the project keeps on
+/// purpose).
+fn mark(o: &Observation, color: bool) -> String {
+    if o.level == "warn" && o.expected.is_none() {
+        paint("!", "33", color)
+    } else {
+        paint("·", "2", color)
+    }
+}
+
+/// A run's diagnoses: the first in full (its saving, its other findings,
+/// its callers, its fix), the others a line each with where in the program
+/// (each in full with `all`).
+pub(super) fn diagnosis_lines(a: &Analysis, all: bool, color: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    for (n, d) in a.diagnoses.iter().enumerate() {
+        let Some(head) = d.findings.first().and_then(|&i| a.observations.get(i)) else {
+            continue;
+        };
+        if n == 0 || all {
+            out.extend(diagnosis_full(a, d, head, color));
+            continue;
+        }
+        let mut line = format!("{} {}", mark(head, color), head.text);
+        if !d.saving_text.is_empty() {
+            line.push_str(&paint(&format!(" · {}", d.saving_text), "32", color));
+        }
+        if let Some(c) = head.callers.first() {
+            line.push_str(&paint(&format!(" (at {})", c.place), "2", color));
+        }
+        if let Some(why) = &head.expected {
+            line.push_str(&paint(
+                &format!(" · expected: {why} (sonde.toml)"),
+                "2",
+                color,
+            ));
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// A diagnosis in full: its head finding with the diagnosis's saving, its
+/// other findings (`also`), its callers and its fix.
+fn diagnosis_full(
+    a: &Analysis,
+    d: &sonde_analysis::fixes::Diagnosis,
+    head: &Observation,
+    color: bool,
+) -> Vec<String> {
+    finding_lines(
+        head,
+        Some(&d.saving_text),
+        &also_of(a, d),
+        a.sdk.as_deref(),
+        color,
+    )
+}
+
+/// A diagnosis's findings past its head, each said (one kept on purpose
+/// with why); its requests one after another as the rest of the change
+/// (`and send the other 87 requests 8 at once`).
+pub(super) fn also_of(a: &Analysis, d: &sonde_analysis::fixes::Diagnosis) -> Vec<String> {
+    let said = |text: String, o: &Observation| match &o.expected {
+        Some(why) => format!("{text} (expected: {why})"),
+        None => text,
+    };
+    let mut also: Vec<String> = d.findings[1..]
+        .iter()
+        .filter(|&&i| Some(i) != d.serial)
+        .filter_map(|&i| a.observations.get(i))
+        .map(|o| said(o.text.clone(), o))
+        .collect();
+    if let (Some(rest), Some(o)) = (&d.rest, d.serial.and_then(|i| a.observations.get(i))) {
+        also.push(said(rest.en(), o));
+    }
+    also
+}
+
+/// The findings against the run before as a run again says them, in place
+/// of its plan: each fixed with what it saved; each still there (open, less,
+/// more) on a line with its first line of code; each diagnosis with a new
+/// finding in full, as the plan says it.
+fn changed_lines(
+    a: &Analysis,
+    findings: &[FindingChange],
+    uncounted: Option<&str>,
+    color: bool,
+) -> Vec<String> {
+    let change = |id: &str| findings.iter().find(|f| f.identity == id);
+    let is_new = |id: &String| change(id).is_some_and(|f| f.state == State::New);
+    let mut out: Vec<String> = findings
+        .iter()
+        .filter(|f| f.state == State::Fixed)
+        .map(|f| change_line(f, uncounted, color))
+        .collect();
+    let (new, kept): (Vec<_>, Vec<_>) = a
+        .diagnoses
+        .iter()
+        .partition(|d| d.identities.iter().any(is_new));
+    // a diagnosis a line, its head's; a finding of it that moved (less,
+    // more) a line too, those as they were counted on the head's
+    let moved = |o: &Observation| {
+        change(&o.identity).is_some_and(|f| matches!(f.state, State::Less | State::More))
+    };
+    for d in kept {
+        let found: Vec<&Observation> = d
+            .findings
+            .iter()
+            .filter_map(|&i| a.observations.get(i))
+            .collect();
+        let Some((head, rest)) = found.split_first() else {
+            continue;
+        };
+        let (moved, same): (Vec<&Observation>, Vec<&Observation>) =
+            rest.iter().partition(|o| moved(o));
+        for (n, o) in std::iter::once(head).chain(&moved).enumerate() {
+            let mut line = match change(&o.identity) {
+                Some(f) => change_line(f, uncounted, color),
+                None => format!(
+                    "  {} {:<5}  {}",
+                    paint("·", "2", color),
+                    paint(State::Open.label(), "2", color),
+                    o.text
+                ),
+            };
+            if let Some(c) = o.callers.first() {
+                line.push_str(&paint(&format!(" (at {})", c.place), "2", color));
+            }
+            if let Some(why) = &o.expected {
+                line.push_str(&paint(&format!(" · expected: {why}"), "2", color));
+            }
+            if n == 0 && !same.is_empty() {
+                line.push_str(&paint(
+                    &format!(" · and {} beside it", output::count(same.len(), "finding")),
+                    "2",
+                    color,
+                ));
+            }
+            out.push(line);
+        }
+    }
+    // a change no finding of the run's is (a kind of failure that moved)
+    let found = |id: &str| a.observations.iter().any(|o| o.identity == id);
+    out.extend(
+        findings
+            .iter()
+            .filter(|f| f.state != State::Fixed && !found(&f.identity))
+            .map(|f| change_line(f, uncounted, color)),
+    );
+    for d in new {
+        let Some(head) = d.findings.first().and_then(|&i| a.observations.get(i)) else {
+            continue;
+        };
+        let mut lines = diagnosis_full(a, d, head, color);
+        // (its head as it stands: new, or still there with a new finding beside it)
+        lines[0] = match change(&head.identity) {
+            Some(f) if f.state != State::New => change_line(f, uncounted, color),
+            _ => format!(
+                "  {} {:<5}  {}",
+                paint("!", "33", color),
+                paint(State::New.label(), "33", color),
+                head.text
+            ),
+        };
+        out.extend(lines);
+    }
+    out
+}
+
+/// Whether a run's change since another can be said as a run again says it
+/// (what changed, in place of the plan): two runs of one program, neither
+/// failed nor empty.
+pub(super) fn comparable(since: &SinceLast) -> bool {
+    since.failed.is_none()
+        && !since.empty
+        && since.previous.is_some()
+        && since.change.as_ref().is_some_and(|c| {
+            c.same_program && c.failed.is_none() && c.requests.0 > 0 && c.requests.1 > 0
+        })
+}
+
+/// A finding between two runs, on one line: `✓ fixed  … · 1.2 s less
+/// (predicted 1.5 s)`, or `· within noise`; with the command changed or the workload grown
 /// between the runs (`uncounted`, [`RunChange::uncounted`]), fixed, less
 /// and more say so in place of a saving.
 pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: bool) -> String {
@@ -87,7 +260,7 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
         State::Fixed => ("✓", "32"),
         State::Less => ("↓", "36"),
         State::More => ("↑", "33"),
-        State::New | State::Back => ("!", "33"),
+        State::New => ("!", "33"),
         State::Open => ("·", "2"),
     };
     let mut line = format!(
@@ -123,16 +296,10 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
     line
 }
 
-/// The findings of a change worth a line (fixed, less, more, new, back),
-/// then those still open as they were, counted: `as above` when the run's
-/// findings are `listed` above (`run`, `show`), not by `compare`, which
-/// lists none.
-pub(super) fn change_lines(
-    findings: &[FindingChange],
-    uncounted: Option<&str>,
-    listed: bool,
-    color: bool,
-) -> Vec<String> {
+/// The findings of a change worth a line (fixed, less, more, new),
+/// then those still open as they were, counted: each is listed above, with
+/// its line and fix (`show`).
+fn change_lines(findings: &[FindingChange], uncounted: Option<&str>, color: bool) -> Vec<String> {
     let mut out: Vec<String> = findings
         .iter()
         .filter(|f| f.state != State::Open)
@@ -141,9 +308,8 @@ pub(super) fn change_lines(
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
     // (each is listed above, with its line and fix: counted here)
     if !open.is_empty() && !out.is_empty() {
-        let above = if listed { ", as above" } else { "" };
         out.push(paint(
-            &format!("  {} still open{above}", open.len()),
+            &format!("  {} still open, as above", open.len()),
             "2",
             color,
         ));
@@ -175,6 +341,18 @@ pub(super) fn uncounted_line(why: &str) -> String {
     format!("{why}: what moved is not counted as a fix")
 }
 
+/// How much the program's runs vary, as a fix's time is judged against
+/// it: `its runs vary by 220 ms`, or that no band is known yet.
+pub(super) fn noise_line(noise_ms: Option<f64>) -> String {
+    match noise_ms {
+        Some(ms) => format!(
+            "its runs vary by {} (its last runs of this command): a change under it is within noise",
+            ms_text(ms)
+        ),
+        None => "no noise band yet: fewer than 2 earlier runs of this command".into(),
+    }
+}
+
 /// The figures of a change on one line: requests, waiting, cost.
 fn figures_line(c: &RunChange) -> String {
     let n = |v: f64| crate::output::grouped(v.max(0.0).round() as u64);
@@ -199,10 +377,18 @@ pub(super) fn cost_moved((a, b): (f64, f64), currency: &str) -> String {
     moved(a, b, |v| money_text(v, currency))
 }
 
-/// A run against the program's run before it, in a few lines: what it
-/// asks of the store, and its findings fixed, less, new and back. Nothing
-/// for a program's first run.
-pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
+/// A run against the program's run before it (or the run `asked` for,
+/// `show --since`), in a few lines: what it asks of the store, the kinds of
+/// request that moved (asked), and its findings fixed, less, more and new.
+/// Nothing for a program's first run. With the run's analysis (`again`: a
+/// run again, its plan not said), each finding still there is on its own
+/// line and a new one in full ([`changed_lines`]).
+pub(super) fn since_lines(
+    since: &SinceLast,
+    asked: bool,
+    again: Option<&Analysis>,
+    color: bool,
+) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(why) = &since.unsaved {
         out.push(format!("note: {why}"));
@@ -233,19 +419,210 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         .file_stem()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    out.push(paint(&format!("since the run before ({name})"), "1", color));
+    let head = match (&c.endpoints, asked) {
+        (Some((x, y)), _) => format!("since {name} on {x} (this run on {y})"),
+        (None, true) => format!("since {name}"),
+        (None, false) => format!("since the run before ({name})"),
+    };
+    out.push(paint(&head, "1", color));
+    // (said only of a run asked for: the run before is the program's)
+    let caveat = if !c.same_program {
+        Some(
+            "not two runs of one program: their figures compare, their findings do not".to_string(),
+        )
+    } else if let Some(x) = c.failed {
+        Some(format!(
+            "a run compared failed (exit {x}); their findings are not compared"
+        ))
+    } else if c.requests.0 == 0 || c.requests.1 == 0 {
+        Some(format!(
+            "{} in one of them: it recorded no request; their findings are not compared",
+            sonde_analysis::program::NOTHING_REACHED
+        ))
+    } else {
+        None
+    };
+    if asked && let Some(t) = caveat {
+        out.push(paint(&format!("  {t}"), "33", color));
+    }
     let uncounted = c.uncounted(false);
     if let Some(why) = c.uncounted(true) {
         out.push(paint(&format!("  {}", uncounted_line(&why)), "33", color));
     }
     out.push(format!("  {}", figures_line(c)));
-    out.extend(change_lines(
-        &since.findings,
-        uncounted.as_deref(),
-        true,
-        color,
+    if asked {
+        out.extend(kinds_moved(c));
+    }
+    // what a fix's time is judged against: said once, when one says it (a
+    // run again: when one is within it)
+    let noise = match again {
+        Some(_) => since.findings.iter().any(|f| f.within_noise),
+        None => since.findings.iter().any(|f| f.saved.is_some()),
+    };
+    if noise {
+        out.push(paint(&format!("  {}", noise_line(c.noise_ms)), "2", color));
+    }
+    out.extend(match again {
+        Some(a) => changed_lines(a, &since.findings, uncounted.as_deref(), color),
+        None => change_lines(&since.findings, uncounted.as_deref(), color),
+    });
+    out
+}
+
+/// The kinds of request that moved between two runs, the largest change
+/// first, in a table; the rest counted.
+fn kinds_moved(c: &RunChange) -> Vec<String> {
+    const ROWS: usize = 10;
+    let changed: Vec<&sonde_analysis::profile::GroupChange> = c
+        .groups
+        .iter()
+        .filter(|g| {
+            g.requests.0 != g.requests.1
+                || (c.waiting_known && (g.waiting_ms.0 - g.waiting_ms.1).abs() >= 1.0)
+        })
+        .collect();
+    let rows: Vec<Vec<String>> = changed
+        .iter()
+        .take(ROWS)
+        .map(|g| {
+            vec![
+                if g.missed {
+                    format!("{} (not found)", g.kind)
+                } else {
+                    g.kind.clone()
+                },
+                format!(
+                    "{} → {}",
+                    output::grouped(g.requests.0 as u64),
+                    output::grouped(g.requests.1 as u64)
+                ),
+                if c.waiting_known {
+                    format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1))
+                } else {
+                    "—".into()
+                },
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = output::table(&["kind", "requests", "waiting"], &rows)
+        .to_string()
+        .lines()
+        .map(|l| format!("  {l}"))
+        .collect();
+    out.extend(more_kinds(
+        changed.len() - rows.len(),
+        c.groups.len() - changed.len(),
     ));
     out
+}
+
+/// What the table of kinds that moved leaves out: `cut` that changed past
+/// its rows, `same` that did not change.
+fn more_kinds(cut: usize, same: usize) -> Option<String> {
+    let kinds = |n: usize| if n == 1 { "kind" } else { "kinds" };
+    match (cut, same) {
+        (0, 0) => None,
+        (0, s) => Some(format!(
+            "  … and {s} more {} of request, unchanged",
+            kinds(s)
+        )),
+        (c, 0) => Some(format!("  … and {c} more {} of request", kinds(c))),
+        (c, s) => Some(format!(
+            "  … and {} more {} of request, {s} of them unchanged",
+            c + s,
+            kinds(c + s)
+        )),
+    }
+}
+
+/// A run to compare with (`show --since`), read, reckoned and let go
+/// before the run shown is read: two runs cost what the larger does.
+pub(super) struct Other {
+    path: PathBuf,
+    header: RunHeader,
+    run: sonde_analysis::profile::Run,
+}
+
+impl Other {
+    pub(super) fn read(s: &Sonde, path: &Path) -> anyhow::Result<Other> {
+        let (_, opened) = super::runs::open_lean(s, &path.to_path_buf())?;
+        let prices = request_prices_for(s, &opened.header.endpoint);
+        let run = sonde_analysis::profile::Run::analysed(&opened.header, &opened.records, &prices);
+        Ok(Other {
+            path: path.to_path_buf(),
+            header: opened.header,
+            run,
+        })
+    }
+}
+
+/// `path` (a run, its `header` and `records`, analysed as `a`) against
+/// `other` (`show --since`): as against the run before, but read only: the
+/// program's kept findings say what was fixed below its threshold, and are
+/// left as they are. Two programs' figures compare, their findings do not;
+/// nor do a failed run's, nor those of a run nothing reached.
+pub(super) fn since_other(
+    path: &Path,
+    header: &RunHeader,
+    records: &[Record],
+    a: &Analysis,
+    other: Other,
+) -> SinceLast {
+    let Other {
+        path: other,
+        header: hb,
+        run: before,
+    } = other;
+    let traces = sonde_analysis::episode::traces_of(header, records, &a.episodes);
+    let mut after = sonde_analysis::profile::Run::later(
+        records,
+        a.profile.clone(),
+        a.observations.clone(),
+        traces,
+    );
+    after.measure(records, &before);
+    let (kb, ka) = (
+        sonde_analysis::program::key_of(&hb),
+        sonde_analysis::program::key_of(header),
+    );
+    let mut c = sonde_analysis::profile::compare_runs(&before, &after);
+    c.waiting_known = !hb.whole_seconds && !header.whole_seconds;
+    c.endpoints =
+        (hb.endpoint != header.endpoint).then(|| (hb.endpoint.clone(), header.endpoint.clone()));
+    c.same_program = ka.is_some() && ka == kb;
+    if c.same_program {
+        c = c.of_commands(hb.command.as_deref(), header.command.as_deref());
+        let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(path));
+        if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
+            program.mark_gone(&mut c.findings, &before, &after);
+            c.appeared = sonde_analysis::fixloop::said(&c.findings, &[State::New]);
+            c.resolved = sonde_analysis::fixloop::said(&c.findings, &[State::Fixed]);
+        }
+    } else {
+        c = c.of_programs(None, None);
+    }
+    c = c.of_exits((
+        sonde_analysis::fixloop::failed(&other),
+        sonde_analysis::fixloop::failed(path),
+    ));
+    // a run nothing reached: what it did not see is not fixed, nor new
+    if c.failed.is_none() && (before.requests == 0 || after.requests == 0) {
+        c.resolved.clear();
+        c.appeared.clear();
+        c.findings.clear();
+    }
+    SinceLast {
+        program: ka.unwrap_or_default(),
+        failed: None,
+        empty: false,
+        previous: Some(other.display().to_string()),
+        findings: c.findings.clone(),
+        change: Some(c),
+        unsaved: None,
+    }
 }
 
 /// `path` (a run, its `header` and `records`, analysed as `a`) against its
@@ -311,7 +688,7 @@ mod tests {
             .collect();
         let obs = observations(&rs, &episodes(&rs));
         let o = obs.iter().find(|o| o.kind == "obs.headget").unwrap();
-        let lines = finding_lines(o, None, None, false);
+        let lines = finding_lines(o, None, &[], None, false);
         let set = lines
             .iter()
             .position(|l| l == "    set: --s3-no-head-object = true (rclone)")
@@ -331,6 +708,7 @@ mod tests {
             counts: None,
             predicted: Saving::default(),
             measured: None,
+            within_noise: false,
             saved: None,
             saved_text: saved.map(String::from),
         }
@@ -343,41 +721,44 @@ mod tests {
                 change(
                     State::Fixed,
                     "HEAD before GET",
-                    Some("saved 20 requests (predicted 20)"),
+                    Some("1.2 s less (predicted 1.5 s)"),
                 ),
-                change(State::Less, "41 one after another", None),
-                change(State::Back, "listed 5 times", None),
+                change(State::Less, "41 one after another", Some("within noise")),
+                change(State::New, "listed 5 times", None),
                 change(State::Open, "small uploads", None),
                 change(State::Open, "hot key", None),
             ],
             None,
-            true,
             false,
         );
         assert_eq!(
             lines,
             [
-                "  ✓ fixed  HEAD before GET · saved 20 requests (predicted 20)",
-                "  ↓ less   41 one after another",
-                "  ! back   listed 5 times",
+                "  ✓ fixed  HEAD before GET · 1.2 s less (predicted 1.5 s)",
+                "  ↓ less   41 one after another · within noise",
+                "  ! new    listed 5 times",
                 // each listed above, with its line and fix
                 "  2 still open, as above",
             ]
         );
         // nothing moved: no "still open" alone
-        assert!(change_lines(&[change(State::Open, "x", None)], None, true, false).is_empty());
-        // compare lists no findings: nothing is above
+        assert!(change_lines(&[change(State::Open, "x", None)], None, false).is_empty());
+    }
+
+    #[test]
+    fn the_kinds_that_moved_say_how_many_their_table_leaves_out() {
+        assert_eq!(more_kinds(0, 0), None);
         assert_eq!(
-            change_lines(
-                &[
-                    change(State::Less, "41 one after another", None),
-                    change(State::Open, "hot key", None),
-                ],
-                None,
-                false,
-                false,
-            ),
-            ["  ↓ less   41 one after another", "  1 still open"]
+            more_kinds(0, 1).as_deref(),
+            Some("  … and 1 more kind of request, unchanged")
+        );
+        assert_eq!(
+            more_kinds(3, 0).as_deref(),
+            Some("  … and 3 more kinds of request")
+        );
+        assert_eq!(
+            more_kinds(2, 5).as_deref(),
+            Some("  … and 7 more kinds of request, 5 of them unchanged")
         );
     }
 

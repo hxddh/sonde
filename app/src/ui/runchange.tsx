@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { say } from "../phrases";
 import type { FindingChange, Profile, RunChange, Signals } from "../types";
 import { Icon } from "./icon";
-import { Card, Empty, Heading, ICON, Notice, Row, Stat, terminal, Tiles, type TileLook, SIZES, WIDTH, TEXT } from "./kit";
+import { Card, Empty, Heading, ICON, Notice, Row, Stat, Tiles, SIZES, WIDTH, TEXT } from "./kit";
 import { type FindingState, StateBadge } from "./runview";
 import { brief, FEW, handful } from "../signals";
 import { Chart, cost, DistributionCompare, PrefixChangeMap, RunBars, MARK, Sparkline, TrialOverClean, trialLegend, kindChangeSaid, prefixChangeSaid, latencyChangeSaid, overTimeSaid } from "./plots";
@@ -16,9 +16,9 @@ import { Chart, cost, DistributionCompare, PrefixChangeMap, RunBars, MARK, Spark
 /** What acting on a finding saved, measured, against the predicted ("saved 40 requests (predicted 42)"); null when nothing was measured. */
 export const savedText = (f: FindingChange): string | null => (f.saved ? say([f.saved], f.savedText ?? "") : (f.savedText ?? null));
 
-/** The findings that tell what changed: fixed first, then less, back, new, more (open ones say nothing new). */
+/** The findings that tell what changed: fixed first, then less, new, more (open ones say nothing new). */
 export const changedFindings = (findings: FindingChange[]): FindingChange[] => {
-  const rank: Record<FindingState, number> = { fixed: 0, less: 1, back: 2, new: 3, more: 4, open: 5 };
+  const rank: Record<FindingState, number> = { fixed: 0, less: 1, new: 2, more: 3, open: 4 };
   return findings.filter((f) => f.state !== "open").sort((a, b) => rank[a.state] - rank[b.state]);
 };
 
@@ -58,7 +58,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
   };
   // a figure kept with its unit: a tile's line wraps between figures, never inside one ("~93 / ms")
   const keep = (text: string) => text.replace(/(\d) (ms|s|min|h|B|KiB|MiB|GiB|USD)\b/g, "$1\u00a0$2");
-  const tile = (f: () => Fact, look: () => TileLook) => {
+  const tile = (f: () => Fact) => {
     const known = () => f().a != null && f().b != null;
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
     const side = (i: 0 | 1, v: number) => (f().few?.[i] ? `~${f().text(v)}` : f().text(v));
@@ -75,7 +75,6 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     return (
       <Stat
         testID={`compare-${f().id}`}
-        look={look()}
         label={f().label}
         value={value()}
         detail={detail()}
@@ -93,14 +92,14 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     );
   };
   // (each tile whole at every width: a change is what it says, and its detail is the change's size; given its look, it is as high as its row)
-  return <Tiles min={SIZES.compareTile} testID="compare-figures" items={facts().map((_, i) => () => tile(() => facts()[i], () => "full"))} />;
+  return <Tiles min={SIZES.compareTile} testID="compare-figures" items={facts().map((_, i) => () => tile(() => facts()[i]))} />;
 }
 
 /** Two runs of a program, before and after a change: the figures, by kind of request, and the findings gone and new. */
 export function RunChangeView(props: { change: RunChange; inline?: boolean; /** both runs' signals, when they are read: the tiles' lines and second figures */ signals?: [Signals, Signals] | null; /** both runs' profiles, when they are read: the two over time */ profiles?: [Profile, Profile] | null }) {
   const c = () => props.change;
   const n = (v: number) => count(Math.round(v));
-  // each finding that changed between the runs: fixed (with what it saved, measured against the predicted), less, back, new
+  // each finding that changed between the runs: fixed (with what it saved, measured against the predicted), less, new
   const changed = () => changedFindings(c().findings ?? []);
   const findings = () => changed().length;
   // the same requests of each kind, the same errors, no finding gone or new
@@ -110,9 +109,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
       <If when={!c().sameProgram}>
         <Notice testID="other-program" tone="warn" text={t("compare.otherProgram")} />
       </If>
-      <If when={!terminal()} else={<Text testID="compare-figures" class="text-foreground">{[`${t("compare.requests")} ${n(c().requests[0])} → ${n(c().requests[1])}`, `${t("signal.errors")} ${n(c().errors[0])} → ${n(c().errors[1])}`, `${t("compare.waiting")} ${duration(c().waitingMs[0])} → ${duration(c().waitingMs[1])}`].join(" · ")}</Text>}>
-        <ChangeTiles change={c()} signals={props.signals} />
-      </If>
+      <ChangeTiles change={c()} signals={props.signals} />
       <If
         when={!unchanged()}
         else={

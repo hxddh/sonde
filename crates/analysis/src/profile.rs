@@ -328,7 +328,7 @@ impl Cost {
     /// What `show` and `run` say of the money past the requests: the bytes
     /// out (charged, or what they would be if read from outside the region)
     /// and what the run left stored, a month; none when neither comes to a
-    /// cent and no version was kept.
+    /// cent and no version kept costs a cent a month.
     pub fn line(&self) -> Option<String> {
         use crate::program::{CENT, money_text};
         let money = |v: f64| money_text(v, &self.currency);
@@ -358,7 +358,9 @@ impl Cost {
                 money(st.per_month)
             ));
         }
-        if st.versioned && st.noncurrent > 0 {
+        // (versions of a known size under a cent a month: nothing to act on)
+        let worth = st.noncurrent_bytes == 0 || st.noncurrent_per_month >= CENT;
+        if st.versioned && st.noncurrent > 0 && worth {
             let s = if st.noncurrent == 1 { "" } else { "s" };
             parts.push(if st.noncurrent_bytes > 0 {
                 format!(
@@ -1711,7 +1713,7 @@ pub struct RunChange {
     /// Findings only the second run has.
     pub appeared: Vec<FindingText>,
     /// Each finding of either run, where it stands: fixed (with what it
-    /// saved, measured, and what was predicted), less, new, back or open.
+    /// saved, measured, and what was predicted), less, new, more or open.
     pub findings: Vec<crate::fixloop::FindingChange>,
     /// Both are runs of one program. Two programs' figures still compare,
     /// but their findings do not: one's are not "gone" because the other
@@ -1736,6 +1738,12 @@ pub struct RunChange {
     /// workload on two stores.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<(String, String)>,
+    /// How much the program's wall time varies run to run, in ms
+    /// ([`crate::fixloop::noise_ms`]): a saving under it is within noise.
+    /// None with fewer than two earlier runs of the command, or for two
+    /// runs compared by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_ms: Option<f64>,
     /// Whether both runs' waiting is known: not when either's times are to
     /// the second (an imported log's), and then `waiting_ms` says nothing.
     pub waiting_known: bool,
@@ -1992,6 +2000,8 @@ pub const FINDING_KINDS: &[&str] = &[
     "obs.markers",
     "obs.throttled",
     "obs.serial",
+    // a fault scenario the program did not survive ([`crate::trial::findings`])
+    "trial",
 ];
 
 /// The version of the rules a finding's identity is made by ([`stable`]
@@ -2429,13 +2439,14 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         groups,
         latency: (pa.latency.clone(), pb.latency.clone()),
         resolved: said(&findings, &[State::Fixed]),
-        appeared: said(&findings, &[State::New, State::Back]),
+        appeared: said(&findings, &[State::New]),
         findings,
         same_program: true,
         failed: None,
         command_changed: None,
         workload_changed: None,
         endpoints: None,
+        noise_ms: None,
         waiting_known: true,
     }
 }

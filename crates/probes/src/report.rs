@@ -147,7 +147,7 @@ pub fn markdown(runs: &[Run]) -> String {
 }
 
 /// Exit status for scripts: 0 all pass (or unsupported/skipped), 1 any
-/// failure, 2 any difference but no failure, 3 errors only.
+/// failure, 2 any difference but no failure, 70 errors only (the probes could not run).
 pub fn exit_code(runs: &[Run]) -> i32 {
     let all: Vec<Verdict> = runs
         .iter()
@@ -158,7 +158,7 @@ pub fn exit_code(runs: &[Run]) -> i32 {
     } else if all.contains(&Verdict::Differs) {
         2
     } else if all.contains(&Verdict::Error) {
-        3
+        70
     } else {
         0
     }

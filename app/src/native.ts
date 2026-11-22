@@ -72,8 +72,6 @@ export const api = {
     view: async (path: string) => (await Runs.view(path)) as T.RunView,
     /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a run of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
     stretch: async (path: string, fromMs: number, toMs: number) => (await Runs.stretch(path, fromMs, toMs)) as T.Stretch,
-    /** A run as it goes: the requests that started in its last half minute, reckoned alone (the live panel). Off the interface's thread. */
-    live: async (path: string) => (await (Runs as unknown as { live(p: string): Promise<unknown> }).live(path)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
     episodes: async (path: string, query: T.EpisodeQuery) => (await Runs.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */
@@ -131,9 +129,6 @@ export const api = {
     /** The run's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
     trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
       Runs.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
-    /** Try again what did not survive: the run's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
-    trialAgain: (path: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent | T.RunEvent) => void) =>
-      Runs.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
     /** Its output as timed lines. Off the interface's thread (a run not yet read is read whole). */
     logLines: async (path: string) => (await Runs.logLines(path)) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Runs.replayPlan(path, endpoint),

@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v28
+      - uses: hxddh/sonde@v29
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -36,6 +36,10 @@ the run is held to its budget alone. This repository tests it against stand-ins 
 No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
 requests and findings; its times are not meaningful, so no check holds a demo run's waiting.
 
+To start, `sonde check RUN --init` writes a `sonde.toml` from a run, its findings known by count
+(`[check.findings]`): a pull request that adds a finding, or more of one, fails, with no baseline yet. It prints this
+step with the run's own command.
+
 | Step | Does |
 |---|---|
 | Install | The release binary of `version` (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
@@ -44,7 +48,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` in `working-directory` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
-| Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
+| Comment | `sonde check -f markdown` (the report's link from `SONDE_REPORT_URL`): the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
 | Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
 
 | Input | Default | |
@@ -60,7 +64,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `28.0.0`, `28`, `28.0` (the newest 28.0.x), `latest`, `path`. Tag `@v28` installs the newest 28.x; `@v28.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
+| `version` | the action's tag; at a branch or commit, its own major | `29.0.0`, `29`, `29.0` (the newest 29.0.x), `latest`, `path`. Tag `@v29` installs the newest 29.x; `@v29.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
@@ -95,12 +99,12 @@ Outputs: `passed` (`true`/`false`), `file` (the run's), `report-url`, `comment-u
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
 | Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure over the baseline in bold with its limit. Kinds of request that changed. |
-| New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
+| New findings, Gone | Against the baseline, as `sonde show --since` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
 | Warnings now | A finding the baseline had as a note, a warning in this run (a baseline always holds the run to no new warning). |
 | Trials | Those that broke or degraded; the survived counted. |
 | Expected | Findings `[check] expect` keeps on purpose, each with its reason (said here, not as new). |
 | Findings | Without a baseline: the run's first five findings, folded. |
-| The report | With `--report-url`. |
+| The report | With `SONDE_REPORT_URL` set. |
 
 ## Elsewhere
 
@@ -108,7 +112,7 @@ Three commands, in any CI:
 
 ```sh
 sonde run -o run.sonde -- python etl.py
-sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
+SONDE_REPORT_URL="$URL" sonde check run.sonde --baseline main.sonde -f markdown > comment.md
 sonde share run.sonde --baseline main.sonde -o report.html
 ```
 

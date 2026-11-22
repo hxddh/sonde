@@ -189,12 +189,11 @@ pub fn scan(s: &Arc<Sonde>, endpoint: &str, bucket: &str, prefix: &str) -> Strin
         bucket.to_string(),
         prefix.to_string(),
     );
-    let settings = s.settings();
     s.jobs().spawn(
         "mpu",
         ph!("job.mpu", bucket = b, prefix = p),
-        settings.concurrency,
-        settings.rate_limit,
+        crate::config::CONCURRENCY,
+        None,
         move |ctx| async move {
             let report = scan_inner(&s2, &ep, &b, &p, &ctx).await?;
             Ok(serde_json::to_value(report).unwrap_or_default())
@@ -308,7 +307,7 @@ pub async fn scan_inner(
                 }
             }
         })
-        .buffer_unordered(settings.concurrency.max(1))
+        .buffer_unordered(crate::config::CONCURRENCY)
         .collect()
         .await;
     ctx.check()?;

@@ -2,7 +2,7 @@
 // it. Its output is kept (the last 2 MB) so a terminal mounted later shows
 // it from the start; listeners get what arrives after.
 
-import { announce, batch, effect, lifecycle, Notifications, platform, signal, Storage } from "nsh";
+import { announce, batch, effect, lifecycle, Notifications, signal, Storage } from "nsh";
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
@@ -22,9 +22,9 @@ export interface Running {
 /** The running program, or null. */
 export const running = signal<Running | null>(null);
 /** How the last run ended. */
-export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user: Run is back at its start */ deleted?: boolean; endpoint: string }) | null>(null);
+export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user */ deleted?: boolean; endpoint: string }) | null>(null);
 
-/** A run deleted: if it was the last one, Run stops showing it. */
+/** A run deleted: if it was the last one, it is no longer said to be. */
 export function forgetRun(path: string) {
   const last = lastRun();
   if (last?.path === path) lastRun.set({ ...last, removed: true, deleted: true });
@@ -47,7 +47,7 @@ function remember(cmd: string) {
 }
 
 // While a program runs, the tray says so: a press brings the window back.
-if (isAvailable && platform.idiom !== "terminal") {
+if (isAvailable) {
   effect(() => {
     const r = running();
     try {
@@ -72,7 +72,7 @@ if (isAvailable && platform.idiom !== "terminal") {
 /** The shortcut that starts the last command, or stops the running one, from
  * any app: ⌘⌥R / Ctrl+Alt+R. */
 export const RUN_SHORTCUT = "mod+alt+r";
-if (isAvailable && platform.idiom !== "terminal") {
+if (isAvailable) {
   void GlobalShortcut.register(RUN_SHORTCUT, () => {
     if (running()) return stop();
     const last = history()[0];
@@ -84,7 +84,7 @@ if (isAvailable && platform.idiom !== "terminal") {
 }
 
 export const cwd = signal("");
-/** What the program may do to the store: Run's choice, allow unless
+/** What the program may do to the store: the command bar's choice, allow unless
  * changed (a project's `[record] policy` in sonde.toml narrows it). */
 export const policy = signal<Policy>("allow");
 
@@ -112,7 +112,7 @@ export function resize(cols: number, rows: number) {
 async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
   try {
     const v = await api.runs.view(r.path);
-    // run again from a run's view: this run, compared with the one before it, on Run (where its view opens)
+    // run again from a run's view: this run, compared with the one before it, where its view opens
     // (a run that made no request has nothing to compare)
     if (before && !killed && v.summary.requests > 0) compareOnOpen.set({ before, after: r.path });
     // a run that made no request leaves nothing to read: it is not kept, unless asked
@@ -125,7 +125,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
         void api.runs
           .remove(r.path)
           .then(() => {
-            // nothing left to open from Run
+            // nothing left to open
             const last = lastRun();
             if (last?.path === r.path) lastRun.set({ ...last, removed: true });
             runsChanged();
@@ -141,8 +141,8 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
     const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? scrubCommand(cmd) }) : t("run.toastEnded", { command: programOf(cmd) ?? scrubCommand(cmd), code: String(r.exit ?? "?") });
     // read out to a screen reader wherever the focus is
     announce(`${title}. ${body}`);
-    // on Run the band says it; elsewhere a toast does
-    if (area() !== "run")
+    // in Runs its own view says it; elsewhere a toast does
+    if (area() !== "runs")
       toast({
         id: "run-ended",
         kind: r.exit === 0 && !warnings ? "success" : "warning",
@@ -173,7 +173,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
     await Notifications.show({ id: `${NOTIFY}${r.path}`, title: t("run.notifyTitle", { command: programOf(cmd) ?? scrubCommand(cmd) }), body });
     if (lifecycle() === "active") await Notifications.setBadge(0).catch(() => {});
   } catch {
-    // no notifications here (a terminal, an unbundled app): the screen says it
+    // no notifications here (an unbundled app): the screen says it
   }
 }
 
@@ -186,7 +186,6 @@ export function runAgain(path: string, cmd: string, endpoint: string, dir?: stri
   command.set(cmd);
   // where it ran before, when the run says
   if (dir) cwd.set(dir);
-  go("run");
   // compared with the run before only once this one has started
   if (start(cmd, endpoint)) againOf = path;
 }
@@ -208,6 +207,11 @@ export function start(cmd: string, endpoint: string): boolean {
     .run(cmd, cwd() || null, endpoint, policy(), size.cols, size.rows, (e) => {
       if ("started" in e) {
         running.set({ command: cmd, path: e.started.path, endpoint });
+        // the run is the newest in the list, and opens there as it goes
+        batch(() => {
+          openRun.set(e.started.path);
+          runsChanged();
+        });
       } else if ("data" in e) {
         buffer += e.data;
         if (buffer.length > MAX) {
@@ -251,22 +255,11 @@ export function input(data: string) {
   if (running()) api.runs.input(data);
 }
 
-/** Opens the last run in Runs, lined up with its output. */
-export function openLastRun(go: (s: "runs") => void) {
-  const r = lastRun();
-  if (!r || r.removed) return;
-  batch(() => {
-    openRun.set(r.path);
-    go("runs");
-  });
-}
-
 const NOTIFY = "sonde-run:";
 
 /** The first run asks once whether sonde may say when a run ends (the
  * system asks only when the user did something; starting a run is that). */
 function askToNotify() {
-  if (platform.idiom === "terminal") return;
   void Notifications.permission()
     .then((p) => (p === "default" ? Notifications.requestPermission() : p))
     .catch(() => {});

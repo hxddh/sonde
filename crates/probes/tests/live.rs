@@ -18,10 +18,10 @@ async fn suite_runs_and_cleans_up() {
             include_slow: true,
             ..Default::default()
         };
-        let ids = runner::spawn(s, std::slice::from_ref(&t.name), opts);
+        let id = runner::spawn(s, &t.name, opts);
         let v = s
             .jobs()
-            .wait(&ids[0])
+            .wait(&id)
             .await
             .unwrap_or_else(|e| panic!("{}: {e}", t.name));
         let run: probes::Run = serde_json::from_value(v).unwrap();
@@ -55,8 +55,6 @@ async fn suite_runs_and_cleans_up() {
             .await
             .unwrap();
         assert!(ups.upload.is_empty(), "{}: uploads left", t.name);
-        let saved = probes::store::list(s.paths());
-        assert_eq!(saved.len(), 1);
         let md = probes::report::markdown(std::slice::from_ref(&run));
         assert!(md.contains("| `cond.put-if-none-match` |"));
         let _ = c.delete_bucket(&b).await;

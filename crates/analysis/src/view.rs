@@ -86,6 +86,10 @@ pub struct Analysis {
     pub profile: Profile,
     pub signals: Signals,
     pub what_if: Option<WhatIf>,
+    /// The findings as diagnoses, in order: one each root cause.
+    pub diagnoses: Vec<crate::fixes::Diagnosis>,
+    /// Where its time went.
+    pub time: Option<crate::summary::TimeAccount>,
     /// Its money a month, when that can be said ([`crate::month`]).
     pub month: Option<crate::month::Month>,
     /// The SDK that sent most of its requests (`boto3 1.44`).
@@ -109,6 +113,26 @@ fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
 }
 
 impl Analysis {
+    /// Adds the trial's findings ([`crate::trial::findings`]) to the run's,
+    /// each a diagnosis of its own after the run's: no saving, so last.
+    pub fn add_trials(&mut self, trials: &[crate::trial::Trial]) {
+        for o in crate::trial::findings(trials) {
+            self.diagnoses.push(crate::fixes::Diagnosis {
+                id: o.identity.clone(),
+                findings: vec![self.observations.len()],
+                identities: vec![o.identity.clone()],
+                serial: None,
+                saves_ms: 0.0,
+                saves_cost: 0.0,
+                saves_requests: 0,
+                saving: Vec::new(),
+                saving_text: String::new(),
+                rest: None,
+            });
+            self.observations.push(o);
+        }
+    }
+
     /// `path` (a run, its `header` and `records`, analysed as this) against
     /// its program's run before it ([`crate::fixloop::since_last`]). Its
     /// operations are not made again, and its findings at any threshold
@@ -126,7 +150,13 @@ impl Analysis {
             return None;
         }
         let dir = crate::fixloop::folder_of(path);
-        let traces = match crate::fixloop::previous_run(&dir, &key, header.created, path) {
+        let traces = match crate::fixloop::previous_run(
+            &dir,
+            &key,
+            header.created,
+            path,
+            header.command.as_deref(),
+        ) {
             Some(_) => crate::episode::traces_of(header, records, &self.episodes),
             None => Vec::new(),
         };
@@ -158,20 +188,29 @@ impl Analysis {
         let profile = crate::profile::profile(records, prices);
         let episodes = episodes(records);
         let mut observations = observations_of(header, records, &episodes);
-        crate::fixes::rank_by_saving(&mut observations, records, &profile.prices);
+        // (an imported log's times are to the second: its waiting is not known)
+        let timed = !header.whole_seconds;
+        crate::fixes::rank_by_saving(&mut observations, records, &profile, timed);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
             .collect();
-        // (an imported log's times are to the second: its waiting is not known)
-        let what_if =
-            crate::fixes::what_if(records, &profile, &observations, !header.whole_seconds);
+        let what_if = crate::fixes::what_if(records, &profile, &observations, timed);
         let month = crate::month::month(
             header,
             summary.seconds,
             profile.cost.amount,
             &profile.cost.currency,
         );
+        let diagnoses = crate::fixes::diagnose(
+            &mut observations,
+            &episodes,
+            records,
+            &profile,
+            timed,
+            month.as_ref(),
+        );
+        let time = crate::summary::time_account(records, &summary, &profile, header);
         let owner = crate::episode::Owners::of(&episodes);
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
@@ -209,6 +248,8 @@ impl Analysis {
             shared_notes,
             profile,
             what_if,
+            diagnoses,
+            time,
             month,
             owner,
             kinds,
@@ -427,6 +468,8 @@ impl Analysis {
         v.insert("profile".into(), to(&self.profile));
         v.insert("signals".into(), to(&self.signals));
         v.insert("whatIf".into(), to(&self.what_if));
+        v.insert("diagnoses".into(), to(&self.diagnoses));
+        v.insert("time".into(), to(&self.time));
         v.insert("month".into(), to(&self.month));
         v.insert("injected".into(), json!(self.injected));
         v.insert("sdk".into(), json!(self.sdk));

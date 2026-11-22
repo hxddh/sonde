@@ -54,15 +54,12 @@ pub struct CheckArgs {
     #[arg(long, value_parser = tolerance_arg, value_name = "PCT")]
     tolerance: Option<f64>,
     /// Write `sonde.toml` here (or at --config) with a `[check]` that this
-    /// run passes: its figures with --tolerance, 10%, of room. Refused when
+    /// run passes: its requests with --tolerance, 10%, of room, its errors,
+    /// and its findings known (`[check.findings]`). Refused when
     /// the file is there. Trials are not written: `sonde run --trial` tries
     /// the program, and a `[[scenario]]` is the project's own to add.
     #[arg(long)]
     init: bool,
-    /// With -f markdown: the link to the whole report (`sonde share`'s
-    /// page, kept by CI) the comment ends with.
-    #[arg(long, value_name = "URL")]
-    report_url: Option<String>,
     /// The format written: text, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
@@ -162,8 +159,15 @@ pub(super) fn expect_of(h: &RunHeader) -> std::collections::BTreeMap<String, Str
 }
 
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
-/// with room to grow, and the CI step that holds every run to it.
-fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyhow::Result<i32> {
+/// with room to grow, and its findings known (`[check.findings]`: a new
+/// one, or more of one, fails); and the CI step that holds every run to
+/// it, with the program's own command.
+fn init_project(
+    a: &CheckArgs,
+    run: &sonde_analysis::program::RunPoint,
+    findings: &[sonde_analysis::episode::Observation],
+    header: &RunHeader,
+) -> anyhow::Result<i32> {
     let path = a
         .config
         .clone()
@@ -177,39 +181,81 @@ fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyho
     }
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
+    let max_requests = (run.requests as f64 * grow).ceil() as u64;
     // whole figures a person reads and edits
     let waiting = (run.waiting_ms * grow + sonde_analysis::program::WAITING_SLACK_MS).ceil();
-    let text = [
+    let known: std::collections::BTreeMap<String, usize> = findings
+        .iter()
+        .map(|o| {
+            (
+                sonde_analysis::profile::finding_identity(o),
+                sonde_analysis::fixloop::count_of(o),
+            )
+        })
+        .collect();
+    let mut text = vec![
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
             "# Made from a run of {}; edit freely.",
             output::count(run.requests, "request")
         ),
         "[check]".into(),
-        format!("max-requests = {}", (run.requests as f64 * grow).ceil() as u64),
+        format!("max-requests = {max_requests}"),
         // time moves from one identical run to the next: a limit made from
         // one run fails the next one in two. Left for a person to set
         format!(
             "# max-waiting = \"{waiting}ms\"   # measured {}: time varies run to run, set it with room",
             ms_text(run.waiting_ms)
         ),
+        // failures after retries are no finding: held to the run's own
         format!("max-errors = {}", run.errors),
-        "# against a baseline run: how much more it may use, in percent".into(),
-        format!("tolerance = {tolerance}"),
         "# baseline = \"auto\"   # the baseline set for the program (in the app, or --set-baseline)".into(),
         "# baseline = \"https://…/main.sonde\"   # or the main branch's run, kept by CI".into(),
         String::new(),
-    ]
-    .join("\n");
-    std::fs::write(&path, text)?;
+        "# The run's findings, each with its count: a run with another, or more of one, fails.".into(),
+        "[check.findings]".into(),
+    ];
+    // (an identity is written as a TOML string: JSON's escapes are TOML's)
+    text.extend(
+        known
+            .iter()
+            .map(|(id, n)| format!("{} = {n}", serde_json::to_string(id).unwrap_or_default())),
+    );
+    text.push(String::new());
+    std::fs::write(&path, text.join("\n"))?;
+    // the program's own command, and the store it ran against: a demo
+    // run's is the demo store's (`--demo`), no URL to fill in
+    let command = header
+        .command
+        .clone()
+        .unwrap_or_else(|| "<your command>".into());
+    let run_args = if header.endpoint == "demo" {
+        "--demo".to_string()
+    } else {
+        "--url <the S3 endpoint>".to_string()
+    };
+    let uses = action_line();
+    if a.format == Format::Json {
+        output::print_json(&serde_json::json!({
+            "wrote": path.to_string_lossy(),
+            "maxRequests": max_requests,
+            "findings": known,
+            "command": command,
+            "runArgs": run_args,
+            "uses": uses.trim().trim_start_matches("- uses: "),
+        }));
+        return Ok(0);
+    }
     eprintln!(
-        "wrote {}: a [check] this run passes ({}, {} of room)",
+        "wrote {}: a [check] this run passes ({}, {} of room) and its {} known",
         path.display(),
         output::count(run.requests, "request"),
-        format_args!("{tolerance}%")
+        format_args!("{tolerance}%"),
+        output::count(known.len(), "finding"),
     );
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
-    let uses = action_line();
+    let run_line = format!("          run: {command}");
+    let args_line = format!("          run-args: {run_args}");
     eprintln!(
         "{}",
         [
@@ -219,13 +265,13 @@ fn init_project(a: &CheckArgs, run: &sonde_analysis::program::RunPoint) -> anyho
             "",
             uses.as_str(),
             "        with:",
-            "          run: <your command>",
-            "          run-args: --url <the S3 endpoint>",
+            run_line.as_str(),
+            args_line.as_str(),
             "",
-            "Elsewhere: `sonde run -- <your command>`, then `sonde check -f markdown`.",
         ]
         .join("\n")
     );
+    eprintln!("Elsewhere: `sonde run -- {command}`, then `sonde check -f markdown`.");
     Ok(0)
 }
 
@@ -407,10 +453,6 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
 }
 
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
-    if a.report_url.is_some() && a.format != Format::Markdown {
-        eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
-        return Ok(64);
-    }
     use sonde_analysis::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
@@ -560,7 +602,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         return Ok(64);
     }
     if a.init {
-        return init_project(a, &run.0);
+        return init_project(a, &run.0, &run.2, &header);
     }
     if a.set_baseline {
         let Some(key) = &program else {
@@ -663,6 +705,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         tolerance: base
             .as_ref()
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
+        known: project.known(),
         untimed,
     };
     if untimed && budget.max_waiting_ms.is_some() {
@@ -682,6 +725,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     use sonde_analysis::program::{run_closing, run_passed};
     // each scenario with what it was before ("broke on 12 Nov, survived since")
     let trials = sonde_analysis::trial::load_with_history(&file, program.as_deref());
+    // what did not survive is among the run's findings, as `show` says them
+    // (held to the trial's verdict, not to `[check.findings]`)
+    run.2.extend(sonde_analysis::trial::findings(&trials));
     // `c.passed` is of its rows; the whole check also fails on a trial that
     // broke, and on a program that failed
     let passed = run_passed(&c, &trials, failed);
@@ -765,7 +811,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             "program": program,
             "programNamed": header.name.is_some(),
             "check": c,
-            "trials": trials,
+            "trials": trials.iter().map(|t| t.verdict()).collect::<Vec<_>>(),
             "passed": passed,
             "verdict": closing,
             "since": since,
@@ -870,6 +916,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(w)
             );
         }
+        for g in &c.findings {
+            println!(
+                "::error title=sonde: not in sonde.toml's findings::{}",
+                gh_escape(&gated_line(g))
+            );
+        }
         for f in run.2.iter().take(10) {
             // what the project keeps on purpose is said with why, never warned of
             let level = if f.level == "warn" && f.expected.is_none() {
@@ -893,8 +945,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         println!("sonde: {closing} · {judged}");
         return Ok(if passed { 0 } else { 1 });
     }
-    // a pull request's comment: the verdicts, what is new, and the run's findings
+    // a pull request's comment: the verdicts, what is new, and the run's
+    // findings; it ends with the link to the whole report CI keeps
+    // (SONDE_REPORT_URL, which the Action sets)
     if matches!(a.format, Format::Markdown) {
+        let report_url = std::env::var("SONDE_REPORT_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty());
         print!(
             "{}",
             sonde_analysis::program::check_comment(
@@ -906,7 +963,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                     trials: &trials,
                     change: change.as_ref(),
                     no_baseline: no_baseline.as_deref(),
-                    report_url: a.report_url.as_deref(),
+                    report_url: report_url.as_deref(),
                     failed: failed.map(|code| (code, run.0.refused.as_deref())),
                 }
             )
@@ -967,8 +1024,23 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             }
         );
     }
+    // what did not survive: why, at which request and line
+    for o in run
+        .2
+        .iter()
+        .filter(|o| o.kind == sonde_analysis::trial::TRIAL)
+    {
+        let mark = if o.level == "warn" { "!" } else { "·" };
+        println!("{} {}", paint(mark, "33", color), o.text);
+        for c in &o.callers {
+            println!("{}", paint(&format!("    at {}", c.place), "2", color));
+        }
+    }
     for w in &c.new_warnings {
         println!("{} {w}", paint("!", "33", color));
+    }
+    for g in &c.findings {
+        println!("{} {}", paint("!", "33", color), gated_line(g));
     }
     for e in &c.expected {
         println!(
@@ -986,6 +1058,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         paint(&closing, if passed { "32" } else { "31" }, color)
     );
     Ok(if passed { 0 } else { 1 })
+}
+
+/// A finding `[check.findings]` does not know, or knows with less of it:
+/// `new: …`, `grew 6 → 10: …`.
+fn gated_line(g: &sonde_analysis::program::Gated) -> String {
+    match g.known {
+        Some(n) => format!("grew {n} → {}: {}", g.count, g.text),
+        None => format!("new: {}", g.text),
+    }
 }
 
 /// Why a run records nothing, and where to look.

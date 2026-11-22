@@ -6,12 +6,8 @@ rerun the commands to compare on your machine.
 ## How to reproduce
 
 ```sh
-# release binary with the terminal UI and embedded bundle
-(cd app && nsh build App.tsx --release)
-cargo build --release -p sonde-cli --features tui
-
-python3 scripts/perf.py target/release/sonde                    # terminal binary in a pty (pip install pyte)
-(cd app && nsh test tests/perf.test.tsx --target tui --trace)   # headless UI: 100k rows, 500 scroll frames
+cargo build --release -p sonde-cli
+bash scripts/ui-tests.sh perf                                   # headless UI: 100k rows, 500 scroll frames
 cargo run --release -p sonde-proxy --example overhead           # proxy overhead (OVERHEAD_URL, OVERHEAD_BUCKET, AWS keys)
 cargo run --release -p sonde-analysis --example scale -- 1000000   # a synthetic run of a million requests
 ```
@@ -24,8 +20,8 @@ for t in $(cargo test --release -p sonde-analysis --test budgets -- --ignored --
 done
 ```
 
-The UI measures use the built-in demo endpoint (`sonde tui --demo`, bucket `demo-large`, 100 000 keys), so they
-measure sonde, not the network.
+The UI measures use the built-in demo endpoint (bucket `demo-large`, 100 000 keys), so they measure sonde, not the
+network.
 
 ## Recording proxy
 
@@ -41,7 +37,7 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 
 ## Large runs
 
-**A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `compare` of two, about 500 MiB
+**A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `show --since` of two, about 500 MiB
 (it reads one run at a time). Memory grows with the requests: about 350 bytes each (a record's 96 bytes and what
 it shares, its operation's 88, and the analysis's room), so 8 GB holds about twenty million.
 
@@ -55,7 +51,7 @@ a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 | `sonde show -f json` | 13 s | 350 MiB |
 | `sonde show -f json --requests` (1.6 GiB of JSON) | 38 s | 349 MiB |
 | `sonde check --baseline` (another million) | 17 s | 391 MiB |
-| `sonde compare` (two millions) | 20 s | 510 MiB |
+| `sonde show --since` (two millions) | 20 s | 510 MiB |
 
 Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past
 its peak memory (what is measured and about an eighth more), which moves by a few percent from run to run. Time
@@ -76,7 +72,7 @@ How:
   size and the first byte's time take 8 bytes each; its query and headers are one list behind a pointer that records
   holding the same share; what few have (an error's body, a fault's mark) and what no analysis reads (the URL, the
   endpoint, the region, the store's ids) is behind another, there only when needed.
-- **The reading**: the file is streamed and parsed on every core; a lean reading (what `show`, `check` and `compare`
+- **The reading**: the file is streamed and parsed on every core; a lean reading (what `show` and `check`
   use) borrows a line's text and makes only what it keeps, the headers an analysis reads; repeated text is shared.
 - **The operation** (88 bytes): one request that went through is its record's names in place; any other's phrases,
   notes and outcome are behind one pointer; titles are made when asked for.
@@ -84,28 +80,13 @@ How:
   each kept what they let go: a fifth more memory, for 2.5 s less); work is done on sorted indexes and tables by id,
   not per-request maps and copies; a run's traces keep their counts and words, not the requests they name.
 - **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
-  gets a page of operations at a time; `compare` reads one run at a time. The app also caches each finished
+  gets a page of operations at a time; `show --since` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
-
-## Terminal binary
-
-`scripts/perf.py`, 120×40 pty, two runs; measured at 20.0.0, on its `sonde-linux-x86_64` (CI's build):
-
-| Measure | Result |
-| --- | --- |
-| CLI start (`sonde --version`), mean of 10 | 5 ms |
-| TUI start to first frame (`sonde tui --demo`) | 110–180 ms |
-| Load 100 000 rows in Buckets (flat, *Load all*: 100 ListObjectsV2 pages) | 0.57–0.63 s |
-| Memory (VmRSS): idle / 100 000 rows loaded / after paging | 51 / 106 / 109 MiB |
-| Page Down presses in 10 s, each answered with a frame | 151–154 (≈ 5 000 rows) |
-| `--fps` while paging | 46 fps (bounded by the script's key rate), frame 2.0 ms, p95 3.0 ms, ≈ 160 cells written |
-
-Binary: 79.7 MB (LTO thin, JS engine, the app's bundle and the viewer included), linking only `libgcc_s`, `libm`,
-`libc` ([packaging](packaging.md#the-terminal-binary-has-no-gui-dependency)).
 
 ## Headless UI
 
-`nsh test --target tui --trace`, debug host, measured at sonde 0.1.0: Browse › demo-large, flat, load all 100 000
+`nsh test --trace`, debug host, measured at sonde 0.1.0 (then on the terminal host, gone in 29.0; CI's nightly
+`ui-perf` measures the desktop host): Browse › demo-large, flat, load all 100 000
 rows, scroll the table 500 frames down and back.
 
 | Measure | Result |

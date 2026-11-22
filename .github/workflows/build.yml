@@ -34,7 +34,7 @@ jobs:
   plan:
     runs-on: ubuntu-24.04
     outputs:
-      terminal: ${{ steps.plan.outputs.terminal }}
+      cli: ${{ steps.plan.outputs.cli }}
       desktop: ${{ steps.plan.outputs.desktop }}
       macos-app: ${{ steps.plan.outputs.macos-app }}
       any: ${{ steps.plan.outputs.any }}
@@ -46,27 +46,27 @@ jobs:
         run: |
           import json, os
           level = {"pr": 0, "all": 1}[os.environ["SET"]]
-          terminal = [
+          cli = [
               (0, "ubuntu-22.04", "x86_64-unknown-linux-gnu", "linux-x86_64"),
               # static: runs on any Linux, Alpine and distroless included
               (0, "ubuntu-22.04", "x86_64-unknown-linux-musl", "linux-x86_64-musl"),
               (1, "ubuntu-22.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"),
               (1, "macos-26", "aarch64-apple-darwin", "macos-aarch64"),
               (1, "macos-26-intel", "x86_64-apple-darwin", "macos-x86_64"),
-              # sonde.exe in a .zip: CI on Windows, and the terminal there
+              # sonde.exe in a .zip: CI on Windows
               (1, "windows-latest", "x86_64-pc-windows-msvc", "windows-x86_64"),
           ]
           desktop = [
               (0, "ubuntu-24.04", "linux", "linux-x86_64"),
               (1, "windows-latest", "windows", "windows-x86_64"),
           ]
-          t = [{"os": o, "target": g, "name": n} for l, o, g, n in terminal if l <= level]
+          t = [{"os": o, "target": g, "name": n} for l, o, g, n in cli if l <= level]
           d = [{"os": o, "target": g, "name": n} for l, o, g, n in desktop if l <= level]
           m = level >= 1
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"terminal={json.dumps(t)}\ndesktop={json.dumps(d)}\n")
+              out.write(f"cli={json.dumps(t)}\ndesktop={json.dumps(d)}\n")
               out.write(f"macos-app={str(m).lower()}\nany={str(bool(t or d or m)).lower()}\n")
-          print("terminal:", [x["name"] for x in t], "desktop:", [x["name"] for x in d], "macos-app:", m)
+          print("cli:", [x["name"] for x in t], "desktop:", [x["name"] for x in d], "macos-app:", m)
 
   viewer:
     # the page `sonde share` writes: Native Shell's web target, made once
@@ -117,35 +117,14 @@ jobs:
           name: sonde-viewer
           path: viewer/.nsh/out/sonde-viewer
 
-  bundle:
-    # the app's bundle the terminal binary embeds (`sonde tui`): JavaScript,
-    # the same for every platform, built once (a terminal build then needs
-    # no Native Shell of its own)
-    needs: plan
-    if: needs.plan.outputs.terminal != '[]'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-      # the app's crate, as ci.yml's ui job keeps it (which saves it)
-      - run: mkdir -p app/.nsh/rust
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: app, save-if: false, workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
-      - uses: ./.github/actions/nsh
-      - name: Bundle the app
-        run: cd app && nsh build App.tsx --release && ls -la .nsh/out
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: sonde-bundle
-          path: app/.nsh/out
-
-  terminal:
-    needs: [plan, viewer, bundle]
-    if: needs.plan.outputs.terminal != '[]'
+  cli:
+    # the CLI, one binary with the web viewer `sonde share` writes embedded
+    needs: [plan, viewer]
+    if: needs.plan.outputs.cli != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.terminal) }}
+        include: ${{ fromJSON(needs.plan.outputs.cli) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
@@ -159,17 +138,15 @@ jobs:
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: sonde-bundle, path: app/.nsh/out }
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
-      - name: Build sonde (CLI + TUI)
-        run: cargo build --release --locked -p sonde-cli --features tui --target ${{ matrix.target }}
+      - name: Build sonde
+        run: cargo build --release --locked -p sonde-cli --target ${{ matrix.target }}
       - name: Check the binary needs no GUI libraries
         if: runner.os == 'Linux'
         run: |
           # a static binary has no dynamic libraries to list
           (ldd target/${{ matrix.target }}/release/sonde || true) | tee ldd.txt
-          if grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt; then echo "::error::the terminal binary links GUI libraries"; exit 1; fi
+          if grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt; then echo "::error::the CLI binary links GUI libraries"; exit 1; fi
           image=${{ contains(matrix.target, 'musl') && 'alpine:3.24' || 'debian:bookworm-slim' }}
           docker run --rm -v "$PWD/target/${{ matrix.target }}/release/sonde:/sonde:ro" $image /sonde --version
       - name: Check the binary on macOS

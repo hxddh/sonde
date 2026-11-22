@@ -98,12 +98,11 @@ pub fn detect(s: &Arc<Sonde>, endpoint: &str, bucket: &str, prefix: &str) -> Str
         bucket.to_string(),
         prefix.to_string(),
     );
-    let settings = s.settings();
     s.jobs().spawn(
         "layout-detect",
         ph!("job.layoutDetect", bucket = b, prefix = p),
-        settings.concurrency,
-        settings.rate_limit,
+        crate::config::CONCURRENCY,
+        None,
         move |ctx| async move {
             let src = S3Source {
                 client: s2.job_client(&ep, &ctx)?,
@@ -127,12 +126,11 @@ pub fn analyze(s: &Arc<Sonde>, endpoint: &str, bucket: &str, format: Format, roo
         bucket.to_string(),
         root.to_string(),
     );
-    let settings = s.settings();
     s.jobs().spawn(
         "layout",
         ph!("job.layout", format = format.label(), bucket = b, root = r),
-        settings.concurrency,
-        settings.rate_limit,
+        crate::config::CONCURRENCY,
+        None,
         move |ctx| async move {
             let src = S3Source {
                 client: s2.job_client(&ep, &ctx)?,

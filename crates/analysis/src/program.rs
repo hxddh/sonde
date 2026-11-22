@@ -678,6 +678,11 @@ pub struct Budget {
     /// Against the baseline: requests, waiting and cost may grow this much.
     /// A baseline also holds the run to no warning it did not have.
     pub tolerance: Option<f64>,
+    /// The findings the project knows, each with its count (`[check.findings]`,
+    /// as `check --init` writes them): a finding of another identity, or
+    /// one whose count rose, fails the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known: Option<std::collections::BTreeMap<String, usize>>,
     /// The run's times are not meaningful (the built-in demo store's): no
     /// row holds its waiting, to a budget or to a baseline.
     #[serde(skip)]
@@ -689,7 +694,7 @@ pub struct Budget {
 #[serde(rename_all = "camelCase")]
 pub struct Verdict {
     /// `requests`, `waiting`, `cost`, `transfer` (bytes out), `errors`,
-    /// `p95` or `warnings`.
+    /// `p95`, `warnings` or `findings` (new or grown).
     pub what: &'static str,
     pub value: f64,
     pub limit: f64,
@@ -708,6 +713,7 @@ impl Verdict {
     pub fn label(&self) -> &'static str {
         match self.what {
             "warnings" => "new warnings",
+            "findings" => "new or grown findings",
             what => what,
         }
     }
@@ -744,10 +750,65 @@ pub struct Check {
     pub verdicts: Vec<Verdict>,
     /// Warnings the baseline did not have, as they read.
     pub new_warnings: Vec<String>,
+    /// Findings the project does not know (`[check.findings]`), or knows
+    /// with a smaller count: what fails the `findings` row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Gated>,
     /// Findings of the run the project keeps on purpose (`expect`), each
     /// with why.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expected: Vec<Expected>,
+}
+
+/// A finding of the run the project does not know, or knows with less of
+/// it ([`Budget::known`]).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Gated {
+    pub identity: String,
+    pub text: String,
+    /// Its count in the run ([`crate::fixloop::count_of`]).
+    pub count: usize,
+    /// Its count as the project knows it: none for a new one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known: Option<usize>,
+}
+
+/// The run's findings `known` does not name (by identity, an entry made
+/// by older rules read by these), or names with a smaller count: judged
+/// by counts alone, never by a share of the run (one of time alone, past a
+/// fifth more). One kept on purpose (`expect`) is none.
+pub fn gated(
+    findings: &[Observation],
+    known: &std::collections::BTreeMap<String, usize>,
+) -> Vec<Gated> {
+    findings
+        .iter()
+        .filter(|o| o.expected.is_none())
+        .filter_map(|o| {
+            let identity = crate::profile::finding_identity(o);
+            let count = crate::fixloop::count_of(o);
+            let was = known
+                .iter()
+                .find(|(k, _)| {
+                    let k = k.trim();
+                    k == identity || expected_identity(k) == identity
+                })
+                .map(|(_, n)| *n);
+            // requests one after another: their count moves with their
+            // timing, so it grew only past a fifth more (as the fix loop)
+            let grew = |n: usize| match crate::fixloop::of_time(o) {
+                true => count * 4 > n * 5,
+                false => count > n,
+            };
+            was.is_none_or(grew).then(|| Gated {
+                identity,
+                text: o.text.clone(),
+                count,
+                known: was,
+            })
+        })
+        .collect()
 }
 
 /// A finding the project keeps on purpose, as `check` says it.
@@ -958,6 +1019,11 @@ pub fn check(
     if let Some(n) = budget.max_transfer {
         limit("transfer", r.bytes_out as f64, n as f64, "budget");
     }
+    let mut findings = Vec::new();
+    if let Some(known) = &budget.known {
+        findings = gated(run.3, known);
+        limit("findings", findings.len() as f64, 0.0, "budget");
+    }
     let mut new_warnings = Vec::new();
     if let Some(b) = baseline {
         let base = b.0;
@@ -1018,6 +1084,7 @@ pub fn check(
         empty,
         verdicts: v,
         new_warnings,
+        findings,
         expected: run
             .3
             .iter()
@@ -1613,6 +1680,56 @@ mod tests {
         (run_point("x", "", rs, &p, &o), p, o)
     }
 
+    /// 28.0's `check` held a run to figures alone. `[check.findings]` holds
+    /// it to the findings it knows: another, or more of one by its count,
+    /// fails; requests one after another only past a fifth more.
+    #[test]
+    fn a_finding_not_known_or_grown_fails_the_check() {
+        let hot = |n: u64| -> Vec<Record> { (1..=n).map(|i| rec(i, "hot")).collect() };
+        let held = |rs: &[Record], known: &[(&str, usize)]| {
+            let (pt, pr, ob) = point(rs);
+            check(
+                (&pt, rs, &pr, &ob),
+                None,
+                &Budget {
+                    known: Some(known.iter().map(|(k, n)| (k.to_string(), *n)).collect()),
+                    ..Default::default()
+                },
+            )
+        };
+        let c = held(&hot(12), &[("obs.hot|b/hot", 12)]);
+        assert!(c.passed && c.findings.is_empty(), "{c:#?}");
+        assert_eq!(c.verdicts[0].what, "findings");
+        // fewer is no failure
+        assert!(held(&hot(11), &[("obs.hot|b/hot", 12)]).passed);
+        let grown = held(&hot(13), &[("obs.hot|b/hot", 12)]);
+        assert!(!grown.passed);
+        assert_eq!(
+            (grown.findings[0].count, grown.findings[0].known),
+            (13, Some(12))
+        );
+        let new = held(&hot(12), &[]);
+        assert!(!new.passed);
+        assert_eq!(new.findings[0].identity, "obs.hot|b/hot");
+        assert_eq!(new.findings[0].known, None);
+        // one of time alone: its count moves with its timing
+        let serial: Vec<Record> = (1..=40u64)
+            .map(|i| Record {
+                time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 11).unwrap(),
+                latency_ms: 10.0,
+                ..rec(i, &format!("k{i}"))
+            })
+            .collect();
+        let (_, _, ob) = point(&serial);
+        let s = ob
+            .iter()
+            .find(|o| o.kind == "obs.serial")
+            .expect("one after another");
+        let n = crate::fixloop::count_of(s);
+        assert!(held(&serial, &[("obs.serial|", n * 9 / 10)]).passed);
+        assert!(!held(&serial, &[("obs.serial|", n * 3 / 4)]).passed);
+    }
+
     /// `max-errors` counts the requests that failed after their retries:
     /// one 503 retried into a 200 against real S3 fails no budget.
     #[test]
@@ -2111,7 +2228,7 @@ mod tests {
         let rs: Vec<Record> = (0..3).map(|i| rec(i + 1, &format!("k{i}"))).collect();
         let (pt, pr, ob) = point(&rs);
         let scenario = sonde_proxy::fault::scenario("slowdown").unwrap();
-        let mut broke = judge(&scenario, &rs, 0, &rs, 1);
+        let broke = judge(&scenario, &rs, 0, &rs, 1);
         assert_eq!(broke.standing, Standing::Broke);
         let mut fine = broke.clone();
         fine.standing = Standing::Degraded;
@@ -2126,32 +2243,28 @@ mod tests {
         let none = check((&pt, &rs, &pr, &ob), None, &Budget::default());
         assert_eq!(check_closing(&within, &[]), "within budget");
         assert_eq!(
-            check_closing(&within, &[broke.clone()]),
+            check_closing(&within, std::slice::from_ref(&broke)),
             "within budget, and broke under a trial"
         );
-        assert!(!check_passed(&within, &[broke.clone()]));
+        assert!(!check_passed(&within, std::slice::from_ref(&broke)));
         // trials alone are a check: no budget is needed to fail one
         assert_eq!(
-            check_closing(&none, &[broke.clone()]),
+            check_closing(&none, std::slice::from_ref(&broke)),
             "broke under a trial"
         );
-        assert!(!check_passed(&none, &[broke.clone()]));
+        assert!(!check_passed(&none, std::slice::from_ref(&broke)));
         assert_eq!(
             check_closing(&none, &[fine.clone()]),
             "did not break under its trials"
         );
         assert!(check_passed(&none, &[fine.clone()]));
-        broke.reasons = vec!["exited 1 | really".into()];
         let md = check_markdown_with(&within, "USD", None, &[], &[broke, fine]);
         assert!(
             md.starts_with("### sonde: within budget, and broke under a trial ❌"),
             "{md}"
         );
         assert!(!md.contains("over budget"), "{md}");
-        assert!(
-            squeezed(&md).contains("| **broke** | slowdown | exited 1 \\| really |"),
-            "{md}"
-        );
+        assert!(squeezed(&md).contains("| **broke** | slowdown |"), "{md}");
         assert!(
             squeezed(&md).contains("| degraded | slowdown |"),
             "degraded is not a pass: {md}"

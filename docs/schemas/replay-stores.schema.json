@@ -1,48 +1,49 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare-replay.schema.json",
-  "title": "sonde compare FILE --replay ENDPOINT -f json",
-  "description": "A run replayed on one endpoint, cleaned up and compared. Exit 2 when answers differ.",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/replay-stores.schema.json",
+  "title": "sonde replay RUN -e A -e B … -f json",
+  "description": "A run replayed on several endpoints at once, side by side.",
   "type": "object",
   "properties": {
     "plan": {
       "$ref": "#/$defs/plan"
     },
-    "run": {
-      "type": "string",
-      "description": "The replay's own run."
-    },
-    "comparison": {
-      "$ref": "#/$defs/comparison"
-    },
-    "removed": {
-      "type": "integer",
-      "description": "Objects the cleanup removed."
-    },
-    "removedVersions": {
-      "type": "integer"
-    },
-    "remaining": {
-      "type": "integer",
-      "description": "What the cleanup could not remove."
-    },
-    "remainingObjects": {
-      "type": "integer"
-    },
-    "remainingVersions": {
-      "type": "integer"
-    },
-    "remainingMarkers": {
-      "type": "integer"
-    },
-    "unabortedUploads": {
-      "type": "integer"
-    },
-    "relies": {
+    "stores": {
       "type": "array",
-      "description": "What the program relies on (only the probes matching features its requests used), run against the store.",
       "items": {
-        "$ref": "#/$defs/relied"
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "comparison": {
+            "$ref": "#/$defs/comparison"
+          },
+          "latency": {
+            "type": "array",
+            "description": "Each kind's latency, recording against replay.",
+            "items": {
+              "$ref": "#/$defs/latencyChange"
+            }
+          },
+          "relies": {
+            "type": "array",
+            "description": "What the program relies on (only the probes matching features its requests used), run against the store.",
+            "items": {
+              "$ref": "#/$defs/relied"
+            }
+          }
+        },
+        "required": [
+          "endpoint",
+          "run",
+          "comparison",
+          "latency",
+          "relies"
+        ]
       }
     },
     "cost": {
@@ -55,16 +56,7 @@
   },
   "required": [
     "plan",
-    "run",
-    "comparison",
-    "removed",
-    "removedVersions",
-    "remaining",
-    "remainingObjects",
-    "remainingVersions",
-    "remainingMarkers",
-    "unabortedUploads",
-    "relies",
+    "stores",
     "cost"
   ],
   "$defs": {
@@ -160,6 +152,74 @@
         "conditions"
       ]
     },
+    "latencyChange": {
+      "type": "object",
+      "description": "A kind of request in two runs: each figure a pair (first, second).",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "missed": {
+          "type": "boolean"
+        },
+        "requests": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "p50Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "p95Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "waitingMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "kind",
+        "missed",
+        "requests",
+        "p50Ms",
+        "p95Ms",
+        "waitingMs"
+      ]
+    },
     "phrase": {
       "type": "object",
       "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
@@ -221,7 +281,7 @@
       "properties": {
         "probe": {
           "type": "string",
-          "description": "The probe's id (`sonde probe list`)."
+          "description": "The probe's id ([probes.md](https://github.com/hxddh/sonde/blob/main/docs/probes.md))."
         },
         "kind": {
           "type": "string",

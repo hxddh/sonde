@@ -20,12 +20,6 @@ pub struct DuArgs {
     /// Only what is under this key prefix (default: the whole bucket).
     #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
     prefix: String,
-    /// Leave out incomplete multipart uploads.
-    #[arg(long)]
-    no_multipart: bool,
-    /// Print the last cached scan instead of scanning.
-    #[arg(long)]
-    cached: bool,
     /// The format written: text or json.
     #[arg(
         long,
@@ -39,19 +33,10 @@ pub struct DuArgs {
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> {
     let ep = super::endpoint(s, a.endpoint.as_deref())?;
-    let r = if a.cached {
-        du::load_cache(s, &ep, &a.bucket, &a.prefix)
-            .ok_or_else(|| anyhow::anyhow!("no cached scan of {}/{}", a.bucket, a.prefix))?
-    } else {
-        serde_json::from_value(
-            super::wait(
-                s,
-                &du::scan(s, &ep, &a.bucket, &a.prefix, !a.no_multipart),
-                false,
-            )
-            .await?,
-        )?
-    };
+    // incomplete uploads are billed as stored: always counted
+    let r: du::DuReport = serde_json::from_value(
+        super::wait(s, &du::scan(s, &ep, &a.bucket, &a.prefix, true), false).await?,
+    )?;
     let h = sonde_core::guard::human_bytes;
     match a.format {
         Format::Json => output::print_json(&r),

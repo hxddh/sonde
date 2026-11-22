@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use probes::store::Fixture;
+use probes::Fixture;
 use probes::{Step, Steps, Verdict};
 
 fn fixtures() -> Vec<(String, Fixture)> {

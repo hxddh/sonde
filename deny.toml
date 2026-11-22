@@ -12,7 +12,7 @@ yanked = "deny"
 # the git on PATH fetches the database: it follows the machine's proxy
 git-fetch-with-cli = true
 ignore = [
-    # Native Shell's tree (the terminal UI and the app), not sonde's code:
+    # Native Shell's tree (the app), not sonde's code:
     # raised upstream, gone when the pin moves past them
     { id = "RUSTSEC-2023-0071", reason = "rsa in quickjs-jit-stdlib (Native Shell): sonde does no RSA" },
     { id = "RUSTSEC-2025-0141", reason = "bincode, unmaintained, in syntect (Native Shell)" },

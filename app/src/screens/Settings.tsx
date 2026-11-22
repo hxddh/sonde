@@ -8,7 +8,7 @@ import { language, t } from "../i18n";
 import { api, asError } from "../native";
 import { copy, notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Button, Choice, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
+import { Button, Choice, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Section, SwitchRow } from "../ui/kit";
 import { Updates } from "../ui/updates";
 
 /** A form's fields, two to a row (one where there is no room), every label above its control. */
@@ -52,9 +52,7 @@ export function ConfigNotice() {
     <If when={error()}>
       {(e) => (
         <Notice tone="error" title={t("config.unreadable")} text={e()} testID="config-error">
-          <If when={!terminal()}>
-            <Button small variant="outline" label={t("config.reveal")} onPress={reveal} testID="config-reveal" />
-          </If>
+          <Button small variant="outline" label={t("config.reveal")} onPress={reveal} testID="config-reveal" />
           <Button small variant="outline" icon="refresh-cw" label={t("config.reload")} onPress={reload} testID="config-reload" />
         </Notice>
       )}
@@ -121,7 +119,7 @@ export function SettingsScreen() {
     <Page testID="screen-settings">
       <If when={draft()}>
         {(d) => (
-          <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
+          <View class={`${FORM} gap-6`}>
             <ConfigNotice />
             <Section title={t("settings.appearance")}>
               <View class={GRID}>

@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy` and the tour share (the
+//! Recording: what `sonde run`, `run --listen` and the tour share (the
 //! recording's arguments, the proxy started, a run's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -21,8 +21,6 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::output;
 
 pub use super::check::{CheckArgs, check};
-pub use super::compare::{CompareArgs, compare};
-pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, summary_on_stderr};
 
@@ -368,7 +366,12 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
 /// adds the median and the slowest, and every kind. Times not recorded (a
 /// CloudTrail import) are "—"; so is the waiting of a log timed to the
 /// second (`whole_seconds`), whose requests sonde spread over it.
-pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<String> {
+pub(super) fn kinds_table(
+    p: &Profile,
+    all: bool,
+    whole_seconds: bool,
+    priced: bool,
+) -> Vec<String> {
     use sonde_analysis::summary::FEW;
     if p.groups.is_empty() {
         return Vec::new();
@@ -415,12 +418,10 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
                 } else {
                     "—".to_string()
                 },
-                if p.cost.amount > 0.0 {
-                    share_text(g.cost / p.cost.amount)
-                } else {
-                    String::new()
-                },
             ];
+            if priced {
+                row.push(share_text(g.cost / p.cost.amount));
+            }
             if all {
                 row.push(time(g.p50_ms, star));
                 row.push(time(g.max_ms, ""));
@@ -428,7 +429,10 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
             row
         })
         .collect();
-    let mut heads = vec!["kind", "requests", "errors", "p95", "waiting", "cost"];
+    let mut heads = vec!["kind", "requests", "errors", "p95", "waiting"];
+    if priced {
+        heads.push("cost");
+    }
     if all {
         heads.extend(["p50", "max"]);
     }
@@ -458,15 +462,40 @@ pub(super) fn print_summary(
     // (a run just recorded: its times are its own)
     let header = RunHeader::new(endpoint, "", "", None);
     let analysis = Analysis::of_records(&header, records, prices);
-    print_summary_of(&analysis, &header, path, color, stdout, false, None);
+    print_summary_of(
+        &analysis,
+        &header,
+        path,
+        color,
+        stdout,
+        false,
+        None,
+        Says::Plan,
+    );
+}
+
+/// How much of a run's summary is said.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Says {
+    /// The whole plan (`show`, the tour, an import).
+    Plan,
+    /// What changed since the program's run before (`run` again): the plan
+    /// when there is none to compare with.
+    Changes,
+    /// The head line alone (a trial's clean run: its verdicts follow).
+    Head,
 }
 
 /// What a run amounts to, in one fixed shape for `run`, `show` and
 /// the tour: the head line (requests, operations, the SDK, the store, the
-/// time, the waiting and the cost), the findings first (each with its
-/// saving, its line of code and its fix), what acting on them would leave,
-/// one table of the kinds of request, and the change since the program's
-/// run before. `all` adds the signals over the run and their tables.
+/// time, the waiting and the cost), where its time went, the findings first
+/// (each with its saving, its line of code and its fix), what acting on them
+/// would leave, one table of the kinds of request, and the change since the
+/// program's run before (or the run asked for: `since`'s `true`). `all` adds
+/// the signals over the run and their tables. A run again (`Says::Changes`
+/// with a run before to compare) says the head line, where its time went and
+/// the change alone; `Says::Head` the head line alone.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn print_summary_of(
     a: &Analysis,
     header: &RunHeader,
@@ -474,9 +503,10 @@ pub(super) fn print_summary_of(
     color: bool,
     stdout: bool,
     all: bool,
-    since: Option<&sonde_analysis::fixloop::SinceLast>,
+    since: Option<(&sonde_analysis::fixloop::SinceLast, bool)>,
+    says: Says,
 ) {
-    // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
+    // `sonde show` answers on stdout; run keeps stdout for the program's own output
     let say = |line: String| {
         if stdout {
             println!("{line}")
@@ -506,7 +536,8 @@ pub(super) fn print_summary_of(
         output::duration(s.seconds * 1000.0)
     ));
     // (spread over whole seconds by sonde, waiting would be sonde's guess)
-    if p.waiting_ms > 0.0 && !header.whole_seconds {
+    // (the time account below says it, when there is one)
+    if p.waiting_ms > 0.0 && !header.whole_seconds && a.time.is_none() {
         head.push_str(&format!(", waiting {}", output::duration(p.waiting_ms)));
     }
     // (under a cent the table's shares say it)
@@ -542,8 +573,20 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
-    if let Some(line) = p.cost.line() {
+    if says == Says::Head {
+        return;
+    }
+    // a run again, against the program's run before: what changed
+    let changes = (says == Says::Changes)
+        .then_some(since)
+        .flatten()
+        .filter(|(s, _)| super::fixloop::comparable(s));
+    if let (None, Some(line)) = (changes, p.cost.line()) {
         say(format!("  {line}"));
+    }
+    // where its time went: the program's own, the round trips, the bytes
+    if let Some(t) = &a.time {
+        say(format!("  {}", t.text));
     }
     // a trial's faults are sonde's doing: said before the figures they are in
     if !a.injected.is_empty() {
@@ -561,16 +604,36 @@ pub(super) fn print_summary_of(
         // where in its second a request began is not known
         say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once, and so the waiting, is not known".into());
     }
-    for o in &a.observations {
-        for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), a.month.as_ref(), color) {
+    if let Some((since, asked)) = changes {
+        for line in super::fixloop::since_lines(since, asked, Some(a), color) {
             say(line);
         }
+        say_refused(s, color, &say);
+        say(paint(
+            &format!("run: {} (the whole plan: sonde show)", path.display()),
+            "2",
+            color,
+        ));
+        return;
     }
-    // the list's total: acting on all of them, at once
-    if let Some(w) = &a.what_if {
+    for line in super::fixloop::diagnosis_lines(a, all, color) {
+        say(line);
+    }
+    // the list's total: acting on all of them, at once (one says it already)
+    let saving = a
+        .diagnoses
+        .iter()
+        .filter(|d| !d.saving_text.is_empty())
+        .count();
+    if let Some(w) = a.what_if.as_ref().filter(|_| saving > 1) {
         say(paint(&w.line(a.month.as_ref()), "32", color));
     }
-    for line in kinds_table(p, all, header.whole_seconds) {
+    // (shares of under a cent nobody acts on: no cost column)
+    let priced = p.cost.amount >= sonde_analysis::program::CENT
+        || a.month
+            .as_ref()
+            .is_some_and(|m| m.cost >= sonde_analysis::program::CENT);
+    for line in kinds_table(p, all, header.whole_seconds, priced) {
         say(line);
     }
     for (what, n) in &s.error_codes {
@@ -592,12 +655,24 @@ pub(super) fn print_summary_of(
             say(line.to_string());
         }
     }
-    if let Some(since) = since {
-        for line in super::fixloop::since_lines(since, color) {
+    if let Some((since, asked)) = since {
+        for line in super::fixloop::since_lines(since, asked, None, color) {
             say(line);
         }
     }
     say(paint(&format!("run: {}", path.display()), "2", color).to_string());
+}
+
+/// What sonde refused of a run's requests, each reason a line: said by a run
+/// again too (what changed leaves out the other errors, said as findings).
+fn say_refused(s: &sonde_analysis::summary::Summary, color: bool, say: &dyn Fn(String)) {
+    for (what, n) in &s.error_codes {
+        if what == "refused by sonde" {
+            for line in refused_lines(s, *n) {
+                say(paint(&line, "33", color));
+            }
+        }
+    }
 }
 
 /// `-o FILE` and a file there: refused (64) unless `--force`. One rule for
@@ -824,11 +899,21 @@ mod tests {
                 })
                 .collect()
         };
-        let timed = kinds_table(&profile(&of(5.0), &RequestPrices::default()), false, false);
+        let timed = kinds_table(
+            &profile(&of(5.0), &RequestPrices::default()),
+            false,
+            false,
+            true,
+        );
         assert!(timed.iter().any(|l| l.contains('*')), "{timed:?}");
         assert!(timed.last().unwrap().contains("of fewer than"));
         // no times: every p95 is —, no star, no footnote
-        let untimed = kinds_table(&profile(&of(0.0), &RequestPrices::default()), false, false);
+        let untimed = kinds_table(
+            &profile(&of(0.0), &RequestPrices::default()),
+            false,
+            false,
+            true,
+        );
         assert!(
             untimed.iter().all(|l| !l.contains("of fewer than")),
             "{untimed:?}"

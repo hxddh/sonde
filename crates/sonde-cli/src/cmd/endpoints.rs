@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
+use probes::Verdict;
+use probes::runner::RunOptions;
 use sonde_core::Sonde;
 
 use crate::Cli;
@@ -26,10 +28,17 @@ enum EndpointAction {
         )]
         format: Format,
     },
-    /// Lists buckets and, where the vendor has it, asks STS who the credentials belong to.
+    /// Lists buckets and, where the vendor has it, asks STS who the
+    /// credentials belong to; with --probes, how it answers next to AWS.
     Test {
         /// The endpoint's id (default: --url, or the only one configured).
         endpoint: Option<String>,
+        /// Run the compatibility probes in BUCKET (it must exist; they write
+        /// under sonde-probe/ and remove what they wrote): each with its
+        /// verdict next to AWS. Exit 1 when a guarantee broke, 2 when it
+        /// differs from AWS.
+        #[arg(long, value_name = "BUCKET")]
+        probes: Option<String>,
         /// The format written: text or json.
         #[arg(
             long,
@@ -45,9 +54,11 @@ enum EndpointAction {
         /// A short id: what -e names it by.
         id: String,
         /// The endpoint URL, e.g. https://s3.eu-west-1.amazonaws.com or http://localhost:9000
-        /// (--region, --path-style and --ca-file apply to it).
-        #[arg(value_name = "URL")]
-        endpoint_url: String,
+        /// (--region, --path-style and --ca-file apply to it). With
+        /// --profile, default: the profile's endpoint_url, else AWS in its
+        /// region.
+        #[arg(value_name = "URL", required_unless_present = "profile")]
+        endpoint_url: Option<String>,
         /// Credentials from this profile of ~/.aws/config (default: the AWS default chain).
         #[arg(long)]
         profile: Option<String>,
@@ -55,15 +66,10 @@ enum EndpointAction {
         #[arg(long)]
         replace: bool,
     },
-    /// Adds endpoints for the profiles of ~/.aws/config.
-    Import {
-        /// Only these profiles (default: all that are not configured yet).
-        profiles: Vec<String>,
-    },
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
-    // add and import say what they did on stderr: they have no -f
+    // add says what it did on stderr: it has no -f
     let format = match &a.action {
         EndpointAction::List { format } | EndpointAction::Test { format, .. } => *format,
         _ => Format::Text,
@@ -81,9 +87,22 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
                 );
                 return Ok(64);
             }
-            let vendor = sonde_core::Vendor::guess(endpoint_url);
-            let region = super::region(cli, endpoint_url);
-            let mut e = sonde_core::EndpointConfig::new(id, id, endpoint_url, &region, vendor);
+            // a profile alone: its endpoint and region, as an SDK reads them
+            let mut e = match (endpoint_url, profile) {
+                (None, Some(name)) => sonde_core::sonde::profile_endpoint(
+                    &sonde_core::credentials::ini::AwsFiles::load(),
+                    id,
+                    name,
+                    cli.region.as_deref(),
+                )
+                .ok_or_else(|| super::usage(format!("no profile {name:?} in ~/.aws/config")))?,
+                (url, _) => {
+                    let url = url.as_deref().unwrap_or_default();
+                    let vendor = sonde_core::Vendor::guess(url);
+                    let region = super::region(cli, url);
+                    sonde_core::EndpointConfig::new(id, id, url, &region, vendor)
+                }
+            };
             e.path_style |= cli.path_style;
             e.ca_file = cli.ca_file.clone();
             if let Some(name) = profile {
@@ -126,6 +145,14 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             }
             Ok(0)
         }
+        EndpointAction::Test {
+            endpoint,
+            probes: Some(bucket),
+            ..
+        } => {
+            let ep = to_test(s, endpoint.as_deref())?;
+            probe(s, &ep, bucket, format).await
+        }
         EndpointAction::Test { endpoint, .. } => {
             let ep = to_test(s, endpoint.as_deref())?;
             let r = s.test_endpoint(&ep).await;
@@ -167,25 +194,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             }
             Ok(if r.ok { 0 } else { 70 })
         }
-        EndpointAction::Import { profiles } => {
-            let mut added = 0;
-            for e in s.importable_profiles() {
-                let name = match &e.credentials {
-                    sonde_core::CredentialSource::Profile { name } => name.clone(),
-                    _ => continue,
-                };
-                if !profiles.is_empty() && !profiles.contains(&name) {
-                    continue;
-                }
-                println!("added {} ({}) → {}", e.id, name, e.url);
-                s.upsert_endpoint(e).map_err(|m| anyhow::anyhow!(m))?;
-                added += 1;
-            }
-            if added == 0 {
-                println!("nothing to import");
-            }
-            Ok(0)
-        }
     }
 }
 
@@ -217,4 +225,65 @@ fn to_test(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
             ids()
         ))),
     }
+}
+
+/// `endpoints test E --probes BUCKET`: the compatibility probes on `ep`,
+/// in `bucket` (naming it is the consent; the run is audited). What did
+/// not pass says why in its row. Exit 1 when a guarantee broke, 2 when it
+/// differs from AWS, 70 when probes could not run.
+async fn probe(s: &Arc<Sonde>, ep: &str, bucket: &str, format: Format) -> anyhow::Result<i32> {
+    let opts = RunOptions {
+        bucket: bucket.to_string(),
+        ..Default::default()
+    };
+    let job = probes::runner::spawn(s, ep, opts);
+    let run: probes::Run = serde_json::from_value(super::wait(s, &job, false).await?)?;
+    match format {
+        Format::Json => output::print_json(&run),
+        Format::Text => {
+            let rows: Vec<Vec<String>> = run
+                .results
+                .iter()
+                .map(|r| {
+                    vec![
+                        r.id.clone(),
+                        format!("{} {}", r.verdict.symbol(), r.verdict.label()),
+                        if r.verdict == Verdict::Pass {
+                            String::new()
+                        } else {
+                            r.summary.clone()
+                        },
+                    ]
+                })
+                .collect();
+            println!("{}", output::table(&["probe", "verdict", "why"], &rows));
+            // every probe counted: those that erred or were skipped too
+            let counts: Vec<String> = [
+                Verdict::Pass,
+                Verdict::Fail,
+                Verdict::Differs,
+                Verdict::Unsupported,
+                Verdict::Error,
+                Verdict::Skipped,
+            ]
+            .into_iter()
+            .filter_map(|v| {
+                let n = run.count(v);
+                let word = match v {
+                    Verdict::Differs => "differ",
+                    Verdict::Error if n != 1 => "errors",
+                    _ => v.label(),
+                };
+                (n > 0 || matches!(v, Verdict::Pass | Verdict::Fail)).then(|| format!("{n} {word}"))
+            })
+            .collect();
+            println!(
+                "\n{}: {} probes: {}",
+                run.endpoint_name,
+                run.results.len(),
+                counts.join(", ")
+            );
+        }
+    }
+    Ok(probes::report::exit_code(std::slice::from_ref(&run)))
 }

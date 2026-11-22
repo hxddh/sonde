@@ -2,7 +2,7 @@
 
 | Artifact | Built by | How |
 |---|---|---|
-| `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release`, then `cargo build --release -p sonde-cli --features tui`: CLI and terminal UI in one binary, bundle and web viewer embedded. Dynamically linked: needs glibc 2.35 or newer. There is no static aarch64 build: `install.sh` refuses aarch64 on musl or an older glibc, saying so. |
+| `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `cargo build --release -p sonde-cli`: the CLI, the web viewer `sonde share` writes embedded. Dynamically linked: needs glibc 2.35 or newer. There is no static aarch64 build: `install.sh` refuses aarch64 on musl or an older glibc, saying so. |
 | `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same, statically linked: runs on Alpine, distroless, old distributions (checked in `alpine`). `install.sh` takes it on musl systems, with `SONDE_STATIC=1`, or when the glibc build cannot start (glibc older than 2.35). |
 | `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 26 (arm64) and macOS 26 Intel | The same. |
 | `sonde-windows-x86_64.zip` | `build.yml` on Windows (`x86_64-pc-windows-msvc`) | The same, `sonde.exe` (signed) in a `.zip`. |
@@ -39,7 +39,7 @@ Ready for when the keys exist. `ci.yml` passes `build.yml` these repository secr
 A step whose secrets are absent is skipped and says so: a notice, or a warning on `main`, whose build a release
 publishes. Each release's notes say what it skipped.
 
-## The terminal binary has no GUI dependency
+## The CLI has no GUI dependency
 
 ```text
 $ ldd target/release/sonde
@@ -50,7 +50,7 @@ $ ldd target/release/sonde
 	/lib64/ld-linux-x86-64.so.2
 ```
 
-No GTK, GLib, Cairo, Pango, WebKit, X11 or Wayland (the terminal backend draws with ratatui). CI checks with `ldd` and
+No GTK, GLib, Cairo, Pango, WebKit, X11 or Wayland. CI checks with `ldd` and
 runs `sonde --version` in `debian:bookworm-slim`.
 
 ## CI
@@ -79,13 +79,13 @@ the viewer's web runtime is kept by that commit and Rust's version. `fuzz.yml` r
    build, test and tour — and publishes that run's files (`scripts/release-wait.sh`). The release has the changelog
    section (`latest.json` carries its Chinese part as `notes.zh.md`), what it skipped for want of secrets (signing, notarization, Windows' Authenticode, the signed package),
    `SHA256SUMS` and a `.sha256` per file; each file is attested.
-3. `action-tag.yml` then moves the major tag (`v28`) to the release, so `uses: hxddh/sonde@v28` installs it (a
+3. `action-tag.yml` then moves the major tag (`v29`) to the release, so `uses: hxddh/sonde@v29` installs it (a
    pre-release does not move it; to repair one: Actions › Action tag › Run workflow with `x.y.z`), and
    `action-live.yml` runs the Action against it.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`28.0.0`; `28`: the newest 28.x; `28.0`: the newest 28.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`29.0.0`; `29`: the newest 29.x; `29.0`: the newest 29.0.x), `SONDE_STATIC=1`; the static build, too, when the glibc one cannot start. Installs nothing that does not start (`sonde --version`). Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job, [the tour](../../CONTRIBUTING.md#the-tour-and-its-pictures). The screens of measured figures show committed runs (`app/tests/fixtures/runs`). |
 
 ## Signed packages of the app's code

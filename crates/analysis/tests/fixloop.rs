@@ -2,7 +2,8 @@
 //! 1 and 2 the same program twice, 3 without its HEAD before each GET, 4
 //! also without small files uploaded in parts, 5 both undone. A finding
 //! keeps its identity across runs; fixed is gone at any threshold, less is
-//! under it; what a fix saved is measured against what was predicted.
+//! under it; what a fix saved is the run's wall time and cost, against what
+//! was predicted and the program's own noise.
 
 use std::path::{Path, PathBuf};
 
@@ -79,9 +80,17 @@ fn a_fixed_finding_says_what_it_saved_against_what_was_predicted() {
     assert!(head.identity.starts_with("obs.headget"));
     assert_eq!(head.predicted.requests, 20);
     assert_eq!(head.measured.map(|m| m.requests), Some(20));
+    // what it saved is the run's wall time, not its requests
+    let fell = c.wall_ms.0 - c.wall_ms.1;
+    assert_eq!(head.measured.unwrap().ms, fell);
+    let way = if fell >= 0.0 { "less" } else { "more" };
     assert_eq!(
         head.saved_text.as_deref(),
-        Some("saved 20 requests (predicted 20)")
+        Some(format!("{} {way}", sonde_fmt::duration(fell.abs())).as_str())
+    );
+    assert!(
+        !head.within_noise,
+        "two runs compared by hand know no noise"
     );
     assert_eq!(c.resolved.len(), 1);
     assert_eq!(state_of(&c.findings, "obs.small"), State::Open);
@@ -104,9 +113,9 @@ fn a_fixed_finding_says_what_it_saved_against_what_was_predicted() {
 }
 
 /// The program's kept findings over the five runs, each taken in as
-/// `sonde run` does: open, fixed with its saving, back when undone.
+/// `sonde run` does: open, fixed with its saving, new again when undone.
 #[test]
-fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
+fn a_programs_findings_are_kept_open_fixed_and_new_again_over_its_runs() {
     let dir = tempfile::tempdir().unwrap();
     for name in RUNS {
         std::fs::copy(fixture(name), dir.path().join(name)).unwrap();
@@ -135,12 +144,13 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     assert_eq!(head.measured.map(|m| m.requests), Some(20));
     since(RUNS[3]);
     let undone = since(RUNS[4]);
-    assert_eq!(state_of(&undone.findings, "obs.headget"), State::Back);
-    assert_eq!(state_of(&undone.findings, "obs.small"), State::Back);
+    // none of it in the run before, at any threshold: its count rose from 0
+    assert_eq!(state_of(&undone.findings, "obs.headget"), State::New);
+    assert_eq!(state_of(&undone.findings, "obs.small"), State::New);
     let kept = fixloop::read(dir.path());
     assert_eq!(
         kept["etl"].findings["obs.headget|etl-bucket/run/in/"].state,
-        State::Back
+        State::Open
     );
     assert_eq!(
         kept["etl"].findings["obs.listed|etl-bucket/run/in/"].state,
@@ -206,10 +216,8 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
         "b/hot was read 12 times (100% of all requests)"
     );
     assert_eq!(hot.measured.map(|m| m.requests), Some(9));
-    assert_eq!(
-        hot.saved_text.as_deref(),
-        Some("saved 9 requests (predicted 11)")
-    );
+    // the run took 90 ms less: said as time, with no prediction of time
+    assert_eq!(hot.saved_text.as_deref(), Some("90 ms less"));
     // less is not resolved
     assert!(c.resolved.is_empty());
 
@@ -396,9 +404,9 @@ fn a_run_that_failed_is_not_compared_and_changes_nothing_kept() {
 }
 
 /// `show` of an older run says what it was against the run before it, not
-/// what later runs made of its findings.
+/// what later runs made of its findings; a fixed one that returns is new.
 #[test]
-fn back_is_judged_by_the_runs_compared_not_by_later_ones() {
+fn new_is_judged_by_the_runs_compared_not_by_later_ones() {
     let dir = tempfile::tempdir().unwrap();
     let good = || hot(1);
     ran(dir.path(), 1, &good(), Some(0));
@@ -411,9 +419,9 @@ fn back_is_judged_by_the_runs_compared_not_by_later_ones() {
     assert_eq!(state_of(&again.findings, "obs.hot"), State::New);
     let ch = again.change.unwrap();
     assert_eq!(ch.appeared.len(), 1);
-    // and back once it was fixed before
+    // and new again once it was fixed before: its count rose from 0
     let back = ran(dir.path(), 4, &hot(12), Some(0));
-    assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
+    assert_eq!(state_of(&back.findings, "obs.hot"), State::New);
 }
 
 /// 20.0 credited `--limit 30` then `--limit 5` as a fix that saved 25
@@ -567,9 +575,9 @@ fn what_a_fix_saved_counts_keys_that_hold_a_runs_id_as_the_same() {
     assert_eq!(hot.measured.map(|m| m.requests), Some(4));
 }
 
-/// Less is kept: over its threshold again it is back, not new.
+/// Less is kept: over its threshold again it is more, by its counts.
 #[test]
-fn less_is_kept_and_over_its_threshold_again_is_back() {
+fn less_is_kept_and_over_its_threshold_again_is_more() {
     let dir = tempfile::tempdir().unwrap();
     ran(dir.path(), 1, &hot(12), Some(0));
     let less = ran(dir.path(), 2, &hot(3), Some(0));
@@ -577,8 +585,8 @@ fn less_is_kept_and_over_its_threshold_again_is_back() {
     let kept = |dir: &Path| fixloop::read(dir)["job"].findings["obs.hot|b/hot"].state;
     assert_eq!(kept(dir.path()), State::Less);
     let over = ran(dir.path(), 3, &hot(12), Some(0));
-    assert_eq!(state_of(&over.findings, "obs.hot"), State::Back);
-    assert_eq!(kept(dir.path()), State::Back);
+    assert_eq!(state_of(&over.findings, "obs.hot"), State::More);
+    assert_eq!(kept(dir.path()), State::Open);
 }
 
 /// `n` requests one after another, each `ms` long.
@@ -593,7 +601,7 @@ fn chain(n: u64, ms: i64) -> Vec<Record> {
 }
 
 /// A finding of time alone is judged by its requests: timing that drops it
-/// under its threshold leaves it open, and what it saved is its own waiting.
+/// under its threshold leaves it open, and what it saved is the run's time.
 #[test]
 fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
     let serial = |c: &[fixloop::FindingChange]| {
@@ -620,8 +628,7 @@ fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
     let s = serial(&c.findings);
     assert_eq!(s.state, State::Less);
     let ms = s.measured.unwrap().ms;
-    assert!((ms - 130.0).abs() < 1.0, "{ms}");
-    assert!(ms < a.profile.waiting_ms - b.profile.waiting_ms);
+    assert_eq!(ms, a.profile.wall_ms - b.profile.wall_ms);
 }
 
 /// A run reading keys laid out as tables and jobs lay them out, each named
@@ -900,28 +907,23 @@ fn findings_kept_under_older_rules_are_made_again() {
     assert_eq!(job.rules, sonde_analysis::profile::IDENTITY_RULES);
     let ids: Vec<&String> = job.findings.keys().collect();
     assert_eq!(ids, ["obs.hot|b/day={v}/part-{n}"]);
-    // back, as it was fixed before: not new
-    let mut c = vec![fixloop::FindingChange {
-        identity: "obs.hot|b/day={v}/part-{n}".into(),
-        state: State::New,
-        level: "info",
-        text: String::new(),
-        phrases: Vec::new(),
-        was: None,
-        counts: None,
-        predicted: Default::default(),
-        measured: None,
-        saved: None,
-        saved_text: None,
-    }];
-    job.mark_back(&mut c, "2030-01-01T00:00:00+00:00");
-    assert_eq!(c[0].state, State::Back);
+    assert_eq!(
+        job.findings["obs.hot|b/day={v}/part-{n}"].state,
+        State::Fixed
+    );
+    // 28.0's `back` reads as open
+    let back: fixloop::Tracked = serde_json::from_value(serde_json::json!({
+        "kind": "obs.hot", "text": "a", "state": "back", "since": "run-01.sonde",
+        "predicted": {"requests": 11, "ms": 0.0}
+    }))
+    .unwrap();
+    assert_eq!(back.state, State::Open);
 }
 
 /// 24.0 said nothing of a finding that went under its threshold and then
 /// was gone, kept it less, and called its return new.
 #[test]
-fn a_finding_under_its_threshold_and_then_gone_is_fixed_and_its_return_back() {
+fn a_finding_under_its_threshold_and_then_gone_is_fixed_and_its_return_new() {
     let dir = tempfile::tempdir().unwrap();
     let first = ran(dir.path(), 1, &hot(30), Some(0));
     assert_eq!(state_of(&first.findings, "obs.hot"), State::New);
@@ -938,7 +940,7 @@ fn a_finding_under_its_threshold_and_then_gone_is_fixed_and_its_return_back() {
     let kept = &fixloop::read(dir.path())["job"];
     assert_eq!(kept.findings["obs.hot|b/hot"].state, State::Fixed);
     let back = ran(dir.path(), 4, &hot(30), Some(0));
-    assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
+    assert_eq!(state_of(&back.findings, "obs.hot"), State::New);
 }
 
 /// 24.0 called a run nothing reached a fix of every finding, and compared
@@ -963,13 +965,195 @@ fn a_run_nothing_reached_fixes_nothing_and_is_never_the_run_before() {
     );
     let (path, header) = job(dir.path(), 3);
     assert_eq!(
-        fixloop::previous_run(dir.path(), "job", header.created, &path)
-            .unwrap()
-            .file_name()
-            .unwrap(),
+        fixloop::previous_run(
+            dir.path(),
+            "job",
+            header.created,
+            &path,
+            header.command.as_deref()
+        )
+        .unwrap()
+        .file_name()
+        .unwrap(),
         "run-01.sonde"
     );
     let next = ran(dir.path(), 3, &hot(30), Some(0));
     assert!(next.previous.as_deref().unwrap().ends_with("run-01.sonde"));
+    assert_eq!(state_of(&next.findings, "obs.hot"), State::Open);
+}
+
+/// `n` reads of `b/hot`, `gap` ms apart: a run of `job` whose wall time is
+/// `gap` × (n − 1) + 5 ms.
+fn hot_every(n: u64, gap: i64) -> Vec<Record> {
+    (1..=n)
+        .map(|i| Record {
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * gap).unwrap(),
+            ..get(i, "hot")
+        })
+        .collect()
+}
+
+/// 28.0's eval: "fixed, saved 20 requests" while the run took 30% longer.
+/// What a fix saved is the run's wall time, said against the program's own
+/// noise: the spread of its earlier runs of the command; with fewer than
+/// two, no band is known and none is said.
+#[test]
+fn a_fix_is_judged_by_the_runs_time_against_its_own_noise() {
+    let dir = tempfile::tempdir().unwrap();
+    // two runs of 115 ms and 335 ms: the program varies by 220 ms
+    ran(dir.path(), 1, &hot_every(12, 30), Some(0));
+    let second = ran(dir.path(), 2, &hot_every(12, 10), Some(0));
+    assert_eq!(second.change.as_ref().unwrap().noise_ms, None);
+    let open = second
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(open.state, State::Open);
+    // fixed, 110 ms sooner: under the 220 ms it varies by
+    let fixed = ran(dir.path(), 3, &hot_every(1, 10), Some(0));
+    let c = fixed.change.as_ref().unwrap();
+    assert_eq!(c.noise_ms, Some(220.0));
+    let f = fixed
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(f.state, State::Fixed);
+    assert_eq!(f.measured.unwrap().ms, 110.0);
+    assert!(f.within_noise, "{f:#?}");
+    assert_eq!(f.saved_text.as_deref(), Some("within noise"));
+
+    // a program with one earlier run: no band, the time said as it moved
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot_every(12, 10), Some(0));
+    let fixed = ran(dir.path(), 2, &hot_every(1, 10), Some(0));
+    assert_eq!(fixed.change.as_ref().unwrap().noise_ms, None);
+    let f = &fixed.findings[0];
+    assert_eq!(f.state, State::Fixed);
+    assert!(!f.within_noise);
+    assert_eq!(f.saved_text.as_deref(), Some("110 ms less"));
+    // and a fix that made the run slower says so
+    ran(dir.path(), 3, &hot_every(12, 10), Some(0));
+    // the hot key read once, and another key half a second later
+    let mut slow = hot(1);
+    slow.push(Record {
+        time: DateTime::from_timestamp_millis(1_700_000_000_515).unwrap(),
+        ..get(2, "other")
+    });
+    let slower = ran(dir.path(), 4, &slow, Some(0));
+    let f = slower
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(f.state, State::Fixed, "{:#?}", slower.findings);
+    assert_eq!(f.saved_text.as_deref(), Some("395 ms more"));
+}
+
+/// 28.0's eval: 6 polls of `_READY` under the 1% a finding needs in a run of
+/// 1,000 requests, over it in a run of 30, read "back" with counts [6, 6]
+/// and were listed as appeared. Judged by its counts, as much is open.
+#[test]
+fn a_finding_under_its_threshold_before_is_judged_by_its_counts_not_back() {
+    let run = |others: u64| -> Vec<Record> {
+        let mut rs: Vec<Record> = (1..=6)
+            .map(|i| Record {
+                method: "HEAD".into(),
+                kind: "HeadObject".into(),
+                status: Some(404),
+                ..get(i, "out/_READY")
+            })
+            .collect();
+        rs.extend((7..7 + others).map(|i| get(i, &format!("in/{i}.json"))));
+        rs
+    };
+    let (big, small) = (run(1000), run(24));
+    let a = run_of(&big);
+    assert!(
+        !a.observations.iter().any(|o| o.kind == "obs.polled")
+            && a.traces.keys().any(|k| k.starts_with("obs.polled")),
+        "under its threshold in the large run: {:?}",
+        a.traces.keys()
+    );
+    let mut b = run_of(&small);
+    assert!(b.observations.iter().any(|o| o.kind == "obs.polled"));
+    b.measure(&small, &a);
+    let c = compare_runs(&a, &b);
+    let polled = c
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.polled"))
+        .unwrap();
+    assert_eq!((polled.state, polled.counts), (State::Open, Some([6, 6])));
+    assert!(c.appeared.is_empty(), "{:#?}", c.appeared);
+    // more of it, by its count: more, never back
+    let mut more = run(24);
+    more.extend((2000..2004).map(|i| Record {
+        method: "HEAD".into(),
+        kind: "HeadObject".into(),
+        status: Some(404),
+        ..get(i, "out/_READY")
+    }));
+    let mut b = run_of(&more);
+    b.measure(&more, &a);
+    let c = compare_runs(&a, &b);
+    let polled = c
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.polled"))
+        .unwrap();
+    assert_eq!((polled.state, polled.counts), (State::More, Some([6, 10])));
+}
+
+/// 28.0's eval: `sonde run --trial -- etl.py 40` of a program run as
+/// `etl.py` read "the command changed (— → 40)" and three less, and the
+/// next run was compared with it. A trial's clean run of another command
+/// is compared with none and is never the run before.
+#[test]
+fn a_trials_clean_run_of_another_command_is_not_the_programs_newest() {
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot(12), Some(0));
+    // the trial's clean run, another command, kept with its trials
+    let (path, mut header) = job(dir.path(), 2);
+    header.command = Some("python job.py 40".into());
+    let records = hot(3);
+    write_run(&path, &header, &records);
+    sonde_analysis::index::set(&path, sonde_analysis::index::Change::Exit(0));
+    // while it is tried (`sonde run --trial`), before its verdicts are kept
+    assert!(fixloop::tried_apart(&path, &header));
+    let scenario = sonde_proxy::fault::scenarios()[0].clone();
+    let t = sonde_analysis::trial::judge(&scenario, &records, 0, &records, 0);
+    sonde_analysis::trial::save(&path, &[t]).unwrap();
+    assert!(fixloop::tried_otherwise(
+        &path,
+        false,
+        header.command.as_deref(),
+        Some("python job.py")
+    ));
+    let kept = sonde_analysis::index::of(dir.path())
+        .folder
+        .findings
+        .clone();
+    let since = fixloop::since_last(
+        dir.path(),
+        &path,
+        &header,
+        &records,
+        run_of(&records),
+        &|_: &str| RequestPrices::default(),
+    );
+    assert!(since.is_none(), "{since:#?}");
+    assert_eq!(
+        sonde_analysis::index::of(dir.path())
+            .folder
+            .findings
+            .clone(),
+        kept
+    );
+    // the next run of the program is compared with its own run before
+    let next = ran(dir.path(), 3, &hot(12), Some(0));
+    assert!(next.previous.as_deref().unwrap().ends_with("run-01.sonde"));
+    assert!(next.change.as_ref().unwrap().command_changed.is_none());
     assert_eq!(state_of(&next.findings, "obs.hot"), State::Open);
 }

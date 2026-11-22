@@ -1,17 +1,19 @@
 // A program over its runs: the same command run again and again, each run's
 // requests, waiting, cost and warnings, its baseline, and this run held to it.
 
-import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
+import { effect, List, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
 import { bytes, costColumn, count, date, day, duration, factor, hm } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
-import { scenarioLabel } from "../trials";
+import { scenarioLabel, trialDone } from "../trials";
+import { running } from "../run";
+import { liveTrial, stopTrial, trialNow, trying } from "./trial";
 import { api } from "../native";
 import { copy, report, runsChanged, runsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, textual, SIZES, WIDTH, TEXT } from "./kit";
 import { cost, RunTrend } from "./plots";
 import { programOf, scrubCommand } from "./runview";
 
@@ -19,11 +21,6 @@ export { scenarioLabel };
 
 
 export const STANDING = { survived: "ok", degraded: "warn", broke: "fail", untested: "quiet", refused: "refused" } as const;
-
-/** The standings "Try again what broke" takes up: what did not survive, and what the policy refused (never judged). */
-export const AGAIN: Trial["standing"][] = ["broke", "degraded", "refused"];
-/** The verdicts to try again: the last of each scenario that did not survive. */
-export const toTryAgain = (trials: Trial[] | undefined): Trial[] => (trials ?? []).filter((x) => AGAIN.includes(x.standing));
 
 /** When a verdict was given: its time of day where that is today, else its day and time. */
 const moment = (at: string) => {
@@ -59,7 +56,7 @@ export interface VerdictRow {
 /** What to change for a verdict, in the reader's language (a sentence of its own: its first letter raised);
  * none for one that survived or gives no advice. */
 export function adviceOf(x: Trial | null): string | null {
-  const a = !x || x.standing === "survived" ? null : x.advice;
+  const a = !x || x.standing === "survived" ? null : x.finding?.advice;
   const said = a ? say([{ key: a.key, args: a.args ?? {} }], "") : "";
   return said ? said.charAt(0).toUpperCase() + said.slice(1) : null;
 }
@@ -106,14 +103,10 @@ export function trialText(x: Trial): string {
 /** A verdict's scenario as it was asked for: its id, and how hard it pressed when that was more than once (`slowdown:3`, what `sonde run --fault` takes). */
 export const trialAsked = (x: Trial): string => (x.times && x.times > 1 ? `${x.scenario}:${x.times}` : x.scenario);
 
-/** Why a trial is not "survived", a sentence each, in the reader's language:
- * Rust's phrases, its English where a reason has no phrase.
+/** Why a trial is not "survived", a sentence each, in the reader's language.
  * The one place each of these is said: [`trialText`] is the figures only. */
 export function trialReasons(x: Trial): string[] {
-  return x.reasons.map((en, i) => {
-    const said = x.reasonsText?.[i];
-    return said?.length ? say(said.map((p) => ({ key: p.key, args: p.args ?? {} })), en) : en;
-  });
+  return (x.finding?.why ?? []).map((said) => say(said.map((p) => ({ key: p.key, args: p.args ?? {} })), "")).filter(Boolean);
 }
 
 /** A verdict in a line: the scenario and its id, why it is not "survived" (or what it found) and how it stood
@@ -129,7 +122,7 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
   const gone = () => !!x() && !x()!.run;
   // where it turned: "at PutObject b/state (etl.py:12)", the program's line when the run named its callers
   const where = () => {
-    const w = x()?.standing === "survived" ? null : x()?.where;
+    const w = x()?.standing === "survived" ? null : x()?.finding?.where;
     return w ? t("trial.at", { what: `${w.kind} ${w.key}${w.caller ? ` (${w.caller})` : ""}` }) : "";
   };
   return (
@@ -194,12 +187,48 @@ export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID
   );
 }
 
-/** The run under faults, on the Runs pane: its verdicts grouped by what to change; a press opens a trial's own
- * run (a row whose run is gone only says what it found). */
-function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
-  const rows = (): VerdictRow[] => props.trials.map((x) => ({ scenario: x.scenario, trial: x, state: "done", onOpen: props.onOpen && x.run ? () => props.onOpen!(x.run!) : undefined }));
+/** The run under faults, on its History: its verdicts grouped by what to change; a press opens a trial's own
+ * run (a row whose run is gone only says what it found). A trial under way fills them as it goes, with how far
+ * it is and its Stop; else "Run trials again" asks the plan again. */
+function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; path: string; onTrials?: () => void }) {
+  // this run's trial while it runs, and once it ended until the kept verdicts are read
+  const live = () => {
+    const l = liveTrial();
+    return l && l.path === props.path ? l : null;
+  };
+  const rows = (): VerdictRow[] => {
+    const l = live();
+    if (l) return l.steps.map((s) => ({ scenario: s.scenario, trial: s.trial ?? null, state: s.state }));
+    return props.trials.map((x) => ({ scenario: x.scenario, trial: x, state: "done", onOpen: props.onOpen && x.run ? () => props.onOpen!(x.run!) : undefined }));
+  };
+  const going = () => !!live() && live()!.ended === null;
+  const progress = () => {
+    const l = live()!;
+    return t("trial.progress", { n: Math.min(trialDone(l.steps) + 1, l.steps.length), of: l.steps.length });
+  };
   return (
-    <Section testID="history-trials" title={t("trial.title")} action={props.action} plain>
+    <Section
+      testID="history-trials"
+      title={t("trial.title")}
+      plain
+      action={
+        <If
+          when={going()}
+          else={
+            <If when={props.onTrials}>
+              <Button small variant="outline" icon="flask-conical" label={t("trial.runAgain")} disabled={trying() || !!running()} onPress={() => props.onTrials?.()} testID="trial-again" />
+            </If>
+          }
+        >
+          <View class="flex-row items-center gap-2">
+            <Text testID="trial-progress" class={`tabular-nums ${TEXT.note}`}>{progress()}</Text>
+            <Text testID="trial-elapsed" class={`tabular-nums ${TEXT.note}`}>{duration(Math.max(0, trialNow() - live()!.started), "counter")}</Text>
+            {/* its own word: Stop ends the program, and the trial keeps nothing */}
+            <Button small variant="destructive" icon="square" label={t("trial.stop")} onPress={stopTrial} testID="trial-cancel" />
+          </View>
+        </If>
+      }
+    >
       <TrialVerdicts rows={rows()} id="trial" historyID="trial-history" />
     </Section>
   );
@@ -217,7 +246,7 @@ function Verdicts(props: { h: ProgramHistory }) {
     <>
       <Notice testID="history-check" tone={c().passed ? "info" : "warn"} icon={c().passed ? "circle-check" : undefined} title={c().passed ? t("history.passed") : t("history.failed")} text={lines()}>
         {/* what CI would comment on the pull request, read here first */}
-        <If when={props.h.markdown && !terminal()}>
+        <If when={props.h.markdown}>
           <Button small variant="outline" icon="scroll-text" label={t("history.commentOpen")} onPress={() => open.set(true)} testID="history-comment" />
         </If>
       </Notice>
@@ -263,7 +292,7 @@ function SinceRow(props: { h: ProgramHistory }) {
     <View testID="history-since" class="flex-row items-center gap-2">
       <Icon name="git-compare-arrows" tint="warn" />
       <Text class={`min-w-0 flex-1 tabular-nums ${TEXT.small}`}>{text()}</Text>
-      <If when={!terminal() && canDiff()}>
+      <If when={canDiff()}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("history.codeChangeOpen")} onPress={() => open.set(true)} testID="history-code-change" />
       </If>
       <If when={open()}>
@@ -328,7 +357,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; onOpen?: (path: string) => void; /** "Run trials again": the trial's plan */ onTrials?: () => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -343,6 +372,11 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
     () => [props.path, runsTick()] as const,
     ([p]) => api.runs.history(p),
   );
+  // a trial of this run that ended: its verdicts as they came give way to the kept ones once those are read
+  effect(() => {
+    const l = liveTrial();
+    if (l && l.ended !== null && l.path === props.path && !h.loading()) untracked(() => liveTrial.set(null));
+  });
   const isBase = () => h()?.baseline === props.path;
   const toggle = () => {
     try {
@@ -385,39 +419,37 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
     <Await loading={h.loading() && !h()} error={h.error()} retry={() => h.refetch()}>
       <If when={h()} else={<Empty icon="list-clock" text={t("history.none")} />}>
         {(x) => (
-          <Scroll testID="history-pane" class="min-h-0 flex-1" onScroll={(e) => props.onScrolled?.(e.offset.y > 8)} contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
+          <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass="gap-4 pb-4 pr-2">
             {/* the command is the run's header, over this pane: not said again; the dashed line said where one is drawn */}
             <PageHeader title={t("history.title", { n: x().runs.length })} subtitle={!textual() && x().baseline && x().runs.length > 1 && shown(x()).runs.length > 0 ? t("history.hint") : undefined}>
-              <If when={!terminal()}>
-                <DatePicker
-                  range
-                  value={range()}
-                  onChange={({ value }) => range.set(Array.isArray(value) ? value : null)}
-                  cleanable
-                  presets={[
-                    { label: t("history.last7"), value: [daysAgo(7), daysAgo(0)] },
-                    { label: t("history.last30"), value: [daysAgo(30), daysAgo(0)] },
-                  ]}
-                  accessibilityLabel={t("history.range")}
-                  align="end"
-                  offset={4}
-                  popupClass={`${POPUP} p-2 ${POPUP_MOTION.class}`}
-                  popupStartingClass={POPUP_MOTION.starting}
-                  popupEndingClass={POPUP_MOTION.ending}
-                  contentClass="flex-row gap-2"
-                  presetsClass="gap-1"
-                  presetClass={`rounded-(--radius-sm) px-2 py-1 ${TEXT.small} hover:bg-muted`}
-                  itemClass={`size-8 items-center justify-center rounded-(--radius-sm) ${TEXT.small} hover:bg-muted selected:bg-primary selected:text-primary-foreground`}
-                  trigger={
-                    // a small outline button, as the baseline's beside it
-                    <View testID="history-range" class={CONTROL.trigger}>
-                      <Icon name="calendar-clock" />
-                      <Text class={TEXT.small}>{rangeText()}</Text>
-                      <Icon name="chevron-down" size={ICON.small} />
-                    </View>
-                  }
-                />
-              </If>
+              <DatePicker
+                range
+                value={range()}
+                onChange={({ value }) => range.set(Array.isArray(value) ? value : null)}
+                cleanable
+                presets={[
+                  { label: t("history.last7"), value: [daysAgo(7), daysAgo(0)] },
+                  { label: t("history.last30"), value: [daysAgo(30), daysAgo(0)] },
+                ]}
+                accessibilityLabel={t("history.range")}
+                align="end"
+                offset={4}
+                popupClass={`${POPUP} p-2 ${POPUP_MOTION.class}`}
+                popupStartingClass={POPUP_MOTION.starting}
+                popupEndingClass={POPUP_MOTION.ending}
+                contentClass="flex-row gap-2"
+                presetsClass="gap-1"
+                presetClass={`rounded-(--radius-sm) px-2 py-1 ${TEXT.small} hover:bg-muted`}
+                itemClass={`size-8 items-center justify-center rounded-(--radius-sm) ${TEXT.small} hover:bg-muted selected:bg-primary selected:text-primary-foreground`}
+                trigger={
+                  // a small outline button, as the baseline's beside it
+                  <View testID="history-range" class={CONTROL.trigger}>
+                    <Icon name="calendar-clock" />
+                    <Text class={TEXT.small}>{rangeText()}</Text>
+                    <Icon name="chevron-down" size={ICON.small} />
+                  </View>
+                }
+              />
               {/* one button, its words the action: set, or (already the baseline) clear */}
               {/* a run written elsewhere (`-o`) cannot be one: the button stays, and says why */}
               <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : props.elsewhere ? t("history.elsewhere") : undefined} disabled={props.elsewhere && !isBase()} onPress={toggle} testID="history-baseline" />
@@ -425,17 +457,8 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
             <If when={x().check}>
               <Verdicts h={x()} />
             </If>
-            <If when={(x().trials?.length ?? 0) > 0}>
-              <Trials
-                trials={x().trials!}
-                onOpen={props.onOpen}
-                action={
-                  // after a change to the program: only what did not survive, on a fresh run
-                  <If when={props.onTryAgain && !terminal() && toTryAgain(x().trials).length > 0}>
-                    <Button small variant="outline" icon="rotate-ccw" label={t("trial.again")} onPress={() => props.onTryAgain?.(toTryAgain(x().trials))} testID="trial-again" />
-                  </If>
-                }
-              />
+            <If when={(x().trials?.length ?? 0) > 0 || liveTrial()?.path === props.path}>
+              <Trials trials={x().trials ?? []} path={props.path} onOpen={props.onOpen} onTrials={props.onTrials} />
             </If>
             <If when={x().since}>
               <SinceRow h={x()} />

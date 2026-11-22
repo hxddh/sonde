@@ -101,7 +101,7 @@ fn completions_and_man_pages_are_written_and_never_listed() {
         assert_eq!(o.status.code(), Some(0), "{shell}");
         let text = stdout(&o);
         assert!(text.contains(says), "{shell}: {text}");
-        assert!(text.contains("compare"), "{shell}");
+        assert!(text.contains("replay"), "{shell}");
         // neither generator is a command they complete
         for word in [
             "'completions'",
@@ -123,7 +123,7 @@ fn completions_and_man_pages_are_written_and_never_listed() {
     let page = std::fs::read_to_string(man.join("sonde.1")).unwrap();
     assert!(page.starts_with(".ie \\n(.g .ds Aq"), "{page}");
     assert!(page.contains("sonde\\-run(1)"), "{page}");
-    assert!(man.join("sonde-run.1").exists() && man.join("sonde-probe-list.1").exists());
+    assert!(man.join("sonde-run.1").exists() && man.join("sonde-endpoints-test.1").exists());
     assert!(!man.join("sonde-man.1").exists() && !man.join("sonde-completions.1").exists());
     // neither is a command the help lists
     let help = stdout(&sonde(t.path(), &["--help"]));
@@ -191,7 +191,7 @@ fn the_demo_records_a_run_that_every_command_reads() {
     }
     let last = out.lines().last().unwrap();
     assert!(
-        last.starts_with("  ✓ fixed") && last.ends_with("saved 3 requests (predicted 3)"),
+        last.starts_with("  ✓ fixed") && last.ends_with(" ms less"),
         "{out}"
     );
     // the job it names is there, the line it names holds the HEAD
@@ -205,7 +205,7 @@ fn the_demo_records_a_run_that_every_command_reads() {
     let json = sonde(t.path(), &["show", "--requests", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(v["requests"].as_array().unwrap().len(), 9);
-    assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
+    assert!(v["diagnoses"].as_array().unwrap().is_empty(), "{v}");
 
     let table = stdout(&sonde(t.path(), &["runs"]));
     assert!(
@@ -228,10 +228,13 @@ fn the_demo_records_a_run_that_every_command_reads() {
     // the same run against itself: no change
     let path = t.path().join("data/runs").join(&name);
     let p = path.to_str().unwrap();
-    let same = stdout(&sonde(t.path(), &["compare", p, p]));
-    assert!(same.starts_with("no change"), "{same}");
-    assert!(same.contains("requests   9 (no change)"), "{same}");
-    assert!(!same.contains("0%"), "{same}");
+    let same = stdout(&sonde(t.path(), &["show", p, "--since", p]));
+    let block = &same[same.find("\nsince ").unwrap_or_else(|| panic!("{same}"))..];
+    assert!(
+        block.contains("requests 9 (no change) · waiting"),
+        "{block}"
+    );
+    assert!(!block.contains("0%"), "{block}");
 }
 
 #[test]
@@ -256,8 +259,18 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
 fn a_probe_run_named_on_the_command_line_is_not_held_to_read_only_mode() {
     let t = tempfile::tempdir().unwrap();
     // read-only is the default; the run starts (and fails here on the connection, not refused)
-    let args = ["--url", "http://127.0.0.1:9", "probe", "-b", "scratch"];
-    assert_ne!(sonde(t.path(), &args).status.code(), Some(77));
+    let args = [
+        "--url",
+        "http://127.0.0.1:9",
+        "endpoints",
+        "test",
+        "adhoc",
+        "--probes",
+        "scratch",
+    ];
+    let o = sonde(t.path(), &args);
+    assert_ne!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
 }
 
 #[test]
@@ -373,11 +386,18 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     // the summary's head line names it too
     let summary = stdout(&sonde(t.path(), &["show"]));
     assert!(summary.contains(" from boto3 "), "{summary}");
-    // a dimension it does not know, and a flag it would ignore
-    assert_eq!(
-        sonde(t.path(), &["show", "--by", "bucket"]).status.code(),
-        Some(64)
-    );
+    // a dimension it does not know (nor the SDK, which the head line
+    // names, nor the status, which the error lines count), and a flag it
+    // would ignore
+    for by in ["bucket", "sdk", "status"] {
+        let o = sonde(t.path(), &["show", "--by", by]);
+        assert_eq!(o.status.code(), Some(64), "{by}");
+        assert!(
+            stderr(&o).contains("not one of kind, prefix, size, caller, key"),
+            "{}",
+            stderr(&o)
+        );
+    }
     assert_eq!(
         sonde(t.path(), &["show", "--by", "size", "--requests"])
             .status
@@ -425,21 +445,16 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
         .code(),
         Some(64)
     );
-    // a link in a comment is a comment's
-    let o = sonde(
-        t.path(),
-        &[
-            "check",
-            "--max-requests",
-            "1000",
-            "--report-url",
-            "https://x",
-        ],
+    // the link a comment ends with is CI's: SONDE_REPORT_URL, which the
+    // Action sets (no flag carries it)
+    assert_eq!(
+        sonde(t.path(), &["check", "--report-url", "https://x"])
+            .status
+            .code(),
+        Some(64)
     );
-    assert_eq!(o.status.code(), Some(64));
-    let o = sonde(
-        t.path(),
-        &[
+    let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args([
             "check",
             &names[1],
             "--baseline",
@@ -450,10 +465,13 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
             "1000",
             "-f",
             "markdown",
-            "--report-url",
-            "https://x.test/r",
-        ],
-    );
+        ])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .env("SONDE_REPORT_URL", "https://x.test/r")
+        .no_aws(t.path())
+        .output()
+        .unwrap();
     let md = stdout(&o);
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
@@ -786,13 +804,12 @@ fn every_command_writes_text_and_json_and_refuses_another_format() {
     for args in [
         &["bucket", "size", "-b", "b", "-f", "markdown"][..],
         &["bucket", "uploads", "-b", "b", "-f", "csv"],
-        &["probe", "list", "-f", "csv"],
-        &["probe", "-b", "scratch", "-f", "markdown"],
+        &["endpoints", "test", "--probes", "scratch", "-f", "markdown"],
         &["layout", "-b", "b", "-f", "csv"],
         &["endpoints", "list", "-f", "table"],
         &["runs", "-f", "github"],
         &["show", "-f", "markdown"],
-        &["compare", "-f", "csv"],
+        &["replay", "x.sonde", "-f", "csv"],
         &["check", "--max-requests", "1", "-f", "csv"],
     ] {
         let o = sonde(t.path(), args);
@@ -816,7 +833,7 @@ fn every_command_writes_text_and_json_and_refuses_another_format() {
         (&["runs", "prune", "--help"][..], None),
         (&["endpoints", "add", "--help"], None),
         (
-            &["probe", "list", "--help"],
+            &["endpoints", "test", "--help"],
             Some("written: text or json ["),
         ),
         (&["runs", "--help"], Some("written: text or json [")),
@@ -879,14 +896,84 @@ fn a_flag_that_would_do_nothing_is_a_usage_error() {
         &["share", "--html"],
         &["share", "--otlp"],
         &["share", "--serve"],
-        &["proxy", "--rotate", "5"],
         &["import", "s3://b/p", "--follow"],
         &["runs", "prune", "--keep", "1", "--confirm", "1"],
+        // nor what 29.0 took out: sonde's own pace, a request printed as it
+        // happens (`show --requests` lists them), a cached scan, the link a
+        // comment ends with (SONDE_REPORT_URL)
+        &["--rate", "5", "runs"],
+        &["--concurrency", "2", "runs"],
+        &["run", "--demo", "--live"],
+        &["bucket", "size", "-b", "b", "--cached"],
+        &["bucket", "size", "-b", "b", "--no-multipart"],
+        &["check", "--max-requests", "1", "--report-url", "https://x"],
     ] {
         let o = sonde(t.path(), args);
         assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
-        assert!(stderr(&o).contains("unexpected argument"), "{args:?}");
+        assert!(
+            stderr(&o).contains("unexpected argument") || stderr(&o).contains("unknown option"),
+            "{args:?}: {}",
+            stderr(&o)
+        );
     }
+}
+
+/// 29.0 folded commands into others: `compare` into `show --since` and
+/// `replay`, `proxy` into `run --listen`, `probe` into `endpoints test
+/// --probes`, `endpoints import` into `endpoints add --profile`.
+#[test]
+fn a_command_folded_into_another_is_no_command() {
+    let t = tempfile::tempdir().unwrap();
+    for args in [
+        &["compare"][..],
+        &["proxy"],
+        &["probe", "list"],
+        &["endpoints", "import"],
+    ] {
+        let o = sonde(t.path(), args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains("unrecognized subcommand"),
+            "{args:?}: {}",
+            stderr(&o)
+        );
+    }
+}
+
+/// `run --listen` serves until stopped, with no command; a command, a
+/// trial or the demo store with it is a mistake, as is an address other
+/// machines reach without --allow-remote.
+#[test]
+fn run_listen_takes_no_command_and_stays_on_loopback() {
+    let t = tempfile::tempdir().unwrap();
+    for args in [
+        &["run", "--listen", "--", "true"][..],
+        &["run", "--listen", "--trial"],
+        &["run", "--listen", "--demo"],
+        &["run", "--allow-remote", "--", "true"],
+        &[
+            "run",
+            "--listen",
+            "0.0.0.0:9000",
+            "--url",
+            "http://127.0.0.1:9",
+        ],
+    ] {
+        let o = sonde(t.path(), args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+    }
+    let o = sonde(
+        t.path(),
+        &[
+            "run",
+            "--listen",
+            "0.0.0.0:9000",
+            "--url",
+            "http://127.0.0.1:9",
+        ],
+    );
+    assert!(stderr(&o).contains("--allow-remote"), "{}", stderr(&o));
+    assert!(runs_in(t.path()) == 0, "nothing recorded");
 }
 
 #[cfg(unix)]
@@ -940,41 +1027,177 @@ fn demo_run(dirs: &Path) -> String {
     tour_runs(dirs)[0].clone()
 }
 
-/// `show -f json` is the answer an agent reads: each finding's kind, its
-/// callers as file, line and function, the fix for the run's SDK alone, the
-/// command that records it again; a first run's findings are new.
+/// `show -f json` is the answer an agent reads, lean: each diagnosis
+/// carries what to change and where (its text, its callers as file, line and
+/// function, the fix for the run's SDK alone, what it saves), the command
+/// that records it again; no display phrases, no operation ids, times to a
+/// tenth of a millisecond, and no `since` for a program's first run.
 #[test]
-fn show_json_is_compact_and_names_what_to_change_and_where() {
+fn show_json_is_lean_and_each_diagnosis_names_what_to_change_and_where() {
     let t = tempfile::tempdir().unwrap();
     demo_run(t.path());
     // the tour's first run: the job before its fix
     let name = tour_runs(t.path())[1].clone();
     let shown = sonde(t.path(), &["show", &name, "-f", "json"]);
     assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
-    let j: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let text = stdout(&shown);
+    let j: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert!(j.get("operations").is_none(), "only with --all");
     assert_eq!(j["verify"], "sonde run --demo");
-    let f = &j["findings"][0];
-    assert_eq!(f["kind"], "obs.headget");
-    assert_eq!(f["callers"][0]["file"], "export.py");
-    assert!(f["callers"][0]["line"].as_u64().is_some(), "{f}");
-    assert_eq!(f["callers"][0]["function"], "read_reports");
-    assert_eq!(f["fixes"].as_array().unwrap().len(), 1, "{f}");
-    assert_eq!(f["fixes"][0]["sdk"], "python");
-    assert_eq!(
-        f["operationsTotal"],
-        f["operations"].as_array().unwrap().len()
+    let d = &j["diagnoses"][0];
+    assert_eq!(d["kind"], "obs.headget", "{d}");
+    assert!(
+        d["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("checked with HEAD")),
+        "{d}"
     );
-    assert_eq!(j["since"]["findings"][0]["state"], "new");
-    // --all: every SDK's fix and every operation
+    assert_eq!(d["at"][0]["file"], "export.py", "{d}");
+    assert!(d["at"][0]["line"].as_u64().is_some(), "{d}");
+    assert_eq!(d["at"][0]["function"], "read_reports", "{d}");
+    assert_eq!(d["fix"]["sdk"], "python", "{d}");
+    assert!(d["fix"]["code"].is_string(), "{d}");
+    assert!(
+        d["savesMs"].is_number() && d["savingText"].is_string(),
+        "{d}"
+    );
+    // no join to make: the findings, their places and display phrases are --all's
+    for gone in ["findings", "serial", "saving", "rest"] {
+        assert!(d.get(gone).is_none(), "{gone}: {d}");
+    }
+    assert!(j.get("findings").is_none(), "{text}");
+    for gone in [
+        "\"phrases\"",
+        "\"impact\"",
+        "\"level\"",
+        "\"kinds\"",
+        "\"sumMs\"",
+    ] {
+        assert!(!text.contains(gone), "{gone} in {text}");
+    }
+    // a program's first run: nothing to compare
+    assert!(j["since"].is_null(), "{}", j["since"]);
+    // a time to a tenth of a millisecond, a figure to six digits
+    fn walk(v: &serde_json::Value, key: &str, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| walk(x, k, out)),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, key, out)),
+            serde_json::Value::Number(n) if n.is_f64() => {
+                let shown = n.to_string();
+                let digits = shown.trim_start_matches(['-', '0', '.']).replace('.', "");
+                let digits = digits.split(['e', 'E']).next().unwrap_or("").len();
+                let tenth = shown.split_once('.').is_none_or(|(_, f)| f.len() <= 1);
+                let ms = key.ends_with("Ms") || key == "ms";
+                if (ms && !tenth) || (!ms && digits > 6) {
+                    out.push(format!("{key}: {shown}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut long = Vec::new();
+    walk(&j, "", &mut long);
+    assert!(long.is_empty(), "{long:?}");
+    // --all: the findings whole (every SDK's fix, every operation), and
+    // each diagnosis's by place
     let all: serde_json::Value =
         serde_json::from_slice(&sonde(t.path(), &["show", &name, "--all", "-f", "json"]).stdout)
             .unwrap();
     assert!(all["findings"][0]["fixes"].as_array().unwrap().len() > 1);
     assert_eq!(
+        all["findings"][0]["operationsTotal"],
+        all["findings"][0]["operations"].as_array().unwrap().len()
+    );
+    assert_eq!(all["diagnoses"][0]["findings"][0], 0);
+    assert_eq!(
         all["operations"].as_array().unwrap().len() as u64,
         all["operationsTotal"].as_u64().unwrap()
     );
+    // the fixed run against it: its finding fixed, what it saved beside
+    // what was predicted, said in one place (`since.findings`)
+    let fixed = tour_runs(t.path())[0].clone();
+    let j: serde_json::Value =
+        serde_json::from_slice(&sonde(t.path(), &["show", &fixed, "-f", "json"]).stdout).unwrap();
+    let f = &j["since"]["findings"][0];
+    assert_eq!(f["state"], "fixed", "{}", j["since"]);
+    assert!(
+        f["saved"]["ms"].is_number() && f["predicted"]["ms"].is_number(),
+        "{f}"
+    );
+    assert!(f.get("measured").is_none(), "{f}");
+    let change = &j["since"]["change"];
+    for gone in ["findings", "resolved", "appeared", "latency"] {
+        assert!(change.get(gone).is_none(), "{gone}: {change}");
+    }
+}
+
+/// A program run again says what changed, not its whole plan again: each
+/// finding fixed with what it saved, each still open on a line with its line
+/// of code, a new one in full; `sonde show` has the whole plan.
+#[test]
+fn a_run_again_says_only_what_changed() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    let tour = t.path().join("data/tour");
+    let run = |job: &str| {
+        std::fs::copy(tour.join(job), t.path().join("job.py")).unwrap();
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(["run", "--demo", "--name", "job", "--"])
+            .arg(env!("CARGO_BIN_EXE_sonde"))
+            .args(["demo-job", "job.py"])
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        stderr(&o)
+    };
+    let plan = ["    fix for boto3:", "kind ", "    saving: "];
+    // a program's first run: the whole plan
+    let first = run("export.py");
+    for said in plan {
+        assert!(first.contains(said), "no {said:?} in:\n{first}");
+    }
+    // again, unchanged: each finding still open, a line each with its code line
+    let again = run("export.py");
+    for not in plan {
+        assert!(!again.contains(not), "{not:?} in:\n{again}");
+    }
+    assert!(again.contains("since the run before"), "{again}");
+    assert!(again.contains("  · open   "), "{again}");
+    assert!(again.contains(" (at job.py:"), "{again}");
+    assert!(again.contains("(the whole plan: sonde show)"), "{again}");
+    assert!(again.contains("  time "), "{again}");
+    // fixed: what it saved, and nothing of the plan
+    let fixed = run("export-fixed.py");
+    assert!(fixed.contains("  ✓ fixed  "), "{fixed}");
+    for not in plan {
+        assert!(!fixed.contains(not), "{not:?} in:\n{fixed}");
+    }
+    // undone: new again, in full as the plan says it
+    let undone = run("export.py");
+    assert!(undone.contains("  ! new    "), "{undone}");
+    assert!(undone.contains("    fix for boto3:"), "{undone}");
+    assert!(!undone.contains("kind "), "{undone}");
+    assert!(
+        undone.split_whitespace().count() * 2 < first.split_whitespace().count() * 3,
+        "{undone}"
+    );
+    // show: the whole plan
+    let shown = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["show"])
+        .current_dir(t.path())
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .output()
+        .unwrap();
+    let shown = stdout(&shown);
+    for said in plan {
+        assert!(shown.contains(said), "no {said:?} in:\n{shown}");
+    }
 }
 
 /// The runs listed, newest first (`runs -f json`).
@@ -1015,10 +1238,10 @@ const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E5
 fn every_command_takes_a_run_by_its_name_and_says_where_it_looked() {
     let t = tempfile::tempdir().unwrap();
     let name = demo_run(t.path());
-    // compare by name, as show and check take one
-    let c = sonde(t.path(), &["compare", &name, &name]);
+    // since a run by name, as show and check take one
+    let c = sonde(t.path(), &["show", &name, "--since", &name]);
     assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
-    assert!(stdout(&c).contains("no change"), "{}", stdout(&c));
+    assert!(stdout(&c).contains("(no change)"), "{}", stdout(&c));
     // a replay opens it too (and stops at the confirmation: nothing is sent)
     let r = sonde(
         t.path(),
@@ -1026,9 +1249,9 @@ fn every_command_takes_a_run_by_its_name_and_says_where_it_looked() {
             "--url",
             "http://127.0.0.1:9",
             "--path-style",
-            "compare",
+            "replay",
             &name,
-            "--replay",
+            "-e",
             "adhoc",
         ],
     );
@@ -1042,11 +1265,11 @@ fn every_command_takes_a_run_by_its_name_and_says_where_it_looked() {
     );
     // a name that is no run is said, with where it was looked for
     for args in [
-        vec!["compare", "nosuch", name.as_str()],
+        vec!["show", name.as_str(), "--since", "nosuch"],
         vec![
-            "compare",
+            "replay",
             "nosuch",
-            "--replay",
+            "-e",
             "adhoc",
             "--url",
             "http://127.0.0.1:9",
@@ -1084,17 +1307,18 @@ fn two_imports_compare_without_contradicting_themselves() {
         assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     }
     let (a, b) = (a.to_str().unwrap(), b.to_str().unwrap());
-    let text = stdout(&sonde(t.path(), &["compare", a, b]));
-    assert!(text.contains("neither is a run of a program"), "{text}");
-    assert!(!text.contains("two different programs"), "{text}");
+    let text = stdout(&sonde(t.path(), &["show", b, "--since", a]));
+    assert!(text.contains("not two runs of one program"), "{text}");
     assert!(
-        text.contains("no change: the same requests, errors and cost\n"),
+        text.contains("requests 3 (no change) · waiting — (not known) · cost"),
         "{text}"
     );
-    assert!(text.contains("waiting    — (not known"), "{text}");
-    let doc: serde_json::Value =
-        serde_json::from_str(&stdout(&sonde(t.path(), &["compare", a, b, "-f", "json"]))).unwrap();
-    assert_eq!(doc["waitingKnown"], false, "{doc}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", b, "--since", a, "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(doc["since"]["change"]["waitingKnown"], false, "{doc}");
 }
 
 #[test]
@@ -1139,25 +1363,26 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
     // flags and commands of earlier versions are unknown, as any other
     for args in [
         vec!["--log-out", "x.har", "endpoints", "list"],
-        vec!["proxy", "--no-delete"],
-        vec!["proxy", "--read-only"],
-        vec!["proxy", "--allow-writes"],
+        vec!["run", "--no-delete", "--", "true"],
+        vec!["run", "--read-only", "--", "true"],
+        vec!["run", "--allow-writes", "--", "true"],
         vec!["share", "--json"],
         vec!["export"],
         vec!["demo"],
         vec!["watch"],
-        vec!["replay", "x.sonde"],
+        vec!["replay", "x.sonde", "--replay", "e"],
         vec!["diff", "a.sonde", "b.sonde"],
         vec!["du", "-b", "b"],
         vec!["mpu", "scan", "-b", "b"],
         vec!["bucket", "scan", "-b", "b"],
-        vec!["compare", "x.sonde", "--replay", "e", "--in-place"],
+        vec!["replay", "x.sonde", "-e", "e", "--in-place"],
     ] {
         let o = sonde(t.path(), &args);
         assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
         assert!(
             stderr(&o).contains("unexpected argument")
-                || stderr(&o).contains("unrecognized subcommand"),
+                || stderr(&o).contains("unrecognized subcommand")
+                || stderr(&o).contains("unknown option"),
             "{args:?}: {}",
             stderr(&o)
         );
@@ -1244,7 +1469,7 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
     for cmd in ["show", "runs", "check", "share"] {
         let h = help(&[cmd]);
         assert!(h.contains("--data-dir"), "{cmd}: {h}");
-        assert!(!h.contains("--url") && !h.contains("--rate"), "{cmd}: {h}");
+        assert!(!h.contains("--url"), "{cmd}: {h}");
     }
     // (still taken where it was always taken: it is hidden, not gone)
     assert_eq!(
@@ -1518,7 +1743,7 @@ fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
     assert!(stderr(&shown).contains("line 2: "), "{}", stderr(&shown));
     for args in [
         &["check", "bad", "--max-requests", "100"][..],
-        &["compare", "bad", "bad"],
+        &["show", "bad", "--since", "bad"],
     ] {
         assert_eq!(sonde(t.path(), args).status.code(), Some(65), "{args:?}");
     }
@@ -1541,7 +1766,7 @@ fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
 }
 
 #[test]
-fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
+fn show_since_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
     let t = tempfile::tempdir().unwrap();
     run_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
     let b = run_of(t.path(), "b.sonde", "python etl.py", "2026-11-01T11:00:00Z");
@@ -1554,9 +1779,10 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
         .unwrap();
     lines.remove(part);
     std::fs::write(&b, lines.join("\n") + "\n").unwrap();
-    let out = sonde(t.path(), &["compare", "a", "b"]);
+    let out = sonde(t.path(), &["show", "b", "--since", "a"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let text = stdout(&out);
+    let text = &text[text.find("\nsince a").unwrap_or_else(|| panic!("{text}"))..];
     assert!(text.contains("UploadPart"), "{text}");
     // ten kinds, one changed: the nine others are said, not dropped
     assert!(
@@ -1566,13 +1792,13 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
     // a kind's waiting is its share of the run's, as show's table says it
     let json: serde_json::Value = serde_json::from_str(&stdout(&sonde(
         t.path(),
-        &["compare", "a", "b", "-f", "json"],
+        &["show", "b", "--since", "a", "-f", "json"],
     )))
     .unwrap();
     let shown: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", "a", "-f", "json"]))).unwrap();
     let kinds = shown["waiting"]["byKind"].as_array().unwrap();
-    for g in json["groups"].as_array().unwrap() {
+    for g in json["since"]["change"]["groups"].as_array().unwrap() {
         let s = kinds
             .iter()
             .find(|k| k["kind"] == g["kind"] && k["missed"] == g["missed"])
@@ -1920,7 +2146,7 @@ fn spark_submit_is_given_s3as_endpoint_and_tls_its_certificate() {
 }
 
 #[test]
-fn the_help_lists_fourteen_commands_at_most() {
+fn the_help_lists_eleven_commands_at_most() {
     let t = tempfile::tempdir().unwrap();
     let help = stdout(&sonde(t.path(), &["--help"]));
     let listed: Vec<&str> = help
@@ -1929,14 +2155,14 @@ fn the_help_lists_fourteen_commands_at_most() {
         .filter_map(|l| l.split_whitespace().next())
         .filter(|n| *n != "help")
         .collect();
-    assert!(listed.len() <= 14, "{listed:?}");
+    assert!(listed.len() <= 11, "{listed:?}");
 }
 
 /// The fix loop on recorded runs of one boto3 program: `show` says each
-/// finding's saving, line and fix, and the change since the run before;
-/// `compare` alone takes the last two runs.
+/// finding's saving, line and fix, and the change since the run before
+/// (or since the run named with `--since`).
 #[test]
-fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
+fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("data/runs");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1972,18 +2198,21 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         .iter()
         .map(|r| stdout(&sonde(t.path(), &["show", r])))
         .collect();
-    // the head line names the SDK; each finding its saving, line and fix
+    // the head line names the SDK; where the time went; the first diagnosis
+    // its saving (time of the run), line and fix; the others a line each
     let first = &shown[0];
     assert!(
         first.contains("91 requests (73 operations) from boto3 1.44 to moto"),
         "{first}"
     );
     for said in [
-        "    saving: 20 fewer requests (22% of the run)",
+        "  time 739 ms: your program's own 250 ms (34%) · S3 round trips 489 ms (91 requests, median 3.3 ms)",
+        "    saving: ≈178 ms of 739 ms (24%)",
+        "    also: and send the other 41 requests 8 at once",
         "    at etl.py:19 <module> (20 requests)",
         "    fix for boto3:",
         "      obj = s3.get_object(Bucket=b, Key=k)",
-        "    at etl.py:33 <module> (18 requests)",
+        " · ≈50 ms of 739 ms (7%) (at etl.py:33 <module>)",
     ] {
         assert!(first.contains(said), "no {said:?} in:\n{first}");
     }
@@ -1997,48 +2226,63 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(shown[1].contains("since the run before (etl-1-base)"));
     let third = &shown[2];
     assert!(
-        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · saved 20 requests (predicted 20)"),
+        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · within noise"),
         "{third}"
     );
     assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
+    // the two runs before it took 397 ms apart: what it saved is not told
+    // from that
+    assert!(
+        third.contains("  its runs vary by 397 ms (its last runs of this command)"),
+        "{third}"
+    );
     assert!(
         shown[3].contains("✓ fixed  6 files under 5 MiB"),
         "{}",
         shown[3]
     );
     assert!(
-        shown[4].contains("! back   20 objects under etl-bucket/run/in/ were checked"),
+        shown[4].contains("! new    20 objects under etl-bucket/run/in/ were checked"),
         "{}",
         shown[4]
     );
 
-    // compare alone: the last two runs, an undone fix back
-    let c = stdout(&sonde(t.path(), &["compare"]));
-    assert!(
-        c.contains("etl-4-no-small.sonde → etl-5-undone.sonde"),
-        "{c}"
-    );
-    assert!(c.contains("! back   6 files under 5 MiB"), "{c}");
-    // one run: it and the run before it
-    let c = stdout(&sonde(t.path(), &["compare", "etl-3-no-head"]));
-    assert!(c.contains("etl-2-again.sonde → etl-3-no-head.sonde"), "{c}");
+    // show alone: the newest run against the one before, an undone fix new again
+    let c = stdout(&sonde(t.path(), &["show"]));
+    assert!(c.contains("since the run before (etl-4-no-small)"), "{c}");
+    assert!(c.contains("! new    6 files under 5 MiB"), "{c}");
+    // since a run named: the kinds that moved too
+    let c = stdout(&sonde(
+        t.path(),
+        &["show", "etl-3-no-head", "--since", "etl-2-again"],
+    ));
+    assert!(c.contains("since etl-2-again\n"), "{c}");
     assert!(c.contains("✓ fixed  20 objects"), "{c}");
+    assert!(c.contains("  HeadObject "), "{c}");
     let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
         t.path(),
-        &["compare", "etl-3-no-head", "-f", "json"],
+        &[
+            "show",
+            "etl-3-no-head",
+            "--since",
+            "etl-2-again",
+            "-f",
+            "json",
+        ],
     )))
     .unwrap();
-    let fixed = &j["findings"][0];
+    let fixed = &j["since"]["findings"][0];
     assert_eq!(fixed["state"], "fixed", "{j}");
     assert_eq!(fixed["predicted"]["requests"], 20);
-    assert_eq!(fixed["measured"]["requests"], 20);
+    assert_eq!(fixed["saved"]["requests"], 20);
+    assert!(j["since"]["change"].get("findings").is_none(), "{j}");
     // a program's first run has nothing before it
-    let none = sonde(t.path(), &["compare", "etl-1-base"]);
-    assert_eq!(none.status.code(), Some(0), "not a mistake in the command");
+    let none = sonde(t.path(), &["show", "etl-1-base"]);
+    assert_eq!(none.status.code(), Some(0));
     assert!(
-        stderr(&none).contains("the first run of `etl`: there is no run before it"),
+        !stdout(&none).contains("since the run before"),
         "{}",
-        stderr(&none)
+        stdout(&none)
     );
     // show says in JSON what it says in text: the change since the run before
     let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
@@ -2082,10 +2326,10 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(!s.contains("fixed"), "{s}");
     let c = stdout(&sonde(
         t.path(),
-        &["compare", "etl-5-undone", "etl-6-crashed"],
+        &["show", "etl-6-crashed", "--since", "etl-5-undone"],
     ));
     assert!(
-        c.contains("the run failed (exit 3); its findings are not compared"),
+        c.contains("a run compared failed (exit 3); their findings are not compared"),
         "{c}"
     );
     assert!(!c.contains("✓ fixed"), "{c}");
@@ -2127,23 +2371,16 @@ fn an_expected_finding_says_why_in_every_output() {
     let file = run.to_str().unwrap();
     let shown: serde_json::Value =
         serde_json::from_str(&here(&["show", file, "-f", "json"])).unwrap();
-    let serial = shown["findings"]
+    // on its diagnosis, by identity: only that one
+    let expected: Vec<&serde_json::Value> = shown["diagnoses"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|f| f["kind"] == "obs.serial")
-        .unwrap();
-    assert_eq!(serial["expected"], why);
-    // only that one
-    assert_eq!(
-        shown["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|f| f.get("expected").is_some())
-            .count(),
-        1
-    );
+        .filter_map(|d| d.get("expected"))
+        .collect();
+    assert_eq!(expected.len(), 1, "{}", shown["diagnoses"]);
+    assert_eq!(expected[0].as_object().unwrap().len(), 1, "{expected:?}");
+    assert_eq!(expected[0]["obs.serial|"], why);
     assert!(here(&["show", file]).contains(&format!("expected: {why}")));
     let checked: serde_json::Value =
         serde_json::from_str(&here(&["check", file, "-f", "json"])).unwrap();
@@ -2453,18 +2690,10 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         "the path said twice: {}",
         stderr(&ck)
     );
-    // show, compare and share take the same run: this folder's, not the newest
+    // show and share take the same run: this folder's, not the newest
     let shown = sonde_in(t.path(), &a, &["show", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
     assert_eq!(doc["run"]["command"], "sh get.sh", "{doc}");
-    let compared = sonde_in(t.path(), &a, &["compare"]);
-    assert!(
-        stdout(&compared).contains("first run of `get`")
-            || stderr(&compared).contains("first run of `get`"),
-        "{}{}",
-        stdout(&compared),
-        stderr(&compared)
-    );
     // nothing recorded here: none taken (27.0 took the newest of any
     // program, said only on stderr), and what to do
     for cmd in [&["check", "--max-requests", "100"][..], &["show"]] {
@@ -2633,7 +2862,7 @@ fn a_keys_control_characters_are_written_out_never_sent() {
         vec!["show", "--all", s],
         vec!["show", "--by", "prefix", s],
         vec!["runs"],
-        vec!["compare", s, s],
+        vec!["show", s, "--since", s],
         vec!["check", s],
     ] {
         seen.push(sonde(t.path(), &args));
@@ -2815,6 +3044,53 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
     assert!(!stderr(&o).contains("exit 137"), "{}", stderr(&o));
 }
 
+/// `run --listen`: the endpoint, standing, until Ctrl-C; then its run.
+#[cfg(unix)]
+#[test]
+fn run_listen_serves_until_ctrl_c_and_keeps_its_run() {
+    use std::io::Read;
+    let t = tempfile::tempdir().unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--listen", &addr, "--url", "http://127.0.0.1:9"])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // listening: it says how to point a program at it
+    let mut said = String::new();
+    let mut err = child.stderr.take().unwrap();
+    let mut buf = [0u8; 4096];
+    while !said.contains("Ctrl-C stops") {
+        let n = err.read(&mut buf).unwrap();
+        assert!(n > 0, "{said}");
+        said.push_str(&String::from_utf8_lossy(&buf[..n]));
+    }
+    assert!(
+        said.contains(&format!("listening on http://{addr}")),
+        "{said}"
+    );
+    assert!(said.contains("export AWS_ENDPOINT_URL="), "{said}");
+    std::net::TcpStream::connect(&addr).expect("it listens");
+    let killed = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(0));
+    assert_eq!(runs_in(t.path()), 1);
+}
+
 /// A CloudTrail file cut short is bad data (65), said where it broke.
 #[test]
 fn a_cloudtrail_file_cut_short_is_bad_data_said_where() {
@@ -2828,22 +3104,6 @@ fn a_cloudtrail_file_cut_short_is_bad_data_said_where() {
     let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
     assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
     assert!(stderr(&o).contains("at line 1, column"), "{}", stderr(&o));
-}
-
-/// `compare` alone after a program's first run: there is no run before it,
-/// said, and nothing wrong with the command.
-#[test]
-fn compare_alone_after_a_first_run_says_there_is_no_run_before() {
-    let t = tempfile::tempdir().unwrap();
-    let o = sonde(t.path(), &["run", "--demo", "--", "true"]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    let o = sonde(t.path(), &["compare"]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    assert!(
-        stderr(&o).contains("there is no run before it to compare with"),
-        "{}",
-        stderr(&o)
-    );
 }
 
 /// An imported log's what-if says no waiting: the import says it is not known.
@@ -2864,13 +3124,14 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
     let s = run.to_str().unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    // one diagnosis: its saving is the run's, said as requests (no times)
     let shown = stdout(&sonde(t.path(), &["show", s]));
     let line = shown
         .lines()
-        .find(|l| l.starts_with("in all"))
+        .find(|l| l.starts_with("    saving:"))
         .unwrap_or_else(|| panic!("{shown}"));
-    assert!(line.contains("16 → 8 requests"), "{line}");
-    assert!(!line.contains("waiting"), "{line}");
+    assert_eq!(line, "    saving: 8 fewer requests (50% of the run)");
+    assert!(!shown.contains(" ms of "), "{shown}");
     let j: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", s, "-f", "json"]))).unwrap();
     assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);
@@ -3168,6 +3429,19 @@ fn an_endpoint_added_takes_its_url_s_region_else_the_environment_s() {
         None,
     );
     assert_eq!(region_of("given"), "eu-north-1");
+    // a profile alone (what `endpoints import` did): its endpoint and region
+    std::fs::write(
+        t.path().join("aws-config"),
+        "[profile r2]\nregion = auto\nendpoint_url = https://acct.r2.cloudflarestorage.com\n",
+    )
+    .unwrap();
+    add(&["endpoints", "add", "r2", "--profile", "r2"], None);
+    assert_eq!(region_of("r2"), "auto");
+    let o = sonde(t.path(), &["endpoints", "add", "x", "--profile", "nosuch"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    // and neither a URL nor a profile is a usage error
+    let o = sonde(t.path(), &["endpoints", "add", "y"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
 }
 
 /// 27.0's `runs prune --keep 0 --yes` deleted a run still being recorded:

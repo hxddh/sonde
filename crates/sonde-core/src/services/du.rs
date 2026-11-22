@@ -453,12 +453,11 @@ pub fn scan(
         bucket.to_string(),
         prefix.to_string(),
     );
-    let settings = s.settings();
     s.jobs().spawn(
         "du",
         ph!("job.du", bucket = b, prefix = p),
-        settings.concurrency,
-        settings.rate_limit,
+        crate::config::CONCURRENCY,
+        None,
         move |ctx| async move {
             let r = scan_inner(&s2, &ep, &b, &p, include_multipart, &ctx).await?;
             let _ = save_cache(&s2, &r);

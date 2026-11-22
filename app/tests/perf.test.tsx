@@ -1,6 +1,6 @@
 // Performance: 100 000 rows in the object table, scrolled end to end.
 // Not part of the regular suites. From app/:
-//   nsh test tests/perf.test.tsx --target tui --trace
+//   nsh test tests/perf.test.tsx --trace
 // The numbers are recorded in docs/dev/performance.md.
 
 import { expect, open, test } from "nsh/test";
@@ -12,9 +12,8 @@ test("100 000 rows: load and scroll", async () => {
   await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
-  // a terminal's Buckets opens on none: the large one is chosen from its menu
-  await app.press("label:Choose a bucket");
-  await app.press("text:demo-large");
+  // the large one, from the sidebar's buckets
+  await app.press("id:bucket-demo-large");
   await app.waitFor("text:1 item", { timeout: 10000 });
   await app.keyboard.press("mod+shift+f");
   const loadStart = Date.now();

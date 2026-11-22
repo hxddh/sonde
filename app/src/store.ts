@@ -11,10 +11,9 @@ import { core, endpointName } from "./phrases";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
-/** The app's places: Run, Runs and Buckets ("store"); Activity and
- * Settings, which a window shows over its place (a sheet, a window of their
- * own) and a terminal as places of their own. */
-export type Area = "run" | "runs" | "store" | "activity" | "settings";
+/** The app's places: Runs and Buckets ("store"); Activity and Settings,
+ * which the window shows over its place (a sheet, a window of their own). */
+export type Area = "runs" | "store" | "activity" | "settings";
 /** The tabs of Store: what is in a bucket. */
 export type StoreTab = "browse" | "capacity" | "multipart" | "layouts";
 /** The tabs of Settings. */
@@ -22,16 +21,16 @@ export type SettingsTab = "settings" | "endpoints";
 /** The tabs of Activity: what sonde itself did. */
 export type ActivityTab = "jobs" | "audit";
 /** Where to go: an area, or a tab of one. */
-export type Section = "run" | "runs" | StoreTab | SettingsTab | ActivityTab;
+export type Section = "runs" | StoreTab | SettingsTab | ActivityTab;
 
-/** Every place, as a terminal lists them. */
-export const AREAS: Area[] = ["run", "runs", "store", "activity", "settings"];
+/** Every place, as the palette lists them. */
+export const AREAS: Area[] = ["runs", "store", "activity", "settings"];
 export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "layouts"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["jobs", "audit"];
 
 export function areaOf(s: Section): Area {
-  if (s === "run" || s === "runs") return s;
+  if (s === "runs") return s;
   if ((STORE_TABS as string[]).includes(s)) return "store";
   if ((ACTIVITY_TABS as string[]).includes(s)) return "activity";
   return "settings";
@@ -44,7 +43,7 @@ export const settings = signal<Settings | null>(null);
 export const endpoint = signal<string | null>(null);
 export const bucket = signal<string | null>(null);
 export const prefix = signal<string>("");
-export const section = signal<Section>("run");
+export const section = signal<Section>("runs");
 export const storeTab = signal<StoreTab>("browse");
 /** The detail of a bucket a window shows in a sheet over its objects. */
 export const settingsTab = signal<SettingsTab>("settings");
@@ -92,10 +91,6 @@ export const compareOnOpen = signal<{ before: string; after: string } | null>(nu
 export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations" } | null>(null);
 /** A finding to open with a run (its index): the demo's run opens on its first. */
 export const findingOnOpen = signal<{ path: string; index: number } | null>(null);
-/** What the current place shows, for the toolbar's breadcrumb (a run's command). */
-export const crumb = signal<string | null>(null);
-/** Where the breadcrumb's place goes back to its list (Runs: the run let go, its list the page), while it has one. */
-export const crumbBack = signal<(() => void) | null>(null);
 /** Bumped when the list of runs changes (a run ended, an example opened, a replay). */
 /** The window is out of sight (minimized, hidden, another space): polls rest until it is back. */
 export const away = () => lifecycle() === "background";
@@ -110,7 +105,7 @@ export const shellWidth = signal(1280);
 /** The window's height, as its shell is laid out: what a surface over it may take. */
 export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
- * (its runs, its buckets, the commands run before), given by the place
+ * (its runs, its buckets), given by the place
  * while it is on screen. One left column for the whole window. */
 export const sideList = signal<{ key: string; render: () => JSX.Element } | null>(null);
 /** Gives the sidebar a place's list while the place is on screen; returns

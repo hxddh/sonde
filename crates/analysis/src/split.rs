@@ -170,7 +170,15 @@ impl Keyer {
                 .unwrap_or_else(|| "no answer".into()),
             Dimension::Key => match (r.bucket.as_deref(), r.key.as_deref()) {
                 (Some(b), Some(k)) => format!("{b}/{k}"),
-                (Some(b), None) => format!("{b}/"),
+                // a listing is of its prefix, not of the whole bucket
+                (Some(b), None) => {
+                    let prefix = r
+                        .query()
+                        .iter()
+                        .find(|(k, _)| k.as_ref() == "prefix")
+                        .map_or("", |(_, v)| v.as_ref());
+                    format!("{b}/{prefix}")
+                }
                 (None, Some(k)) => k.to_string(),
                 (None, None) => "(no key)".into(),
             },
@@ -510,6 +518,23 @@ mod tests {
         // past the rows a table holds, the rest is one group
         assert!(s.rows.last().is_some_and(|r| r.other));
         assert!(s.text.contains("at b/conf/settings.json"), "{}", s.text);
+    }
+
+    /// 28.0 put every LIST under its bucket (`b/`), whatever prefix it listed.
+    #[test]
+    fn by_key_a_listing_is_under_its_prefix() {
+        let mut list = rec(1, "ListObjectsV2", "", 5.0, 10);
+        list.key = None;
+        list.lists = reqlog::Lists {
+            query: vec![
+                ("list-type".into(), "2".into()),
+                ("prefix".into(), "t/_versions/".into()),
+            ],
+            ..Default::default()
+        }
+        .into();
+        let s = split(&[list], Dimension::Key, &RequestPrices::default());
+        assert_eq!(s.rows[0].key, "b/t/_versions/");
     }
 
     #[test]

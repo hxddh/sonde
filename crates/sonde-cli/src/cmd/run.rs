@@ -24,9 +24,17 @@ pub struct RunArgs {
     /// its line of code and fix, then the job fixed and the saving measured.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
-    /// Print each request on stderr as it happens.
-    #[arg(long)]
-    live: bool,
+    /// No command: serve the endpoint on ADDR (default 127.0.0.1:9000) for a
+    /// program started elsewhere, print each request, and stop at Ctrl-C.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1,
+          default_missing_value = "127.0.0.1:9000",
+          conflicts_with_all = ["demo", "trial", "faults", "name", "no_callers"])]
+    listen: Option<SocketAddr>,
+    /// With --listen: take requests from other machines too (any Host).
+    /// Anyone who has the keys sonde prints can then use the endpoint's
+    /// credentials.
+    #[arg(long, requires = "listen")]
+    allow_remote: bool,
     /// Do not name the place in the program's code that sent each request.
     /// It is named by default for Python's boto3, the AWS SDK for
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
@@ -52,11 +60,6 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
-    /// A trial of only what did not survive (--trial is implied): a fresh
-    /// clean run, then the scenarios that broke, degraded or were refused by
-    /// the policy in this program's last trials (`sonde run --again -- …`).
-    #[arg(long, conflicts_with = "faults")]
-    again: bool,
     /// The program's name: its runs, baseline and trial verdicts go by it
     /// (default: sonde.toml's `[program] name` for the program it `runs`,
     /// else what the command runs: `etl` for `python3 etl.py 5`).
@@ -65,13 +68,69 @@ pub struct RunArgs {
     /// With -o: write over the file if it is there (else a run refuses it).
     #[arg(long, requires = "out")]
     force: bool,
-    /// The command, after `--` (none with --demo: the tour).
+    /// The command, after `--` (none with --demo: the tour; none with --listen).
     #[arg(
-        required_unless_present = "demo",
+        required_unless_present_any = ["demo", "listen"],
+        conflicts_with = "listen",
         trailing_var_arg = true,
         allow_hyphen_values = true
     )]
     command: Vec<String>,
+}
+
+/// `sonde run --listen`: the endpoint, standing, for a program started
+/// elsewhere: the variables to set, then each request as it comes, and the
+/// run's summary at Ctrl-C.
+async fn listen(
+    s: &Arc<Sonde>,
+    rec: &Recording,
+    addr: SocketAddr,
+    allow_remote: bool,
+) -> anyhow::Result<i32> {
+    if !addr.ip().is_loopback() && !allow_remote {
+        return Err(super::usage(format!(
+            "{addr} is reachable from other machines: add --allow-remote if that is what you want (anyone with the keys sonde prints can then use the endpoint's credentials)"
+        )));
+    }
+    if allow_remote {
+        eprintln!("warning: sonde takes requests from other machines on {addr}");
+    }
+    let mut started = start(s, rec, addr, None, allow_remote).await?;
+    let (set, unset) = started.proxy.env();
+    eprintln!(
+        "sonde is listening on {}. Point the application at it:\n",
+        started.proxy.url()
+    );
+    for k in &unset {
+        eprintln!("  unset {k}");
+    }
+    for (k, v) in &set {
+        eprintln!("  export {k}={v}");
+    }
+    eprintln!("\nCtrl-C stops.\n");
+    let printer = follow(&started.log, false);
+    tokio::signal::ctrl_c().await?;
+    printer.abort();
+    // requests still in flight are recorded before the file is read and packed
+    shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
+    started.writer.flush()?;
+    if let Some(lost) = started.writer.not_written() {
+        eprintln!("sonde: {lost}");
+    }
+    let run = RunFile::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+    print_summary(
+        &run.records,
+        &run.header.endpoint,
+        &started.path,
+        std::io::stderr().is_terminal(),
+        &request_prices_for(s, &run.header.endpoint),
+        false,
+    );
+    // finished: compressed to a tenth or less, still a .sonde file
+    let file = started.path.clone();
+    drop(started);
+    let _ = sonde_analysis::run::compress(&file);
+    Ok(0)
 }
 
 /// The signal that asked sonde to stop, once one has: 2 (Ctrl-C) or 15
@@ -272,12 +331,15 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if let Some(out) = &a.rec.out {
         refuse_existing(out, a.force)?;
     }
+    if let Some(addr) = a.listen {
+        return listen(s, &a.rec, addr, a.allow_remote).await;
+    }
     // `--demo` alone: the tour
     if a.demo && a.command.is_empty() {
         if cli.url.is_some() {
             return Err(super::usage("--demo and --url name two stores: give one"));
         }
-        if a.trial || a.again || !a.faults.is_empty() || a.name.is_some() {
+        if a.trial || !a.faults.is_empty() || a.name.is_some() {
             return Err(super::usage(
                 "the tour is not tried or named: give a command after -- (`sonde run --demo --trial -- python etl.py`)",
             ));
@@ -312,7 +374,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             asked.push(scenario);
         }
     }
-    // what to try again is known before anything runs
     // the program's name, when it has one of its own
     let command = sonde_analysis::program::shell_join(&a.command);
     let name = a
@@ -321,42 +382,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .or_else(|| project.file.program.name_for(&command));
-    if a.again {
-        let program = name
-            .clone()
-            .or_else(|| sonde_analysis::program::program_key(Some(&command)))
-            .unwrap_or_default();
-        let dir = match &a.rec.out {
-            Some(out) => runs_dir(out),
-            None => s.paths().runs(),
-        };
-        let names = sonde_analysis::trial::to_try_again(&dir, &program);
-        if names.is_empty() {
-            let tried = sonde_analysis::trial::read_verdicts(&dir).contains_key(&program);
-            if tried {
-                eprintln!(
-                    "Nothing to try again: every scenario of `{program}` survived its last trial, or met nothing."
-                );
-                return Ok(0);
-            }
-            return Err(super::usage(format!(
-                "--again: `{program}` has no trial in {} yet (`sonde run --trial`)",
-                dir.display()
-            )));
-        }
-        for name in &names {
-            match named_scenario(name, &project.scenarios) {
-                Ok(scenario) if asked.iter().any(|s| same(s, &scenario)) => {}
-                Ok(scenario) => asked.push(scenario),
-                // a project's scenario since taken out of sonde.toml
-                Err(e) => eprintln!("warning: not tried again: {e}"),
-            }
-        }
-        if asked.is_empty() {
-            return Ok(64);
-        }
-    }
-    let trying = a.trial || a.again || !asked.is_empty();
+    let trying = a.trial || !asked.is_empty();
     let ctx = RunCtx {
         trying,
         name,
@@ -403,7 +429,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         sonde_analysis::trial::choose(&clean_run.records, &clean_run.header.url)
     };
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
-    let program = sonde_analysis::program::key_of(&clean_run.header);
     let color = std::io::stderr().is_terminal();
     eprintln!(
         "\nTrial: the command runs {}.",
@@ -456,23 +481,31 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .count();
     let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
     eprintln!("\n{}", trials_summary(&standings));
-    eprintln!("Each trial is a run:");
-    for t in &trials {
-        if let Some(path) = sonde_analysis::trial::run_path(&file, t) {
-            eprintln!("  sonde show {}", path.display());
+    // what did not survive, as findings of the clean run: why, at which
+    // line, and what to change for the SDK (what survived since the trial
+    // before, its verdict says)
+    for o in sonde_analysis::trial::findings(&trials) {
+        for line in super::fixloop::finding_lines(&o, None, &[], None, color) {
+            eprintln!("{line}");
         }
     }
-    if program.is_some()
-        && trials.iter().any(|t| {
-            matches!(
-                t.standing,
-                Standing::Broke | Standing::Degraded | Standing::Refused
-            )
-        })
-    {
-        eprintln!("Once changed, try again what did not survive:");
-        eprintln!("  {}", again_command(cli, a, &trials));
-    }
+    let stem = file
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    eprintln!(
+        "{}",
+        paint(
+            &format!(
+                "each trial is a run: sonde show {}",
+                sonde_analysis::trial::folder_for(&file)
+                    .join(format!("{stem}.<scenario>.sonde"))
+                    .display()
+            ),
+            "2",
+            color
+        )
+    );
     Ok(if broke > 0 { 1 } else { 0 })
 }
 
@@ -507,67 +540,6 @@ fn trials_summary(standings: &[sonde_analysis::trial::Standing]) -> String {
         _ if unjudged.is_empty() => format!("The program broke under {broke} of {judged}."),
         _ => format!("The program broke under {broke} of {judged} judged; not judged: {unjudged}."),
     }
-}
-
-/// The command that tries a program again under what did not survive, with
-/// the flags of the trial it repeats: the same store, policy and recording.
-/// A trial of scenarios named (`--fault`) names again the ones that did not
-/// survive.
-fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_analysis::trial::Trial]) -> String {
-    use sonde_analysis::trial::Standing;
-    let q = |w: &str| sonde_analysis::program::shell_join(&[w.to_string()]);
-    let mut words = vec!["sonde run".to_string()];
-    if a.faults.is_empty() {
-        words.push("--again".into());
-    } else {
-        for t in trials.iter().filter(|t| {
-            matches!(
-                t.standing,
-                Standing::Broke | Standing::Degraded | Standing::Refused
-            )
-        }) {
-            words.push(format!("--fault {}", q(&t.asked())));
-        }
-    }
-    if let Some(n) = &a.name {
-        words.push(format!("--name {}", q(n)));
-    }
-    if let Some(out) = &a.rec.out {
-        // (the file is there now: written over, as asked)
-        words.push(format!("-o {} --force", q(&out.to_string_lossy())));
-    }
-    if a.demo {
-        words.push("--demo".into());
-    }
-    if let Some(url) = &cli.url {
-        words.push(format!("--url {}", q(url)));
-        if let Some(r) = &cli.region {
-            words.push(format!("--region {}", q(r)));
-        }
-        if cli.path_style {
-            words.push("--path-style".into());
-        }
-        if let Some(ca) = &cli.ca_file {
-            words.push(format!("--ca-file {}", q(&ca.to_string_lossy())));
-        }
-    }
-    if let Some(e) = &a.rec.endpoint
-        && !a.demo
-    {
-        words.push(format!("-e {}", q(e)));
-    }
-    if let Some(p) = &a.rec.policy {
-        words.push(format!("--policy {}", q(p)));
-    }
-    if a.rec.tls {
-        words.push("--tls".into());
-    }
-    if a.no_callers {
-        words.push("--no-callers".into());
-    }
-    words.push("--".into());
-    words.push(sonde_analysis::program::shell_join(&a.command));
-    words.join(" ")
 }
 
 /// A trial's line: its standing, the scenario, what happened.
@@ -769,15 +741,11 @@ async fn run_once(
         }
         (None, false) => {}
     }
-    let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
     let began = std::time::Instant::now();
     let mut child = match child.spawn() {
         Ok(c) => c,
         Err(e) => {
             // nothing ran: no run of it
-            if let Some(p) = printer {
-                p.abort();
-            }
             shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
             let path = started.path.clone();
             drop(started);
@@ -859,9 +827,6 @@ async fn run_once(
     if let Some(f) = feeder {
         f.abort();
     }
-    if let Some(p) = printer {
-        p.abort();
-    }
     // a run sonde ended on SIGTERM ended as sonde does (143), whatever
     // signal took its processes down
     let code = match signal {
@@ -891,9 +856,16 @@ async fn run_once(
             &mut analysis.observations,
             &super::check::expect_of(&run.header),
         );
-        // against the program's run before: what the change did
-        let since =
-            super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);
+        // against the program's run before: what the change did. A trial's
+        // clean run of another command is compared with none
+        let apart = ctx.trying && sonde_analysis::fixloop::tried_apart(&started.path, &run.header);
+        let since = (!apart)
+            .then(|| {
+                super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis)
+            })
+            .flatten();
+        // a trial's clean run: its head line, then the verdicts (its plan
+        // is `show`'s); a run again: what changed
         print_summary_of(
             &analysis,
             &run.header,
@@ -901,8 +873,23 @@ async fn run_once(
             color,
             false,
             false,
-            since.as_ref(),
+            since.as_ref().map(|s| (s, false)),
+            if ctx.trying {
+                Says::Head
+            } else {
+                Says::Changes
+            },
         );
+        if apart && !ctx.trying {
+            eprintln!(
+                "{}",
+                paint(
+                    "not compared with the program's runs: a trial of another command",
+                    "2",
+                    color
+                )
+            );
+        }
         // stopped from outside: said as such, not as a program that failed
         // (nor as one that sent nothing)
         match stopped_text(signal) {

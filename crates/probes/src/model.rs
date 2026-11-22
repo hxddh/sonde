@@ -276,3 +276,16 @@ impl Run {
         self.results.iter().find(|r| r.id == id)
     }
 }
+
+/// A judge fixture: steps recorded from a real service (or written from
+/// AWS's documented behavior) and the verdict they must give.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fixture {
+    pub probe: String,
+    pub vendor: String,
+    pub expect: Verdict,
+    #[serde(default)]
+    pub note: String,
+    pub steps: Vec<Step>,
+}

@@ -71,14 +71,6 @@ pub struct ConnectivityReport {
     pub server: Option<String>,
 }
 
-/// Values of one run that stand in for the saved settings (`--rate`,
-/// `--concurrency`): never written to `config.toml`.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Overrides {
-    pub rate_limit: Option<f64>,
-    pub concurrency: Option<usize>,
-}
-
 struct State {
     /// What `config.toml` holds (or will, at the next save).
     base: Config,
@@ -88,10 +80,9 @@ struct State {
     /// Endpoints of this process only. One with a configured id hides the
     /// configured endpoint, which stays in `base` and in every save.
     transient: Vec<EndpointConfig>,
-    overrides: Overrides,
     /// Why the file did not load. Nothing is saved while it stands.
     error: Option<String>,
-    /// `base` with the transient endpoints and the overrides: what runs.
+    /// `base` with the transient endpoints: what runs.
     effective: Config,
 }
 
@@ -103,12 +94,6 @@ impl State {
                 Some(e) => *e = t.clone(),
                 None => c.endpoints.push(t.clone()),
             }
-        }
-        if let Some(r) = self.overrides.rate_limit {
-            c.settings.rate_limit = Some(r);
-        }
-        if let Some(n) = self.overrides.concurrency {
-            c.settings.concurrency = n;
         }
         self.effective = c;
     }
@@ -161,7 +146,6 @@ impl Sonde {
                 base: config,
                 disk,
                 transient: Vec::new(),
-                overrides: Overrides::default(),
                 error,
             }),
             saving: Default::default(),
@@ -221,17 +205,6 @@ impl Sonde {
         Ok(())
     }
 
-    /// Values for this run only (`--rate`, `--concurrency`): not saved.
-    pub fn set_overrides(&self, o: Overrides) -> Result<(), String> {
-        if o.concurrency.is_some_and(|n| n == 0 || n > 1024) {
-            return Err("concurrency: 1 to 1024".into());
-        }
-        let mut st = self.state.write();
-        st.overrides = o;
-        st.refresh();
-        Ok(())
-    }
-
     /// Applies `change` to the configuration and writes it. The file is
     /// read first: one that changed since it was last read is what the
     /// change applies to (edits made outside are kept), and one that does
@@ -277,10 +250,7 @@ impl Sonde {
     /// Saves the settings that differ from the current ones (and only
     /// those: the rest keep what the file says).
     pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
-        let (old, overrides) = {
-            let st = self.state.read();
-            (st.effective.settings.clone(), st.overrides)
-        };
+        let old = self.state.read().effective.settings.clone();
         let obj = |s: &Settings| match serde_json::to_value(s) {
             Ok(serde_json::Value::Object(m)) => Ok(m),
             _ => Err("settings: not an object".to_string()),
@@ -290,28 +260,13 @@ impl Sonde {
             .into_iter()
             .filter(|(k, v)| was.get(k) != Some(v))
             .collect();
-        // an override the user changed is theirs now, and saved
-        let mut o = overrides;
-        for (k, _) in &changed {
-            match k.as_str() {
-                "rate-limit" => o.rate_limit = None,
-                "concurrency" => o.concurrency = None,
-                _ => {}
-            }
-        }
         self.save_with(|c| {
             let mut m = obj(&c.settings)?;
             m.extend(changed);
             c.settings = serde_json::from_value(serde_json::Value::Object(m))
                 .map_err(|e| format!("settings: {e}"))?;
             Ok(())
-        })?;
-        {
-            let mut st = self.state.write();
-            st.overrides = o;
-            st.refresh();
-        }
-        Ok(())
+        })
     }
 
     pub fn endpoints(&self) -> Vec<EndpointView> {
@@ -644,14 +599,7 @@ fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConf
                 .iter()
                 .any(|e| matches!(&e.credentials, CredentialSource::Profile { name } if name == p))
         })
-        .map(|name| {
-            let prof = files.profile(&name).unwrap_or_default();
-            let region = prof
-                .get("region")
-                .cloned()
-                .unwrap_or_else(|| "us-east-1".into());
-            let url = files.s3_endpoint(&name).unwrap_or_else(|| aws_url(&region));
-            let vendor = Vendor::guess(&url);
+        .filter_map(|name| {
             let stem = format!(
                 "profile-{}",
                 name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-', "-")
@@ -663,17 +611,37 @@ fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConf
                 id = format!("{stem}-{n}");
                 n += 1;
             }
-            let mut e = EndpointConfig::new(
-                &id,
-                &format!("{name} ({})", vendor.label()),
-                &url,
-                &region,
-                vendor,
-            );
-            e.credentials = CredentialSource::Profile { name };
-            e
+            profile_endpoint(files, &id, &name, None)
         })
         .collect()
+}
+
+/// The endpoint of the AWS profile `name` as an SDK reads it, under `id`:
+/// its `endpoint_url` (else AWS in its region), its region (`region`
+/// given, else the profile's, else us-east-1), its credentials. None when
+/// `~/.aws/config` has no such profile.
+pub fn profile_endpoint(
+    files: &AwsFiles,
+    id: &str,
+    name: &str,
+    region: Option<&str>,
+) -> Option<EndpointConfig> {
+    let prof = files.profile(name)?;
+    let region = region
+        .map(String::from)
+        .or_else(|| prof.get("region").cloned())
+        .unwrap_or_else(|| "us-east-1".into());
+    let url = files.s3_endpoint(name).unwrap_or_else(|| aws_url(&region));
+    let vendor = Vendor::guess(&url);
+    let mut e = EndpointConfig::new(
+        id,
+        &format!("{name} ({})", vendor.label()),
+        &url,
+        &region,
+        vendor,
+    );
+    e.credentials = CredentialSource::Profile { name: name.into() };
+    Some(e)
 }
 
 #[cfg(test)]
@@ -961,34 +929,22 @@ mod tests {
     }
 
     #[test]
-    fn values_of_one_run_are_never_saved() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::rooted(dir.path());
-        let s = Sonde::open(paths.clone()).unwrap();
-        s.add_transient_endpoint(ep("adhoc")).unwrap();
-        s.set_overrides(Overrides {
-            rate_limit: Some(5.0),
-            concurrency: Some(2),
-        })
-        .unwrap();
-        assert_eq!(s.settings().concurrency, 2);
-        let mut st = s.settings();
-        st.theme = "dark".into();
-        s.set_settings(st).unwrap();
-        let on_disk = Config::load(&paths.config_file()).unwrap();
-        assert!(on_disk.endpoints.is_empty());
-        assert_eq!(on_disk.settings.concurrency, 16);
-        assert_eq!(on_disk.settings.rate_limit, None);
-        assert_eq!(on_disk.settings.theme, "dark");
-        assert_eq!(s.settings().concurrency, 2, "still in force here");
-        // a value the user sets is theirs: saved, and the override ends
-        let mut st = s.settings();
-        st.concurrency = 8;
-        s.set_settings(st).unwrap();
-        assert_eq!(s.settings().concurrency, 8);
-        let on_disk = Config::load(&paths.config_file()).unwrap();
-        assert_eq!(on_disk.settings.concurrency, 8);
-        assert_eq!(on_disk.settings.rate_limit, None);
+    fn a_profile_is_an_endpoint_with_its_url_and_region() {
+        let files = AwsFiles {
+            config: ini::parse(
+                "[profile r2]\nregion = auto\nendpoint_url = https://acct.r2.cloudflarestorage.com\n[profile eu]\nregion = eu-west-1\n",
+            ),
+            credentials: Default::default(),
+        };
+        let r2 = profile_endpoint(&files, "r2", "r2", None).unwrap();
+        assert_eq!(r2.url, "https://acct.r2.cloudflarestorage.com");
+        assert_eq!(r2.region, "auto");
+        assert!(matches!(&r2.credentials, CredentialSource::Profile { name } if name == "r2"));
+        let eu = profile_endpoint(&files, "eu", "eu", None).unwrap();
+        assert!(eu.url.contains("eu-west-1"), "{}", eu.url);
+        let given = profile_endpoint(&files, "eu", "eu", Some("eu-north-1")).unwrap();
+        assert_eq!(given.region, "eu-north-1");
+        assert!(profile_endpoint(&files, "x", "nosuch", None).is_none());
     }
 
     #[test]

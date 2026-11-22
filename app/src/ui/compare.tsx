@@ -13,7 +13,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, runsChanged } from "../store";
 import type { LatencyChange, Profile, Relied, RunInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
+import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { RunChangeView } from "./runchange";
 import { StateBadge } from "./runview";
 import { fileName, runName } from "./manage";
@@ -276,7 +276,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
       <Card pad="none">
       <DataTable
         columns={columns()}
-        renderHeaderCell={terminal() ? undefined : titleCells(columns)}
+        renderHeaderCell={titleCells(columns)}
         data={rows()}
         // the stores under one heading
         groups={[[{ label: "", span: 2 }, { label: t("matrix.stores"), span: props.runs.length }]]}
@@ -284,9 +284,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
         fontSize={TYPE.body}
         // a store's p95 against the recording's: much slower in red, much faster in green
         renderCell={
-          terminal()
-            ? undefined
-            : (c) => {
+          (c) => {
                 const k = c.row > 1 && c.key.startsWith("s") ? kinds()[c.row - 2] : null;
                 const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
                 const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
@@ -301,9 +299,9 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
                 );
               }
         }
-        classes={terminal() ? undefined : { ...TABLE, cell: "px-0" }}
+        classes={{ ...TABLE, cell: "px-0" }}
         // as high as its rows: the header and each row, no more
-        style={terminal() ? undefined : { height: (rows().length + 2) * (rowHeight(ROW.table) ?? ROW.table) + 2 }}
+        style={{ height: (rows().length + 2) * (rowHeight(ROW.table) ?? ROW.table) + 2 }}
       />
       </Card>
       <View class="flex-row flex-wrap gap-2">

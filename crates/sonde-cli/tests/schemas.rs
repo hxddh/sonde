@@ -315,14 +315,24 @@ async fn every_json_output_is_as_its_schema_says() {
         let mut now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
         // one that degraded: the request it turns on, and what to change
         now.standing = trial::Standing::Degraded;
-        now.at = Some(trial::Where {
-            kind: "PutObject".into(),
-            key: "b/state".into(),
-            caller: Some("etl.py:12 in save".into()),
-        });
-        now.advice = Some(trial::Said {
-            key: "trial.advice.retry".into(),
-            args: Default::default(),
+        now.finding = Some(trial::TrialFinding {
+            why: vec![vec![trial::Said {
+                key: "trial.why.reads".into(),
+                args: [("n", "1"), ("s", ""), ("it", "it")]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            }]],
+            at: Some(trial::Where {
+                kind: "PutObject".into(),
+                key: "b/state".into(),
+                caller: Some("etl.py:12 in save".into()),
+            }),
+            sdk: Some("boto3 1.34".into()),
+            advice: Some(trial::Said {
+                key: "trial.advice.retry".into(),
+                args: Default::default(),
+            }),
         });
         trial::save(&run, std::slice::from_ref(&now)).unwrap();
         let mut then = now.clone();
@@ -383,6 +393,8 @@ async fn every_json_output_is_as_its_schema_says() {
         let q = q.to_str().unwrap();
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);
+        // a log's time is no program's: no time account
+        assert!(shown["time"].is_null(), "{}", shown["time"]);
         holds("show", &shown);
         holds(
             "show",
@@ -397,11 +409,8 @@ async fn every_json_output_is_as_its_schema_says() {
         sonde_analysis::import::save(&run, &m).unwrap();
         let m = m.to_str().unwrap();
         let summary = b.json(&["show", m, "-f", "json"], 0).await;
-        assert!(
-            summary["summary"]["kinds"][0].get("few").is_none(),
-            "{}",
-            summary["summary"]["kinds"][0]
-        );
+        // one table of the kinds of request: `waiting.byKind`
+        assert!(summary["summary"].get("kinds").is_none(), "{summary}");
         holds("show", &summary);
         // an imported log's month, at the rate of its span
         assert!(summary["month"].is_null() || summary["month"]["from"] == "log");
@@ -416,23 +425,61 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     let summary = b.json(&["show", s, "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
-    // a trial's `where` and `advice` are in the output, and typed by the schema
-    let t = &summary["trials"][0];
-    assert_eq!(t["where"]["kind"], "PutObject", "{t}");
-    assert_eq!(t["advice"]["key"], "trial.advice.retry", "{t}");
-    // with its English: an agent looks nothing up
-    assert!(
-        t["advice"]["text"]
-            .as_str()
-            .is_some_and(|x| x.starts_with("send a failed request again")),
-        "{t}"
-    );
-    let props = &schema("show")["$defs"]["trial"]["properties"];
-    assert_eq!(props["where"]["type"], "object", "{props}");
+    // the plan (--all: by place): every finding in one diagnosis; where the time went
+    let whole = b.json(&["show", s, "--all", "-f", "json"], 0).await;
+    let findings = whole["findings"].as_array().unwrap().len();
+    let mut placed: Vec<u64> = whole["diagnoses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| {
+            d["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i.as_u64().unwrap())
+        })
+        .collect();
+    placed.sort_unstable();
     assert_eq!(
-        props["advice"]["required"],
-        serde_json::json!(["key", "args", "text"]),
-        "{props}"
+        placed,
+        (0..findings as u64).collect::<Vec<_>>(),
+        "{}",
+        whole["diagnoses"]
+    );
+    assert!(summary["time"]["wallMs"].is_number(), "{}", summary["time"]);
+    // a verdict is its table's row: why, where and what to change are a
+    // finding of the run's, with its caller and its fix
+    let t = &summary["trials"][0];
+    for gone in ["where", "advice", "reasons", "reasonsText", "finding"] {
+        assert!(t.get(gone).is_none(), "{gone}: {t}");
+    }
+    let found = summary["diagnoses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["identities"][0] == "trial|slowdown")
+        .unwrap_or_else(|| panic!("{}", summary["diagnoses"]));
+    assert_eq!(found["kind"], "trial", "{found}");
+    assert_eq!(found["at"][0]["place"], "etl.py:12 in save", "{found}");
+    assert!(
+        found["text"]
+            .as_str()
+            .is_some_and(|x| x.starts_with("degraded under slowdown: gave up on 1 failed read")),
+        "{found}"
+    );
+    assert!(found.get("savingText").is_none(), "{found}");
+    // and in its fix loop: degraded before, degraded now
+    let open = summary["since"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|f| f["identity"] == "trial|slowdown");
+    assert_eq!(
+        open.map(|f| &f["state"]),
+        Some(&Value::from("open")),
+        "{}",
+        summary["since"]
     );
     // a finding an engine's setting acts on: the setting, and where the
     // program's folder sets it (a SlateDB reader polling its manifest every
@@ -472,13 +519,13 @@ async fn every_json_output_is_as_its_schema_says() {
         let shown = b
             .json(&["show", file.to_str().unwrap(), "-f", "json"], 0)
             .await;
-        let listed = shown["findings"]
+        let listed = shown["diagnoses"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|f| f["kind"] == "obs.listed")
-            .unwrap_or_else(|| panic!("{}", shown["findings"]));
-        let s = &listed["fixes"][0]["setting"];
+            .find(|d| d["kind"] == "obs.listed")
+            .unwrap_or_else(|| panic!("{}", shown["diagnoses"]));
+        let s = &listed["fix"]["setting"];
         assert_eq!(s["key"], "manifest_poll_interval", "{listed}");
         assert_eq!(s["value"], "10s", "{listed}");
         assert_eq!(s["engine"], "SlateDB DbReader", "{listed}");
@@ -508,13 +555,12 @@ async fn every_json_output_is_as_its_schema_says() {
             &b.json(&["check", p, "--baseline", s, "-f", "json"], 0)
                 .await,
         );
-        holds(
-            "compare",
-            &b.json(&["compare", s, p, "-f", "json"], 0).await,
-        );
+        let since = b.json(&["show", p, "--since", s, "-f", "json"], 0).await;
+        assert!(since["since"]["change"].is_object(), "{}", since["since"]);
+        holds("show", &since);
         holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
     }
-    for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
+    for by in ["kind", "prefix", "size", "caller", "key"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
@@ -563,13 +609,13 @@ async fn every_json_output_is_as_its_schema_says() {
         let k = kept.to_str().unwrap();
         let shown = b.json(&["show", k, "-f", "json"], 0).await;
         assert!(
-            shown["findings"]
+            shown["diagnoses"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|f| f["expected"] == "kept"),
+                .any(|d| d["expected"]["obs.serial|"] == "kept"),
             "{}",
-            shown["findings"]
+            shown["diagnoses"]
         );
         holds("show", &shown);
         let checked = b.json(&["check", k, "-f", "json"], 0).await;
@@ -577,23 +623,96 @@ async fn every_json_output_is_as_its_schema_says() {
         holds("check", &checked);
         std::fs::remove_file(b.path("sonde.toml")).unwrap();
     }
+    // `check --init -f json` writes JSON (27.0 wrote text), the run's
+    // findings known by count and its own command; `check` then fails on a
+    // finding it does not know
+    {
+        // (the tour ran elsewhere: its project is the one named)
+        let toml_path = b.path("sonde.toml");
+        let config = toml_path.to_str().unwrap();
+        let init = b
+            .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
+            .await;
+        holds("check-init", &init);
+        assert_eq!(init["runArgs"], "--demo", "{init}");
+        assert!(
+            !init["command"].as_str().unwrap().contains("<your command>"),
+            "{init}"
+        );
+        std::fs::remove_file(&toml_path).unwrap();
+        // a run with findings (the etl fixture, on moto): known by count
+        let etl = b.path("etl.sonde");
+        let s = etl.to_str().unwrap();
+        let init = b
+            .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
+            .await;
+        holds("check-init", &init);
+        assert_eq!(init["runArgs"], "--url <the S3 endpoint>", "{init}");
+        let known = init["findings"].as_object().unwrap();
+        assert!(!known.is_empty(), "{init}");
+        let toml = std::fs::read_to_string(b.path("sonde.toml")).unwrap();
+        assert!(toml.contains("[check.findings]"), "{toml}");
+        assert!(!toml.contains("tolerance"), "{toml}");
+        let passed = b
+            .json(&["check", s, "--config", config, "-f", "json"], 0)
+            .await;
+        holds("check", &passed);
+        // one known with a smaller count, and one left out: grown and new
+        let mut ids = known.keys();
+        let (grown, gone) = (ids.next().unwrap().clone(), ids.next().cloned());
+        let mut cut = toml.replace(
+            &format!(
+                "{} = {}",
+                serde_json::to_string(&grown).unwrap(),
+                known[&grown]
+            ),
+            &format!("{} = 0", serde_json::to_string(&grown).unwrap()),
+        );
+        if let Some(g) = &gone {
+            cut = cut.replace(
+                &format!("{} = {}\n", serde_json::to_string(g).unwrap(), known[g]),
+                "",
+            );
+        }
+        std::fs::write(b.path("sonde.toml"), cut).unwrap();
+        let failed = b
+            .json(&["check", s, "--config", config, "-f", "json"], 1)
+            .await;
+        holds("check", &failed);
+        let gated = failed["check"]["findings"].as_array().unwrap();
+        assert!(
+            gated
+                .iter()
+                .any(|f| f["identity"] == grown.as_str() && f["known"] == 0),
+            "{failed}"
+        );
+        if let Some(g) = gone {
+            assert!(
+                gated
+                    .iter()
+                    .any(|f| f["identity"] == g.as_str() && f.get("known").is_none()),
+                "{failed}"
+            );
+        }
+        std::fs::remove_file(b.path("sonde.toml")).unwrap();
+    }
     holds(
-        "compare",
-        &b.json(&["compare", s, s, "-f", "json"], 0).await,
+        "show",
+        &b.json(&["show", s, "--since", s, "-f", "json"], 0).await,
     );
     holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
-    // replaying it on the small store, and the two compared (what the run
-    // read is written there first: nothing differs)
+    // replaying it on the small store (what the run read is written there
+    // first: nothing differs)
     let replayed = b.path("replay.sonde");
     let r = replayed.to_str().unwrap();
     holds(
-        "compare-replay",
+        "replay",
         &b.json(
             &[
-                "compare",
+                "replay",
                 s,
-                "--replay",
+                "-e",
                 "a",
                 "--bucket",
                 "demo=data",
@@ -608,18 +727,14 @@ async fn every_json_output_is_as_its_schema_says() {
         .await,
     );
     holds(
-        "compare-answers",
-        &b.json(&["compare", s, r, "-f", "json"], 0).await,
-    );
-    holds(
-        "compare-replay-stores",
+        "replay-stores",
         &b.json(
             &[
-                "compare",
+                "replay",
                 s,
-                "--replay",
+                "-e",
                 "a",
-                "--replay",
+                "-e",
                 "b",
                 "--bucket",
                 "demo=data",
@@ -667,37 +782,14 @@ async fn every_json_output_is_as_its_schema_says() {
         )
         .await,
     );
-    holds(
-        "probe-list",
-        &b.json(&["probe", "list", "-f", "json"], 0).await,
-    );
-    let run = b
+    let probed = b
         .json(
-            &[
-                "probe",
-                "-e",
-                "a",
-                "-b",
-                "data",
-                "--only",
-                "list.",
-                "--no-slow",
-                "-f",
-                "json",
-            ],
+            &["endpoints", "test", "a", "--probes", "data", "-f", "json"],
             // (the small store breaks a guarantee or two)
             1,
         )
         .await;
-    holds("probe", &run);
-    let runs = b.json(&["probe", "runs", "-f", "json"], 0).await;
-    holds("probe-runs", &runs);
-    let one = format!("{}:a", runs[0]["id"].as_str().unwrap());
-    holds(
-        "probe-diff",
-        &b.json(&["probe", "diff", &one, &one, "-f", "json"], 0)
-            .await,
-    );
+    holds("endpoints-probes", &probed);
 }
 
 /// The checker says what is wrong, and refuses a keyword it does not check.
@@ -732,20 +824,16 @@ fn every_schema_is_checked_and_documented() {
         "show",
         "show-by",
         "check",
-        "compare",
+        "check-init",
         "runs",
-        "compare-replay",
-        "compare-replay-stores",
-        "compare-answers",
+        "replay",
+        "replay-stores",
         "endpoints-list",
         "endpoints-test",
+        "endpoints-probes",
         "bucket-size",
         "bucket-uploads",
         "layout",
-        "probe-list",
-        "probe",
-        "probe-runs",
-        "probe-diff",
     ];
     let mut found: Vec<String> = std::fs::read_dir(schemas_dir())
         .unwrap()

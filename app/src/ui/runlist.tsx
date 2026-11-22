@@ -1,7 +1,7 @@
 // The runs in the sidebar, newest first, by day: a row a run — its
 // program (or the endpoint), what tells it from its neighbours and its time;
-// then where it went and its requests, and how it went (its trials, else a
-// mark of its requests over its time).
+// then where it went and its requests, and a mark of its requests over its
+// time.
 
 import { computed, type ContextMenuEvent, effect, type JSX, List, type ListRef, Text, untracked, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
@@ -9,7 +9,7 @@ import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
 import type { RunInfo } from "../types";
-import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT, TONE } from "./kit";
+import { Dot, Heading, InWindowMenu, ListRow, TEXT, TONE } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
@@ -75,8 +75,6 @@ export function RunList(props: {
   };
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
-  // how many of a run's trials broke (none: nothing is said)
-  const broke = (s: RunInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
   const name = (s: RunInfo) => s.title || programOf(s.command) || s.endpoint;
   // the rest of the command after its program, scrubbed; the whole of it when
   // the program is not its first word (`cd etl && python load.py`)
@@ -88,8 +86,8 @@ export function RunList(props: {
     if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
     return c === p ? "" : c;
   };
-  // runs of one program are told apart: by the argument that differs, and where the
-  // command is the same to the letter, by the second they started
+  // runs of one program are told apart: by the argument that differs (said even where the command is the same to
+  // the letter, so three `curl`s read as what each fetched), and where it is the same, by the second they started
   // (worked out once per list, each command read once: rows ask for it as they draw)
   const told = computed(() => {
     const by = new Map<string, { s: RunInfo; args: string }[]>();
@@ -129,7 +127,7 @@ export function RunList(props: {
     pressed = true;
     props.onSelect(path);
   };
-  // where the system has no menus to pop up (a terminal, the web): the
+  // where the system has no menus to pop up (the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: RunInfo; i: number }, body: JSX.Element) => (
     <InWindowMenu enabled={!props.onContextMenu && !!props.actions && !isAvailable} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
@@ -150,16 +148,14 @@ export function RunList(props: {
       onPress={() => select(x().s.path)}
       class="mb-1"
     >
-      {/* what ran, what tells it apart and when; then where it went, how much it did, and how it went — its trials'
-          verdict, else its requests over its time, never both */}
+      {/* what ran, what tells it apart and when; then where it went, how much it did, and its requests over its time */}
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
         <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
-        {/* what tells it from its neighbours (the same command again tells nothing apart by its words: its time does,
-            to the second) */}
-        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.twin ? "" : (told().get(x().s.path)?.args ?? args(x().s))}</Text>
+        {/* what tells it from its neighbours: its arguments (the same command again: its time too, to the second) */}
+        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
         {/* the same command run again: its time to the second, and so every time of its day */}
         <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{toSecond().has(dayLabel(x().s.created)) ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
@@ -172,16 +168,7 @@ export function RunList(props: {
           <Dot tone="warn" label={t("runs.pastBaseline")} />
           <Text testID="run-past" class={`shrink-0 ${TEXT.captionSize} ${TONE.warn.text}`}>{t("runs.pastBaseline")}</Text>
         </If>
-        {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
-            (in full to a screen reader) */}
-        <If when={broke(x().s)}>
-          {(n) => (
-            <Text testID="run-broke" class={`shrink-0 ${TEXT.meta}`} accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
-              {t("trial.ofBroke", { n: n(), of: x().s.trials!.length })}
-            </Text>
-          )}
-        </If>
-        <If when={x().s.shape?.length && !broke(x().s)}>
+        <If when={x().s.shape?.length}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
       </View>
@@ -215,7 +202,7 @@ export function RunList(props: {
         <If when={dayOf(r())} else={row(run)}>
           {(day) => (
             // the sidebar's own fill and a hairline under it: what scrolls under the day goes under it whole
-            <View class="border-b border-border bg-sidebar px-2 pb-1 pt-2 terminal:border-0 terminal:bg-transparent">
+            <View class="border-b border-border bg-sidebar px-2 pb-1 pt-2">
               <Heading quiet>{day()}</Heading>
             </View>
           )}
