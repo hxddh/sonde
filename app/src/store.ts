@@ -85,8 +85,13 @@ export const reading = (path: string) => void read.add(path);
 /** Whether `path` is being read or was, or is on its way to being: what
  * tidies up after a run asks this one question before it removes a run. */
 export const wasRead = (path: string) => read.has(path) || openRun() === path;
-/** A comparison to open with a run: the run before it (`Run again`). */
-export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
+/** The command bar asked for (⌘N, File › New Run, the sidebar's Runs pressed in Runs): Runs shows it, whatever run
+ * it showed. */
+export const newRunAsked = signal(false);
+export function newRun() {
+  batch(() => (openRun.set(null), newRunAsked.set(true)));
+  go("runs");
+}
 /** A pane to show a run on when it opens: a trial tried again opens its fresh run on its runs; the demo's, on its operations. */
 export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations" } | null>(null);
 /** A finding to open with a run (its index): the demo's run opens on its first. */

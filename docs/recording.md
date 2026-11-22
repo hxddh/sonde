@@ -13,9 +13,9 @@ sonde run --listen                          # a standing endpoint (127.0.0.1:900
 The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credentials as for every command
 ([credentials](credentials.md)).
 
-**In the app**, Runs' command bar does the same: a command, an endpoint (the folder and the policy behind its `⋯`),
-Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows); its run is the newest in the list, its
-terminal beside its operations; Stop ends it, a notification says how. Output is kept in the run with
+**In the app**, Runs' command bar (⌘N, or Runs pressed again) does the same: a command, an endpoint (the folder and
+the policy behind its `⋯`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows); its run is the
+newest in the list, on its Output tab, its terminal beside its operations; Stop ends it, a notification says how. Output is kept in the run with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
 highlights its lines and back. Output is kept as printed: do not print secrets. With a folder chosen and the field
 empty, the bar proposes what the folder runs: a Makefile's targets, `package.json`'s scripts, `pyproject.toml`'s entry

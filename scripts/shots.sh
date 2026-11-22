@@ -94,7 +94,7 @@ wide-03i-distribution spread
 wide-03l-flows flows
 dark-03l-flows flows-dark
 wide-03m-latency latency
-wide-03h-runs runs
+wide-03p-compare compare
 wide-04b-objects store
 wide-04d-uploads uploads
 wide-05-activity activity

@@ -327,8 +327,7 @@ export const READING = "w-full max-w-[560px]";
  * to a line or two; from `tall` each finding has its lines in full. */
 export const BREAK = { toolbar: 1040, inspector: 780, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
- * (a run's signal, a comparison's fact with its two lines, a bucket's
- * size), how high a dialog's scrolling part grows before it scrolls, and
+ * (a bucket's size), how high a dialog's scrolling part grows before it scrolls, and
  * the findings' room over a run's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
@@ -336,7 +335,6 @@ export const BREAK = { toolbar: 1040, inspector: 780, short: 600, tall: 880 } as
  * lint-layout fail a size constant, a literal least width, a column's literal
  * width or a literal `maxHeight` in a page. */
 export const SIZES = {
-  compareTile: 176,
   capacityTile: 128,
   dialogScroll: 480,
   findingsShort: 68,
@@ -372,9 +370,8 @@ export const COLUMN = {
   matrixWhat: 190,
   matrixRecorded: 90,
   matrixRun: 100,
-  /** an operation's title: before measuring, beside the output, and the least it keeps */
+  /** an operation's title: before measuring, and the least it keeps */
   title: 340,
-  titleCompact: 220,
   titleLeast: 160,
   /** the operations' place-in-time bar and notes: the least they keep */
   whenLeast: 80,
@@ -394,9 +391,8 @@ export const PANE = {
   sidebarNarrow: 220,
   /** the page beside the sidebar */
   mainLeast: 480,
-  /** a run's output (its terminal, while it runs) beside its operations */
+  /** a run's output (its terminal, while it runs) and its operations, side by side on Output: each */
   outputLeast: 240,
-  besideLeast: 320,
   /** a run beside its inspector */
   runLeast: 460,
   inspector: 420,
@@ -497,18 +493,6 @@ export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: 
       <If when={props.onClose}>
         <IconButton icon="x" label={t("common.close")} onPress={() => props.onClose?.()} testID={props.closeTestID} />
       </If>
-    </View>
-  );
-}
-
-/** The head of a list in the sidebar: what it lists, and its few commands. */
-export function SideHeader(props: { title: string; children?: JSX.Element }) {
-  return (
-    <View class="h-9 shrink-0 flex-row items-center gap-1 pl-4 pr-2">
-      <Heading quiet class="min-w-0 flex-1 line-clamp-1">
-        {props.title}
-      </Heading>
-      {props.children}
     </View>
   );
 }
@@ -771,10 +755,22 @@ export function IconTile(props: { icon: IconName; tint?: Tint }) {
     </View>
   );
 }
+/** The head of a list in the sidebar: what it lists, and its few commands. */
+export function SideHeader(props: { title: string; children?: JSX.Element }) {
+  return (
+    <View class="h-9 shrink-0 flex-row items-center gap-1 pl-4 pr-2">
+      <Heading quiet class="min-w-0 flex-1 line-clamp-1">
+        {props.title}
+      </Heading>
+      {props.children}
+    </View>
+  );
+}
+
 /** A figure in a row of them, the one tile: what it counts, the figure, a
  * line about it. In a row, the caller gives it its share (`min-w-44 flex-1`);
  * never a height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a run (a `Sparkline`) */ mark?: JSX.Element }) {
+export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; pending?: boolean; testID?: string; class?: string }) {
   // the figure in the text's colour (a quiet one muted): its tone is a mark beside its name, never its figure
   const tint = () => (props.tone === "quiet" ? TONE.quiet.text : "text-foreground");
   const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
@@ -789,11 +785,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
         <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{props.label}</Text>
       </View>
       <If when={!props.pending} else={<View class="my-1 h-4 w-24 max-w-full rounded-(--radius-sm) bg-muted" />}>
-        <View class="flex-row items-center gap-2">
-          {/* a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile */}
-          <Text class={`min-w-0 flex-1 text-heading font-bold tabular-nums line-clamp-2 ${tint()}`}>{props.value}</Text>
-          {props.mark}
-        </View>
+        {/* a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile */}
+        <Text class={`min-w-0 text-heading font-bold tabular-nums line-clamp-2 ${tint()}`}>{props.value}</Text>
       </If>
       <If when={!props.pending} else={<View class="h-3 w-32 max-w-full rounded-(--radius-sm) bg-muted/70" />}>
         {/* one line, so tiles abreast stand level (what is cut stays in the tile's label) */}

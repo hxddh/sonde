@@ -10,7 +10,7 @@ import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
+import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, newRun, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, SURFACE, Row, TEXT } from "./kit";
@@ -107,6 +107,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   // CLI's `--demo` names one)
   list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", keywords: ["example", "slatedb"], run: openExample });
   if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", keywords: ["demo"], run: () => void startDemo() });
+  list.push({ id: "new-run", label: t("run.new"), group: t("palette.actions"), icon: "plus", shortcut: "mod+n", keywords: ["run", "command"], run: newRun });
   list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   const theme = settings()?.theme ?? "system";
