@@ -93,7 +93,7 @@
         "string",
         "null"
       ],
-      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new, back or open. Null for a run that is no program's (an import, a replay)."
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
@@ -117,7 +117,7 @@
           "description": "The exit code of a run that failed: not compared."
         }
       },
-      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, more, back, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
+      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, more, new, open; a trial's finding against the program's trial before: fixed, new, open), or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program."
     },
     "operations": {
       "type": "array",
@@ -395,7 +395,8 @@
             "obs.rename",
             "obs.markers",
             "obs.throttled",
-            "obs.serial"
+            "obs.serial",
+            "trial"
           ],
           "description": "What kind of finding it is, as `identity` begins (docs/cli.md#findings)."
         },
@@ -818,7 +819,7 @@
     },
     "trial": {
       "type": "object",
-      "description": "A trial's verdict (docs/trials.md).",
+      "description": "A trial's verdict, a row of its table (docs/trials.md): why it is not `survived`, where and what to change are a finding of the run's (`findings[]`, kind `trial`).",
       "properties": {
         "scenario": {
           "type": "string"
@@ -854,54 +855,6 @@
         },
         "attempts": {
           "type": "integer"
-        },
-        "where": {
-          "type": "object",
-          "description": "The request the verdict turns on, when it is not `survived`.",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "description": "The S3 call (`PutObject`)."
-            },
-            "key": {
-              "type": "string",
-              "description": "`bucket/key`, or the bucket and what was listed."
-            },
-            "caller": {
-              "type": "string",
-              "description": "The line of the program that sent it (`etl.py:12 in save`), when the run named callers."
-            }
-          },
-          "required": [
-            "kind",
-            "key"
-          ]
-        },
-        "advice": {
-          "type": "object",
-          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …), its arguments, and its English.",
-          "properties": {
-            "key": {
-              "type": "string",
-              "description": "The phrase's key in the app's locales (en, zh)."
-            },
-            "args": {
-              "type": "object",
-              "description": "Its arguments, as text.",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
-            "text": {
-              "type": "string",
-              "description": "The advice in English: no lookup needed."
-            }
-          },
-          "required": [
-            "key",
-            "args",
-            "text"
-          ]
         },
         "history": {
           "type": "array",

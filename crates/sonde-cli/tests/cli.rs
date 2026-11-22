@@ -191,7 +191,7 @@ fn the_demo_records_a_run_that_every_command_reads() {
     }
     let last = out.lines().last().unwrap();
     assert!(
-        last.starts_with("  ✓ fixed") && last.ends_with("saved 3 requests (predicted 3)"),
+        last.starts_with("  ✓ fixed") && last.ends_with(" ms less"),
         "{out}"
     );
     // the job it names is there, the line it names holds the HEAD
@@ -1936,7 +1936,7 @@ fn the_help_lists_fourteen_commands_at_most() {
 /// finding's saving, line and fix, and the change since the run before;
 /// `compare` alone takes the last two runs.
 #[test]
-fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
+fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("data/runs");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1997,28 +1997,34 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(shown[1].contains("since the run before (etl-1-base)"));
     let third = &shown[2];
     assert!(
-        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · saved 20 requests (predicted 20)"),
+        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · within noise"),
         "{third}"
     );
     assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
+    // the two runs before it took 397 ms apart: what it saved is not told
+    // from that
+    assert!(
+        third.contains("  its runs vary by 397 ms (its last runs of this command)"),
+        "{third}"
+    );
     assert!(
         shown[3].contains("✓ fixed  6 files under 5 MiB"),
         "{}",
         shown[3]
     );
     assert!(
-        shown[4].contains("! back   20 objects under etl-bucket/run/in/ were checked"),
+        shown[4].contains("! new    20 objects under etl-bucket/run/in/ were checked"),
         "{}",
         shown[4]
     );
 
-    // compare alone: the last two runs, an undone fix back
+    // compare alone: the last two runs, an undone fix new again
     let c = stdout(&sonde(t.path(), &["compare"]));
     assert!(
         c.contains("etl-4-no-small.sonde → etl-5-undone.sonde"),
         "{c}"
     );
-    assert!(c.contains("! back   6 files under 5 MiB"), "{c}");
+    assert!(c.contains("! new    6 files under 5 MiB"), "{c}");
     // one run: it and the run before it
     let c = stdout(&sonde(t.path(), &["compare", "etl-3-no-head"]));
     assert!(c.contains("etl-2-again.sonde → etl-3-no-head.sonde"), "{c}");

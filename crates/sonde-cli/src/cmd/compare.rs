@@ -289,14 +289,12 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
-        // a finding fixed by the earlier run or one before it is back, not new
         let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(&after));
         if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
             // one under its threshold before and gone now is fixed
             program.mark_gone(&mut c.findings, &ra, &rb);
-            program.mark_back(&mut c.findings, &ha.created.to_rfc3339());
             use sonde_analysis::fixloop::{State, said};
-            c.appeared = said(&c.findings, &[State::New, State::Back]);
+            c.appeared = said(&c.findings, &[State::New]);
             c.resolved = said(&c.findings, &[State::Fixed]);
         }
     } else {
@@ -515,6 +513,7 @@ fn before_of(after: &std::path::Path) -> anyhow::Result<Result<(PathBuf, PathBuf
         &key,
         h.created,
         after,
+        h.command.as_deref(),
     );
     Ok(match before {
         Some(before) => Ok((before, after.to_path_buf())),

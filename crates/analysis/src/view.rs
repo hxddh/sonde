@@ -126,7 +126,13 @@ impl Analysis {
             return None;
         }
         let dir = crate::fixloop::folder_of(path);
-        let traces = match crate::fixloop::previous_run(&dir, &key, header.created, path) {
+        let traces = match crate::fixloop::previous_run(
+            &dir,
+            &key,
+            header.created,
+            path,
+            header.command.as_deref(),
+        ) {
             Some(_) => crate::episode::traces_of(header, records, &self.episodes),
             None => Vec::new(),
         };

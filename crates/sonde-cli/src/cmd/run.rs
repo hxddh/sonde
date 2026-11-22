@@ -52,11 +52,6 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
-    /// A trial of only what did not survive (--trial is implied): a fresh
-    /// clean run, then the scenarios that broke, degraded or were refused by
-    /// the policy in this program's last trials (`sonde run --again -- …`).
-    #[arg(long, conflicts_with = "faults")]
-    again: bool,
     /// The program's name: its runs, baseline and trial verdicts go by it
     /// (default: sonde.toml's `[program] name` for the program it `runs`,
     /// else what the command runs: `etl` for `python3 etl.py 5`).
@@ -277,7 +272,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         if cli.url.is_some() {
             return Err(super::usage("--demo and --url name two stores: give one"));
         }
-        if a.trial || a.again || !a.faults.is_empty() || a.name.is_some() {
+        if a.trial || !a.faults.is_empty() || a.name.is_some() {
             return Err(super::usage(
                 "the tour is not tried or named: give a command after -- (`sonde run --demo --trial -- python etl.py`)",
             ));
@@ -312,7 +307,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             asked.push(scenario);
         }
     }
-    // what to try again is known before anything runs
     // the program's name, when it has one of its own
     let command = sonde_analysis::program::shell_join(&a.command);
     let name = a
@@ -321,42 +315,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .or_else(|| project.file.program.name_for(&command));
-    if a.again {
-        let program = name
-            .clone()
-            .or_else(|| sonde_analysis::program::program_key(Some(&command)))
-            .unwrap_or_default();
-        let dir = match &a.rec.out {
-            Some(out) => runs_dir(out),
-            None => s.paths().runs(),
-        };
-        let names = sonde_analysis::trial::to_try_again(&dir, &program);
-        if names.is_empty() {
-            let tried = sonde_analysis::trial::read_verdicts(&dir).contains_key(&program);
-            if tried {
-                eprintln!(
-                    "Nothing to try again: every scenario of `{program}` survived its last trial, or met nothing."
-                );
-                return Ok(0);
-            }
-            return Err(super::usage(format!(
-                "--again: `{program}` has no trial in {} yet (`sonde run --trial`)",
-                dir.display()
-            )));
-        }
-        for name in &names {
-            match named_scenario(name, &project.scenarios) {
-                Ok(scenario) if asked.iter().any(|s| same(s, &scenario)) => {}
-                Ok(scenario) => asked.push(scenario),
-                // a project's scenario since taken out of sonde.toml
-                Err(e) => eprintln!("warning: not tried again: {e}"),
-            }
-        }
-        if asked.is_empty() {
-            return Ok(64);
-        }
-    }
-    let trying = a.trial || a.again || !asked.is_empty();
+    let trying = a.trial || !asked.is_empty();
     let ctx = RunCtx {
         trying,
         name,
@@ -449,6 +408,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         return Ok(128 + signal);
     }
+    use sonde_analysis::fixloop::State;
     use sonde_analysis::trial::Standing;
     let broke = trials
         .iter()
@@ -456,22 +416,26 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .count();
     let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
     eprintln!("\n{}", trials_summary(&standings));
+    // what did not survive, as findings of the clean run: why, at which
+    // line, and what to change for the SDK
+    for o in sonde_analysis::trial::findings(&trials) {
+        for line in super::fixloop::finding_lines(&o, None, None, color) {
+            eprintln!("{line}");
+        }
+    }
+    // against the program's trial before: what is fixed, still open, new
+    let changed = sonde_analysis::trial::changes(&trials);
+    if program.is_some() && changed.iter().any(|c| c.state != State::New) {
+        eprintln!("{}", paint("since the trial before", "1", color));
+        for line in super::fixloop::change_lines(&changed, None, true, color) {
+            eprintln!("{line}");
+        }
+    }
     eprintln!("Each trial is a run:");
     for t in &trials {
         if let Some(path) = sonde_analysis::trial::run_path(&file, t) {
             eprintln!("  sonde show {}", path.display());
         }
-    }
-    if program.is_some()
-        && trials.iter().any(|t| {
-            matches!(
-                t.standing,
-                Standing::Broke | Standing::Degraded | Standing::Refused
-            )
-        })
-    {
-        eprintln!("Once changed, try again what did not survive:");
-        eprintln!("  {}", again_command(cli, a, &trials));
     }
     Ok(if broke > 0 { 1 } else { 0 })
 }
@@ -507,67 +471,6 @@ fn trials_summary(standings: &[sonde_analysis::trial::Standing]) -> String {
         _ if unjudged.is_empty() => format!("The program broke under {broke} of {judged}."),
         _ => format!("The program broke under {broke} of {judged} judged; not judged: {unjudged}."),
     }
-}
-
-/// The command that tries a program again under what did not survive, with
-/// the flags of the trial it repeats: the same store, policy and recording.
-/// A trial of scenarios named (`--fault`) names again the ones that did not
-/// survive.
-fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_analysis::trial::Trial]) -> String {
-    use sonde_analysis::trial::Standing;
-    let q = |w: &str| sonde_analysis::program::shell_join(&[w.to_string()]);
-    let mut words = vec!["sonde run".to_string()];
-    if a.faults.is_empty() {
-        words.push("--again".into());
-    } else {
-        for t in trials.iter().filter(|t| {
-            matches!(
-                t.standing,
-                Standing::Broke | Standing::Degraded | Standing::Refused
-            )
-        }) {
-            words.push(format!("--fault {}", q(&t.asked())));
-        }
-    }
-    if let Some(n) = &a.name {
-        words.push(format!("--name {}", q(n)));
-    }
-    if let Some(out) = &a.rec.out {
-        // (the file is there now: written over, as asked)
-        words.push(format!("-o {} --force", q(&out.to_string_lossy())));
-    }
-    if a.demo {
-        words.push("--demo".into());
-    }
-    if let Some(url) = &cli.url {
-        words.push(format!("--url {}", q(url)));
-        if let Some(r) = &cli.region {
-            words.push(format!("--region {}", q(r)));
-        }
-        if cli.path_style {
-            words.push("--path-style".into());
-        }
-        if let Some(ca) = &cli.ca_file {
-            words.push(format!("--ca-file {}", q(&ca.to_string_lossy())));
-        }
-    }
-    if let Some(e) = &a.rec.endpoint
-        && !a.demo
-    {
-        words.push(format!("-e {}", q(e)));
-    }
-    if let Some(p) = &a.rec.policy {
-        words.push(format!("--policy {}", q(p)));
-    }
-    if a.rec.tls {
-        words.push("--tls".into());
-    }
-    if a.no_callers {
-        words.push("--no-callers".into());
-    }
-    words.push("--".into());
-    words.push(sonde_analysis::program::shell_join(&a.command));
-    words.join(" ")
 }
 
 /// A trial's line: its standing, the scenario, what happened.
@@ -891,9 +794,14 @@ async fn run_once(
             &mut analysis.observations,
             &super::check::expect_of(&run.header),
         );
-        // against the program's run before: what the change did
-        let since =
-            super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis);
+        // against the program's run before: what the change did. A trial's
+        // clean run of another command is compared with none
+        let apart = ctx.trying && sonde_analysis::fixloop::tried_apart(&started.path, &run.header);
+        let since = (!apart)
+            .then(|| {
+                super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis)
+            })
+            .flatten();
         print_summary_of(
             &analysis,
             &run.header,
@@ -903,6 +811,16 @@ async fn run_once(
             false,
             since.as_ref(),
         );
+        if apart {
+            eprintln!(
+                "{}",
+                paint(
+                    "not compared with the program's runs: a trial of another command",
+                    "2",
+                    color
+                )
+            );
+        }
         // stopped from outside: said as such, not as a program that failed
         // (nor as one that sent nothing)
         match stopped_text(signal) {

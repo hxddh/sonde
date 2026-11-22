@@ -258,7 +258,18 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         sonde_analysis::program::key_of(&run.header).as_deref(),
     );
     // against the program's run before it, as `run` said it: in every format
-    let since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
+    let mut since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
+    // what did not survive is among its findings, and in its fix loop
+    // against the program's trial before
+    analysis
+        .observations
+        .extend(sonde_analysis::trial::findings(&trials));
+    if let Some(since) = &mut since {
+        since
+            .findings
+            .extend(sonde_analysis::trial::changes(&trials));
+    }
+    let trials: Vec<_> = trials.iter().map(|t| t.verdict()).collect();
     match a.format {
         // the answer: the summary, the findings each cut to what to change
         // and where; every operation (--all), the failed ones (--errors), the

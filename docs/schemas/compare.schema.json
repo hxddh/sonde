@@ -175,7 +175,7 @@
     },
     "findings": {
       "type": "array",
-      "description": "Each finding of either run, where it stands: fixed first, then less, back, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`).",
+      "description": "Each finding of either run, where it stands: fixed first, then less, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`).",
       "items": {
         "type": "object",
         "properties": {
@@ -188,11 +188,10 @@
               "fixed",
               "less",
               "more",
-              "back",
               "new",
               "open"
             ],
-            "description": "fixed: gone at any threshold; less and more: still there at any threshold, by its counts; back: fixed in an earlier run, or under its threshold in the run before, over it again; open: as much in both."
+            "description": "Judged by its count alone (`counts`), never by a share of the run: fixed: gone at any threshold; less and more: still there at any threshold, its count fallen or grown; new: none of it in the run before, at any threshold; open: as much in both."
           },
           "level": {
             "enum": [
@@ -213,7 +212,7 @@
           },
           "was": {
             "type": "object",
-            "description": "As it read in the run before, when it reads otherwise now (less, more, back).",
+            "description": "As it read in the run before, when it reads otherwise now (less, more).",
             "properties": {
               "text": {
                 "type": "string",
@@ -245,14 +244,18 @@
           },
           "measured": {
             "$ref": "#/$defs/saving",
-            "description": "What it saved, measured between the runs (fixed, less)."
+            "description": "What it saved, measured between the runs (fixed, less): the requests of its own asks, and what the run's wall time (`ms`) and cost fell by (negative: they grew)."
           },
           "saved": {
             "$ref": "#/$defs/phrase"
           },
           "savedText": {
             "type": "string",
-            "description": "Display text, not stable: the measured saving against the predicted."
+            "description": "Display text, not stable: the run's wall time against the predicted (`1.2 s less (predicted 1.5 s)`), or `within noise`."
+          },
+          "withinNoise": {
+            "type": "boolean",
+            "description": "Present (true) when the run's wall time moved by less than the program's runs vary (`noiseMs`): what it saved is not told from noise."
           }
         },
         "required": [
@@ -280,6 +283,10 @@
     "workloadChanged": {
       "type": "string",
       "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`requests 120 → 402, 3.4×`): grown by half or more, or shrunk by a third or more below what fixing the first run's findings would leave. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+    },
+    "noiseMs": {
+      "type": "number",
+      "description": "How much the program's wall time varies run to run, in ms: the spread of its last runs of the same command (up to 5). A saving under it is within noise. Absent with fewer than two earlier runs (no band), or for two runs named by hand."
     },
     "endpoints": {
       "type": "array",
@@ -411,18 +418,22 @@
     },
     "saving": {
       "type": "object",
-      "description": "Requests not sent and time not waited, in ms.",
+      "description": "Requests not sent, time not taken (ms) and money not spent (`cost`, in the run's currency).",
       "properties": {
         "requests": {
           "type": "integer"
         },
         "ms": {
           "type": "number"
+        },
+        "cost": {
+          "type": "number"
         }
       },
       "required": [
         "requests",
-        "ms"
+        "ms",
+        "cost"
       ]
     }
   }

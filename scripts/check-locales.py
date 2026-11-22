@@ -120,7 +120,10 @@ for k in en:
 
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
-GONE: dict[str, str] = {}
+GONE: dict[str, str] = {
+    "phrase.fix.back": "29.0: a finding judged by its counts is new or more, never back",
+    "phrase.fix.savedTime": "29.0: reworded as phrase.fix.saved, the run's time against the predicted",
+}
 
 
 def git(*args):

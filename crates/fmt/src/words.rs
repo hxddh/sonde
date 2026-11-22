@@ -39,6 +39,15 @@ pub fn phrase(key: &str) -> Option<&'static str> {
     words().phrase.get(key).map(String::as_str)
 }
 
+/// A run's phrase `key` as the locale keeps it, and its English: a key
+/// read back as text (a verdict's) said again as a phrase.
+pub fn phrase_entry(key: &str) -> Option<(&'static str, &'static str)> {
+    words()
+        .phrase
+        .get_key_value(key)
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+}
+
 /// The English of a service's phrase `key` (`core.<key>`).
 pub fn core(key: &str) -> Option<&'static str> {
     words().core.get(key).map(String::as_str)
