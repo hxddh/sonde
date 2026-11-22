@@ -3528,7 +3528,11 @@ fn a_run_written_elsewhere_is_in_its_programs_history_and_verify_writes_beside_i
         verify.starts_with("sonde run --demo --name job -o "),
         "{verify}"
     );
-    assert!(verify.contains("job2.sonde -- "), "{verify}");
+    // (quoted where the shell would need it: a Windows path)
+    assert!(
+        verify.contains("job2.sonde -- ") || verify.contains("job2.sonde\" -- "),
+        "{verify}"
+    );
     // again, into the runs folder: the run written elsewhere is the one before
     run(None);
     let newest = std::fs::read_dir(t.path().join("data/runs"))
