@@ -618,28 +618,6 @@ fn stretch_of(
     json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals) })
 }
 
-/// What the live panel shows of a run: its last half minute.
-pub const LIVE_WINDOW_MS: f64 = 30_000.0;
-
-/// [`Runs::live`] over `records`: those that started in the last
-/// [`LIVE_WINDOW_MS`] before the latest one did.
-fn live_of(
-    records: &[reqlog::Record],
-    prices: &sonde_analysis::profile::RequestPrices,
-) -> JsonValue {
-    let starts = records.iter().map(|r| r.time.timestamp_micros());
-    let (Some(t0), Some(last)) = (starts.clone().min(), starts.max()) else {
-        return stretch_of(records, prices, 0.0, 0.0);
-    };
-    let latest_ms = (last - t0) as f64 / 1000.0;
-    stretch_of(
-        records,
-        prices,
-        (latest_ms - LIVE_WINDOW_MS).max(0.0),
-        latest_ms + 1.0,
-    )
-}
-
 /// A page's query as the interface sends it.
 fn query_of(query: JsonValue) -> Result<sonde_analysis::view::Query, String> {
     if query.is_null() {
@@ -1644,23 +1622,6 @@ impl Runs {
                 &crate::state::request_prices_for(&s.header.endpoint),
                 from_ms,
                 to_ms,
-            ))
-        })
-        .await
-        .map_err(err_msg)?
-    }
-
-    /// A run as it goes: the requests that started in its last
-    /// [`LIVE_WINDOW_MS`], reckoned alone as [`Runs::stretch`] reckons a
-    /// stretch — the live panel's figures and charts, worked out from those
-    /// requests and not from the whole run at each tick. Off the interface's
-    /// thread.
-    pub async fn live(path: String) -> Result<JsonValue, String> {
-        tokio::task::spawn_blocking(move || {
-            let s = open_run(&path)?;
-            Ok(live_of(
-                &s.records,
-                &crate::state::request_prices_for(&s.header.endpoint),
             ))
         })
         .await
@@ -3261,20 +3222,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(none, json!([]));
-    }
-
-    #[test]
-    fn the_live_panel_reckons_the_last_half_minute_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("many.sonde");
-        // a minute: one request every 100 ms
-        many(&path, 600);
-        let s = open_run(&path.to_string_lossy()).unwrap();
-        let prices = sonde_analysis::profile::RequestPrices::default();
-        let v = live_of(&s.records, &prices);
-        // the half minute up to the latest request, both ends in, on the run's axis
-        assert_eq!(v["summary"]["requests"], 301);
-        assert_eq!(v["profile"]["startMs"], 29_900.0);
     }
 
     #[test]

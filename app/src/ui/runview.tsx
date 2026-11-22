@@ -6,15 +6,16 @@
 
 import { Clipboard, computed, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
+import type { MenuItem as MenuItemSpec } from "nsh/desktop";
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say, sharedNotes } from "../phrases";
-import { Chart, runStory, Sparkline, timed, Waterfall, MARK } from "./plots";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
+import { Chart, runStory, timed, Waterfall } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
 import type { EngineSetting, EpisodeRow, Fix, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
-import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, Strong, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Options, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -123,7 +124,15 @@ export function fromWhom(view: Pick<RunView, "header" | "profile" | "sdk">): str
   return view.sdk ? t("run.sdk", { sdk: view.sdk }) : "";
 }
 
-export function RunHeader(props: { view: RunView; /** its commands: made where they stand (folded or open), so neither takes the other's */ actions?: () => JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the run (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
+/** Where and when a run ran, its commit and who sent its requests: "rustfs · Nov 7, 2026, 00:22 · from object_store 0.14". */
+export function runMeta(view: Pick<RunView, "header" | "profile" | "sdk">): string {
+  return [view.header.endpoint, date(view.header.created), gitText(view.header.git), fromWhom(view)].filter(Boolean).join(" · ");
+}
+
+/** A run's header, one form at every size: its command (where and when it ran in its tooltip), its commands, the run
+ * in a sentence, what marks it, and its figures in one line — requests, errors, median, bytes, at once — each
+ * opening its chart, its detail (p95 and p99, each way's bytes) in its tooltip. */
+export function RunHeader(props: { view: RunView; /** its commands, at the title's end */ actions?: () => JSX.Element; /** a press on a figure: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the run (a trial of another run), under its sentence */ children?: JSX.Element }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
@@ -133,105 +142,62 @@ export function RunHeader(props: { view: RunView; /** its commands: made where t
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
-  const acts = () => props.actions?.();
-  const from = () => fromWhom(props.view);
-  if (terminal()) {
-    return (
-      <View class="gap-0">
-        <Title>{command() ? commandLine(command()!) : props.view.header.endpoint}</Title>
-        {props.children}
-        <Text class="text-muted-foreground" testID="run-summary">
-          {line()}
-        </Text>
-        <Text class="text-foreground" testID="run-story">{runStory(props.view.profile)}</Text>
-      </View>
-    );
-  }
   const profile = () => props.view.profile;
-  // the four signals, then in flight: by rank, so a narrow pane drops the last first
   const tiles = () => {
     const x = signalsOf(props.view);
     return x ? signalTiles(x, props.view.summary.misses) : [];
   };
-  const tile = (i: number) => (look: () => TileLook) => {
-    const x = () => tiles()[i];
-    return (
-      <If when={x()}>
-        <Stat
-          look={look()}
-          testID={`signal-${SIGNALS[i]}`}
-          label={x().label}
-          value={x().value}
-          detail={x().detail}
-          tone={x().tone}
-          hint={props.onSignal ? t("signal.open") : undefined}
-          onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={((k) => (k === "quiet" ? "plain" : k))(x().tone)} />}
-        />
-      </If>
-    );
-  };
-  // folded: one line, what it ran and its first four figures said with what they count (each still opens its
-  // chart), then the commands
-  const FOLDED = 4;
-  const said = (i: number, x: SignalTile) =>
-    i === 0 ? t("run.bandRequests", { n: s().requests }) : i === 1 ? t("run.foldedErrors", { v: x.value }) : i === 2 && x.value !== t("signal.notTimed") ? t("run.foldedLatency", { v: x.value }) : x.value;
-  const folded = () => (
-    <View class="gap-3">
-    <View testID="run-folded" class="flex-row items-center gap-3">
-      <View selectable class="min-w-0 flex-1">
-        <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
-      </View>
-      {/* (the run's figures, folded: the same summary in a line, quiet words, no buttons' look) */}
-      <View testID="run-summary" class="shrink-0 flex-row items-center" accessibilityLabel={line()}>
-        <Each of={tiles().slice(0, FOLDED)}>
-          {(x, i) => (
-            <>
-              <If when={i() > 0}>
-                <Text class={TEXT.note}>·</Text>
-              </If>
-              <Pressable label={`${x().label}: ${x().value}`} onPress={() => props.onSignal?.(SIGNALS[i()])} testID={`signal-${SIGNALS[i()]}`}>
-                <Text class={`tabular-nums ${TEXT.note}`}>{said(i(), x())}</Text>
-              </Pressable>
-            </>
-          )}
-        </Each>
-      </View>
-      {acts()}
-    </View>
-    {/* what marks the run (a trial of another, how it ended) stays under the line */}
-    {props.children}
-    </View>
-  );
+  // each figure said with what it counts: "172 requests · 0% errors · median 1.4 ms · 71.5 KiB · 8 at once"
+  const said = (x: SignalTile) =>
+    x.id === "rate"
+      ? t("run.bandRequests", { n: s().requests })
+      : x.id === "errors"
+        ? t("run.foldedErrors", { v: x.value })
+        : x.value === t("signal.notTimed")
+          ? x.value
+          : x.id === "latency"
+            ? t("run.foldedLatency", { v: x.value })
+            : x.id === "inFlight"
+              ? t("run.atOnce", { v: x.value })
+              : x.value;
   return (
-    <If when={!props.folded} else={folded()}>
-    <View class="gap-3">
-      <View class="flex-row items-start gap-3">
-        <View selectable class="min-w-0 flex-1 gap-1">
+    <View class="gap-2">
+      <View class="flex-row items-center gap-3">
+        <View selectable class="min-w-0 flex-1" tooltip={<Tip text={runMeta(props.view)} />}>
           <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
-          <Text testID="run-meta" class={`${TEXT.note} line-clamp-1`}>{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), from()].filter(Boolean).join(" · ")}</Text>
         </View>
-        {acts()}
+        {props.actions?.()}
       </View>
-      {/* the run in a sentence: where its time went, and the first thing to do. Across the pane
-          (not held to the title's column beside the commands); it wraps to two lines as the pane
-          narrows, and what is past them is cut at the second line's end */}
+      {/* the run in a sentence: where its time went, and the first thing to do (two lines at most) */}
       <If when={profile()?.groups.length}>
         <Text testID="run-story" class="text-body leading-5 text-foreground line-clamp-2">{runStory(profile())}</Text>
       </If>
       {props.children}
-      {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
-      {/* (a page shared before runs had a profile: its figures in a line) */}
-      <If when={tiles().length > 0} else={<Text testID="run-summary" accessibilityLabel={line()} class={`tabular-nums ${TEXT.note}`}>{line()}</Text>}>
-        <Tiles ranked short={props.short} min={SIZES.signalTile} testID="run-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
-      </If>
+      {/* its figures in one line, quiet words, each opening its chart; what is not said is in its tooltip */}
+      <View testID="run-summary" class="flex-row flex-wrap items-center" accessibilityLabel={line()}>
+        <If when={tiles().length > 0} else={<Text class={`tabular-nums ${TEXT.note}`}>{line()}</Text>}>
+          <Each of={tiles()}>
+            {(x, i) => (
+              <>
+                <If when={i() > 0}>
+                  <Text class={TEXT.note}>·</Text>
+                </If>
+                <Pressable label={[`${x().label}: ${x().value}`, x().detail].filter(Boolean).join(", ")} tip={x().detail || undefined} onPress={() => props.onSignal?.(x().id)} testID={`signal-${x().id}`}>
+                  <View class="flex-row items-center gap-1">
+                    <If when={x().tone !== "plain" && x().tone !== "quiet"}>
+                      <Dot tone={x().tone as Tone} />
+                    </If>
+                    <Text class={`tabular-nums ${TEXT.note}`}>{said(x())}</Text>
+                  </View>
+                </Pressable>
+              </>
+            )}
+          </Each>
+        </If>
+      </View>
     </View>
-    </If>
   );
 }
-
-/** The signals in rank order (the least width a tile of one reads in is the kit's `SIZES.signalTile`). */
-const SIGNALS: SignalId[] = ["rate", "errors", "latency", "bytes", "inFlight"];
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", rust: "Rust · object_store" } as const;
 type Sdk = keyof typeof SDKS | "config";
@@ -249,9 +215,7 @@ function SettingPanel(props: { s: EngineSetting; onOpenCode?: (place: string) =>
     <View testID="fix-setting" class="gap-1">
       <View class="flex-row flex-wrap items-center gap-2">
         <Strong class="min-w-0 flex-1">{t("fix.setting", { engine: props.s.engine })}</Strong>
-        <If when={!terminal()}>
-          <Button small variant="outline" icon="copy" label={t("fix.copySetting")} onPress={() => void Clipboard.writeText(settingLine(props.s)).catch(() => {})} testID="fix-setting-copy" />
-        </If>
+        <Button small variant="outline" icon="copy" label={t("fix.copySetting")} onPress={() => void Clipboard.writeText(settingLine(props.s)).catch(() => {})} testID="fix-setting-copy" />
       </View>
       <KeyValue mono rows={[[t("fix.settingKey"), props.s.key], [t("fix.settingValue"), props.s.value], ...(props.s.where ? [[t("fix.settingWhere"), props.s.where] as [string, string]] : [])]} />
       <If when={props.s.where} else={<Text class={TEXT.meta}>{t("fix.settingUnset", { engine: props.s.engine })}</Text>}>
@@ -279,7 +243,7 @@ const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
 /** "Expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
 function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => void }) {
   return (
-    <If when={props.onExpect && props.o.identity && !terminal()}>
+    <If when={props.onExpect && props.o.identity}>
       <Button small variant="ghost" icon="check" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
     </If>
   );
@@ -320,7 +284,7 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         <Heading class="shrink-0">{t("fix.title")}</Heading>
         <View class="flex-1" />
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: fixTitle(f) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
-        <If when={shown() && !terminal()}>
+        <If when={shown()}>
           <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
         </If>
         {/* the store's side of the fix, where it has one; or no change: a habit kept on purpose, which sonde check then expects */}
@@ -358,19 +322,17 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
           </Each>
         </View>
       </If>
+      {/* highlighted; a line too long for the card scrolls sideways under its own indicator (Native Shell's
+          TextView); its Copy is beside the SDKs, so no row stands empty over the code for it */}
       <If when={shown()}>
         {(f) => (
-          <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
-            {/* highlighted; a line too long for the card scrolls sideways under its own indicator (Native Shell's
-                TextView); its Copy is beside the SDKs, so no row stands empty over the code for it */}
-            <TextView
-              testID="fix-code"
-              // (the sample as written, without the blank lines around it)
-              markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
-              // (a well: a muted fill, no border; the code's own padding only, its first line at the top)
-              classes={{ codeBlock: "rounded-(--radius) border-0 bg-muted/60 font-mono text-small", codeBlockCode: "px-3 py-2" }}
-            />
-          </If>
+          <TextView
+            testID="fix-code"
+            // (the sample as written, without the blank lines around it)
+            markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
+            // (a well: a muted fill, no border; the code's own padding only, its first line at the top)
+            classes={{ codeBlock: "rounded-(--radius) border-0 bg-muted/60 font-mono text-small", codeBlockCode: "px-3 py-2" }}
+          />
         )}
       </If>
     </View>
@@ -449,34 +411,7 @@ export function Observations(props: { view: RunView; filter?: number | null; onF
     const f = o.identity ? props.states?.[o.identity] : undefined;
     return f && f.state !== "open" && f.state !== "fixed" ? f.state : null;
   };
-  if (terminal()) {
-    return (
-      <If when={props.view.observations.length > 0}>
-        <View testID="observations">
-          <Each of={list()}>
-            {(o, i) => (
-              // a finding narrows the operations to its own, as on the desktop
-              <ListRow
-                plain
-                testID={`observation-${i()}`}
-                label={observationText(o())}
-                selected={props.filter === i()}
-                disabled={!props.onFilter || !about(o())}
-                onPress={() => press(i())}
-              >
-                <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
-                  {o().level === "warn" ? "! " : "· "}
-                  <If when={state(o())}>{(st) => <Text class="text-info">{`[${stateLabel(st())}] `}</Text>}</If>
-                  {observationText(o())}
-                  <If when={!props.compact && observationSaving(o())}>{(s) => <Text class="text-status-ok">{` — ${s()}`}</Text>}</If>
-                </Text>
-              </ListRow>
-            )}
-          </Each>
-        </View>
-      </If>
-    );
-  }
+
   // a line each, but the one chosen in full
   const dense = () => props.compact || !!props.dense;
   // whether the findings are folded away, and the SDK their fixes are shown for: this pane's own
@@ -682,8 +617,8 @@ export function OperationsTable(props: {
   compact?: boolean;
   /** A run still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
   follow?: boolean;
-  /** whether the table is scrolled from its first row (the run's header folds while it is) */
-  onScrolled?: (away: boolean) => void;
+  /** Group by's choices: the operation's title opens them (a menu of the system's) */
+  groupMenu?: () => MenuItemSpec[];
 }) {
   // the requests sonde answered in the store's place (a trial's): their operations in sonde's own tone
   const hurt = computed(() => new Set(props.view.injected ?? []));
@@ -725,13 +660,13 @@ export function OperationsTable(props: {
   const width = signal(0);
   const layout = () =>
     operationColumns(
-      terminal() ? 0 : width(),
+      width(),
       // beside the output or a terminal there is no room for a tag most rows do not have
       // (no "when" bar beside the time: the time says when, and the strip over the table where in the run)
       { format: formats() && !props.compact, bar: false, notes: !props.compact },
       { bar: kept("bar", 150), notes: kept("notes", 320) },
     );
-  const titleWidth = () => (terminal() || width() > 0 ? layout().title : props.compact ? COLUMN.titleCompact : COLUMN.title);
+  const titleWidth = () => (width() > 0 ? layout().title : props.compact ? COLUMN.titleCompact : COLUMN.title);
   const columns = () => {
     const l = layout();
     const column = (key: OpColumn) => {
@@ -754,17 +689,15 @@ export function OperationsTable(props: {
           return { key, title: t("column.notes"), width: l.widths.notes, minWidth: COLUMN.notesLeast };
       }
     };
-    // a terminal draws no dot and reads left to right as a log does: when, what, how many, how long
-    const order: OpColumn[] = terminal() ? (["time", "format", "title", "requests", "duration", "notes"] as OpColumn[]).filter((k) => l.shown.includes(k)) : l.shown;
-    return order.map(column);
+    return l.shown.map(column);
   };
   const data = () =>
     held().map((e) => ({
       status: episodeTone(e, hurt()),
       time: clock(e.start),
       format: family(e).label,
-      // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
-      title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : episodeTitle(e),
+      // cut where it runs out of room (the cell's own middle ellipsis)
+      title: episodeTitle(e),
       requests: count(e.requests),
       duration: duration(episodeMs(e)),
       bar: "",
@@ -840,19 +773,18 @@ export function OperationsTable(props: {
       rowCount={props.source.total()}
       onVisibleRowsChange={({ range }) => {
         endSeen = range.end;
-        props.onScrolled?.(range.start > 0);
         props.source.show(range.start, range.end);
       }}
       fontSize={TYPE.body}
       rowHeight={rowHeight(ROW.table)}
-      resizableColumns={!terminal()}
+      resizableColumns
       onColumnResize={({ key, width }) => {
         if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
       }}
-      classes={terminal() ? undefined : tableClasses}
+      classes={tableClasses}
       rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? SELECTED : ""))}
-      renderCell={terminal() ? undefined : cell}
-      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
+      renderCell={cell}
+      renderHeaderCell={(h) => (props.groupMenu && columns()[h.column]?.key === "title" ? <GroupHead title={h.title} menu={props.groupMenu} /> : titleCells(columns)(h))}
       rowSelectable
       sort={sort()}
       onSortChange={({ sort: next }) => sortBy(next)}
@@ -865,20 +797,26 @@ export function OperationsTable(props: {
     />
     </View>
   );
-  // the notes nearly every operation has: said once, under the rows that leave them out
-  const shared = () => (props.compact ? [] : sharedNotes(held(), props.view.sharedNotes));
+  return grid();
+}
+
+/** The operations' title, as the way to Group by: a press opens its choices under it. */
+function GroupHead(props: { title: string; menu: () => MenuItemSpec[] }) {
+  let head: ViewRef | undefined;
   return (
-    <If when={!props.compact && props.view.sharedNotes.length > 0} else={grid()}>
-      <View class="min-h-0 flex-1 gap-2">
-        {grid()}
-        <Text testID="ops-shared" class={`px-1 ${TEXT.note} line-clamp-2`}>{t("ops.shared", { notes: shared().join(" · ") })}</Text>
-      </View>
-    </If>
+    <View class="min-w-0 flex-1 flex-row items-center">
+      <Pressable ref={(r) => (head = r)} label={t("split.groupBy")} tip={t("split.groupBy")} onPress={() => void popupMenu(props.menu(), head)} testID="group-by">
+        <View class="flex-row items-center gap-1">
+          <Text class={`min-w-0 shrink ${TEXT.meta} line-clamp-1`}>{props.title}</Text>
+          <Icon name="chevron-down" size={ICON.small} tint="muted-foreground" />
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
 /** The program's output, one timed line per row. */
-export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[]; /** whether the table is scrolled from its top (the run's header folds while it is), as the operations' */ onScrolled?: (away: boolean) => void }) {
+export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => void; ref?: (r: DataTableRef) => void; highlight?: number[] }) {
   return (
     <DataTable
       ref={props.ref}
@@ -889,13 +827,12 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
         { key: "time", title: t("column.time"), width: COLUMN.outputTime },
         { key: "line", title: t("runs.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
       ]}
-      renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, {}])}
+      renderHeaderCell={titleCells(() => [{}, {}])}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
-      onVisibleRowsChange={({ range }) => props.onScrolled?.(range.start > 0)}
       fontSize={TYPE.small}
-      fontFamily={terminal() ? undefined : token("font-mono")}
+      fontFamily={token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}
-      classes={terminal() ? undefined : tableClasses}
+      classes={tableClasses}
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? SELECTED : ""))}
       rowSelectable
       onRowPress={({ row }) => props.onSelect(row)}
@@ -992,7 +929,7 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
         </View>
       </If>
       {/* its requests in time, in the one chart frame: a bar from each one's start to its end */}
-      <If when={!terminal() && props.rows.length > 1}>
+      <If when={props.rows.length > 1}>
         <Chart title={t("waterfall.title")} text={t("profile.waterfallText", { n: props.rows.length, time: duration(spanMs(props.rows)) })}>
           <Waterfall records={props.rows} onRecord={props.onRecord} />
         </Chart>

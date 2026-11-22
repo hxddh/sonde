@@ -11,8 +11,7 @@ import { bucket, endpoint, offerCommands, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
 import { sectionLabel } from "../labels";
-import { REVEAL, Await, Badge, ProgressBar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar, Scrubber, WIDTH, TEXT } from "../ui/kit";
-import { BucketPicker, EndpointPicker } from "../ui/picker";
+import { REVEAL, Await, Badge, ProgressBar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, ToolBar, Scrubber, WIDTH, TEXT } from "../ui/kit";
 
 const LABEL = LAYOUT_LABEL;
 /** Words the app has for a decoder's own (a timeline event's kind, an issue's severity); what it has none for, as itself. */
@@ -69,8 +68,8 @@ function Replay(props: { job: string; layout: Layout }) {
 }
 
 export function Layouts() {
-  const pfx = terminal() ? signal("") : prefix;
-  const found = signal<Detection[] | null>(terminal() ? null : (here().layouts ?? null));
+  const pfx = prefix;
+  const found = signal<Detection[] | null>((here().layouts ?? null));
   const layout = signal<{ job: string; layout: Layout } | null>(null);
   const progress = signal<string | null>(null);
   // why the first scan gave nothing: said in place, with Try again
@@ -128,19 +127,14 @@ export function Layouts() {
       ...(found() ?? []).map((d) => ({ id: `layouts-decode-${d.format}-${d.root}`, label: `${t("layouts.decode")} · ${LABEL[d.format] ?? d.format} ${d.root || "/"}`, icon: "boxes" as const, disabled: busy(), run: () => void analyze(d.format, d.root) })),
     ],
   );
-  if (!terminal() && !found()) void detect();
+  if (!found()) void detect();
   return (
     <Scroll testID="screen-layouts" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
-        scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
+        scope={`${bucket() ?? ""}/${pfx()}`}
         // the measure that needs no known layout: any prefix's write cadence
         end={<More testID="layout-more" actions={() => [{ label: t("layouts.generic"), icon: "timer", run: () => void analyze("generic", pfx()), disabled: !bucket() || busy() }]} />}
       >
-        <If when={terminal()}>
-          <EndpointPicker />
-          <BucketPicker />
-          <Field bare class={WIDTH.long} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={detect} mono testID="layout-prefix" />
-        </If>
         <Button small variant={found() ? "outline" : "primary"} label={found() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={detect} disabled={!bucket() || busy()} testID="layout-detect" />
         <If when={busy()}>
           <Button small variant="ghost" label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} testID="layout-cancel" />
@@ -164,7 +158,7 @@ export function Layouts() {
                           <Text class={`shrink-0 ${TEXT.body}`}>{LABEL[d().format] ?? d().format}</Text>
                           <Path path={d().root || "/"} class="min-w-0 flex-1 text-muted-foreground" />
                         </View>
-                        <Text class={`${TEXT.note} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>{d().evidence}</Text>
+                        <Text class={`${TEXT.note} line-clamp-1`} style={{ textOverflow: "ellipsis-middle" }}>{d().evidence}</Text>
                       </View>
                       <View class={REVEAL}>
                         <Button small variant="ghost" label={t("layouts.decode")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />

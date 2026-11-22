@@ -13,8 +13,6 @@ pub mod run;
 pub mod runs;
 pub mod share;
 pub mod show;
-#[cfg(feature = "tui")]
-pub mod tui;
 
 use std::sync::Arc;
 

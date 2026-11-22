@@ -7,7 +7,6 @@ import { count, duration, percent } from "../../format";
 import { t } from "../../i18n";
 import type { Signals } from "../../types";
 import { pressedRow, CROSS_BAND, ChartTip, type Focus, FOCUS_RULE, fitted, HEADROOM, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop, slotMs } from "./system";
-import { terminal } from "../kit";
 import { errorRateSaid, failuresSaid } from "./answers";
 
 /** The classes a failure is of, in the order they stack: the store's own first (a throttle, the store asking the
@@ -62,34 +61,32 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
   };
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <If when={rows().some((r) => r.failed > 0)} else={<NoneInStretch />}>
-        <Plot
-          testID="error-rate"
-          data={rows()}
-          xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [0, budgetTop(peak() * HEADROOM.plot, props.budgetShare)] }}
-          accessibilityLabel={label()}
-          accessibilityValue={tipValue(tip())}
-          appearGeneration={1}
-          motion={MOTION}
-          crossLineClass={CROSS_BAND}
-          tooltipPlacement="pointer"
-          tooltipOffset={10}
-          tooltipContent={<ChartTip tip={tip()} />}
-          onHoverChange={({ index }) => {
-            hovered.set(index);
-            props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
-          }}
-          class={`${TICK_ROOM} ${PLOT} w-full`}
-        >
-          <Bar value="share" class={tone()} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * HEADROOM.plot, props.budgetShare) : (undefined as unknown as number))} class={FOCUS_RULE} />
-          <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
-          <ValueAxis peak={peak()} say={(v) => t("errorRate.peak", { pct: percent(v) })} />
-          <Budget value={props.budgetShare} say={percent} />
-        </Plot>
-      </If>
+    <If when={rows().some((r) => r.failed > 0)} else={<NoneInStretch />}>
+      <Plot
+        testID="error-rate"
+        data={rows()}
+        xScale={{ type: "band", ...BARS.slices }}
+        yScale={{ type: "linear", domain: [0, budgetTop(peak() * HEADROOM.plot, props.budgetShare)] }}
+        accessibilityLabel={label()}
+        accessibilityValue={tipValue(tip())}
+        appearGeneration={1}
+        motion={MOTION}
+        crossLineClass={CROSS_BAND}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<ChartTip tip={tip()} />}
+        onHoverChange={({ index }) => {
+          hovered.set(index);
+          props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
+        }}
+        class={`${TICK_ROOM} ${PLOT} w-full`}
+      >
+        <Bar value="share" class={tone()} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+        <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * HEADROOM.plot, props.budgetShare) : (undefined as unknown as number))} class={FOCUS_RULE} />
+        <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
+        <ValueAxis peak={peak()} say={(v) => t("errorRate.peak", { pct: percent(v) })} />
+        <Budget value={props.budgetShare} say={percent} />
+      </Plot>
     </If>
   );
 }
@@ -115,52 +112,50 @@ export function ErrorsOverTime(props: { signals: Signals; range?: [number, numbe
   };
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <If when={rows().some((r) => total(r) + r.retries > 0)} else={<NoneInStretch />}>
-        <BaseButton
-          testID="errors-press"
-          accessibilityLabel={label()}
-          disabled={!props.onFailures}
-          onPress={() => {
-            // the slice under the pointer; with Return (no pointer), the one with the most failures
-            const i = pressedRow(hovered(), rows(), total);
-            const r = i === null ? null : rows()[i];
-            if (r && total(r) > 0) props.onFailures?.([r.tMs, r.tMs + s().binMs]);
-          }}
-          class="rounded-(--radius)"
-        >
-        <Plot
-          testID="errors-over-time"
-          data={rows()}
-          xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [0, top()] }}
-          accessibilityLabel={label()}
-          accessibilityValue={tipValue(tip())}
-          appearGeneration={1}
-          motion={MOTION}
-          crossLineClass={CROSS_BAND}
-          tooltipPlacement="pointer"
-          tooltipOffset={10}
-          tooltipContent={<ChartTip tip={tip()} />}
-          onHoverChange={({ index }) => {
-            hovered.set(index);
-            props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
-          }}
-          class={`${TICK_ROOM} ${PLOT} w-full`}
-        >
-          <Bar value="throttled" stack="f" class={FAILURE_FILL.throttled} inactiveOpacity={INACTIVE} />
-          <Bar value="server" stack="f" class={FAILURE_FILL.server} inactiveOpacity={INACTIVE} />
-          <Bar value="client" stack="f" class={FAILURE_FILL.client} inactiveOpacity={INACTIVE} />
-          <Bar value="transport" stack="f" class={FAILURE_FILL.transport} inactiveOpacity={INACTIVE} />
-          <Bar value="injected" stack="f" class={FAILURE_FILL.injected} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          {/* a retry is a mark, not a failure of its own: a dot at how many in the slice */}
-          <Dot value={(r) => (r.retries > 0 ? r.retries : (undefined as unknown as number))} r={3} class="fill-info" hoverDotClass="hidden" />
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class={FOCUS_RULE} />
-          <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
-          <ValueAxis peak={top() / HEADROOM.plot} say={(v) => t("failures.peak", { n: count(v) })} />
-        </Plot>
-        </BaseButton>
-      </If>
+    <If when={rows().some((r) => total(r) + r.retries > 0)} else={<NoneInStretch />}>
+      <BaseButton
+        testID="errors-press"
+        accessibilityLabel={label()}
+        disabled={!props.onFailures}
+        onPress={() => {
+          // the slice under the pointer; with Return (no pointer), the one with the most failures
+          const i = pressedRow(hovered(), rows(), total);
+          const r = i === null ? null : rows()[i];
+          if (r && total(r) > 0) props.onFailures?.([r.tMs, r.tMs + s().binMs]);
+        }}
+        class="rounded-(--radius)"
+      >
+      <Plot
+        testID="errors-over-time"
+        data={rows()}
+        xScale={{ type: "band", ...BARS.slices }}
+        yScale={{ type: "linear", domain: [0, top()] }}
+        accessibilityLabel={label()}
+        accessibilityValue={tipValue(tip())}
+        appearGeneration={1}
+        motion={MOTION}
+        crossLineClass={CROSS_BAND}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<ChartTip tip={tip()} />}
+        onHoverChange={({ index }) => {
+          hovered.set(index);
+          props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
+        }}
+        class={`${TICK_ROOM} ${PLOT} w-full`}
+      >
+        <Bar value="throttled" stack="f" class={FAILURE_FILL.throttled} inactiveOpacity={INACTIVE} />
+        <Bar value="server" stack="f" class={FAILURE_FILL.server} inactiveOpacity={INACTIVE} />
+        <Bar value="client" stack="f" class={FAILURE_FILL.client} inactiveOpacity={INACTIVE} />
+        <Bar value="transport" stack="f" class={FAILURE_FILL.transport} inactiveOpacity={INACTIVE} />
+        <Bar value="injected" stack="f" class={FAILURE_FILL.injected} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+        {/* a retry is a mark, not a failure of its own: a dot at how many in the slice */}
+        <Dot value={(r) => (r.retries > 0 ? r.retries : (undefined as unknown as number))} r={3} class="fill-info" hoverDotClass="hidden" />
+        <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class={FOCUS_RULE} />
+        <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
+        <ValueAxis peak={top() / HEADROOM.plot} say={(v) => t("failures.peak", { n: count(v) })} />
+      </Plot>
+      </BaseButton>
     </If>
   );
 }

@@ -12,7 +12,6 @@ Rust 1.97 or newer, and the `nsh` CLI at the commit `Cargo.toml` pins:
 cargo install --locked --git https://github.com/longbridge/nsh --rev <nsh-core's rev in Cargo.toml> nsh-cli
 cargo build -p sonde-cli                 # the CLI
 (cd app && nsh run App.tsx)              # the app
-cargo build -p sonde-cli --features tui  # the CLI with `sonde tui` (needs `cd app && nsh build App.tsx` first)
 ```
 
 On Linux the app needs GTK 4 and WebKitGTK 6 (`libgtk-4-dev libwebkitgtk-6.0-dev` and GStreamer's `-dev` packages).
@@ -25,7 +24,6 @@ What CI runs (`ci.yml`'s lint, unit, ui, action and integration jobs; the rest: 
 # lint
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
 cargo shear                              # no unused dependencies
 python3 scripts/fixtures.py --check      # run fixtures in the current format
 (cd app && nsh check)

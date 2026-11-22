@@ -107,9 +107,6 @@ enum Command {
     Layout(cmd::layout::LayoutArgs),
     /// Configured endpoints.
     Endpoints(cmd::endpoints::EndpointArgs),
-    /// The terminal UI.
-    #[cfg(feature = "tui")]
-    Tui(cmd::tui::TuiArgs),
     /// The tour's job in FILE, played against AWS_ENDPOINT_URL (what the app's demo runs).
     #[command(hide = true)]
     DemoJob {
@@ -166,7 +163,6 @@ const GROUPS: &[(&str, &[&str])] = &[
     ("Record", &["run", "import", "replay"]),
     ("Read a run", &["runs", "show", "check", "share"]),
     ("Buckets", &["bucket", "layout", "endpoints"]),
-    ("More", &["tui"]),
 ];
 
 /// The top-level command with its help grouped. Each line is the command's
@@ -281,10 +277,6 @@ fn main() -> ExitCode {
             return ExitCode::from(if e.use_stderr() { 64 } else { 0 });
         }
     };
-    #[cfg(feature = "tui")]
-    if let Command::Tui(args) = &cli.command {
-        return cmd::tui::run(&cli, args);
-    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -309,8 +301,6 @@ fn main() -> ExitCode {
             Command::Layout(a) => cmd::layout::run(&sonde, &cli, a).await,
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
             Command::DemoJob { file } => cmd::demo::job(file).await,
-            #[cfg(feature = "tui")]
-            Command::Tui(_) => unreachable!(),
         };
         match code {
             Ok(c) => c,
@@ -373,8 +363,8 @@ mod tests {
                 c.get_name()
             );
         }
-        // and no group names a command that is gone (tui is there by feature)
-        for name in grouped.iter().filter(|n| **n != "tui") {
+        // and no group names a command that is gone
+        for name in &grouped {
             assert!(
                 cmd.get_subcommands().any(|c| c.get_name() == *name),
                 "{name} is no command"

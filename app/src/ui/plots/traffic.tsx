@@ -9,7 +9,7 @@ import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
 import { pressedRow, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, runSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER, slotMs, sliceAt } from "./system";
-import { terminal, textual, SimpleTable, TEXT, TONE } from "../kit";
+import { textual, SimpleTable, TEXT, TONE } from "../kit";
 import { bytesSaid, lanesSaid, slicePeak } from "./answers";
 
 // --- what ran at once ----------------------------------------------------------------
@@ -97,7 +97,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   const label = () => lanesSaid(props.profile, props.domainMs);
   const bins = Array.from({ length: LANE_BINS }, (_, i) => `${i}`);
   return (
-    <If when={!terminal() && all().length > 1} else={<Text class={TEXT.note}>{label()}</Text>}>
+    <If when={all().length > 1} else={<Text class={TEXT.note}>{label()}</Text>}>
       <View class="gap-2">
         <If when={rows().length > 0} else={<NoneInStretch />}>
         <BaseButton
@@ -259,7 +259,7 @@ export function RunShape(props: { profile: Profile; slice?: number | null; onSli
   };
   return (
     // a handful of requests has no shape worth a strip; a chart of its own (the Time pane's, with its axes) draws them
-    <If when={!terminal() && rows().length > 1 && ((props.axis && !props.strip) || props.profile.samples.length >= 12)} else={<Text class="hidden text-muted-foreground terminal:flex">{shapeSentence(props.profile)}</Text>}>
+    <If when={rows().length > 1 && ((props.axis && !props.strip) || props.profile.samples.length >= 12)}>
       <BaseButton
         testID={props.testID ?? "run-shape"}
         accessibilityLabel={shapeSentence(props.profile)}
@@ -380,29 +380,13 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string; 
       </If>
     </Plot>
   );
-  // a terminal: the same shape in block characters, as `sonde show` prints it
-  const ink = () => (props.tone === "fail" ? "text-status-server" : props.tone === "client" ? "text-status-client" : props.tone === "injected" ? "text-status-injected" : props.tone === "quiet" ? "text-muted-foreground" : "text-chart-1");
   return (
     <If when={props.shape.some((n) => n > 0)}>
-      <If when={!terminal()} else={<Text class={ink()} accessibilityLabel="">{blocks(props.shape)}</Text>}>
-        <If when={!props.still} else={plot()}>
-          <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
-        </If>
+      <If when={!props.still} else={plot()}>
+        <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
       </If>
     </If>
   );
-}
-
-/** The eight heights of a block character, lowest first. */
-const BLOCKS = "▁▂▃▄▅▆▇█";
-/** A shape in block characters, `columns` wide at most (each the most of the slices it stands for, so a burst is
- * not averaged away); a slice of none is the lowest block, the baseline. */
-export function blocks(shape: number[], columns = 16): string {
-  if (shape.length === 0) return "";
-  const n = Math.min(columns, shape.length);
-  const cols = Array.from({ length: n }, (_, c) => Math.max(...shape.slice(Math.floor((c * shape.length) / n), Math.max(Math.floor(((c + 1) * shape.length) / n), Math.floor((c * shape.length) / n) + 1))));
-  const top = Math.max(...cols, 1e-12);
-  return cols.map((v) => BLOCKS[v <= 0 ? 0 : Math.min(7, Math.max(1, Math.round((v / top) * 7)))]).join("");
 }
 
 // --- how requests were answered ---------------------------------------------------
@@ -427,37 +411,35 @@ export function BytesOverTime(props: { signals: Signals; range?: [number, number
   };
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <If when={rows().some((r) => r.up > 0 || r.down < 0)} else={<NoneInStretch />}>
-        <Plot
-          testID="bytes-over-time"
-          data={rows()}
-          xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [bottom(), top()] }}
-          accessibilityLabel={label()}
-          accessibilityValue={tipValue(tip())}
-          appearGeneration={1}
-          motion={MOTION}
-          crossLineClass={CROSS_BAND}
-          tooltipPlacement="pointer"
-          tooltipOffset={10}
-          tooltipContent={<ChartTip tip={tip()} />}
-          onHoverChange={({ index }) => {
-            hovered.set(index);
-            props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
-          }}
-          class={`${TICK_ROOM} ${PLOT} w-full`}
-        >
-          <Grid y={[0]} class={GRID} />
-          {/* one stem per slice: received hangs under the axis (from its depth up to zero), sent stands on it */}
-          <Bar value={(d) => -d.down} base="down" stack="bytes" class="fill-chart-4" cornerRadii={TIP.down} inactiveOpacity={INACTIVE} />
-          <Bar value="up" stack="bytes" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={bottom()} class={FOCUS_RULE} />
-          <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
-          {/* zero, and the most a second each way */}
-          <ValueAxis peak={top() / HEADROOM.strip} low={bottom() < -HEADROOM.strip ? bottom() / HEADROOM.strip : undefined} say={bytesRate} />
-        </Plot>
-      </If>
+    <If when={rows().some((r) => r.up > 0 || r.down < 0)} else={<NoneInStretch />}>
+      <Plot
+        testID="bytes-over-time"
+        data={rows()}
+        xScale={{ type: "band", ...BARS.slices }}
+        yScale={{ type: "linear", domain: [bottom(), top()] }}
+        accessibilityLabel={label()}
+        accessibilityValue={tipValue(tip())}
+        appearGeneration={1}
+        motion={MOTION}
+        crossLineClass={CROSS_BAND}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<ChartTip tip={tip()} />}
+        onHoverChange={({ index }) => {
+          hovered.set(index);
+          props.focus?.set(index === null ? null : rows()[index].tMs + s().binMs / 2);
+        }}
+        class={`${TICK_ROOM} ${PLOT} w-full`}
+      >
+        <Grid y={[0]} class={GRID} />
+        {/* one stem per slice: received hangs under the axis (from its depth up to zero), sent stands on it */}
+        <Bar value={(d) => -d.down} base="down" stack="bytes" class="fill-chart-4" cornerRadii={TIP.down} inactiveOpacity={INACTIVE} />
+        <Bar value="up" stack="bytes" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+        <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={bottom()} class={FOCUS_RULE} />
+        <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
+        {/* zero, and the most a second each way */}
+        <ValueAxis peak={top() / HEADROOM.strip} low={bottom() < -HEADROOM.strip ? bottom() / HEADROOM.strip : undefined} say={bytesRate} />
+      </Plot>
     </If>
   );
 }

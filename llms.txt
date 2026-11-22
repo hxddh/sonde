@@ -2,7 +2,7 @@
 
 > sonde records what a program does to S3 (its requests, through a local endpoint) and explains it: findings with
 > the line of code that sent them and the fix, what fixing them saves, and whether a fix worked. A CLI, a desktop
-> app, a terminal UI and a GitHub Action.
+> app and a GitHub Action.
 
 For a coding agent: `sonde run -o r.sonde -- <command>`, then `sonde show r.sonde -f json`; edit the code at
 `findings[].callers[].file:line`, run the same command again, and read `since.findings[].state`.

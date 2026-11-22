@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { copy, endpoint, endpoints, report } from "../store";
 import type { EpisodeRow, RecordingView } from "../types";
-import { Button, Card, Dot, Heading, IconTile, Options, Prose, terminal, Row, TEXT } from "./kit";
+import { Button, Card, Dot, Heading, IconTile, Options, Prose, Row, TEXT } from "./kit";
 import { OperationView } from "./runview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, RunHeader, RunList, statusTone } from "./runview";
@@ -41,9 +41,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
       else={
         <Card pad="none" testID={open() ? "record-form" : undefined}>
           <Row first>
-            <If when={!terminal()}>
-              <IconTile icon="radio" tint="foreground" />
-            </If>
+            <IconTile icon="radio" tint="foreground" />
             <View class="min-w-0 flex-1 gap-1">
               <Heading>{t("timeline.recordTitle")}</Heading>
               <Text class={TEXT.note}>{t("timeline.recordHint")}</Text>

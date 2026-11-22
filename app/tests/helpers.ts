@@ -8,21 +8,18 @@ const STORE = ["browse", "capacity", "multipart", "layouts"];
 const SETTINGS = ["settings", "endpoints"];
 const ACTIVITY = ["jobs", "audit"];
 
-/** Goes to a place, or to a tab of one. A window opens Settings in a window
- * of their own (⌘,), Activity from its toolbar, and Buckets' sections from
- * the place's one row of sections; a terminal lists every place on its home
- * list. */
+/** Goes to a place, or to a tab of one: Settings in a window of their own (⌘,), Activity from the edge (⌘⇧A),
+ * Buckets' sections from the place's one row of sections; "run" is Runs with no run chosen, its command bar. */
 export async function place(app: App, where: string) {
   const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : ACTIVITY.includes(where) ? "activity" : where;
-  const window = app.shows("id:toolbar");
-  if (window && area === "settings") {
+  if (area === "settings") {
     await app.keyboard.press("mod+,");
     await app.waitFor("id:screen-settings-area");
     await app.press(`id:tab-${where}`);
     return;
   }
   // Buckets' sections, from its row of them
-  if (window && area === "store") {
+  if (area === "store") {
     // a narrow window folds the sidebar away
     if (!app.shows("id:nav-store")) await app.keyboard.press("mod+b");
     await app.press("id:nav-store");
@@ -30,20 +27,19 @@ export async function place(app: App, where: string) {
     await app.waitFor(`id:screen-${where}`);
     return;
   }
-  if (window && area === "activity") {
-    if (!app.shows("id:activity")) await app.press("id:activity-open");
+  if (area === "activity") {
+    if (!app.shows("id:activity")) await app.keyboard.press("mod+shift+a");
     await app.waitFor("id:activity");
     await app.press(`id:activity-tab-${where}`);
     return;
   }
-  // a terminal shows the places on its home list only
-  if (!app.shows(`id:nav-${area}`)) await app.back();
-  await app.press(`id:nav-${area}`);
-  // a terminal pushes the place over its home list: there once the list has gone (a place
-  // with much to read, a long list of runs, takes a moment)
-  if (!window) await app.waitFor(`id:nav-${area}`, { state: "gone" });
-  if (area === "store" || area === "settings") await app.press(`id:tab-${where}`);
-  if (area === "activity") await app.press(`id:activity-tab-${where}`);
+  if (!app.shows("id:nav-runs")) await app.keyboard.press("mod+b");
+  await app.press("id:nav-runs");
+  // a new run: the command bar
+  if (where === "run") {
+    if (!app.shows("id:run-command")) await app.press("id:new-run");
+    await app.waitFor("id:run-command");
+  }
 }
 
 /** Opens the app, starts the demo, and goes to Store (selecting `bucket`). */
@@ -65,10 +61,12 @@ export async function runCommand(app: App) {
   await app.press("id:run-start");
 }
 
-/** Waits for a run that ended to show its own view on Run (its header read off the interface's thread). */
+/** Waits for a run to show its own view in Runs (its header read off the interface's thread), its program ended. */
 export async function runView(app: App) {
   await app.waitFor("id:run-pane", { timeout: 25000 });
   await app.waitFor("id:run-summary", { timeout: 10000 });
+  // (a program started here: its run opens as it starts; read once it has ended)
+  await app.waitFor("id:run-stop", { state: "gone", timeout: 60000 });
 }
 
 /** A run's command besides its one primary (Try under faults…, Compare… and its On another store…): behind its header's `⋯`,
@@ -86,12 +84,9 @@ export async function runMenu(app: App): Promise<string[]> {
   return labels;
 }
 
-/** The example run, from its doors: the welcome's, where it shows (no endpoint yet), else the palette's (`zh`: the
- * window is in Chinese). */
+/** The example run, from its door: the palette's (`zh`: the window is in Chinese). */
 export async function openExample(app: App, zh = false) {
-  if (app.shows("id:open-example")) return app.press("id:open-example");
-  if (app.shows("id:toolbar")) await app.press("id:palette");
-  else await app.keyboard.press("shift+;");
+  await app.press("id:palette");
   await app.waitFor("id:palette-command");
   await app.type("id:palette-command", zh ? "示例" : "example");
   await app.press(zh ? "id:palette-dialog >> text:打开示例" : "id:palette-dialog >> text:Open the example");
@@ -102,8 +97,7 @@ export async function openExample(app: App, zh = false) {
 export async function openDemo(app: App) {
   // (the callers are on Endpoints: there the demo says when it is the one in use already)
   if (await app.waitFor("id:endpoint-demo >> text:In use", { timeout: 500 }).then(() => true, () => false)) return;
-  if (app.shows("id:toolbar")) await app.press("id:palette");
-  else await app.keyboard.press("shift+;");
+  await app.press("id:palette");
   await app.waitFor("id:palette-command");
   await app.type("id:palette-command", "demo");
   if (await app.waitFor("id:palette-dialog >> text:Start the demo", { timeout: 2000 }).then(() => true, () => false)) await app.press("id:palette-dialog >> text:Start the demo");
@@ -144,7 +138,7 @@ export async function importRun(app: App, name: string, text: string) {
   await app.waitFor("id:run-summary", { timeout: 10000 });
 }
 
-/** A shell command for Run that writes a run outside the runs folder and lists it there as `sonde run -o` does (the
+/** A shell command for the command bar that writes a run outside the runs folder and lists it there as `sonde run -o` does (the
  * runs folder's index names it, `elsewhere`), then sends the demo one request, so the run it is ends and is kept. */
 export function elsewhereCommand(command: string): string {
   const head = JSON.stringify({ format: "sonde-run", version: 2, created: "2026-01-02T08:00:00Z", endpoint: "demo", url: "http://127.0.0.1:1/", region: "us-east-1", command, cwd: "/home/me/agent" });

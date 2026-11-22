@@ -55,9 +55,6 @@
       "NSHumanReadableCopyright": "Apache-2.0"
     }
   },
-  "tui": {
-    "pointsPerCell": "8x16"
-  },
   "window": {
     "title": "sonde",
     "defaultSize": {

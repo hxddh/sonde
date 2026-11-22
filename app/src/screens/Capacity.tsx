@@ -10,9 +10,8 @@ import { bucket, endpoint, notify, offerCommands, prefix, report } from "../stor
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { sectionLabel } from "../labels";
-import { Await, ProgressBar, Button, Empty, Field, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
+import { Await, ProgressBar, Button, Empty, Field, More, Stat, SwitchRow, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
 import { Chart, HALF } from "../ui/plots";
-import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
 
 /** How many months the growth chart names, the latest; the rest are one row before them. */
@@ -61,7 +60,7 @@ function monthSaid(r: DuReport) {
 }
 
 export function Capacity() {
-  const pfx = terminal() ? signal("") : prefix;
+  const pfx = prefix;
   const mpu = signal(true);
   const result = signal<DuReport | null>(null);
   const progress = signal<string | null>(null);
@@ -130,7 +129,7 @@ export function Capacity() {
         report(e);
       }
       // asked for from a window: measured now, unless it was already
-      if (!terminal() && !result()) void scan();
+      if (!result()) void scan();
     });
   });
   // the section's commands: in the palette and on their shortcuts, as on its row
@@ -153,7 +152,7 @@ export function Capacity() {
   return (
     <Scroll testID="screen-capacity" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
-        scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
+        scope={`${bucket() ?? ""}/${pfx()}`}
         end={
           <If when={result()}>
             <More
@@ -166,11 +165,6 @@ export function Capacity() {
           </If>
         }
       >
-        <If when={terminal()}>
-          <EndpointPicker />
-          <BucketPicker />
-          <Field bare class={WIDTH.field} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
-        </If>
         {/* what the next scan counts: before the command, so Cancel coming and going moves nothing */}
         <SwitchRow label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
         <Button small variant={result() ? "outline" : "primary"} label={result() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={scan} disabled={!bucket() || progress() !== null} testID="du-scan" />
@@ -212,7 +206,7 @@ export function Capacity() {
                   <Text class={TEXT.note}>{t("du.source", { api: r().source })}</Text>
                 </View>
               </Chart>
-              <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
+              <View class="flex-row flex-wrap gap-4">
                 <Chart class={HALF} title={t("du.byClass")} text={classSaid(r())} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
                 </Chart>

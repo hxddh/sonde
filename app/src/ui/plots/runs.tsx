@@ -9,7 +9,7 @@ import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
 import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, runSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
 import { prefixNames } from "./where";
-import { Figure, terminal, textual, SimpleTable, SURFACE, TONE } from "../kit";
+import { Figure, textual, SimpleTable, SURFACE, TONE } from "../kit";
 
 // --- a trial over its clean run ------------------------------------------------------
 
@@ -88,12 +88,10 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
     </Plot>
   );
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <View testID="trial-over-clean" class="mt-4 gap-2">
-        {plot("sent", sentTop, (v) => t("shape.peak", { n: count(Math.round(v)) }), false, "trial-over-rate")}
-        {plot("p50", p50Top, (v) => t("trialOver.median", { t: duration(v) }), true, "trial-over-latency")}
-      </View>
-    </If>
+    <View testID="trial-over-clean" class="mt-4 gap-2">
+      {plot("sent", sentTop, (v) => t("shape.peak", { n: count(Math.round(v)) }), false, "trial-over-rate")}
+      {plot("p50", p50Top, (v) => t("trialOver.median", { t: duration(v) }), true, "trial-over-latency")}
+    </View>
   );
 }
 
@@ -403,7 +401,7 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
     return r ? { title: `≤ ${duration(r.e)}`, lines: [`${props.names[0]}: ${percent(r.a / 100)}`, `${props.names[1]}: ${percent(r.b / 100)}`] } : null;
   };
   return (
-    <If when={!terminal() && rows().length > 1}>
+    <If when={rows().length > 1}>
       <Plot
         testID="distribution-compare"
         data={rows()}

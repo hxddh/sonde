@@ -11,16 +11,11 @@ import { say } from "../phrases";
 import { api } from "../native";
 import type { Split, SplitBy } from "../types";
 import { Icon } from "./icon";
-import { Await, Choice } from "./kit";
+import { Await } from "./kit";
 import { GroupTable, groupRows } from "./profile";
 
 export type GroupBy = SplitBy | "none";
 export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status", "key"];
-
-/** The one Group by control: each operation (none), or the operations split by a dimension. */
-export function GroupByChoice(props: { value: GroupBy; onChange: (v: GroupBy) => void }) {
-  return <Choice inline label={t("split.groupBy")} testID="group-by" value={props.value} items={GROUP_BY.map((v) => ({ value: v, title: t(`split.by.${v}`) }))} onChange={(v) => props.onChange(v as GroupBy)} />;
-}
 
 /** The split: its sentence, then a row a group. By kind of request, a row
  * pressed is that kind's operations (`onKind`). */

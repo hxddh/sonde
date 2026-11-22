@@ -1,6 +1,6 @@
 // The command palette: every place and action of the app, and the things
 // people come back to — recent runs, endpoints, buckets, what the screen
-// offers — behind one search field. ⌘K (Ctrl+K) on a desktop, `:` in a terminal.
+// offers — behind one search field. ⌘K (Ctrl+K).
 
 import { computed, resource, setColorScheme, signal, Text, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
@@ -8,12 +8,12 @@ import { date } from "../format";
 import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
-import { lastRun, openLastRun, running, stop } from "../run";
+import { running, stop } from "../run";
 import { checkRequested } from "./updates";
 import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, terminal, SURFACE, Row, TEXT } from "./kit";
+import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, SURFACE, Row, TEXT } from "./kit";
 import { programOf, scrubCommand } from "./runview";
 
 export const paletteOpen = signal(false);
@@ -34,7 +34,7 @@ interface Action {
   run: () => void;
 }
 
-const AREA_ICON = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
+const AREA_ICON = { runs: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
 
 /** What is typed in the palette: with a word, every run is searched. */
 const typed = signal("");
@@ -51,8 +51,6 @@ function actions(buckets: BucketEntry[]): Action[] {
       if (!c.disabled) list.push({ id: `cmd:${c.id}`, label: c.label, group: e.group(), icon: c.icon, shortcut: c.shortcut, run: () => c.run() });
     }),
   );
-  // on Run, the run that ended in the Runs place, where it sits among the others
-  if (area() === "run" && lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
   // the newest runs; every one once a word is typed (by its command, title or endpoint)
   runsTick();
   let runs: RunInfo[] = [];
@@ -109,7 +107,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   // CLI's `--demo` names one)
   list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", keywords: ["example", "slatedb"], run: openExample });
   if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", keywords: ["demo"], run: () => void startDemo() });
-  if (!terminal()) list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
+  list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   const theme = settings()?.theme ?? "system";
   (["light", "dark", "system"] as const).forEach((m) =>
@@ -189,11 +187,11 @@ export function Palette() {
       open={paletteOpen()}
       onOpenChange={({ open }) => paletteOpen.set(open)}
       animation="fade"
-      backdropClass={terminal() ? undefined : PALETTE_SCRIM}
+      backdropClass={PALETTE_SCRIM}
       // the popup surface, its hairlines from edge to edge
       // (nearer the top of a short window: its list and its hint stay inside the least one)
-      style={terminal() ? undefined : { marginTop: shellHeight() < BREAK.short ? 40 : 96, padding: 0, ...glass }}
-      class={terminal() ? "w-full" : `${SURFACE.palette} self-center overflow-hidden ${POPUP}`}
+      style={{ marginTop: shellHeight() < BREAK.short ? 40 : 96, padding: 0, ...glass }}
+      class={`${SURFACE.palette} self-center overflow-hidden ${POPUP}`}
       testID="palette-dialog"
     >
       <Command
@@ -209,19 +207,16 @@ export function Palette() {
         }}
         onCancel={close}
         onQueryChange={({ query }) => typed.set(query)}
-        searchPrefix={terminal() ? undefined : <Icon name="search" />}
+        searchPrefix={<Icon name="search" />}
         // a field at the kit's height in a row with a row's padding (12 by 8): no height of its own
-        searchBarClass={terminal() ? undefined : "flex-row items-center gap-2 border-b border-border px-3 py-2"}
-        searchClass={terminal() ? "text-foreground" : `${CONTROL.field} flex-1 ${TEXT.body} placeholder:text-muted-foreground`}
-        listClass={terminal() ? SURFACE.paletteListTerminal : `${SURFACE.paletteList} p-1`}
-        // emphasis: a terminal marks the row the keys are on by its weight
-        itemClass={terminal() ? `px-1 text-foreground focus:${HIGHLIGHT} checked:${EMPHASIS}` : ROWS.palette}
-        groupClass={`px-2 pb-1 pt-2 ${TEXT.meta} terminal:px-1 terminal:pb-0 terminal:pt-0`}
+        searchBarClass={"flex-row items-center gap-2 border-b border-border px-3 py-2"}
+        searchClass={`${CONTROL.field} flex-1 ${TEXT.body} placeholder:text-muted-foreground`}
+        listClass={`${SURFACE.paletteList} p-1`}
+        itemClass={ROWS.palette}
+        groupClass={`px-2 pb-1 pt-2 ${TEXT.meta}`}
         separatorClass="my-1 h-px bg-border"
         renderItem={
-          terminal()
-            ? undefined
-            : (entry) => {
+          (entry) => {
                 const a = byId().get(entry.id);
                 return (
                   <View class={`${CONTROL.field} flex-row items-center gap-2`}>
@@ -247,7 +242,7 @@ export function Palette() {
         }
         empty={<Empty compact text={t("palette.nothing")} />}
         footer={
-          terminal() ? undefined : (
+          (
             <Row>
               <Text class={TEXT.meta}>{`↑↓ ${t("palette.move")}`}</Text>
               <Text class={TEXT.meta}>{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>

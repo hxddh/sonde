@@ -7,7 +7,7 @@ import { Editor, type EditorDiagnostic } from "nsh/base";
 import { count, date, duration, transfer } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
-import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE, TEXT } from "./kit";
+import { Back, Disclosure, KeyValue, Notice, Title, TYPE, TEXT } from "./kit";
 import { StatusMark } from "./runview";
 import { scenarioLabel } from "../trials";
 
@@ -25,23 +25,21 @@ export function Document(props: { text: string; testID?: string; mark?: boolean 
     return [{ range: { start: { line: at, column: col }, end: { line: at, column: col + code.length } }, severity: "error", message, source: "S3", code }];
   };
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{text()}</Text>}>
-      <Editor
-        testID={props.testID}
-        value={text()}
-        language="xml"
-        readOnly
-        lineNumbers={false}
-        folding
-        softWrap
-        minRows={2}
-        maxRows={18}
-        fontSize={TYPE.small}
-        diagnostics={diagnostics()}
-        accessibilityLabel={props.mark ? diagnostics()[0]?.message : undefined}
-        class="rounded-(--radius) border border-border bg-card"
-      />
-    </If>
+    <Editor
+      testID={props.testID}
+      value={text()}
+      language="xml"
+      readOnly
+      lineNumbers={false}
+      folding
+      softWrap
+      minRows={2}
+      maxRows={18}
+      fontSize={TYPE.small}
+      diagnostics={diagnostics()}
+      accessibilityLabel={props.mark ? diagnostics()[0]?.message : undefined}
+      class="rounded-(--radius) border border-border bg-card"
+    />
   );
 }
 

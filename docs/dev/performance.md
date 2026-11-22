@@ -6,12 +6,8 @@ rerun the commands to compare on your machine.
 ## How to reproduce
 
 ```sh
-# release binary with the terminal UI and embedded bundle
-(cd app && nsh build App.tsx --release)
-cargo build --release -p sonde-cli --features tui
-
-python3 scripts/perf.py target/release/sonde                    # terminal binary in a pty (pip install pyte)
-(cd app && nsh test tests/perf.test.tsx --target tui --trace)   # headless UI: 100k rows, 500 scroll frames
+cargo build --release -p sonde-cli
+bash scripts/ui-tests.sh perf                                   # headless UI: 100k rows, 500 scroll frames
 cargo run --release -p sonde-proxy --example overhead           # proxy overhead (OVERHEAD_URL, OVERHEAD_BUCKET, AWS keys)
 cargo run --release -p sonde-analysis --example scale -- 1000000   # a synthetic run of a million requests
 ```
@@ -24,8 +20,8 @@ for t in $(cargo test --release -p sonde-analysis --test budgets -- --ignored --
 done
 ```
 
-The UI measures use the built-in demo endpoint (`sonde tui --demo`, bucket `demo-large`, 100 000 keys), so they
-measure sonde, not the network.
+The UI measures use the built-in demo endpoint (bucket `demo-large`, 100 000 keys), so they measure sonde, not the
+network.
 
 ## Recording proxy
 
@@ -87,25 +83,10 @@ How:
   gets a page of operations at a time; `show --since` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
 
-## Terminal binary
-
-`scripts/perf.py`, 120×40 pty, two runs; measured at 20.0.0, on its `sonde-linux-x86_64` (CI's build):
-
-| Measure | Result |
-| --- | --- |
-| CLI start (`sonde --version`), mean of 10 | 5 ms |
-| TUI start to first frame (`sonde tui --demo`) | 110–180 ms |
-| Load 100 000 rows in Buckets (flat, *Load all*: 100 ListObjectsV2 pages) | 0.57–0.63 s |
-| Memory (VmRSS): idle / 100 000 rows loaded / after paging | 51 / 106 / 109 MiB |
-| Page Down presses in 10 s, each answered with a frame | 151–154 (≈ 5 000 rows) |
-| `--fps` while paging | 46 fps (bounded by the script's key rate), frame 2.0 ms, p95 3.0 ms, ≈ 160 cells written |
-
-Binary: 79.7 MB (LTO thin, JS engine, the app's bundle and the viewer included), linking only `libgcc_s`, `libm`,
-`libc` ([packaging](packaging.md#the-terminal-binary-has-no-gui-dependency)).
-
 ## Headless UI
 
-`nsh test --target tui --trace`, debug host, measured at sonde 0.1.0: Browse › demo-large, flat, load all 100 000
+`nsh test --trace`, debug host, measured at sonde 0.1.0 (then on the terminal host, gone in 29.0; CI's nightly
+`ui-perf` measures the desktop host): Browse › demo-large, flat, load all 100 000
 rows, scroll the table 500 frames down and back.
 
 | Measure | Result |

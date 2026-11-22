@@ -6,12 +6,13 @@ import { expect, open, test } from "nsh/test";
 test("a shared run reads as in the app: operations and a request", async () => {
   const app = await open("../Demo.tsx", { width: 1280, height: 800 });
   await app.waitFor("id:viewer");
-  // the run's figures as the app shows them: its signals, each a tile
+  // the run's figures as the app shows them: one line, each figure's detail where the pointer rests
   expect(app.shows("id:run-summary")).toBe(true);
-  expect(app.shows("text:in 171 ms")).toBe(true);
-  expect(app.shows("text:/conditional create \\(If-None-Match/")).toBe(true);
+  expect(app.shows("label:/^Requests: 49, in 171 ms$/")).toBe(true);
   await app.press("text:/^commit 2/");
   await app.waitFor("id:operation-detail");
+  // the note most of its writes share: in the operation's inspector, not under the table
+  expect(app.shows("text:/conditional create \\(If-None-Match/")).toBe(true);
   await app.press("id:op-request-0");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:x-amz-request-id")).toBe(true);

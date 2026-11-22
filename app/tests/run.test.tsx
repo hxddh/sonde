@@ -1,5 +1,5 @@
-// Run and Runs: a program run from sonde, its operations beside it, and
-// the run's own view afterwards with the output lined up.
+// Runs: a program run from its command bar, its run the newest in the list,
+// its terminal and then its output lined up beside its operations.
 
 import { expect, open, test } from "nsh/test";
 import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, reach, runCommand, runText, runView, runAction, runMenu } from "./helpers";
@@ -19,16 +19,18 @@ test("run a command: its requests become operations; once it ends, its own view 
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  // once it ended: the run's own view, on Run, opened on its Output (an exit of 0 is no news: nothing said)
+  // the run is the newest in the list and opens in its own view; once it ended, its output beside its operations
+  // (an exit of 0 is no news: nothing said)
   await runView(app);
-  expect(app.shows("id:screen-run")).toBe(true);
+  expect(app.shows("id:screen-runs")).toBe(true);
+  await app.waitFor("id:output", { timeout: 15000 });
   expect(app.shows("id:run-exit")).toBe(false);
-  expect(app.shows("id:live")).toBe(false);
-  await app.waitFor("id:output", { timeout: 5000 });
   expect(app.shows("text:/GetObject demo\\/README\\.md/")).toBe(true);
-  // the command bar stays over it, with the one Run of the place; the view's header has no second one
-  expect(app.shows("id:run-start")).toBe(true);
-  expect(app.shows("id:run-again")).toBe(false);
+  // no command bar over a run: its header's Run again is the one primary, the bar a press away (New run)
+  expect(app.shows("id:run-command")).toBe(false);
+  await app.waitFor("id:run-again");
+  // the toolbar does not say again where the window is (the sidebar and the run's title do)
+  expect(app.shows("id:crumb-place")).toBe(false);
   expect(app.shows("text:fetching")).toBe(true);
   expect(app.shows("text:done")).toBe(true);
   // a line printed before the request points at the operation after it
@@ -37,17 +39,24 @@ test("run a command: its requests become operations; once it ends, its own view 
   expect(app.shows("text:/GetObject/")).toBe(true);
 });
 
-test("a program that runs a while is read as it goes: its requests and the live panel before it ends", async () => {
+test("a program that runs a while is read as it goes: its terminal beside its operations, Stop its primary", async () => {
   const app = await demo();
   const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md";
   await app.type("id:run-command", `for i in $(seq 30); do ${get}; sleep 0.2; done`);
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  // still running: the live panel over its operations, read again as they arrive
-  await app.waitFor("id:live", { timeout: 15000 });
-  expect(app.shows("id:run-status")).toBe(true);
-  expect(app.shows("id:run-ended")).toBe(false);
-  await runView(app);
+  // still running: its run's own view, the program's terminal beside its operations, read again as they arrive
+  await app.waitFor("id:run-terminal", { timeout: 15000 });
+  await app.waitFor("id:run-summary", { timeout: 10000 });
+  expect(app.shows("id:run-stop")).toBe(true);
+  expect(app.shows("id:run-again")).toBe(false);
+  // the newest row of the list, said live
+  expect(app.shows("id:run-0 >> label:Live")).toBe(true);
+  // ended: Run again in Stop's place; it printed nothing, so its operations stand alone, its terminal gone
+  await app.waitFor("id:run-stop", { state: "gone", timeout: 30000 });
+  await app.waitFor("id:run-again", { timeout: 10000 });
+  expect(app.shows("id:run-terminal")).toBe(false);
+  expect(app.shows("id:output")).toBe(false);
 });
 
 test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
@@ -56,22 +65,24 @@ test("a program that sends sonde nothing: how each SDK is pointed at it", async 
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  await app.waitFor("id:run-ended", { timeout: 20000 });
-  await app.waitFor("id:run-no-requests", { timeout: 5000 });
+  await app.waitFor("id:run-no-requests", { timeout: 20000 });
   expect(app.shows("text:The program sent sonde no requests")).toBe(true);
   expect(app.shows("text:boto3 / botocore")).toBe(true);
-  // not kept: said, and no view of a run takes its place
+  // not kept: said, and the command bar takes its place, still saying why
   await app.waitFor("text:/will not be kept/", { timeout: 5000 });
   await app.wait(9000);
   expect(app.shows("id:run-pane")).toBe(false);
+  expect(app.shows("id:run-command")).toBe(true);
   expect(app.shows("id:run-no-requests")).toBe(true);
 });
 
 test("record without a program: a local endpoint to point an application at", async () => {
   const app = await demo();
+  // what it may do: the command bar's ⋯, said at the field's start once it is not the usual
+  await app.press("id:run-options");
+  await app.chooseMenuItem("Block deletes");
   await app.press("id:record");
   await app.waitFor("id:record-form");
-  await app.press("label:Block deletes");
   await app.press("id:record-start");
   await app.waitFor("id:recording", { timeout: 10000 });
   expect(app.shows("text:/Recording on http:\\/\\/127\\.0\\.0\\.1:/")).toBe(true);
@@ -95,8 +106,8 @@ test("an example run reads as operations, each opening on its requests", async (
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   expect(app.shows("text:/^requests · 5$/i")).toBe(true);
-  // the note most SlateDB writes share is said once under the operations, and in full in an operation's inspector
-  expect(app.shows("id:ops-shared")).toBe(true);
+  // the note most SlateDB writes share is left out of the table's rows, and said in full in an operation's inspector
+  expect(app.shows("id:ops-shared")).toBe(false);
   expect(app.shows("text:/conditional create \\(If-None-Match: \\*\\)/")).toBe(true);
   await app.press("id:op-request-4");
   await app.waitFor("id:record-detail");
@@ -121,7 +132,6 @@ test("an example run reads as operations, each opening on its requests", async (
 
 test("a run as a timeline, replayed from the app, and the answers compared", async () => {
   const app = await demo();
-  await place(app, "run");
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT -H 'If-None-Match: *' --data hello $AWS_ENDPOINT_URL/demo/t1.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t1.txt");
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
@@ -159,8 +169,8 @@ test("runs are looked after: renamed, searched, deleted, dropped on the window",
   await place(app, "runs");
   // five runs or more by now (the tests before): enough for a search field
   await app.waitFor("id:run-search");
-  // the run shown is read first: a menu opened while its pane arrives is closed by it
-  await app.waitFor("id:run-summary", { timeout: 10000 });
+  // Runs opens on its command bar: no run chosen yet
+  await app.waitFor("id:run-command", { timeout: 10000 });
   // each row says where its run went and how many requests it sent
   // (one line: how many first, where last)
   expect(app.shows("id:run-0 >> text:/^\\d[\\d,]* requests? · (.* · )?demo$/")).toBe(true);
@@ -207,17 +217,23 @@ test("a run's time: where it went, and two runs before and after", async () => {
   // the shape of the run beside its figures (the example's: the run shown before it goes first)
   await app.waitFor("id:run-shape", { timeout: 10000 });
   expect(app.shows("label:/^Waiting on S3 .* of .*; up to 8 requests in flight/")).toBe(true);
-  // the header's four signals and in flight: a figure each, and a press opens the signal's chart on the Time pane
+  // the header's figures in one line, the four signals and in flight, each said with what it counts; a press opens
+  // the signal's chart on the Time pane, its detail where the pointer rests
   for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
+  expect(app.shows("text:172 requests")).toBe(true);
+  expect(app.shows("text:/^median \\d/")).toBe(true);
+  expect(app.shows("text:8 at once")).toBe(true);
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
-  expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
+  expect(app.shows("label:/^Requests: 172, in 467 ms$/")).toBe(true);
   // what found nothing is no failure, and is said beside them
   expect(app.shows("label:/^Errors: 0%, 67% not found/")).toBe(true);
-  // on Time the header stays open until the board scrolls: where and when it ran, its SDK, and its sentence
+  // no tiles: no chevron, no line over the run in the header
+  expect(app.shows("id:signal-rate-opens")).toBe(false);
+  // where and when it ran, and its SDK: the title's tooltip and the first line of its ⋯
+  expect((await runMenu(app))[0]).toMatch(/^rustfs · .* · from object_store/);
+  // on Time the header is the same one line and its sentence
   await app.press("id:run-pane-mode-time");
   await app.waitFor("id:time-pane");
-  expect(app.shows("id:run-folded")).toBe(false);
-  expect(app.shows("text:/^rustfs · .* · from object_store/")).toBe(true);
   expect(app.shows("id:run-story")).toBe(true);
   // the board in its groups, each chart in the one frame
   expect(app.shows("id:board-traffic")).toBe(true);
@@ -231,15 +247,14 @@ test("a run's time: where it went, and two runs before and after", async () => {
   await reach(app, "text:Which kind of request got slow, and when?");
   expect(app.shows("id:kinds-over-time")).toBe(true);
   expect(app.shows("text:/^The slowest kind: PutObject, p95 /")).toBe(true);
-  // a chart's how to read is quiet at rest, never hidden
-  expect(app.viewStyle("id:chart-kinds-how")?.effectiveOpacity ?? 0).toBeGreaterThan(0.3);
+  // a chart's how to read opens from its title: no mark of its own beside it
+  expect(app.shows("id:chart-kinds-how")).toBe(true);
   await reach(app, "id:scatter-size-chart");
   for (const id of ["latency-as", "scatter-by", "spent-by", "sizes-by", "prefix-measure"]) expect(app.shows(`id:${id}`)).toBe(false);
   await reach(app, "text:Where did the time go?");
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
-  // scrolled, the header folds to a line whose latency says what it is
-  await app.waitFor("id:run-folded", { timeout: 3000 });
+  // scrolled, the header is as it was: it does not fold
   expect(app.shows("text:/^median \\d/")).toBe(true);
   // where by prefix: one bar chart, each prefix's requests and its busiest second against S3's limit
   await reach(app, "id:prefix-use");
@@ -249,12 +264,11 @@ test("a run's time: where it went, and two runs before and after", async () => {
   await reach(app, "text:What did the run cost, and when?");
   expect(app.shows("id:cost-time-chart")).toBe(true);
   expect(app.shows("id:cost-over-time")).toBe(true);
-  expect(app.shows("label:/^Requests .*; bytes out .* egress if read from outside the region; storage left .* a month/")).toBe(true);
+  expect(app.shows("label:/^Requests .* · egress .* if read from outside the region · stored .* a month$/")).toBe(true);
   await reach(app, "id:profile-cost");
   // the operations sort by how long they took
   await app.press("id:run-pane-mode-operations");
   // compared with another run: before and after
-  // (the header, folded while the Time pane was scrolled, opens again with the Operations pane: pressed once laid out)
   await app.wait(500);
   await runAction(app, "Compare…");
   // another program's runs are under their own heading, and say so once compared
@@ -277,6 +291,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
   const app = await demo();
   const cmd = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null";
   for (let i = 0; i < 2; i++) {
+    if (!app.shows("id:run-command")) await app.press("id:new-run");
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
     await runCommand(app);
@@ -347,7 +362,7 @@ test("relative times read in the app's language", async () => {
 });
 
 
-test("run again from Runs: the program after a change, back on Run, compared with the run before", async () => {
+test("run again from a run: the program after a change, the newest run, compared with the run before", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
   // (the button follows the field a frame later)
@@ -359,8 +374,7 @@ test("run again from Runs: the program after a change, back on Run, compared wit
   expect(app.shows("id:runs-by")).toBe(false);
   await app.waitFor("id:run-again", { timeout: 10000 });
   await app.press("id:run-again");
-  // it ran on Run, and its view opened compared with this one: the same program, so findings compare too
-  await app.waitFor("id:screen-run", { timeout: 10000 });
+  // it ran as the newest run, and its view opened compared with this one: the same program, so findings compare too
   await app.waitFor("id:compare", { timeout: 30000 });
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:other-program")).toBe(false);
@@ -373,7 +387,7 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await runView(app);
-  // the run's view on Run: its ⋯ (and the palette) tries it under faults
+  // the run's view: its ⋯ (and the palette) tries it under faults
   await runAction(app, "Try under faults…");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
@@ -436,7 +450,7 @@ test("quitting ends the program being recorded and leaves its run a finished fil
   // (its request is answered before it prints; a moment for the record to be written)
   await app.waitFor("text:fetched", { timeout: 10000 });
   await app.wait(500);
-  expect(app.shows("id:run-ended")).toBe(false);
+  expect(app.shows("id:run-stop")).toBe(true);
   // what `Application.on("quit")` runs: the system waits 200 ms for it
   const { api } = await import("../src/native");
   const began = Date.now();
@@ -447,7 +461,7 @@ test("quitting ends the program being recorded and leaves its run a finished fil
   expect(typeof ended.run).toBe("string");
   expect(took < 200).toBe(true);
   // the program is gone, and the run is a finished one: nothing is still recording
-  await app.waitUntil(() => app.shows("id:run-ended") || app.shows("id:run-pane"), { timeout: 5000 });
+  await app.waitFor("id:run-stop", { state: "gone", timeout: 5000 });
   const kept = api.runs.list().find((s) => s.path === ended.run);
   expect(kept?.live).toBe(false);
   expect(kept?.requests).toBe(1);
@@ -465,10 +479,11 @@ function fixable() {
   return `if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
 }
 
-test("the fix loop: a finding fixed by the next run is said fixed, with what it saved, in Run and compared", async () => {
+test("the fix loop: a finding fixed by the next run is said fixed, with what it saved, in its run and compared", async () => {
   const app = await demo();
   const cmd = fixable();
   for (let i = 0; i < 2; i++) {
+    if (!app.shows("id:run-command")) await app.press("id:new-run");
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
     await runCommand(app);
@@ -491,10 +506,10 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   await app.waitFor("id:run-change", { timeout: 10000 });
   await app.waitFor("id:compare-finding-0");
   expect(app.shows("id:compare-saved-0")).toBe(true);
-  // the run itself says it too, and which SDK sent its requests
+  // the run itself says it too, and which SDK sent its requests (the first line of its ⋯)
   await app.press("id:compare-back");
   await app.waitFor("id:since-run", { timeout: 10000 });
-  expect(app.shows("text:/from curl /")).toBe(true);
+  expect((await runMenu(app))[0]).toMatch(/from curl /);
 });
 
 test("try again what broke: a fresh run, only what did not survive, each scenario with its history", async () => {
@@ -535,8 +550,9 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   const app = await open("../App.tsx", desktop);
   await openExample(app);
   await app.waitFor("id:run-summary", { timeout: 10000 });
-  await app.press("label:Group by");
-  await app.press("text:Kind of request");
+  // Group by is the operations' title: a press opens its choices
+  await app.press("id:group-by");
+  await app.chooseMenuItem("Kind of request");
   await app.waitFor("id:split-table", { timeout: 10000 });
   expect(app.shows("id:split-sentence")).toBe(true);
   expect(app.shows("id:operations")).toBe(false);
@@ -548,15 +564,11 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   await app.waitFor("id:operations");
   await app.waitFor("text:/^PutObject · \\d+ of 34 operations$/");
   await app.press("id:clear-filter");
-  await app.press("label:Group by");
-  await app.press("text:Kind of request");
+  await app.press("id:group-by");
+  await app.chooseMenuItem("Prefix");
   await app.waitFor("id:split-table", { timeout: 10000 });
-  await app.press("label:Group by");
-  await app.press("text:Prefix");
-  await app.waitFor("text:Prefix");
-  // each operation again: the operations show
-  await app.press("label:Group by");
-  await app.press("text:Each operation");
+  // grouped, it says so over them; its ✕ is each operation again: the operations show
+  await app.press("id:clear-group");
   await app.waitFor("id:operations");
   expect(app.shows("id:split-table")).toBe(false);
   // the hot key: every one of its requests, the one shown marked, another a press away
@@ -569,17 +581,16 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   await app.waitFor("id:record-detail");
 });
 
-test("the least window keeps what a run is: where and when it ran, its SDK and its sentence, until its pane scrolls", async () => {
+test("the least window keeps what a run is: its command, its sentence and its figures in a line", async () => {
   const app = await open("../App.tsx", { ...desktop, width: 900, height: 560 });
   await openExample(app);
   await app.waitFor("id:run-summary", { timeout: 10000 });
-  expect(app.shows("id:run-folded")).toBe(false);
-  expect(app.shows("text:/^rustfs · .* · from object_store/")).toBe(true);
   expect(app.shows("id:run-story")).toBe(true);
+  for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
   // History too
   await app.press("id:run-pane-mode-runs");
   await app.wait(300);
-  expect(app.shows("id:run-meta")).toBe(true);
+  expect(app.shows("id:run-story")).toBe(true);
 });
 
 test("a program's newest run past its baseline says so in the sidebar", async () => {
@@ -672,18 +683,16 @@ test("a count of thousands is grouped in the sidebar, in English and Chinese (1,
   }
 }, 120000);
 
-test("scrolling the Output pane folds the run header, as the operations do", async () => {
+test("a run with output shows it beside its operations, on Operations: no tab of its own", async () => {
   const app = await open("../App.tsx", desktop);
   await importRun(app, "printed.sonde", runText(400, "python printed_lines.py", "2026-01-04T09:00:00Z"));
-  await app.press("id:run-pane-mode-aligned");
   await app.waitFor("id:output", { timeout: 5000 });
-  await app.wait(300);
-  expect(app.shows("id:run-folded")).toBe(false);
+  expect(app.shows("id:operations")).toBe(true);
+  expect(app.shows("id:run-pane-mode-aligned")).toBe(false);
+  // scrolled, the header stays as it was
   await app.scroll("id:output", 1500);
-  await app.waitFor("id:run-folded", { timeout: 3000 });
-  // back at its top, open again
-  await app.scroll("id:output", -100000);
-  await app.waitFor("id:run-folded", { state: "gone", timeout: 3000 });
+  await app.wait(300);
+  expect(app.shows("id:run-story") || app.shows("id:run-summary")).toBe(true);
 }, 120000);
 
 test("History in Chinese: the check's new warnings and where the runs went past the baseline, in its words", async () => {
