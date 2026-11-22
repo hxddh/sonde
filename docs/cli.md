@@ -46,7 +46,6 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | ↳ `spark-submit`, `flink run` | Given s3a's endpoint on their command line ([recording](recording.md#spark-flink-trino-and-hadoop-s3a)). |
 | ↳ `docker run`, `podman run` | Given the host's network and sonde's variables ([recording](recording.md#what-the-program-is-given)). |
 | `sonde run --trial [--fault S …] -- CMD…` | The clean run, then one per fault scenario, each with a verdict ([trials](trials.md)). `{trial}` in the command and `SONDE_TRIAL` are `clean`, then the scenario's name. A failed or interrupted clean run is not tried. Ctrl-C / SIGTERM ends the trial (130 / 143), no verdict for the interrupted scenario. Exit: the command's status if not 0, else 1 if a trial broke. A run to a path that holds a run first removes that run's earlier verdicts and trials; the program's history of them is kept. |
-| ↳ `--again` | `--trial` implied: a fresh clean run, then only the scenarios whose last verdict for this program was broke, degraded or refused. Nothing left: says so, exit 0. Never tried: 64. |
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--policy P] [--tls] [-o FILE]` | The same endpoint, standing (default `127.0.0.1:9000`): prints the variables to set, then each request; its summary at Ctrl-C. Loopback only unless `--allow-remote` (then anyone holding the printed keys). |
 | `sonde import s3://B/PREFIX [-e E]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix (the first, the last day's), a run of program `logs of s3://…` (history, baseline, `check`), then shown. Where it got to is kept; an upload not completed yet waits (up to a day of the logs' time) and is read with the import that completes it. Exit 70 when the logs cannot be listed, none could be read, the prefix holds no files or none is a log; nothing new since the last import is said, exit 0. |
@@ -65,7 +64,7 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | ↳ `--by kind\|prefix\|size\|caller\|sdk\|status\|key` | The requests split instead of the table by kind: requests, errors and share, p50, p95, p99, waiting share (not for an imported log, whose waiting is not known), cost per group (most waiting first; past 12, `other`). `caller`: the code that sent them; an imported log's, who sent them (the access log's requester, the CloudTrail identity). `key`: each object (bucket/key), the hot keys first. Size bands: `0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+` (the larger of sent and received). Then one sentence: where the slow requests (the slowest tenth, at or over p90; 3 at least) concentrate, narrowed by prefix, size or kind when one holds most of them, and where the cost does (`80% of the slow requests (over 120 ms) are under b/wal/, over 8 MiB.`). A group is named when it holds half of them and 1.5× its share of the requests. `-f json`: [show-by](schemas/show-by.schema.json). |
 | ↳ `in all (N findings)` | The findings' total: the run recomputed without the requests they name (findings naming none are left out, and the line says which count). |
 | ↳ `-f json` | The answer, its size not growing with the run: `run`, `summary`, `operationsTotal`, `waiting`, `cost`, `month`, `whatIf`, `findings` (each with its first 20 operations), `verify` (the command that records the program again), `since`, `trials`. `--all` adds every operation and each finding's operations and fixes whole; `--errors` the failed operations; `--requests` the requests, streamed. Every field: [show](schemas/show.schema.json); what an agent reads: [agents.md](agents.md). A trial's run says first that its faults were sonde's. |
-| `sonde compare [RUN [RUN]] [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request (the two endpoints named when they differ: `a.sonde on rfs → b.sonde on demo`, `endpoints` in JSON); each finding fixed, less, more, back or new, and each kind of failure whose count moved ([fix loop](#the-fix-loop)). One run: it and its program's run before; none: the run [as above](#common) and the one before; a program's first run has none before it (said, exit 0). Unchanged kinds are counted, not listed. Different programs compare by figures only (said). A run and its replay (either order): every answer compared, with each kind's p50 and p95 on both stores. |
+| `sonde compare [RUN [RUN]] [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request (the two endpoints named when they differ: `a.sonde on rfs → b.sonde on demo`, `endpoints` in JSON); each finding fixed, less, more or new, and each kind of failure whose count moved ([fix loop](#the-fix-loop)). One run: it and its program's run before; none: the run [as above](#common) and the one before; a program's first run has none before it (said, exit 0). Unchanged kinds are counted, not listed. Different programs compare by figures only (said). A run and its replay (either order): every answer compared, with each kind's p50 and p95 on both stores. |
 | `sonde compare FILE --replay E [--replay E2 …] [--bucket A=B] [--prefix P] [--yes] [-o FILE]` | A dry run (what it would send, where), then with `--yes` re-enacts a run on another endpoint under a prefix of its own (never on the recorded keys; what the run read and had not written is written there first), compares every answer, lists what the program relies on with the store's verdict on each, and each store's request cost; then removes what it wrote under its prefix (objects, and on a versioned bucket every version and delete marker; exit 70 if anything remains). Several: replayed on each at once, side by side; exit 70 for a store it could not replay on. [Recording](recording.md#replay-on-another-endpoint). |
 | `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when its program failed, nothing reached sonde, over budget, over the baseline, or a trial broke. [Details](#sonde-check). |
 | `sonde share [[BEFORE] FILE] [--baseline FILE\|auto\|URL] [-o FILE [--force]] [--redact]` | One HTML file (default `./<run>.html`; refused when there unless `--force`, as every `-o` file is): the app's views read-only — figures, findings, operations, output, the Time pane with every chart, a request in full — the viewer and the run in the file, nothing fetched (it opens from a disk as from a web server); it holds what the run holds, so share it as you would the run. Titled by the program. Two runs, or `--baseline` (as `check` takes it): it opens on what changed (the app's Compare: figures before and after, kinds and prefixes that changed, the two over time, latency, findings gone and new). `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
@@ -79,9 +78,10 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | `--set-baseline` | Make this run its program's baseline, in the runs folder or written elsewhere with `-o` (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10; 0 or more). |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Its `[check]` takes each option above by its name (`max-requests = 5000`, `max-waiting = "2s"`, `baseline = "auto"`); flags win. |
+| `[check.findings]` | `sonde.toml` only (`check --init` writes it): the findings the project knows, each with its count (`"obs.hot\|data/conf.json" = 12`). A finding of another identity, or one whose count rose, fails the `findings` row (`check.findings` in JSON: each `identity`, `count`, and `known` when it grew); judged by counts alone. |
 | `expect` | `sonde.toml` only: findings kept on purpose, each with why, `{ "obs.hot\|data/conf.json" = "rewritten by the scheduler", "obs.listed" = "…" }`: a finding's `identity` (as `show -f json` and the app's "Expected" give it) or a kind for all of it. Never a new warning; `show`, `run` and `check` say the reason with the finding (`expected` in JSON). |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
-| `--init` | Write a `sonde.toml` (or `--config`'s file) this run passes: requests with `--tolerance` of room, `max-errors` the run's errors, waiting commented out beside its measured value. No trials. Refused (64) when the file is there, or for a run that failed or sent nothing. Prints the workflow step, `uses: hxddh/sonde@vN` at this sonde's major version. |
+| `--init` | Write a `sonde.toml` (or `--config`'s file) this run passes: requests with `--tolerance` of room, `max-errors` the run's errors, waiting commented out beside its measured value, and the run's findings with their counts (`[check.findings]`: a later run with another finding, or more of one, fails). No trials. Refused (64) when the file is there, or for a run that failed or sent nothing. Prints the workflow step with the run's own command (`run-args: --demo` for a demo run), `uses: hxddh/sonde@vN` at this sonde's major version; `-f json`: the same as JSON ([check-init](schemas/check-init.schema.json)). |
 
 - Text and JSON say each figure `within` or `over` (by how much, `+23%`, over its limit or the baseline's figure);
   markdown says a figure over its baseline in bold, `past the N it may use`. A trial is `survived`, `degraded`,
@@ -180,6 +180,7 @@ requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript,
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
 | `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
+| `trial` | a fault scenario the program did not survive (`trial\|cut-body`; broke: a warning): why, the request it turned on and its line ([trials](trials.md)); no saving | the SDK's retries, a per-attempt timeout, a body read to its end, or the rule itself |
 
 ### Engine settings
 
@@ -216,21 +217,28 @@ about their bucket (`obs.rmw|data`): one finding a run, whatever key or folder i
 These rules have a version (5: a read written back, single deletes and small writes are about their bucket), kept with each program's findings: findings kept under older rules are
 made again by these when read; two that become one are let go. `[check] expect` entries are read by the rules of now.
 
-Between a run and the program's run before it that did not fail, by its counts (times listed, read, throttled):
+Between a run and the program's run before it that did not fail, by its counts alone (times listed, read, throttled),
+never by a threshold relative to the run's size: 6 polls of `_READY` under the threshold in a large run and over it in
+a small one are open, `6 → 6`:
 
 | State | When | Says |
 |---|---|---|
-| fixed | gone at any threshold (over it in the run before, or under it and kept as less) | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
-| less | still there (at any threshold), fewer | what it saved so far, `· 92 → 41` |
+| fixed | gone at any threshold (over it in the run before, or under it and kept as less) | what the run's wall time (and cost, from a cent) moved by, against the predicted: `1.2 s less (predicted 1.5 s)`, or `within noise` |
+| less | still there (at any threshold), fewer | the same, `· 92 → 41 · 310 ms less` |
 | more | still there (at any threshold), more | `↑ more … · 92 → 216` |
-| back | under its threshold in the run before, or fixed by it or an earlier run; over it now | |
-| new | in neither run before, at any threshold; every finding of a program's first run | |
+| new | none of it in the run before, at any threshold (fixed then, or never seen); every finding of a program's first run | |
 | open | as much in both, over its threshold or not | counted, `N still open, as above` (each is listed with its line and fix above; `compare` lists none: `N still open`) |
 
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
 A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (requests 120 → 402, 3.4×)`, `workloadChanged`), or shrank by a third or more below what fixing the earlier run's findings would leave (`the workload shrank`): a fix that read all 400 files, not 30, or 30 files, not 400, is not counted.
+
+**Noise**: a program's runs vary. What a fix saved is said against the spread (longest less shortest wall time) of
+the program's last 5 earlier runs of the same command, said once (`its runs vary by 220 ms`, `noiseMs` in JSON): a
+change under it is `within noise` (`withinNoise`). With fewer than two earlier runs no band is known, and that is
+said. A trial's clean run of another command than its program's runs (`sonde run --trial -- etl.py 40` of a program
+run as `etl.py`) is compared with none and is never the run another is compared with.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
@@ -239,9 +247,9 @@ no request (`nothing reached sonde: the run recorded no request; not compared`, 
 sonde is not fixed, and it is never the run before. Runs that end out of
 order (several at once) each add their findings; an older run changes nothing a newer one said.
 
-Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding
-of time, the fall in its own waiting, at most the fall in the run's. Each program's findings (open, less, fixed with
-its saving, back) are kept in its runs folder's index, brought up
+Measured: the run's wall time and cost before less after (`measured.ms`, `measured.cost`; negative when they grew),
+and of the requests the finding named, those the later run no longer sends (by kind and key: `measured.requests`).
+Each program's findings (open, less, fixed with its saving) are kept in its runs folder's index, brought up
 to date by `run`, `show` and the app when they read the program's newest run. `run`, `show` (`since` in JSON),
 `compare` and `check -f markdown` say a run's findings the same way.
 

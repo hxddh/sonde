@@ -1120,6 +1120,8 @@ fn a_trials_clean_run_of_another_command_is_not_the_programs_newest() {
     let records = hot(3);
     write_run(&path, &header, &records);
     sonde_analysis::index::set(&path, sonde_analysis::index::Change::Exit(0));
+    // while it is tried (`sonde run --trial`), before its verdicts are kept
+    assert!(fixloop::tried_apart(&path, &header));
     let scenario = sonde_proxy::fault::scenarios()[0].clone();
     let t = sonde_analysis::trial::judge(&scenario, &records, 0, &records, 0);
     sonde_analysis::trial::save(&path, &[t]).unwrap();

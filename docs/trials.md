@@ -7,7 +7,6 @@ answering chosen requests in the store's place. From the requests that follow it
 ```sh
 sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'
 sonde run --fault slowdown:3 --fault cut-body -- python etl.py 's3://scratch/etl-{trial}/'
-sonde run --again -- python etl.py 's3://scratch/etl-{trial}/'   # only what did not survive
 ```
 
 ```text
@@ -71,8 +70,7 @@ repeatable; duplicates run once.
 | `s3-limits` | 503 SlowDown past 5,500 reads or 3,500 writes a second per prefix | only `--fault s3-limits` |
 
 - **`slowdown:N` / `error:N`** (1–5): fail each request's first N attempts. The verdict row reads `slowdown:3`; the
-  run is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs, and `--again`
-  runs each that stands broke. No other built-in takes a number (project scenarios set `times`); the app offers the
+  run is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs. No other built-in takes a number (project scenarios set `times`); the app offers the
   same count.
 - **One request** = method, kind, bucket, key, part number (not upload id: a restarted upload retries the same
   parts). Key-less requests add `prefix`, `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`,
@@ -159,24 +157,37 @@ When the exit differs after the store refused a retried write, the reason says s
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
 requests show; sonde does not read data back.
 
-**Where it broke, and what to change**: a verdict other than survived names one request (first that applies: a
-write never resent, a cut body taken, a race not run again, a listing gone on without or rewritten, a read given up,
-a stall waited out, else the last failed request), its code line (named by default) and advice: the SDK's retry
-setting (boto3, AWS SDKs for Java, Go, JavaScript); for skew, re-sign using the answer's `Date`; for a stall, a
-per-attempt timeout; for a stale listing, keep the written keys or list again; else the rule itself.
+**What did not survive is a finding** of the clean run (kind `trial`, identity `trial|<scenario as asked>`; broke
+is a warning, degraded a note), listed under the verdicts, in `show` and `check` with the run's other findings: why
+(the reasons above), the request it turned on (first that applies: a write never resent, a cut body taken, a race not
+run again, a listing gone on without or rewritten, a read given up, a stall waited out, else the last failed request)
+and its code line (named by default), and the fix for the SDK that sent it (boto3, AWS SDKs for Java, Go v2,
+JavaScript v3): its retry setting; for skew, re-sign using the answer's `Date`; for a stall, a per-attempt timeout;
+for a cut body, read it to its end; for a stale listing, keep the written keys or list again; else the rule itself.
+No saving: what a fault costs is not a run's figure. The verdict's own line is its figures.
 
 ```text
-  broke     slowdown       2 faults, 0 retried · 1 write failed and was never sent again, and the program exited 0 · at PutObject scratch/etl-slowdown/state (etl.py:12 save) · boto3 1.43 did not send it again: turn its retries on (boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5})))
+  broke     slowdown       2 faults, 0 retried
+
+The program broke under 1 of 1.
+! broke under slowdown: 1 write failed and was never sent again, and the program exited 0 (at PutObject scratch/etl-slowdown/state)
+    at etl.py:12 save (1 request)
+    fix for boto3:
+      # boto3 1.43 did not send it again: turn its retries on (…)
+      boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
 ```
 
 ## Trying again
+
+Change the program and run the same command: every scenario runs again, and each finding of the trial is read
+against the program's trial before, as the [fix loop](cli.md#the-fix-loop) reads a run's: `✓ fixed  survives
+slowdown now`, `· open`, `! new` (*since the trial before*; in `show`, among `since.findings`).
 
 | | |
 |---|---|
 | History | Each verdict is added to its program's in its runs folder's index: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
-| `--again` | `sonde run --again -- CMD` (`--trial` implied): a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
-| App | *Try again what broke*, on a trial's result and in a program's history: the same. |
+| App | *Try again what broke*, on a trial's result and in a program's history. |
 
 ## Where the results go
 
@@ -184,8 +195,8 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 |---|---|
 | Trial runs | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the run says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs of the program: excluded from "newest", trend, baseline. |
 | Verdicts | in the runs folder's index ([run format](dev/run-format.md#versions)); runs named by file name, never path. |
-| `sonde check` | each trial by its standing, as `run` says it; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
-| `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
+| `sonde check` | each trial by its standing, as `run` says it, and its finding; **fails when the program broke**, budget or not. JSON: `trials` (the verdicts), `passed`, `verdict`. |
+| `sonde show` | *Under faults*: the run's verdicts with their history; their findings with the run's. JSON: `trials` (the verdicts), `findings` (kind `trial`). |
 | `sonde runs` | each run's worst verdict |
 | Deleting a run | removes its verdicts and its own `trials/` files; a verdict's file name is never followed as a path |
 | Exit | the command's status if the clean run failed; 130 / 143 interrupted; 1 if a trial broke; else 0 |

@@ -36,6 +36,10 @@ the run is held to its budget alone. This repository tests it against stand-ins 
 No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
 requests and findings; its times are not meaningful, so no check holds a demo run's waiting.
 
+To start, `sonde check RUN --init` writes a `sonde.toml` from a run, its findings known by count
+(`[check.findings]`): a pull request that adds a finding, or more of one, fails, with no baseline yet. It prints this
+step with the run's own command.
+
 | Step | Does |
 |---|---|
 | Install | The release binary of `version` (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |

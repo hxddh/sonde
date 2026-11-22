@@ -122,6 +122,9 @@ max-errors = 0
 max-transfer = "50 GiB"   # bytes the store sent
 baseline = "auto"
 
+[check.findings]          # the findings the project knows, by count (`check --init` writes it): more fails
+"obs.hot|data/conf.json" = 12
+
 [record]
 policy = "no-delete"      # what the program may do: allow (default; a trial: no-delete), no-delete, read-only
 name-callers = true       # name the code that sent each request (Python, Node.js, Java); false: off

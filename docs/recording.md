@@ -151,7 +151,7 @@ it wrote (during a trial, also one under a `{trial}` place of its command, and w
 on, the store keeps the old version; without it, use `read-only` to keep what is there.
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy` in `sonde.toml`;
-`allow`, or `no-delete` for `--trial` and `--again` (sonde's own faults could push a program down a path it would
+`allow`, or `no-delete` for `--trial` (sonde's own faults could push a program down a path it would
 not take). In the app, `[record] policy` may narrow Run's choice, never widen it.
 
 A request sonde refuses is said with its reason, a line each: a policy's names the flag that lifts it; S3 Express
