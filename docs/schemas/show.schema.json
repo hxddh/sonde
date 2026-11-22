@@ -225,7 +225,7 @@
     },
     "diagnoses": {
       "type": "array",
-      "description": "The plan: findings that share a root cause are one diagnosis, with one saving and one fix (its headline finding's). Those that save the most time first, then money, then requests; the rest after: the first is the one to make. Each finding is in one diagnosis.",
+      "description": "The plan: findings that share a root cause are one diagnosis, with one saving and one fix (its headline finding's). What is wrong first (a warning that saves nothing: a lost update, a trial that broke), then those that save the most time, then money, then requests; the rest after: the first is the next step. Each finding is in one diagnosis.",
       "items": {
         "$ref": "#/$defs/diagnosis"
       }
@@ -1382,7 +1382,7 @@
     },
     "timeAccount": {
       "type": "object",
-      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving.",
+      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving. Absent for an import, a replay, or a run with no command (`run --listen`): their idle time is no program's own.",
       "properties": {
         "wallMs": {
           "type": "number",
@@ -1394,7 +1394,11 @@
         },
         "waitingMs": {
           "type": "number",
-          "description": "With a request in flight."
+          "description": "With a request in flight, S3's (not `injectedMs`)."
+        },
+        "injectedMs": {
+          "type": "number",
+          "description": "With only requests a trial's fault held or answered in flight: sonde's time, not S3's nor the program's. Absent when none."
         },
         "requests": {
           "type": "integer"
@@ -1444,7 +1448,7 @@
     },
     "diagnosis": {
       "type": "object",
-      "description": "Findings that share a root cause (at least half of each one's objects are the other's), as one change, with what an agent needs to make it: what (`text`, `kind`), where (`at`), the `fix`, what it saves. Requests one after another join the diagnosis that owns most of them.",
+      "description": "Findings that share a root cause (at least half of each one's objects are its headline's, and the headline's theirs), as one change, with what an agent needs to make it: what (`text`, `kind`), where (`at`), the `fix`, what it saves. Requests one after another join the diagnosis that owns most of them.",
       "properties": {
         "id": {
           "type": "string",
@@ -1470,7 +1474,7 @@
         },
         "savesMs": {
           "type": "number",
-          "description": "Time of the run acting on it saves: its findings' requests taken out together and the waiting reckoned again (never their sum)."
+          "description": "Time of the run acting on it saves: its findings' requests taken out together, each request's part of the waiting off (a moment's waiting split among the requests then in flight), never their sum."
         },
         "savesCost": {
           "type": "number",
@@ -1482,6 +1486,26 @@
         "savingText": {
           "type": "string",
           "description": "Display text, not stable."
+        },
+        "atOnce": {
+          "type": "object",
+          "description": "Its requests one after another (`obs.serial`), counted: sent `concurrency` at once, they save `savesMs` on their own.",
+          "properties": {
+            "requests": {
+              "type": "integer"
+            },
+            "concurrency": {
+              "type": "integer"
+            },
+            "savesMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "requests",
+            "concurrency",
+            "savesMs"
+          ]
         },
         "kind": {
           "type": "string",

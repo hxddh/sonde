@@ -475,6 +475,11 @@ pub struct Chain {
     /// The time spent waiting on the requests themselves (the gaps between
     /// them are the program's own work, which running them at once keeps).
     pub waiting_ms: f64,
+    /// Those of `ids` that need one before them (a read of a key one wrote, a
+    /// write of a key one read, a listing of where one wrote): they stay one
+    /// after another, the others go at once around them.
+    #[serde(skip)]
+    pub waits: Vec<u64>,
 }
 
 /// The most places in the program's code a profile keeps ([`Profile::callers`]).
@@ -492,12 +497,14 @@ const CHAIN_GAP_US: i64 = 10_000;
 /// one of them (a read or a write of a key one of them wrote, a write of a
 /// key one read, a listing of a prefix one wrote under, a write under a
 /// prefix one listed). Requests that depend on each other cannot be sent at
-/// once without changing what the program does.
+/// once without changing what the program does; the others of the chain can,
+/// around them (a manifest read and written back each time round a loop
+/// holds back its own requests, not the loop's other reads).
 #[derive(Default)]
 struct Depends<'a> {
     keys: std::collections::HashMap<(&'a str, &'a str), bool>,
-    written: Vec<(&'a str, &'a str)>,
-    listed: Vec<(&'a str, &'a str)>,
+    written: std::collections::BTreeSet<(&'a str, &'a str)>,
+    listed: std::collections::BTreeSet<(&'a str, &'a str)>,
 }
 
 impl<'a> Depends<'a> {
@@ -515,33 +522,36 @@ impl<'a> Depends<'a> {
     fn on(&self, r: &'a Record) -> bool {
         let write = !is_read(r);
         if let Some((b, prefix)) = Self::listing(r) {
+            // the first key written at or after the prefix: under it, or none is
             return self
                 .written
-                .iter()
-                .any(|(wb, k)| *wb == b && k.starts_with(prefix));
+                .range((b, prefix)..)
+                .next()
+                .is_some_and(|(wb, k)| *wb == b && k.starts_with(prefix));
         }
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
             return false;
         };
         let touched = self.keys.get(&(b, k)).is_some_and(|w| *w || write);
+        // each of the key's prefixes, as a listing names it
         let under_listed = write
-            && self
-                .listed
-                .iter()
-                .any(|(lb, prefix)| *lb == b && k.starts_with(prefix));
+            && !self.listed.is_empty()
+            && (0..=k.len())
+                .filter(|&i| k.is_char_boundary(i))
+                .any(|i| self.listed.contains(&(b, &k[..i])));
         touched || under_listed
     }
 
     fn add(&mut self, r: &'a Record) {
         if let Some(listed) = Self::listing(r) {
-            self.listed.push(listed);
+            self.listed.insert(listed);
             return;
         }
         if let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) {
             let write = !is_read(r);
             *self.keys.entry((b, k)).or_default() |= write;
             if write {
-                self.written.push((b, k));
+                self.written.insert((b, k));
             }
         }
     }
@@ -557,41 +567,46 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
     let ms = |us: i64| (us - t0) as f64 / 1000.0;
     let mut out: Vec<Chain> = Vec::new();
     let mut cur: Vec<&Record> = Vec::new();
+    let mut waits: Vec<u64> = Vec::new();
     let mut end = i64::MIN;
-    let close = |cur: &mut Vec<&Record>, out: &mut Vec<Chain>| {
+    let close = |cur: &mut Vec<&Record>, waits: &mut Vec<u64>, out: &mut Vec<Chain>| {
         if cur.len() >= CHAIN_MIN {
             let (a, b) = (
                 start_us(cur[0]),
                 cur.iter().map(|r| end_us(r)).max().unwrap_or(0),
             );
-            // the same requests at once: the waves of the longest ones
-            let mut lat: Vec<i64> = cur.iter().map(|r| end_us(r) - start_us(r)).collect();
-            lat.sort_unstable_by(|x, y| y.cmp(x));
-            let at_once: i64 = lat.iter().step_by(CHAIN_CONCURRENCY).sum();
+            let lat = |r: &&Record| end_us(r) - start_us(r);
+            let held: std::collections::HashSet<u64> = waits.iter().copied().collect();
+            // the same requests at once: those that need one before them one
+            // after another, the waves of the longest of the others beside
+            let mut free: Vec<i64> = cur
+                .iter()
+                .filter(|r| !held.contains(&r.id))
+                .map(lat)
+                .collect();
+            free.sort_unstable_by(|x, y| y.cmp(x));
+            let kept: i64 = cur.iter().filter(|r| held.contains(&r.id)).map(lat).sum();
+            let at_once: i64 = kept + free.iter().step_by(CHAIN_CONCURRENCY).sum::<i64>();
             out.push(Chain {
                 start_ms: ms(a),
                 end_ms: ms(b),
                 requests: cur.len(),
                 ids: cur.iter().map(|r| r.id).collect(),
                 at_once_ms: at_once as f64 / 1000.0,
-                waiting_ms: lat.iter().sum::<i64>() as f64 / 1000.0,
+                waiting_ms: cur.iter().map(lat).sum::<i64>() as f64 / 1000.0,
+                waits: std::mem::take(waits),
             });
         }
         cur.clear();
+        waits.clear();
     };
     let mut deps = Depends::default();
     for r in sorted {
         let s = start_us(r);
-        if !cur.is_empty() && !(s < end || s - end > CHAIN_GAP_US) && deps.on(r) {
-            // it needs what one before it did (reads what it wrote, lists
-            // where it wrote): those two cannot be sent at once, so the
-            // chain ends there and another begins with it
-            close(&mut cur, &mut out);
-        }
         if !cur.is_empty() && (s < end || s - end > CHAIN_GAP_US) {
             // an overlap (requests at once already) or the program's own pause
             let overlapped = s < end;
-            close(&mut cur, &mut out);
+            close(&mut cur, &mut waits, &mut out);
             if overlapped {
                 end = end.max(end_us(r));
                 continue;
@@ -604,11 +619,16 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
         if cur.is_empty() {
             deps = Depends::default();
         }
+        // it needs what one before it did (reads what it wrote, lists where
+        // it wrote): it stays after that one, the chain goes on
+        if deps.on(r) {
+            waits.push(r.id);
+        }
         deps.add(r);
         cur.push(r);
         end = end_us(r);
     }
-    close(&mut cur, &mut out);
+    close(&mut cur, &mut waits, &mut out);
     out.sort_by(|a, b| {
         (b.end_ms - b.start_ms - b.at_once_ms).total_cmp(&(a.end_ms - a.start_ms - a.at_once_ms))
     });
@@ -874,6 +894,63 @@ pub fn waiting_ms(records: &[Record]) -> f64 {
 /// [`waiting_ms`] of any records, wherever they are kept.
 pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
     union_us(records.map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
+}
+
+/// Each request's part of the waiting, in ms, by its place in `records`:
+/// every moment with requests in flight split evenly among them. The parts
+/// add up to [`waiting_ms`], and the parts of some requests are the time a
+/// run saves without them: their summed time, divided by how many requests
+/// were in flight beside them (docs/cli.md#findings). Alone (one at a time), a request's
+/// part is its own time; one of eight at once, an eighth of it.
+pub fn waits_ms(records: &[Record]) -> Vec<f64> {
+    let n = records.len();
+    let starts: Vec<i64> = records.iter().map(start_us).collect();
+    let ends: Vec<i64> = records
+        .iter()
+        .zip(&starts)
+        .map(|(r, &s)| end_us(r).max(s))
+        .collect();
+    // the places in order of their starts, and of their ends: records are
+    // mostly in the order they started, sorted only when not
+    let order = |at: &[i64]| {
+        let mut o: Vec<u32> = (0..n as u32).collect();
+        if !at.is_sorted() {
+            o.sort_unstable_by_key(|&i| at[i as usize]);
+        }
+        o
+    };
+    let (by_start, by_end) = (order(&starts), order(&ends));
+    // the time so far, each moment divided by the requests then in flight:
+    // a request's part is this at its end less this at its start
+    let mut out = vec![0f64; n];
+    let (mut a, mut flying, mut so_far, mut last) = (0, 0i64, 0f64, i64::MIN);
+    for &e in &by_end {
+        let e = e as usize;
+        // the starts before this end, then the end (an end before a start at the same moment)
+        while let Some(&i) = by_start.get(a)
+            && starts[i as usize] < ends[e]
+        {
+            let t = starts[i as usize];
+            if flying > 0 && t > last {
+                so_far += (t - last) as f64 / flying as f64;
+            }
+            last = last.max(t);
+            out[i as usize] -= so_far;
+            flying += 1;
+            a += 1;
+        }
+        let t = ends[e];
+        if flying > 0 && t > last {
+            so_far += (t - last) as f64 / flying as f64;
+        }
+        last = last.max(t);
+        out[e] += so_far;
+        flying -= 1;
+    }
+    for w in &mut out {
+        *w /= 1000.0;
+    }
+    out
 }
 
 /// Each kind's part of the waiting, in microseconds: every stretch of time
@@ -3271,7 +3348,7 @@ mod injected {
     }
 
     #[test]
-    fn requests_that_need_the_one_before_are_no_chain_to_send_at_once() {
+    fn requests_that_need_the_one_before_stay_after_it_and_the_others_go_at_once() {
         let at = |id: u64, op: &str, key: &str| {
             let mut r = Record {
                 id,
@@ -3297,7 +3374,8 @@ mod injected {
             .collect();
         assert_eq!(chains(&reads).iter().map(|c| c.requests).sum::<usize>(), 12);
         // each key written and then read back: the read needs its write, so
-        // sending them at once would change what the program reads
+        // it stays after it (sent at once it would read another thing); the
+        // writes go at once
         let back: Vec<Record> = (0..12u64)
             .flat_map(|i| {
                 let k = format!("k{i}");
@@ -3307,7 +3385,11 @@ mod injected {
                 ]
             })
             .collect();
-        assert!(chains(&back).is_empty(), "{:?}", chains(&back));
+        let c = chains(&back);
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert_eq!(c[0].waits, (1..=12).map(|i| 2 * i).collect::<Vec<u64>>());
+        // the reads one after another (24 ms), the twelve writes in two waves (4 ms)
+        assert!((c[0].at_once_ms - 28.0).abs() < 1e-9, "{c:?}");
         // a listing of where the program wrote needs those writes too
         let mut listed: Vec<Record> = (1..=11)
             .map(|i| at(i, "PutObject", &format!("out/{i}")))
@@ -3324,10 +3406,8 @@ mod injected {
         l.bucket = Some("b".into());
         l.lists_mut().query = vec![("prefix".into(), "out/".into())];
         listed.push(l);
-        assert_eq!(
-            chains(&listed).iter().map(|c| c.requests).sum::<usize>(),
-            11
-        );
+        let c = chains(&listed);
+        assert_eq!((c[0].requests, c[0].waits.clone()), (12, vec![12]));
     }
 }
 

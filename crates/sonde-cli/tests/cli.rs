@@ -2207,11 +2207,13 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     );
     for said in [
         "  time 739 ms: your program's own 250 ms (34%) · S3 round trips 489 ms (91 requests, median 3.3 ms)",
-        "    saving: ≈178 ms of 739 ms (24%)",
-        "    also: and send the other 41 requests 8 at once",
-        "    at etl.py:19 <module> (20 requests)",
+        // sent at once saves more than dropping the HEADs: its own change, first
+        "! 51 requests ran one after another for 450 ms",
+        "    saving: ≈160 ms of 739 ms (22%)",
+        "    at etl.py:14 <module> (20 requests)",
         "    fix for boto3:",
-        "      obj = s3.get_object(Bucket=b, Key=k)",
+        "      with ThreadPoolExecutor(8) as pool:",
+        "the GET alone answers both · ≈65 ms of 739 ms (9%) (at etl.py:19 <module>)",
         " · ≈50 ms of 739 ms (7%) (at etl.py:33 <module>)",
     ] {
         assert!(first.contains(said), "no {said:?} in:\n{first}");
