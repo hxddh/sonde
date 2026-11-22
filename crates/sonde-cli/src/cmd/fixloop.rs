@@ -341,16 +341,19 @@ pub(super) fn uncounted_line(why: &str) -> String {
     format!("{why}: what moved is not counted as a fix")
 }
 
-/// How much the program's runs vary, as a fix's time is judged against
-/// it: `its runs vary by 220 ms`, or that no band is known yet.
-pub(super) fn noise_line(noise_ms: Option<f64>) -> String {
-    match noise_ms {
-        Some(ms) => format!(
-            "its runs vary by {} (its last runs of this command): a change under it is within noise",
-            ms_text(ms)
-        ),
-        None => "no noise band yet: fewer than 2 earlier runs of this command".into(),
+/// The run's wall time against the run before, said once for the run:
+/// `time 4.51 s → 3.64 s (-19%)`, and how much the program's runs vary
+/// when that is known (`its runs vary by 120 ms`), `within noise` when it
+/// moved by less.
+pub(super) fn time_moved(c: &RunChange) -> String {
+    let mut t = format!("time {}", moved(c.wall_ms.0, c.wall_ms.1, ms_text));
+    if let Some(band) = c.noise_ms {
+        t.push_str(&format!(" · its runs vary by {}", ms_text(band)));
+        if c.within_noise {
+            t.push_str(": within noise");
+        }
     }
+    t
 }
 
 /// The figures of a change on one line: requests, waiting, cost.
@@ -424,7 +427,7 @@ pub(super) fn since_lines(
         (None, true) => format!("since {name}"),
         (None, false) => format!("since the run before ({name})"),
     };
-    out.push(paint(&head, "1", color));
+    out.push(paint(&format!("{head} · {}", time_moved(c)), "1", color));
     // (said only of a run asked for: the run before is the program's)
     let caveat = if !c.same_program {
         Some(
@@ -452,15 +455,6 @@ pub(super) fn since_lines(
     out.push(format!("  {}", figures_line(c)));
     if asked {
         out.extend(kinds_moved(c));
-    }
-    // what a fix's time is judged against: said once, when one says it (a
-    // run again: when one is within it)
-    let noise = match again {
-        Some(_) => since.findings.iter().any(|f| f.within_noise),
-        None => since.findings.iter().any(|f| f.saved.is_some()),
-    };
-    if noise {
-        out.push(paint(&format!("  {}", noise_line(c.noise_ms)), "2", color));
     }
     out.extend(match again {
         Some(a) => changed_lines(a, &since.findings, uncounted.as_deref(), color),
@@ -565,6 +559,7 @@ impl Other {
 /// left as they are. Two programs' figures compare, their findings do not;
 /// nor do a failed run's, nor those of a run nothing reached.
 pub(super) fn since_other(
+    s: &Sonde,
     path: &Path,
     header: &RunHeader,
     records: &[Record],
@@ -595,11 +590,21 @@ pub(super) fn since_other(
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(hb.command.as_deref(), header.command.as_deref());
-        let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(path));
+        let kept = sonde_analysis::fixloop::read(&history_of(s, path));
         if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
             program.mark_gone(&mut c.findings, &before, &after);
+            program.predict(&mut c.findings);
             c.appeared = sonde_analysis::fixloop::said(&c.findings, &[State::New]);
             c.resolved = sonde_analysis::fixloop::said(&c.findings, &[State::Fixed]);
+            // the later run's time against how much the program's runs
+            // before it vary, as a run again says it
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let noise =
+                sonde_analysis::fixloop::noise_ms(program, &header.created.to_rfc3339(), &name);
+            sonde_analysis::fixloop::within_noise(&mut c, noise);
         }
     } else {
         c = c.of_programs(None, None);
@@ -634,9 +639,29 @@ pub(super) fn since_last(
     records: &[Record],
     a: &Analysis,
 ) -> Option<SinceLast> {
-    a.since_last(path, header, records, &|endpoint| {
+    a.since_last(&history_of(s, path), path, header, records, &|endpoint| {
         request_prices_for(s, endpoint)
     })
+}
+
+/// Where a run's program keeps its history: the runs folder, for a run in
+/// it or written with `-o` and listed with it, so a run finds its
+/// program's runs before it the same way with `-o` or without; else the
+/// folder the run is in.
+pub(super) fn history_of(s: &Sonde, path: &Path) -> PathBuf {
+    let runs = s.paths().runs();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let own = sonde_analysis::fixloop::folder_of(path);
+    let listed = || {
+        sonde_analysis::index::elsewhere(&runs)
+            .iter()
+            .any(|p| canon(p) == canon(path))
+    };
+    if canon(&own) == canon(&runs) || listed() {
+        runs
+    } else {
+        own
+    }
 }
 
 #[cfg(test)]
@@ -707,8 +732,7 @@ mod tests {
             was: None,
             counts: None,
             predicted: Saving::default(),
-            measured: None,
-            within_noise: false,
+            saved_requests: None,
             saved: None,
             saved_text: saved.map(String::from),
         }

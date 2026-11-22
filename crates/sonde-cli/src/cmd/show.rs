@@ -282,6 +282,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // the run asked for: in every format
     let mut since = match other {
         Some(other) => Some(super::fixloop::since_other(
+            s,
             &file,
             &run.header,
             all,
@@ -355,7 +356,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .collect();
                 field(&mut w, "findings", json!(findings))?;
             }
-            w.field("verify", &verify_command(&run.header))?;
+            w.field("verify", &verify_command(s, &file, &run.header))?;
             let moved = a.all || a.since.is_some();
             field(&mut w, "since", since_json(since.as_ref(), moved))?;
             field(&mut w, "trials", json!(trials))?;
@@ -638,9 +639,9 @@ fn callers_json(
 /// The change since the run before as `show -f json` writes it: none for a
 /// program's first run (nothing compared: its findings, all new, are the
 /// plan; a trial's against the program's trial before are compared).
-/// Each finding is said once, in `findings`, with what it saved (`saved`:
-/// the run's wall time, cost and requests that fell) beside what was
-/// predicted; the change keeps the figures, and each kind of request and
+/// Each finding is said once, in `findings`, with the requests it saved
+/// (`savedRequests`) beside what was predicted; the run's time once, in the
+/// change (`wallMs`, `noiseMs`, `withinNoise`); the change keeps the figures, and each kind of request and
 /// prefix that moved when they are asked for (`moved`: `--since`, `--all`),
 /// as the text says them.
 fn since_json(
@@ -676,15 +677,10 @@ fn since_json(
         .flatten()
         .filter_map(|f| f.as_object_mut())
     {
-        // (`measured` read as a time, not as what fell: `saved`, beside `predicted`)
+        // (the phrase is in `savedText`; `predicted` beside what was measured)
         f.remove("saved");
-        match f.remove("measured") {
-            Some(m) => {
-                f.insert("saved".into(), m);
-            }
-            None => {
-                f.remove("predicted");
-            }
+        if !f.contains_key("savedRequests") {
+            f.remove("predicted");
         }
     }
     v
@@ -712,10 +708,16 @@ fn code_line(cwd: Option<&Path>, file: &str, line: u32) -> Option<String> {
     (!text.is_empty()).then(|| text.chars().take(200).collect())
 }
 
-/// The command that records the program again, to see a fix work (`sonde
-/// run --demo -- python3 etl.py`, in the folder it ran in): none for a run
-/// that is no program's (an import, a replay).
-fn verify_command(header: &sonde_analysis::run::RunHeader) -> Option<String> {
+/// The command that records the program again, to see a fix work: as it
+/// was run (`sonde run --url URL -- python3 etl.py`, `-e NAME`, `--demo`,
+/// in the folder it ran in), and a run written with `-o` written beside it
+/// again under the next name (`footer1.sonde`, then `footer2.sonde`). None
+/// for a run that is no program's (an import, a replay).
+fn verify_command(
+    s: &Sonde,
+    path: &Path,
+    header: &sonde_analysis::run::RunHeader,
+) -> Option<String> {
     let command = header.command.as_deref()?;
     // the tour's runs: the tour again
     if command.starts_with("sonde run") {
@@ -726,15 +728,48 @@ fn verify_command(header: &sonde_analysis::run::RunHeader) -> Option<String> {
     {
         return None;
     }
-    let store = if header.endpoint == "demo" {
-        "--demo".to_string()
-    } else {
-        format!("-e {}", header.endpoint)
+    let mut args = vec!["sonde run".to_string()];
+    args.extend(super::record::store_args(header));
+    if let Some(n) = header.name.as_deref() {
+        args.push(format!(
+            "--name {}",
+            sonde_analysis::program::shell_join(&[n.into()])
+        ));
+    }
+    if let Some(out) = next_beside(s, path) {
+        args.push(format!(
+            "-o {}",
+            sonde_analysis::program::shell_join(&[out.to_string_lossy().into_owned()])
+        ));
+    }
+    args.push(format!("-- {command}"));
+    Some(args.join(" "))
+}
+
+/// Where a run written with `-o` (outside the runs folder) is written
+/// again: beside it, its name's last number one more (`footer1.sonde`,
+/// `footer2.sonde`), else `-2` (`etl.sonde`, `etl-2.sonde`), a name not
+/// taken. None for a run in the runs folder.
+fn next_beside(s: &Sonde, path: &Path) -> Option<PathBuf> {
+    let path = std::path::absolute(path).ok()?;
+    let dir = sonde_analysis::fixloop::folder_of(&path);
+    let runs = s.paths().runs();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if canon(&dir) == canon(&runs) {
+        return None;
+    }
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let stem = name.strip_suffix(".sonde").unwrap_or(&name);
+    let digits = stem.len() - stem.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let (base, mut n) = match stem[stem.len() - digits..].parse::<u64>() {
+        Ok(n) if digits > 0 => (stem[..stem.len() - digits].to_string(), n + 1),
+        _ => (format!("{stem}-"), 2),
     };
-    let name = header
-        .name
-        .as_deref()
-        .map(|n| format!(" --name {n}"))
-        .unwrap_or_default();
-    Some(format!("sonde run {store}{name} -- {command}"))
+    loop {
+        let p = dir.join(format!("{base}{n}.sonde"));
+        if !p.exists() {
+            return Some(p);
+        }
+        n += 1;
+    }
 }

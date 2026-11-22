@@ -3001,7 +3001,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     });
     // two of a run's findings that read the same once what changes between
     // runs is taken out (`t00/`, `t01/`) stay two, by their keys as they were
-    crate::profile::name_findings(&mut out, &[]);
+    crate::profile::name_findings(&mut out);
     for o in &mut out {
         // a trace is only told apart from a finding: no fix, no callers
         if any {

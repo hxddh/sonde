@@ -2341,8 +2341,7 @@ pub fn changes(trials: &[Trial]) -> Vec<crate::fixloop::FindingChange> {
                 was: None,
                 counts: None,
                 predicted: Saving::default(),
-                measured: None,
-                within_noise: false,
+                saved_requests: None,
                 saved: None,
                 saved_text: None,
             })

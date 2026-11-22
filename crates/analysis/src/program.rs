@@ -754,6 +754,11 @@ pub struct Check {
     /// with a smaller count: what fails the `findings` row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Gated>,
+    /// Findings the project knows (`[check.findings]`) that the run has
+    /// no more of, or less ([`loose`]): what `[check.findings]` may be
+    /// tightened to, each with its count in the run (0: gone).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loose: Vec<Gated>,
     /// Findings of the run the project keeps on purpose (`expect`), each
     /// with why.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -795,11 +800,12 @@ pub fn gated(
                     k == identity || expected_identity(k) == identity
                 })
                 .map(|(_, n)| *n);
-            // requests one after another: their count moves with their
-            // timing, so it grew only past a fifth more (as the fix loop)
-            let grew = |n: usize| match crate::fixloop::of_time(o) {
-                true => count * 4 > n * 5,
-                false => count > n,
+            // requests one after another, or throttled: their count moves
+            // with the timing, so it grew only past a fifth more (as the
+            // fix loop)
+            let grew = |n: usize| match crate::fixloop::varying_count(o) {
+                Some(_) => count * 4 > n * 5,
+                None => count > n,
             };
             was.is_none_or(grew).then(|| Gated {
                 identity,
@@ -809,6 +815,89 @@ pub fn gated(
             })
         })
         .collect()
+}
+
+/// The findings `known` names that the run has none of now, or less of
+/// (one whose count varies run to run, a fifth less: [`gated`]): each with
+/// its count in the run, 0 for one gone. `[check.findings]` may be
+/// tightened to them: what was fixed then fails the check if it comes back.
+pub fn loose(
+    findings: &[Observation],
+    known: &std::collections::BTreeMap<String, usize>,
+) -> Vec<Gated> {
+    known
+        .iter()
+        .filter_map(|(k, &n)| {
+            let k = k.trim();
+            let o = findings.iter().find(|o| {
+                let id = crate::profile::finding_identity(o);
+                k == id || expected_identity(k) == id
+            });
+            let count = o.map_or(0, crate::fixloop::count_of);
+            let fewer = match o.and_then(crate::fixloop::varying_count) {
+                Some(_) => count * 5 < n * 4,
+                None => count < n,
+            };
+            (fewer && o.is_none_or(|o| o.expected.is_none())).then(|| Gated {
+                identity: k.to_string(),
+                text: o.map(|o| o.text.clone()).unwrap_or_default(),
+                count,
+                known: Some(n),
+            })
+        })
+        .collect()
+}
+
+/// The known findings that are gone or fewer ([`loose`]), in a line:
+/// `2 known findings are gone or fewer: tighten [check.findings] to
+/// "obs.hot|b/k" = 0, …` (an entry of 0 is one to remove). None for none.
+pub fn loose_line(loose: &[Gated]) -> Option<String> {
+    if loose.is_empty() {
+        return None;
+    }
+    let to: Vec<String> = loose
+        .iter()
+        .map(|g| match g.count {
+            0 => format!("remove {:?}", g.identity),
+            n => format!("{:?} = {n}", g.identity),
+        })
+        .collect();
+    Some(format!(
+        "{} known finding{} {} gone or fewer: tighten [check.findings] ({})",
+        loose.len(),
+        if loose.len() == 1 { "" } else { "s" },
+        if loose.len() == 1 { "is" } else { "are" },
+        to.join(", ")
+    ))
+}
+
+/// The kinds of finding that are a fault in what the program does, not
+/// in what it costs (a read written back loses a write made between):
+/// never known to `[check.findings]` by `check --init`, so the check
+/// fails until each is fixed.
+pub const CORRECTNESS: &[&str] = &["obs.rmw", "trial"];
+
+/// What `check --init` writes as known (`[check.findings]`): each of the
+/// run's findings with its count, but a fault in what the program does
+/// ([`CORRECTNESS`]), said apart (identity, text): never known, so the
+/// check fails until it is fixed.
+pub fn known_of(
+    findings: &[Observation],
+) -> (
+    std::collections::BTreeMap<String, usize>,
+    Vec<(String, String)>,
+) {
+    let mut known = std::collections::BTreeMap::new();
+    let mut wrong = Vec::new();
+    for o in findings {
+        let id = crate::profile::finding_identity(o);
+        if CORRECTNESS.contains(&crate::profile::kind_of(&id)) {
+            wrong.push((id, o.text.clone()));
+        } else {
+            known.insert(id, crate::fixloop::count_of(o));
+        }
+    }
+    (known, wrong)
 }
 
 /// A finding the project keeps on purpose, as `check` says it.
@@ -1020,8 +1109,10 @@ pub fn check(
         limit("transfer", r.bytes_out as f64, n as f64, "budget");
     }
     let mut findings = Vec::new();
+    let mut loose_ones = Vec::new();
     if let Some(known) = &budget.known {
         findings = gated(run.3, known);
+        loose_ones = loose(run.3, known);
         limit("findings", findings.len() as f64, 0.0, "budget");
     }
     let mut new_warnings = Vec::new();
@@ -1085,6 +1176,7 @@ pub fn check(
         verdicts: v,
         new_warnings,
         findings,
+        loose: loose_ones,
         expected: run
             .3
             .iter()
@@ -1593,6 +1685,10 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
             if survived == 1 { "" } else { "s" }
         ));
     }
+    // fixed: what sonde.toml may be held to now
+    if let Some(t) = loose_line(&c.loose) {
+        md.push_str(&format!("\n{}\n", md_text(&t)));
+    }
     // kept on purpose: each with why, for a reviewer and an agent to leave
     if !c.expected.is_empty() {
         md.push_str("\n**Expected** (sonde.toml)\n\n");
@@ -1678,6 +1774,58 @@ mod tests {
         let p = profile(rs, &RequestPrices::default());
         let o = observations(rs, &episodes(rs));
         (run_point("x", "", rs, &p, &o), p, o)
+    }
+
+    /// 29.0's eval: a fixed finding left `[check.findings]` as loose as it
+    /// was, and a count of throttled requests, which moves run to run, failed
+    /// the check by one more. Gone or fewer is said, to tighten; throttling
+    /// grows past a fifth more, as requests one after another.
+    #[test]
+    fn known_findings_gone_are_said_and_throttling_counts_with_room() {
+        let hot = |n: u64| -> Vec<Record> { (1..=n).map(|i| rec(i, "hot")).collect() };
+        let known = |k: &[(&str, usize)]| -> std::collections::BTreeMap<String, usize> {
+            k.iter().map(|(k, n)| (k.to_string(), *n)).collect()
+        };
+        let (_, _, ob) = point(&hot(11));
+        let fewer = loose(&ob, &known(&[("obs.hot|b/hot", 12)]));
+        assert_eq!((fewer[0].count, fewer[0].known), (11, Some(12)));
+        let (_, _, none) = point(&hot(3));
+        let gone = loose(&none, &known(&[("obs.hot|b/hot", 12), ("obs.rmw|b", 4)]));
+        assert_eq!(gone.len(), 2);
+        assert_eq!(
+            loose_line(&gone).as_deref(),
+            Some(
+                "2 known findings are gone or fewer: tighten [check.findings] (remove \"obs.hot|b/hot\", remove \"obs.rmw|b\")"
+            )
+        );
+        assert!(loose(&ob, &known(&[("obs.hot|b/hot", 11)])).is_empty());
+        // a throttling of 110 known at 100: within a fifth, as much
+        let throttled = |n: usize| {
+            let mut o = ob[0].clone();
+            o.phrases = vec![crate::phrase::p(
+                "obs.throttled",
+                &[("prefix", "b/t/".into()), ("n", n.to_string())],
+            )];
+            o.identity = "obs.throttled|b/t/".into();
+            o.kind = "obs.throttled".into();
+            o
+        };
+        let k = known(&[("obs.throttled|b/t/", 100)]);
+        assert!(gated(&[throttled(110)], &k).is_empty());
+        assert_eq!(gated(&[throttled(130)], &k).len(), 1);
+        assert!(loose(&[throttled(90)], &k).is_empty());
+    }
+
+    /// 29.0's eval: `check --init` wrote a read written back
+    /// (`"obs.rmw|lake" = 30`) as known: a lost write passed every check.
+    #[test]
+    fn a_fault_is_never_written_as_known() {
+        let (_, _, ob) = point(&(1..=12).map(|i| rec(i, "hot")).collect::<Vec<_>>());
+        let mut rmw = ob[0].clone();
+        rmw.identity = "obs.rmw|lake".into();
+        let (known, wrong) = known_of(&[ob[0].clone(), rmw]);
+        assert_eq!(known.keys().collect::<Vec<_>>(), ["obs.hot|b/hot"]);
+        assert_eq!(wrong[0].0, "obs.rmw|lake");
     }
 
     /// 28.0's `check` held a run to figures alone. `[check.findings]` holds

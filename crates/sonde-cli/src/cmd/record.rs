@@ -361,6 +361,11 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
     }
 }
 
+/// Under this many requests a run's summary has no table of its kinds: a
+/// run of a few requests reads whole on its head line, and every row of the
+/// table would be a percentile of one or two requests (`--all` shows it).
+pub(super) const FEW_KINDS: u64 = 10;
+
 /// The kinds of request, in one table: how many, how many failed, how long
 /// 95% took at most, the run's waiting and cost that were theirs. `all`
 /// adds the median and the slowest, and every kind. Times not recorded (a
@@ -449,6 +454,29 @@ pub(super) fn kinds_table(
         out.push(format!("  * of fewer than {FEW} requests"));
     }
     out
+}
+
+/// The store a run was recorded against, as `sonde run` is told it again:
+/// `--demo`, `--url URL` (a run against a URL given so, its query left
+/// out), else `-e NAME`. None for a run of no endpoint (an import).
+pub(super) fn store_args(h: &RunHeader) -> Option<String> {
+    match h.endpoint.as_str() {
+        "" => None,
+        "demo" => Some("--demo".into()),
+        super::ADHOC => {
+            let url = super::check::url_shown(&h.url);
+            (!url.is_empty()).then(|| {
+                format!(
+                    "--url {}",
+                    sonde_analysis::program::shell_join(&[url.into()])
+                )
+            })
+        }
+        e => Some(format!(
+            "-e {}",
+            sonde_analysis::program::shell_join(&[e.into()])
+        )),
+    }
 }
 
 pub(super) fn print_summary(
@@ -609,11 +637,13 @@ pub(super) fn print_summary_of(
             say(line);
         }
         say_refused(s, color, &say);
-        say(paint(
-            &format!("run: {} (the whole plan: sonde show)", path.display()),
-            "2",
-            color,
-        ));
+        // (the plan is the run's diagnoses: none, no plan to point at)
+        let plan = if a.diagnoses.is_empty() {
+            ""
+        } else {
+            " (the whole plan: sonde show)"
+        };
+        say(paint(&format!("run: {}{plan}", path.display()), "2", color));
         return;
     }
     for line in super::fixloop::diagnosis_lines(a, all, color) {
@@ -633,8 +663,12 @@ pub(super) fn print_summary_of(
         || a.month
             .as_ref()
             .is_some_and(|m| m.cost >= sonde_analysis::program::CENT);
-    for line in kinds_table(p, all, header.whole_seconds, priced) {
-        say(line);
+    // a handful of requests: the head line says them, a table of a
+    // percentile of each kind's two or three is no help ([`FEW_KINDS`])
+    if all || s.requests >= FEW_KINDS {
+        for line in kinds_table(p, all, header.whole_seconds, priced) {
+            say(line);
+        }
     }
     for (what, n) in &s.error_codes {
         let refused = refused_lines(s, *n);
@@ -861,6 +895,27 @@ pub fn project_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 29.0's eval: `verify` of a run against `--url` said `sonde run -e
+    /// adhoc`, an endpoint no one has. The store as the run was told it.
+    #[test]
+    fn a_runs_store_is_said_as_it_was_given() {
+        let h = |e: &str, url: &str| RunHeader::new(e, url, "", Some("python3 etl.py".into()));
+        assert_eq!(
+            store_args(&h(
+                super::super::ADHOC,
+                "http://127.0.0.1:9000/?X-Amz-Signature=s"
+            ))
+            .as_deref(),
+            Some("--url http://127.0.0.1:9000/")
+        );
+        assert_eq!(store_args(&h("demo", "")).as_deref(), Some("--demo"));
+        assert_eq!(
+            store_args(&h("prod", "https://s3")).as_deref(),
+            Some("-e prod")
+        );
+        assert_eq!(store_args(&h("", "")), None);
+    }
 
     /// 24.0 said `from 12+ callers` of exactly 12.
     #[test]

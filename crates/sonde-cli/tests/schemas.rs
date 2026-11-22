@@ -647,7 +647,8 @@ async fn every_json_output_is_as_its_schema_says() {
             .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
             .await;
         holds("check-init", &init);
-        assert_eq!(init["runArgs"], "--url <the S3 endpoint>", "{init}");
+        // the store as the run was told it: no placeholder to fill in
+        assert_eq!(init["runArgs"], "-e moto", "{init}");
         let known = init["findings"].as_object().unwrap();
         assert!(!known.is_empty(), "{init}");
         let toml = std::fs::read_to_string(b.path("sonde.toml")).unwrap();

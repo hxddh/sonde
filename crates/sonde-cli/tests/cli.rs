@@ -190,8 +190,9 @@ fn the_demo_records_a_run_that_every_command_reads() {
         assert!(out.contains(said), "no {said:?} in {out}");
     }
     let last = out.lines().last().unwrap();
+    // its own requests saved, and the time its plan said it saves
     assert!(
-        last.starts_with("  ✓ fixed") && last.ends_with(" ms less"),
+        last.starts_with("  ✓ fixed") && last.contains(" fewer requests (predicted "),
         "{out}"
     );
     // the job it names is there, the line it names holds the HEAD
@@ -1120,11 +1121,15 @@ fn show_json_is_lean_and_each_diagnosis_names_what_to_change_and_where() {
         serde_json::from_slice(&sonde(t.path(), &["show", &fixed, "-f", "json"]).stdout).unwrap();
     let f = &j["since"]["findings"][0];
     assert_eq!(f["state"], "fixed", "{}", j["since"]);
+    // its own requests saved, beside the time its plan predicted; the
+    // run's time is the run's, said once in the change
+    assert!(f["savedRequests"].as_u64().unwrap() > 0, "{f}");
+    assert!(f["predicted"]["ms"].as_f64().unwrap() > 0.0, "{f}");
     assert!(
-        f["saved"]["ms"].is_number() && f["predicted"]["ms"].is_number(),
+        f.get("saved").is_none() && f.get("withinNoise").is_none(),
         "{f}"
     );
-    assert!(f.get("measured").is_none(), "{f}");
+    assert!(j["since"]["change"]["wallMs"].is_array(), "{}", j["since"]);
     let change = &j["since"]["change"];
     for gone in ["findings", "resolved", "appeared", "latency"] {
         assert!(change.get(gone).is_none(), "{gone}: {change}");
@@ -2226,14 +2231,15 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     assert!(shown[1].contains("since the run before (etl-1-base)"));
     let third = &shown[2];
     assert!(
-        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · within noise"),
+        third.contains("✓ fixed  20 objects under etl-bucket/run/in/ were checked with HEAD and then read with GET: the GET alone answers both · 20 fewer requests (predicted "),
         "{third}"
     );
     assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
-    // the two runs before it took 397 ms apart: what it saved is not told
-    // from that
+    // the run's time said once, for the run: the two runs before it took
+    // 397 ms apart, so what it moved by is not told from that
     assert!(
-        third.contains("  its runs vary by 397 ms (its last runs of this command)"),
+        third.contains("since the run before (etl-2-again) · time ")
+            && third.contains(" · its runs vary by 397 ms: within noise"),
         "{third}"
     );
     assert!(
@@ -2256,7 +2262,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
         t.path(),
         &["show", "etl-3-no-head", "--since", "etl-2-again"],
     ));
-    assert!(c.contains("since etl-2-again\n"), "{c}");
+    assert!(c.contains("since etl-2-again · time "), "{c}");
     assert!(c.contains("✓ fixed  20 objects"), "{c}");
     assert!(c.contains("  HeadObject "), "{c}");
     let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
@@ -2274,7 +2280,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     let fixed = &j["since"]["findings"][0];
     assert_eq!(fixed["state"], "fixed", "{j}");
     assert_eq!(fixed["predicted"]["requests"], 20);
-    assert_eq!(fixed["saved"]["requests"], 20);
+    assert_eq!(fixed["savedRequests"], 20);
     assert!(j["since"]["change"].get("findings").is_none(), "{j}");
     // a program's first run has nothing before it
     let none = sonde(t.path(), &["show", "etl-1-base"]);
@@ -2462,9 +2468,16 @@ fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
     let err = stderr(&o);
     assert!(err.contains("1 line could not be read"), "{err}");
     assert!(err.contains("1 event left out"), "{err}");
-    // no latency in CloudTrail: no p95, no waiting
-    let table = stderr(&o);
-    let row = table.lines().find(|l| l.contains("GetObject")).unwrap();
+    // no latency in CloudTrail: no p95, no waiting (a run of a few
+    // requests has its table with --all)
+    let run = std::fs::read_dir(t.path().join("data/runs"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "sonde"))
+        .unwrap();
+    let table = stdout(&sonde(t.path(), &["show", run.to_str().unwrap(), "--all"]));
+    let row = table.lines().find(|l| l.starts_with("GetObject ")).unwrap();
     assert!(row.contains('—') && !row.contains(" ms"), "{table}");
     // an access log to the second: its waiting would be sonde's spreading
     let log = t.path().join("two.log");
@@ -3470,4 +3483,61 @@ fn prune_keeps_a_run_still_being_recorded() {
     let o = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert!(!live.exists(), "{}", stdout(&o));
+}
+
+/// 29.0's eval: `verify` of a run written with `-o` did not write it beside
+/// it again, and a run without `-o` after runs with it had `since: null`:
+/// a program's runs are found the same way with `-o` or without.
+#[test]
+fn a_run_written_elsewhere_is_in_its_programs_history_and_verify_writes_beside_it() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    std::fs::copy(
+        t.path().join("data/tour/export.py"),
+        t.path().join("job.py"),
+    )
+    .unwrap();
+    let out = t.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let run = |o: Option<&Path>| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sonde"));
+        c.args(["run", "--demo", "--name", "job"]);
+        if let Some(o) = o {
+            c.arg("-o").arg(o);
+        }
+        let o = c
+            .arg("--")
+            .arg(env!("CARGO_BIN_EXE_sonde"))
+            .args(["demo-job", "job.py"])
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    };
+    let first = out.join("job1.sonde");
+    run(Some(&first));
+    let shown = sonde(t.path(), &["show", first.to_str().unwrap(), "-f", "json"]);
+    let j: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
+    let verify = j["verify"].as_str().unwrap();
+    assert!(
+        verify.starts_with("sonde run --demo --name job -o "),
+        "{verify}"
+    );
+    assert!(verify.contains("job2.sonde -- "), "{verify}");
+    // again, into the runs folder: the run written elsewhere is the one before
+    run(None);
+    let newest = std::fs::read_dir(t.path().join("data/runs"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
+        .max_by_key(|p| std::fs::metadata(p).unwrap().modified().unwrap())
+        .unwrap();
+    let shown = sonde(t.path(), &["show", newest.to_str().unwrap(), "-f", "json"]);
+    let j: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
+    let previous = j["since"]["previous"].as_str().unwrap_or_default();
+    assert!(previous.ends_with("job1.sonde"), "{}", j["since"]);
 }

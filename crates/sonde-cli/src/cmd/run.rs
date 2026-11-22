@@ -395,11 +395,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         callers: !a.no_callers && project.file.record.name_callers != Some(false),
         made: Arc::default(),
     };
-    if trying && !names_its_place(&a.command) {
-        eprintln!(
-            "warning: the command has no {{trial}} and does not name SONDE_TRIAL: every run of the trial writes to the same place"
-        );
-    }
     let clean = run_once(s, a, None, &ctx).await?;
     let (file, code) = (clean.file.clone(), clean.code);
     if !trying {
@@ -420,6 +415,17 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if clean_run.records.is_empty() {
         eprintln!("\nNo trial: the program sent no requests to fail.");
         return Ok(code);
+    }
+    // only a program that writes writes over itself, run after run
+    if !names_its_place(&a.command)
+        && clean_run
+            .records
+            .iter()
+            .any(|r| matches!(r.method.as_str(), "PUT" | "POST" | "DELETE"))
+    {
+        eprintln!(
+            "warning: the command has no {{trial}} and does not name SONDE_TRIAL: every run of the trial writes to the same place"
+        );
     }
     let scenarios = if !asked.is_empty() {
         asked
