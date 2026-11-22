@@ -16,9 +16,9 @@ import { Chart, cost, DistributionCompare, PrefixChangeMap, RunBars, MARK, Spark
 /** What acting on a finding saved, measured, against the predicted ("saved 40 requests (predicted 42)"); null when nothing was measured. */
 export const savedText = (f: FindingChange): string | null => (f.saved ? say([f.saved], f.savedText ?? "") : (f.savedText ?? null));
 
-/** The findings that tell what changed: fixed first, then less, back, new, more (open ones say nothing new). */
+/** The findings that tell what changed: fixed first, then less, new, more (open ones say nothing new). */
 export const changedFindings = (findings: FindingChange[]): FindingChange[] => {
-  const rank: Record<FindingState, number> = { fixed: 0, less: 1, back: 2, new: 3, more: 4, open: 5 };
+  const rank: Record<FindingState, number> = { fixed: 0, less: 1, new: 2, more: 3, open: 4 };
   return findings.filter((f) => f.state !== "open").sort((a, b) => rank[a.state] - rank[b.state]);
 };
 
@@ -99,7 +99,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
 export function RunChangeView(props: { change: RunChange; inline?: boolean; /** both runs' signals, when they are read: the tiles' lines and second figures */ signals?: [Signals, Signals] | null; /** both runs' profiles, when they are read: the two over time */ profiles?: [Profile, Profile] | null }) {
   const c = () => props.change;
   const n = (v: number) => count(Math.round(v));
-  // each finding that changed between the runs: fixed (with what it saved, measured against the predicted), less, back, new
+  // each finding that changed between the runs: fixed (with what it saved, measured against the predicted), less, new
   const changed = () => changedFindings(c().findings ?? []);
   const findings = () => changed().length;
   // the same requests of each kind, the same errors, no finding gone or new

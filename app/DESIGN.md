@@ -170,8 +170,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Four thresholds** (`BREAK`, `[threshold]`): two widths — `toolbar` (1040), from which the window's toolbar shows
   the endpoint's name in full and the search field rather than its button, and `inspector` (780), from which a pane
   holds an inspector beside what it details (under it the inspector comes in from the edge); two heights of a
-  run's pane — under `short` (600) the shape strip goes and the findings keep to a line or two, from `tall` (880)
-  each finding has its lines in full. A pane measures itself (`onLayout`); nothing reads the focused window's size.
+  run's pane — under `short` (600) the shape strip goes and the plan keeps to a line or two, from `tall` (880)
+  its rows are not tightened. A pane measures itself (`onLayout`); nothing reads the focused window's size.
 - **A pane that narrows reflows by rule**, never by clipping:
   - *one line of figures*: a run's header is its command, its sentence, then its **four signals — requests, errors,
     median, bytes — and how many at once** in one line of quiet words ("172 requests · 0% errors · median 1.4 ms ·
@@ -187,7 +187,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     says when, the strip over them where; Format only where rows differ). The objects: name
     and size stay; then Modified, Class, Parts. Ranked columns stand last, in rank order, because DataTable keeps a
     column's state by its place;
-  - a finding's words keep their width: what acting on it saves goes first, then the count's words;
+  - a diagnosis's words keep their width: what acting on it saves goes first (the inspector says it);
   - a run's sentence wraps to two lines and is cut only at the second line's end;
   - tiles (`Tiles`) go in rows of equal count, each as high as its row: four are four abreast or two and two,
     never three and one; five that do not fit go in rows as even as they can (three and two, not four and one). They never stand
@@ -200,9 +200,9 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     under the run's sentence;
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯` by their words — never a row of unlabelled icons; they never wrap to a second line;
-  - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
-    in a short pane that room is bounded so the operations under it keep rows, ending on a whole finding, and
-    says how many are in view;
+  - the plan is a diagnosis a line (its headline and the time it saves), its other findings under it once chosen;
+    its fix opens in the inspector, never inside the list. In a short pane the list's room is bounded so the
+    operations under it keep rows, ending on a whole row, and says how many are in view;
   - free width goes to the column that would be cut (a target, a key, a name);
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
@@ -256,9 +256,9 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   would cover its tabs); while it is open its Save is the page's one primary.
 - **Dialogs**: short decisions only (a typed confirmation, the replay target), over
   the scrim, in two widths: 480, and 640 for one that lists, centred in the room under the title bar and never over
-  it. A dialog with states (the trial's plan, progress and verdicts) is `steady`: at least 480 pt
-  high, growing with what it holds up to the room, its body scrolling inside with its edges fading, and its foot
-  always has a primary (done: Close). A dialog's intro is set at the body's leading; a command in it is one line.
+  it. A dialog that lists (the trial's plan) is `steady`: at least 480 pt
+  high, growing with what it holds up to the room, its body scrolling inside with its edges fading; what follows a
+  decision (a trial's verdicts) is on the page it is about (the run's History), never in a dialog. A dialog's intro is set at the body's leading; a command in it is one line.
 - **Inside a card or the inspector, nothing is boxed again**: a `KeyValue` or a `SimpleTable bare` has hairlines
   between its rows only, no outer border and no rules between columns; names are sans and muted, mono is for
   identifiers. Twin cards stand apart by their gap, with no rule between them, and a split between two cards
@@ -280,7 +280,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - Secondary commands live in a visible menu (`⋯`) or a context menu, and every one has
   another path (the palette, a shortcut, the inspector).
 - **One header pattern.** A run's header is its command (one line, regular mono, cut in its middle; where and when it
-  ran in its tooltip), then one primary (Run again; Stop while its program runs) and `⋯` — where and when it ran
+  ran in its tooltip), then one primary (Run again, an outline while a diagnosis's Apply shows in the inspector; Stop while its
+  program runs) and `⋯` — where and when it ran
   first, then Try under faults…, Compare… and On another store…, also in the palette's "This run"
   ("Since the run before" keeps its own Compare link at its sentence's end). Every Buckets section opens on the same
   head (`ToolBar`): its scope (the bucket and prefix; its tab above it names the section), its actions at the end,

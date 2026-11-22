@@ -163,6 +163,16 @@ GONE: dict[str, str] = {
     "ops.shared": "the shared notes are in the operation's inspector",
     "trial.ofBroke": "a run's row no longer says how its trials stood (D-111): its History does",
     "trial.ofBrokeSaid": "a run's row no longer says how its trials stood (D-111): its History does",
+    "story.time": "the run header's sentence is the time account (phrase.time.account)",
+    "story.untimed": "the run header's sentence is the time account (phrase.time.account)",
+    "obs.top": "the plan lists every diagnosis",
+    "trial.ended": "a trial's verdicts fill its run's History, where they stay",
+    "trial.again": "Try again what broke is gone: Run trials again asks the plan (trial.runAgain)",
+    "trial.againTitle": "Try again what broke is gone: Run trials again asks the plan (trial.runAgain)",
+    "trial.againHint": "Try again what broke is gone: Run trials again asks the plan (trial.runAgain)",
+    "trial.againRun": "Try again what broke is gone: Run trials again asks the plan (trial.runAgain)",
+    "trial.afresh": "Try again what broke is gone: no fresh run before a trial",
+    "trial.againFailed": "Try again what broke is gone: no fresh run before a trial",
 }
 
 

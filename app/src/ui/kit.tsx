@@ -340,10 +340,8 @@ export const SIZES = {
   capacityTile: 128,
   dialogScroll: 480,
   findingsShort: 68,
-  findingsShortOpen: 96,
   findingsLeast: 104,
   findingsShare: 0.3,
-  findingsShareOpen: 0.45,
 } as const;
 /** A table's column widths, each named once (lint-kit fails a literal width
  * in a column object; lint-layout reads these to check a title and the widest
@@ -424,8 +422,6 @@ export const WIDTH = {
   size: "w-20",
   /** a standing's badge */
   badge: "w-24",
-  /** a count in words ("28 operations") */
-  count: "w-28",
   /** a date and time */
   date: "w-36",
   /** a tree row's chevron */

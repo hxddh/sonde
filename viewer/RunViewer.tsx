@@ -15,7 +15,7 @@ import { RunChangeView } from "../app/src/ui/runchange";
 import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong, PANE, SIZES } from "../app/src/ui/kit";
 import { RunShape, SHAPE_STRIP, TICK_ROOM } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
-import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, RunHeader } from "../app/src/ui/runview";
+import { Diagnoses, diagnosesOf, findingMarks, FixDetail, headOf, linesOf, OperationsTable, OperationView, OutputTable, RunHeader } from "../app/src/ui/runview";
 import { TimePane } from "../app/src/ui/profile";
 import { type Range, rangeOf, rangeParam } from "../app/src/range";
 
@@ -80,7 +80,15 @@ export function RunViewer(props: { data: SharedRun }) {
   const rec = signal<number | null>(null);
   const opHighlight = signal<number[]>([]);
   const outHighlight = signal<number[]>([]);
+  // the diagnosis chosen: its operations narrowed, its fix in the inspector
   const filter = signal<number | null>(null);
+  const diagnosis = () => (filter() === null ? null : (diagnosesOf(d)[filter()!] ?? null));
+  /** The finding whose operations the chosen diagnosis narrows the table to: its headline, when it has any. */
+  const narrowedTo = (): number | null => {
+    const x = diagnosis();
+    const o = x ? headOf(d, x) : undefined;
+    return x && o && (o.operationsTotal ?? o.operations.length) > 0 ? x.findings[0] : null;
+  };
   // an address that names a stretch of time opens on the Time pane, over it
   // a run shared against another opens on what changed
   const pane = signal<Pane>((hashRange || hashTime) && d.profile ? "time" : props.data.compare ? "compare" : "operations");
@@ -96,7 +104,7 @@ export function RunViewer(props: { data: SharedRun }) {
   });
   // a request chosen on the Time pane has no operation open: the inspector shows it all the same
   const record = computed(() => (rec() === null ? null : (byId.get(rec()!) ?? null)));
-  const inspecting = () => !!episode() || !!record();
+  const inspecting = () => !!episode() || !!record() || !!diagnosis();
   // this page's own size: what it shows of a finding and whether the shape has room follow it
   const box = signal({ w: 1280, h: 800 });
   /** A slice of the run's shape, picked on the strip: the operations running then. */
@@ -107,9 +115,9 @@ export function RunViewer(props: { data: SharedRun }) {
     const a = d.profile.rate[i]?.tMs ?? 0;
     return [a, a + d.profile.binMs];
   };
-  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice. */
+  /** The operations shown: all, those the chosen diagnosis is about, and those running in the chosen slice. */
   effect(() => {
-    const f = filter();
+    const f = narrowedTo();
     const w = window();
     untracked(() => {
       const { finding: _, slice: __, ...kept } = source.query();
@@ -118,7 +126,7 @@ export function RunViewer(props: { data: SharedRun }) {
   });
   const filterNote = () => {
     const w = window();
-    if (filter() === null && !w) return null;
+    if (narrowedTo() === null && !w) return null;
     const n = source.total();
     return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.operationsTotal }) : t("runs.filtered", { n, of: d.operationsTotal });
   };
@@ -144,7 +152,9 @@ export function RunViewer(props: { data: SharedRun }) {
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
+  // an operation or a request shown gives way to the chosen diagnosis's fix; the fix closed lets the diagnosis go
   const close = () => {
+    if (op() === null && rec() === null) filter.set(null);
     op.set(null);
     rec.set(null);
     opHighlight.set([]);
@@ -154,7 +164,7 @@ export function RunViewer(props: { data: SharedRun }) {
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's run page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the run and what stands out over its operations
-  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(SIZES.findingsLeast, Math.round(box().h * SIZES.findingsShare))} />;
+  const findings = () => <Diagnoses view={d} dense narrow={box().w < BREAK.inspector || inspecting()} selected={filter()} onSelect={(i) => batch(() => (filter.set(i), op.set(null), rec.set(null), opHighlight.set([])))} maxHeight={Math.max(SIZES.findingsLeast, Math.round(box().h * SIZES.findingsShare))} />;
   const strip = () => (
     <If when={d.profile && box().h >= BREAK.short}>
       <RunShape strip axis profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
@@ -237,9 +247,9 @@ export function RunViewer(props: { data: SharedRun }) {
         <If when={inspecting()}>
           <ResizablePanel size={PANE.inspector} minSize={PANE.inspectorLeast} maxSize={PANE.inspectorMost}>
             <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
-              <PanelHeader icon={record() ? "radio" : "layers"} title={record() ? t("inspector.request") : t("inspector.operation")} onClose={close} closeTestID="inspector-close" />
+              <PanelHeader icon={record() ? "radio" : episode() ? "layers" : "sparkles"} title={record() ? t("inspector.request") : episode() ? t("inspector.operation") : t("fix.title")} onClose={close} closeTestID="inspector-close" />
               <Scroll class="flex-1" contentClass="p-4">
-                <If when={record()} else={<If when={episode()}>{(e) => <OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}</If>}>
+                <If when={record()} else={<If when={episode()} else={<If when={diagnosis()}>{(x) => <FixDetail view={d} diagnosis={x()} />}</If>}>{(e) => <OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}</If>}>
                   {(r) => <RecordView record={r()} onBack={() => rec.set(null)} />}
                 </If>
               </Scroll>

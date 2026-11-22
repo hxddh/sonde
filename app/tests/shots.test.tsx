@@ -173,7 +173,8 @@ for (const v of variants) {
     const fixture = () => openRow("nightly-report.sh", "./nightly-report.sh");
 
     await shot("01-welcome");
-    // the demo, in one press: its job run, its run open on its finding (the line that sent it, the fix)
+    // the demo, in one press: its job run, its run open on its first diagnosis, its fix in the inspector (the line that
+    // sent it, the code for the program's own SDK, Apply)
     // (on Windows the real cursor moves on a focus change and can cancel a simulated press: pressed again only while
     // the welcome is still there and its button is not at work, as openRow does)
     const took = () => !app.shows("id:welcome") || !app.enabled("id:welcome-demo");
@@ -181,7 +182,7 @@ for (const v of variants) {
       await app.press("id:welcome-demo");
       await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
     }
-    await app.waitFor("id:finding-advice", { timeout: 30000 });
+    await app.waitFor("id:inspector >> id:fix", { timeout: 30000 });
     await app.waitFor("id:fix-callers");
     await charts("01a-demo");
     // the fix applied to the job's code and the job run again: the finding fixed, its saving measured and predicted
@@ -248,32 +249,18 @@ for (const v of variants) {
     await ranView();
     await app.waitFor("id:since-run", { timeout: 10000 });
     await charts("02bb-since");
-    // the same command under faults (from the view's ⋯): said before it runs, followed as it goes, its verdicts
+    // the same command under faults (from the view's ⋯): said before it runs; started, the run's History follows it,
+    // its verdicts filling in as they come, and keeps them; what broke is a diagnosis of the run like any other
     await act("run-try", "Try under faults…", "在故障下试运行…");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
     await shot("02e-trial-plan");
     await app.press("id:trial-start");
+    await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
     await app.waitFor("id:trial-progress", { timeout: 10000 });
     await app.screenshot(`${dir}/${v.name}-02f-trial-running.png`);
-    await app.waitFor("id:trial-elapsed");
     await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
+    await app.waitFor("id:trial-again", { timeout: 20000 });
     await shot("02g-trial-done");
-    // what broke, tried again on a fresh run (after a change, to see it survive): said first, then run
-    // (the tour's program has a write whose refusal it never hears: a trial of it always leaves something broken)
-    await app.waitFor("id:trial-again-here").catch(() => {
-      throw new Error("the trial ended with nothing broken: the tour's program has a write that a fault must break, so Try again has something to try");
-    });
-    await app.press("id:trial-again-here");
-    await app.waitFor("id:trial-again-plan", { timeout: 10000 });
-    await shot("02ga-again-plan");
-    await app.press("id:trial-start");
-    await app.waitFor("id:trial-progress", { timeout: 10000 });
-    await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
-    await shot("02gb-again-done");
-    // closed, the run's view opens on its History, where the verdicts stay, grouped by what to change
-    await app.press("id:trial-close");
-    await app.waitFor("id:history-trials", { timeout: 20000 });
-    await shot("02h-runs-verdicts");
     // a trial's own run: its notice, the faults' moments on its shape, and the run over its clean run
     // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
     // (the trial's run can take longer than a press's wait to open: what is on screen decides the next step)

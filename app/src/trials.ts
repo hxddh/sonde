@@ -1,6 +1,6 @@
 // A trial as the app follows it: the scenarios it will run, one after the
 // other, and what the bridge says of each as it goes (`Runs.trial`'s
-// events), folded into the list the dialog shows.
+// events), folded into the list the run's History shows.
 
 import { t } from "./i18n";
 import type { Trial, TrialEvent } from "./types";
@@ -49,9 +49,3 @@ export function foldTrial(steps: TrialStep[], e: TrialEvent): TrialStep[] {
 
 /** How far a trial is: scenarios done, of how many. */
 export const trialDone = (steps: TrialStep[]) => steps.filter((s) => s.state === "done").length;
-
-/** The worst standing among verdicts: broke, then degraded; none when every one survived or was not met. */
-export function worstStanding(trials: { standing: Trial["standing"] }[] | undefined): "broke" | "degraded" | null {
-  if (trials?.some((x) => x.standing === "broke")) return "broke";
-  return trials?.some((x) => x.standing === "degraded") ? "degraded" : null;
-}

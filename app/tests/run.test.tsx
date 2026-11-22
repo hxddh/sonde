@@ -380,7 +380,7 @@ test("run again from a run: the program after a change, the newest run, compared
   expect(app.shows("id:other-program")).toBe(false);
 });
 
-test("a run tried under faults: said before it runs, followed as it goes, its trial opened and marked as one", async () => {
+test("a run tried under faults: said before it runs, followed on its History as it goes, its trial opened and marked as one", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/trial.txt -o /dev/null");
   // (the button follows the field a frame later)
@@ -404,17 +404,18 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.press("id:trial-scenario-error");
   await app.waitFor("label:Run 2 trials");
   await app.press("id:trial-start");
-  await app.waitFor("id:trial-progress", { timeout: 10000 });
-  expect(app.shows("id:trial-step-error")).toBe(false);
-  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
-  expect(app.shows("id:trial-step-slowdown")).toBe(true);
-  expect(app.shows("id:trial-step-lost-answer")).toBe(true);
-  expect(app.shows("text:Waiting")).toBe(false);
-  // a finished scenario, pressed in the dialog: its own run (it is in no list), in Runs, marked as a trial (a row
-  // opens once the whole trial has ended and kept its runs: its verdicts are drawn a moment before)
-  await app.waitUntil(() => app.enabled("id:trial-step-slowdown"), { timeout: 10000 });
-  await app.press("id:trial-step-slowdown");
+  // started, the dialog closes: the run's History follows the trial, how far it is, its Stop
   await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
+  await app.waitFor("id:history-trials", { timeout: 10000 });
+  expect(app.shows("id:trial-error")).toBe(false);
+  await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 60000 });
+  expect(app.shows("id:trial-slowdown")).toBe(true);
+  expect(app.shows("id:trial-lost-answer")).toBe(true);
+  expect(app.shows("text:Waiting")).toBe(false);
+  // a finished scenario, pressed: its own run (it is in no list), in Runs, marked as a trial (a row opens once the
+  // whole trial has ended and its verdicts are kept)
+  await app.waitUntil(() => app.enabled("id:trial-slowdown"), { timeout: 10000 });
+  await app.press("id:trial-slowdown");
   await app.waitFor("id:trial-note", { timeout: 10000 });
   expect(app.shows("text:/^A trial of curl under “The store asks to slow down”/")).toBe(true);
   // no run of its own: not run again, no Runs of its own
@@ -492,15 +493,16 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
     if (i === 0) {
       await app.waitFor("text:/demo\\/README\\.md was read 10 times/", { timeout: 10000 });
       expect(app.shows("id:since-run")).toBe(false);
-      // acting on it, estimated
-      expect(app.shows("text:/^Acting on 1 finding: 10 → \\d+ requests/")).toBe(true);
+      // acting on it, estimated, said once: on its row (no line for all of them, for one)
+      expect(app.shows("id:observation-saving-0")).toBe(true);
+      expect(app.shows("id:what-if")).toBe(false);
     }
   }
   // the second: what changed since the run before, the finding fixed with what it saved
   await app.waitFor("id:since-run", { timeout: 10000 });
   // in a sentence: the finding fixed with what it saved, then the figures
   // (the one fixed, named: what it was, then what it saved)
-  expect(app.shows("text:/^Since the run before: 1 fixed: demo\\/README\\.md was read 10 times.*, saved 9 requests \\(predicted 9\\) · Requests\\s10\\s→\\s1/")).toBe(true);
+  expect(app.shows("text:/^Since the run before: fixed: demo\\/README\\.md was read 10 times.* — [^·]*(less|more|within noise)\\)? · Requests\\s10\\s→\\s1/")).toBe(true);
   // compared: the two runs, the finding fixed with its measured saving
   await app.press("id:since-compare");
   await app.waitFor("id:run-change", { timeout: 10000 });
@@ -512,38 +514,45 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   expect((await runMenu(app))[0]).toMatch(/from curl /);
 });
 
-test("try again what broke: a fresh run, only what did not survive, each scenario with its history", async () => {
+test("what broke under faults is a finding of the run, its fix in the inspector; Run trials again asks the plan anew, each scenario with its history", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/again.txt -o /dev/null");
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await runView(app);
-  await runAction(app, "Try under faults…");
-  await app.waitFor("id:trial-plan", { timeout: 10000 });
   // the slowdown alone: curl does not retry the write it was refused, and exits 0
-  for (const s of ["error", "skew", "lost-answer"]) if (app.shows(`id:trial-scenario-${s}`)) await app.press(`id:trial-scenario-${s}`);
-  await app.waitFor("label:Run 1 trial");
-  await app.press("id:trial-start");
-  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
-  expect(app.shows("label:Broke: The store asks to slow down")).toBe(true);
+  const slowdownAlone = async () => {
+    await runAction(app, "Try under faults…");
+    await app.waitFor("id:trial-plan", { timeout: 10000 });
+    for (const s of ["error", "skew", "lost-answer"]) if (app.shows(`id:trial-scenario-${s}`)) await app.press(`id:trial-scenario-${s}`);
+    await app.waitFor("label:Run 1 trial");
+    await app.press("id:trial-start");
+    await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
+    await app.waitFor("id:history-trials", { timeout: 10000 });
+    await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 60000 });
+  };
+  await slowdownAlone();
+  await app.waitFor("label:Broke: The store asks to slow down", { timeout: 10000 });
   // where it turned: the request it broke at
   expect(app.shows("text:/ · at PutObject \\S*again\\.txt$/")).toBe(true);
-  // what broke, again, from the dialog: said first (only that scenario), then run on a fresh run
-  await app.press("id:trial-again-here");
-  await app.waitFor("id:trial-again-plan");
-  expect(app.shows("label:Try 1 again")).toBe(true);
-  await app.press("id:trial-start");
-  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
-  // its history over the program's runs
-  await app.waitFor("id:trial-step-history-slowdown");
-  expect(app.shows("text:/^Broke in \\d+ of \\d+ runs, since /")).toBe(true);
-  // closed, the fresh run opens on its History, where it can be tried again
+  // no dialog of results, no "Try again what broke": the plan is asked anew
+  expect(app.shows("id:trial-again-here")).toBe(false);
+  // what broke is among the run's findings, like any other: chosen, its fix in the inspector
+  await app.press("id:run-pane-mode-operations");
+  await app.waitFor("text:/^broke under slowdown: /i", { timeout: 10000 });
+  await app.press("text:/^broke under slowdown: /i");
+  await app.waitFor("id:inspector >> id:fix", { timeout: 10000 });
+  expect(app.shows("id:fix-code")).toBe(true);
+  // Run trials again, from the History: the plan again, then its history over the program's runs
+  await app.press("id:run-pane-mode-runs");
+  await app.waitFor("id:trial-again", { timeout: 10000 });
+  await app.press("id:trial-again");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
   await app.press("id:trial-close");
-  await app.waitFor("id:history-trials", { timeout: 10000 });
+  await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
+  await slowdownAlone();
   await app.waitFor("id:trial-history-slowdown", { timeout: 10000 });
-  expect(app.shows("id:trial-again")).toBe(true);
-  // the run's ⋯ tries it under faults too
-  expect(await runMenu(app)).toContain("Try under faults…");
+  expect(app.shows("text:/^Broke in \\d+ of \\d+ runs, since /")).toBe(true);
 }, 180000);
 
 test("why slow: Group by splits the operations with a sentence; a request's inspector shows its key's history", async () => {

@@ -1,9 +1,9 @@
 // The fix loop in the app: a finding followed across a program's runs.
 // A run's findings carry their state against the program's run before
-// (new, back, less; open says nothing new and is left unmarked), and what
-// the run before had that this one has not is said once, beside them:
-// "since the run before", each fixed finding with what it saved, measured,
-// against what was predicted.
+// (new, less; open says nothing new and is left unmarked), and what the run
+// before had that this one has not is said once, beside them: "since the
+// run before", a fixed finding with the time it saved, measured, against
+// what was predicted ("1.2 s less (predicted 1.5 s)", or "within noise").
 
 import { resource, Text, View } from "nsh";
 import { count, duration } from "../format";
@@ -47,29 +47,30 @@ function changeLine(s: SinceLast): string | null {
   return parts.join(" · ");
 }
 
-/** "Since the run before", in one sentence: what the findings did (fixed, back, less, more, new) and how the
+/** "Since the run before", in one sentence: what the findings did (fixed, less, more, new) and how the
  * figures changed, then a link that opens the two runs side by side (`onCompare`), where each fixed finding
  * says what it saved. Nothing for a program's first run, nor when nothing changed. */
 export function SinceRun(props: { since: SinceLast | null | undefined; onCompare?: () => void }) {
   const s = () => props.since;
-  // the one finding named: the first that came back or is new, else the one fixed (several fixed: each in Compare)
+  // the one finding named: the one fixed, else the first that is new (several: each in Compare)
   const named = (): FindingChange | null => {
     const f = s()?.findings ?? [];
     const fixed = f.filter((x) => x.state === "fixed");
-    return f.find((x) => x.state === "back") ?? f.find((x) => x.state === "new") ?? (fixed.length === 1 ? fixed[0] : null);
+    return fixed.length === 1 ? fixed[0] : (f.find((x) => x.state === "new") ?? null);
   };
-  // what the findings did, counted: fixed, back, less, more, new (open ones say nothing new); the named one's
-  // words beside its count, and a fixed one's measured saving after them
+  // what the findings did: fixed, less, more, new (open ones say nothing new), each counted, but the one named —
+  // its state and its words, and a fixed one's measured saving ("fixed: … — 1.2 s less (predicted 1.5 s)")
   const tally = () =>
-    (["fixed", "back", "less", "more", "new"] as const)
+    (["fixed", "less", "more", "new"] as const)
       .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st)] as const)
       .filter(([, of]) => of.length > 0)
       .map(([st, of]) => {
-        const said = `${count(of.length)} ${say([{ key: "fix." + st, args: {} }], st)}`;
+        const word = say([{ key: "fix." + st, args: {} }], st);
         const one = named();
-        const what = one && one.state === st ? t("fix.named", { what: said, finding: say(one.phrases, one.text) }) : said;
-        const saved = st === "fixed" && of.length === 1 ? savedText(of[0]) : null;
-        return saved ? `${what}, ${saved}` : what;
+        if (!one || one.state !== st || of.length > 1) return `${count(of.length)} ${word}`;
+        const saved = st === "fixed" ? savedText(one) : null;
+        const finding = say(one.phrases, one.text);
+        return saved ? t("fix.namedSaved", { what: word, finding, saved }) : t("fix.named", { what: word, finding });
       })
       .join(" · ");
   const changed = (x: SinceLast) => !!tally() || (!!x.change && (x.change.requests[0] !== x.change.requests[1] || x.change.errors[0] !== x.change.errors[1]));

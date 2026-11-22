@@ -565,7 +565,7 @@ export interface Observation {
   operationsTotal?: number;
   /** Its first operation's start (where it stands on the run's shape); absent when it names none. */
   firstStart?: string;
-  /** The requests it bears on. Findings come ordered by what they save: money, then time, then requests. */
+  /** The requests it bears on. Findings come in their diagnoses' order (`RunView.diagnoses`). */
   impact?: number;
   /** What acting on it would save, when that can be counted. */
   saving?: Phrase;
@@ -795,13 +795,16 @@ export interface Trial {
   wroteTwice: number;
   /** The attempts in a row it failed at each request, when asked to press harder than once (`slowdown:3`). */
   times?: number | null;
-  reasons: string[];
-  /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); empty when there are none. */
-  reasonsText?: { key: string; args?: Record<string, string> }[][];
-  /** The request the verdict turns on, when it is not "survived": its kind, `bucket/key`, and the program's line when the run named callers. */
-  where?: { kind: string; key: string; caller?: string } | null;
-  /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
-  advice?: { key: string; args?: Record<string, string> } | null;
+  /** Why it is not "survived", where and what to change: also said as a finding of the run (`kind` `trial`). */
+  finding?: {
+    /** Each reason a sentence of phrases (`trial.why.*`). */
+    why: { key: string; args?: Record<string, string> }[][];
+    /** The request the verdict turns on: its kind, `bucket/key`, and the program's line when the run named callers. */
+    where?: { kind: string; key: string; caller?: string } | null;
+    sdk?: string | null;
+    /** What to change, as a phrase (`trial.advice.*`). */
+    advice?: { key: string; args?: Record<string, string> } | null;
+  } | null;
   /** The trial's own run (an absolute path), when it is still there. */
   run?: string | null;
   /** The scenario's verdicts for the program, oldest first, up to this one (`at` RFC 3339; `run` a run's file name). */
@@ -851,9 +854,9 @@ export interface RunChange {
 export interface Saving {
   requests: number;
   ms: number;
+  cost?: number;
 }
 
-/** A finding between two runs of a program: fixed (gone at any threshold), less or more (by its count), back (fixed or under its threshold before, here again), new or open. */
 /** A program run here, as `Runs.programs()` gives it (the fields the app reads). */
 export interface ProgramInfo {
   program: string;
@@ -864,9 +867,10 @@ export interface ProgramInfo {
   regressed: boolean;
 }
 
+/** A finding between two runs of a program: fixed (gone at any threshold), less or more (by its count), new or open. */
 export interface FindingChange {
   identity: string;
-  state: "fixed" | "less" | "more" | "back" | "new" | "open";
+  state: "fixed" | "less" | "more" | "new" | "open";
   level: "warn" | "info";
   text: string;
   phrases: Phrase[];
@@ -877,7 +881,9 @@ export interface FindingChange {
   predicted: Saving;
   /** Measured between the runs (fixed, less). */
   measured?: Saving;
-  /** The measured saving against the predicted (`fix.saved`, `fix.savedTime`). */
+  /** The measured saving is within the runs' noise. */
+  withinNoise?: boolean;
+  /** The measured saving against the predicted (`fix.saved`, `fix.noise`). */
   saved?: Phrase;
   savedText?: string;
 }
@@ -960,8 +966,6 @@ export interface TrialResult {
   path: string;
   trials: Trial[];
   cancelled: boolean;
-  /** `trialAgain` only: the fresh clean run's exit (no trial when not 0). */
-  cleanExit?: number | null;
 }
 
 export interface RunView {
@@ -991,7 +995,36 @@ export interface RunView {
   /** Its operations by family: how many of each format and of each kind. */
   families: { formats: Record<string, number>; kinds: Record<string, number> };
   observations: Observation[];
+  /** The findings by root cause, ranked by the time they save: each its findings by place in `observations`, the headline first. */
+  diagnoses?: Diagnosis[];
+  /** Where the program's time went (a program's run only). */
+  time?: TimeAccount | null;
   sharedNotes: string[];
+}
+
+/** Findings with one root cause and one fix: what acting on them all saves, said once. */
+export interface Diagnosis {
+  id: string;
+  findings: number[];
+  identities: string[];
+  /** Its requests one after another, by place in `observations`: said as `rest`, not as a finding of its own. */
+  serial?: number;
+  savesMs?: number;
+  savesCost?: number;
+  savesRequests?: number;
+  saving?: Phrase[];
+  savingText?: string;
+  /** The requests one after another, said as the rest of the change ("and send the other 87 requests 8 at once"). */
+  rest?: Phrase;
+}
+
+/** A program's run in a sentence: its own time and its round trips. */
+export interface TimeAccount {
+  wallMs: number;
+  ownMs: number;
+  waitingMs: number;
+  phrases: Phrase[];
+  text: string;
 }
 
 /** A run whole, every operation in it: what `sonde share` writes into a page (`Episode`s with their English titles). */

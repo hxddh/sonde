@@ -748,11 +748,38 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
         None => {
             let trials = trials_of(p);
             if !trials.is_empty() {
+                with_trial_findings(o, &trials);
                 o.insert("trials".into(), to_json(trials));
             }
         }
     }
     v
+}
+
+/// The verdicts that did not survive as findings of the run, each a
+/// diagnosis of its own after the run's (no saving: last), as `sonde show`
+/// adds them ([`sonde_analysis::view::Analysis::add_trials`]): the view's
+/// findings are the kept analysis's, the verdicts are read fresh.
+fn with_trial_findings(
+    v: &mut serde_json::Map<String, JsonValue>,
+    trials: &[sonde_analysis::trial::Trial],
+) {
+    for o in sonde_analysis::trial::findings(trials) {
+        let Some(JsonValue::Array(found)) = v.get_mut("observations") else {
+            return;
+        };
+        let at = found.len();
+        let mut f = to_json(&o);
+        f["operationsTotal"] = json!(0);
+        found.push(f);
+        let dx = json!({ "id": o.identity, "findings": [at], "identities": [o.identity] });
+        match v.get_mut("diagnoses") {
+            Some(JsonValue::Array(d)) => d.push(dx),
+            _ => {
+                v.insert("diagnoses".into(), json!([dx]));
+            }
+        }
+    }
 }
 
 /// The budget a project gives its program in the `[check]` of the
@@ -1892,63 +1919,6 @@ impl Runs {
             &file, &of, &clean, clean_exit, &plan, chosen, &policy, cols, rows, &output,
         )
         .await
-    }
-
-    /// Tries a run's program again under what did not survive: its command
-    /// runs anew (a fresh clean run, recorded as a run of its own and judged
-    /// against), then only the scenarios whose last verdict for the program
-    /// was broke, degraded or refused by the policy. Events as
-    /// [`Runs::trial`]'s, the clean run's output first (`{ data }`).
-    /// Resolves with `{ path, trials, cancelled, cleanExit }`: `path` the
-    /// fresh run; no trial when it exited non-zero.
-    pub async fn trial_again(
-        path: String,
-        policy: String,
-        cols: f64,
-        rows: f64,
-        #[args(event)] output: Callback<JsonValue>,
-    ) -> Result<JsonValue, String> {
-        let (file, _) = own_run(&path)?;
-        let last = open_run(&path)?;
-        let plan = sonde_analysis::trial_plan::of(&last).map_err(err_msg)?;
-        let program = sonde_analysis::program::key_of(&last.header)
-            .ok_or_else(|| err_msg("only a run of a command can be tried again"))?;
-        let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let names = sonde_analysis::trial::to_try_again(&dir, &program);
-        if names.is_empty() {
-            return Err(err_msg(
-                "nothing to try again: every scenario survived the program's last trial",
-            ));
-        }
-        let chosen = plan.named(&names).map_err(err_msg)?;
-        policy_of(&policy)?;
-        // the clean run, afresh
-        let (code, fresh) = run_recorded(
-            &plan.command,
-            plan.cwd.as_deref(),
-            last.header.endpoint.clone(),
-            policy.clone(),
-            cols,
-            rows,
-            &output,
-            None,
-            false,
-        )
-        .await?;
-        keep_exit(&fresh, code);
-        if code != Some(0) {
-            return Ok(
-                json!({ "path": fresh, "trials": [], "cancelled": false, "cleanExit": code }),
-            );
-        }
-        let (file, of) = own_run(&fresh)?;
-        let clean = open_run(&fresh)?;
-        let mut done = try_under(
-            &file, &of, &clean, 0, &plan, chosen, &policy, cols, rows, &output,
-        )
-        .await?;
-        done["cleanExit"] = json!(code);
-        Ok(done)
     }
 
     /// What replaying a run on `endpoint` would send: the plan, the
@@ -3469,7 +3439,15 @@ mod tests {
     #[test]
     fn a_clean_run_with_verdicts_carries_them_and_its_list_row_marks_them() {
         let dir = tempfile::tempdir().unwrap();
-        let (clean, trial, verdict) = run_and_trial(dir.path(), "python job.py", None);
+        let (clean, trial, mut verdict) = run_and_trial(dir.path(), "python job.py", None);
+        // (it broke: what it found is a finding of the run)
+        verdict.standing = sonde_analysis::trial::Standing::Broke;
+        verdict.finding = Some(sonde_analysis::trial::TrialFinding {
+            why: Vec::new(),
+            at: None,
+            sdk: None,
+            advice: None,
+        });
         assert!(trial_marks(Path::new(&clean)).is_empty());
         // read before the verdicts were written: the analysis is kept, the
         // verdicts are read fresh
@@ -3480,6 +3458,19 @@ mod tests {
         assert_eq!(view["trials"][0]["scenario"], "slowdown");
         assert_eq!(view["trials"][0]["standing"], to_json(verdict.standing));
         assert_eq!(view["trials"][0]["run"], trial.as_str());
+        // the verdict not survived is a finding of the run, a diagnosis of its own after the run's
+        let found = view["observations"].as_array().unwrap();
+        let last = found.last().unwrap();
+        assert_eq!(last["kind"], "trial", "{last}");
+        assert_eq!(last["operationsTotal"], 0);
+        let dx = view["diagnoses"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(dx["findings"], json!([found.len() - 1]));
+        assert_eq!(dx["identities"], json!([last["identity"]]));
         let marks = trial_marks(Path::new(&clean));
         assert_eq!(
             marks,

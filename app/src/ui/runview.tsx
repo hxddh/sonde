@@ -10,12 +10,12 @@ import type { MenuItem as MenuItemSpec } from "nsh/desktop";
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
-import { Chart, runStory, timed, Waterfall } from "./plots";
+import { Chart, timed, Waterfall } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
-import type { EngineSetting, EpisodeRow, Fix, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
+import type { Diagnosis, EngineSetting, EpisodeRow, Fix, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
-import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Options, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Choice, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -29,7 +29,7 @@ const time = (iso: string) => new Date(iso).getTime();
 
 /** Where a finding stands against its program's run before (crates/analysis/src/fixloop.rs). */
 export type FindingState = FindingChange["state"];
-const STATE_TONE: Record<FindingState, Tone> = { fixed: "ok", less: "info", more: "warn", back: "warn", new: "info", open: "quiet" };
+const STATE_TONE: Record<FindingState, Tone> = { fixed: "ok", less: "info", more: "warn", new: "info", open: "quiet" };
 /** A state as the reader's language says it ("Fixed", "又出现"). */
 export const stateLabel = (s: FindingState): string => {
   const w = say([{ key: "fix." + s, args: {} }], s);
@@ -142,7 +142,12 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
-  const profile = () => props.view.profile;
+  // where the program's time went, in a sentence (a program's run: its own work and its round trips)
+  const story = () => {
+    const x = props.view.time;
+    const said = x ? say(x.phrases, x.text) : "";
+    return said.charAt(0).toUpperCase() + said.slice(1);
+  };
   const tiles = () => {
     const x = signalsOf(props.view);
     return x ? signalTiles(x, props.view.summary.misses) : [];
@@ -168,9 +173,9 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
         </View>
         {props.actions?.()}
       </View>
-      {/* the run in a sentence: where its time went, and the first thing to do (two lines at most) */}
-      <If when={profile()?.groups.length}>
-        <Text testID="run-story" class="text-body leading-5 text-foreground line-clamp-2">{runStory(profile())}</Text>
+      {/* the run in a sentence: where its time went (two lines at most) */}
+      <If when={story()}>
+        <Text testID="run-story" class="text-body leading-5 text-foreground line-clamp-2">{story()}</Text>
       </If>
       {props.children}
       {/* its figures in one line, quiet words, each opening its chart; what is not said is in its tooltip */}
@@ -232,7 +237,6 @@ function SettingPanel(props: { s: EngineSetting; onOpenCode?: (place: string) =>
   );
 }
 
-/** What to change for a finding: its fix in each SDK, one shown. */
 /** The fix's SDK for the program's own: its user agent named it. */
 const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   if (!sdk) return null;
@@ -265,53 +269,73 @@ function StoreFixButton(props: { o: Observation; onStore?: (o: Observation) => v
   );
 }
 
-function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; onStore?: (o: Observation) => void; /** the fix applied to the program's code, and the program run again (the demo's) */ onApply?: (o: Observation) => void }) {
-  const fixSdk = props.sdk;
-  const fixes = () => props.o.fixes ?? [];
-  // the program's own SDK first, when its requests said which; else the one last chosen
-  const own = () => sdkOfAgent(props.o.sdk);
+/** A run's plan: its findings by root cause, ranked as given, each a diagnosis with one fix and one saving. A run
+ * read by an older sonde (no diagnoses) has each finding as its own. */
+export function diagnosesOf(v: Pick<RunView, "diagnoses" | "observations">): Diagnosis[] {
+  return v.diagnoses?.length ? v.diagnoses : v.observations.map((o, i) => ({ id: o.identity ?? `${i}`, findings: [i], identities: o.identity ? [o.identity] : [] }));
+}
+
+/** A diagnosis's headline: its first finding. */
+export const headOf = (v: Pick<RunView, "observations">, d: Diagnosis): Observation | undefined => v.observations[d.findings[0]];
+
+/** What acting on a diagnosis saves, in the reader's language (its one finding's, where it is one). */
+export function diagnosisSaving(v: Pick<RunView, "observations">, d: Diagnosis): string | null {
+  if (d.saving?.length) return say(d.saving, d.savingText ?? "");
+  const h = headOf(v, d);
+  return d.findings.length === 1 && h ? observationSaving(h) : null;
+}
+
+/** A diagnosis's other findings, a sentence each: its requests one after another said as the rest of the change. */
+export function alsoOf(v: Pick<RunView, "observations">, d: Diagnosis): string[] {
+  const also = d.findings.slice(1).flatMap((i) => (i === d.serial || !v.observations[i] ? [] : [observationText(v.observations[i])]));
+  return d.rest && d.serial !== undefined ? [...also, say([d.rest], "")].filter(Boolean) : also;
+}
+
+/** The fix's SDK: the program's own, as its requests' user agent named it (the finding's, else the run's). */
+const ownSdk = (o: Observation | undefined, v: Pick<RunView, "sdk">) => sdkOfAgent(o?.sdk ?? v.sdk ?? undefined);
+
+/** A diagnosis in the inspector: what was found and what it saves, why, the lines of code that sent it, and the
+ * fix for the program's own SDK (the others behind a small menu), its acts at the end — Apply, where the app can
+ * (the demo's job), the one primary. */
+export function FixDetail(props: { view: RunView; diagnosis: Diagnosis; state?: FindingState | null; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; onStore?: (o: Observation) => void; onApply?: (o: Observation) => void }) {
+  const o = () => headOf(props.view, props.diagnosis)!;
+  const fixes = () => o().fixes ?? [];
+  // another SDK than the program's own, chosen from the menu for this diagnosis
+  const chosen = signal<{ id: string; sdk: Sdk } | null>(null);
+  const other = () => (chosen()?.id === props.diagnosis.id ? chosen()!.sdk : null);
   // an engine's setting first: what sent the requests is the engine, not an SDK the program calls
-  const shown = () => fixes().find((f) => f.setting) ?? fixes().find((f) => f.sdk === fixSdk()) ?? fixes().find((f) => f.sdk === own()) ?? fixes()[0];
-  effect(() => {
-    const o = own();
-    if (o && fixes().some((f) => f.sdk === o)) untracked(() => fixSdk.set(o));
-  });
+  const shown = () => fixes().find((f) => f.setting) ?? fixes().find((f) => f.sdk === other()) ?? fixes().find((f) => f.sdk === ownSdk(o(), props.view)) ?? fixes()[0];
+  // where in the program: the headline's lines, else the first of its findings that named any
+  const callers = () => [o(), ...props.diagnosis.findings.slice(1).map((i) => props.view.observations[i])].find((x) => x?.callers?.length)?.callers ?? [];
+  const saving = () => diagnosisSaving(props.view, props.diagnosis);
   return (
-    <View testID="fix" class="gap-2">
-      <View class="flex-row flex-wrap items-center gap-2">
-        <Icon name="sparkles" size={ICON.small} />
-        {/* the heading keeps its words: what does not fit beside it goes to the next line, never into it */}
-        <Heading class="shrink-0">{t("fix.title")}</Heading>
-        <View class="flex-1" />
-        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: fixTitle(f) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
-        <If when={shown()}>
-          <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
+    <View testID="fix" class="gap-3">
+      <View class="flex-row items-start gap-2">
+        <If when={props.state}>
+          {(st) => (
+            <View class="min-h-5 justify-center">
+              <StateBadge state={st()} />
+            </View>
+          )}
         </If>
-        {/* the store's side of the fix, where it has one; or no change: a habit kept on purpose, which sonde check then expects */}
-        <StoreFixButton o={props.o} onStore={props.onStore} />
-        <ExpectButton o={props.o} onExpect={props.onExpect} />
-        {/* the demo's: the fix made in its code, and the job run again — the loop in one press */}
-        <If when={props.onApply}>
-          <Button small variant="primary" icon="play" label={t("fix.apply")} onPress={() => props.onApply?.(props.o)} testID="finding-apply" />
-        </If>
+        <Strong class="min-w-0 flex-1">{observationText(o())}</Strong>
       </View>
-      {/* the engine's setting, the one edit to make: before why and the code */}
-      <If when={shown()?.setting}>{(s) => <SettingPanel s={s()} onOpenCode={props.onOpenCode} />}</If>
-      {/* why it matters and what it saves, written out */}
-      <If when={observationWhy(props.o)}>
-        {(why) => (
-          <TextView
-            testID="fix-why"
-            markdown={`${why()}${observationSaving(props.o) ? `\n\n**${observationSaving(props.o)}**` : ""}`}
-            // emphasis: what the change saves, within the reason for it
-            classes={{ paragraph: "text-small leading-snug text-muted-foreground", strong: `${EMPHASIS} text-info` }}
-          />
+      <If when={saving()}>
+        {(v) => (
+          <View class="flex-row items-center gap-1">
+            <Icon name="trending-down" size={ICON.small} tint="info" />
+            <Text testID="fix-saving" class="min-w-0 flex-1 tabular-nums text-small text-info">{v()}</Text>
+          </View>
         )}
       </If>
+      <Each of={alsoOf(props.view, props.diagnosis)}>{(x) => <Text class={TEXT.note}>{x()}</Text>}</Each>
+      <If when={observationWhy(o())}>{(why) => <Text testID="fix-why" class="text-small leading-snug text-muted-foreground">{why()}</Text>}</If>
+      {/* the engine's setting, the one edit to make: before the code */}
+      <If when={shown()?.setting}>{(s) => <SettingPanel s={s()} onOpenCode={props.onOpenCode} />}</If>
       {/* where in the program, when it said: the place to change */}
-      <If when={props.o.callers?.length}>
+      <If when={callers().length}>
         <View testID="fix-callers" class="gap-1">
-          <Each of={props.o.callers!} key={(c) => c.place}>
+          <Each of={callers()} key={(c) => c.place}>
             {(c) => (
               // a shared page cannot open the code: the place is said, not offered (a row that does nothing on a press)
               <ListRow label={props.onOpenCode ? t("fix.openCode", { place: c().place }) : c().place} disabled={!props.onOpenCode} onPress={() => props.onOpenCode?.(c().place)} trailing={<Text class={`tabular-nums ${TEXT.meta}`}>{t("run.bandRequests", { n: c().requests })}</Text>}>
@@ -322,27 +346,47 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
           </Each>
         </View>
       </If>
-      {/* highlighted; a line too long for the card scrolls sideways under its own indicator (Native Shell's
-          TextView); its Copy is beside the SDKs, so no row stands empty over the code for it */}
-      <If when={shown()}>
+      <If when={shown()} else={<Text class={TEXT.note}>{t("expect.hint")}</Text>}>
         {(f) => (
-          <TextView
-            testID="fix-code"
-            // (the sample as written, without the blank lines around it)
-            markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
-            // (a well: a muted fill, no border; the code's own padding only, its first line at the top)
-            classes={{ codeBlock: "rounded-(--radius) border-0 bg-muted/60 font-mono text-small", codeBlockCode: "px-3 py-2" }}
-          />
+          <View class="gap-2">
+            <View class="flex-row flex-wrap items-center gap-2">
+              {/* (the inspector's title says what this is) the program's own SDK; another, from a small menu */}
+              <View class="flex-1" />
+              <If when={fixes().length > 1}>
+                <Choice inline testID="fix-sdk" value={f().sdk} items={fixes().map((x) => ({ value: x.sdk, title: fixTitle(x) }))} onChange={(v) => chosen.set({ id: props.diagnosis.id, sdk: v as Sdk })} />
+              </If>
+              <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => void Clipboard.writeText(sample(f().code)).catch(() => {})} testID="fix-copy" />
+            </View>
+            {/* highlighted; a line too long scrolls sideways under its own indicator (Native Shell's TextView) */}
+            <TextView
+              testID="fix-code"
+              markdown={`\`\`\`${langOf(f())}\n${sample(f().code)}\n\`\`\``}
+              // (a well: a muted fill, no border; the code's own padding only, its first line at the top)
+              classes={{ codeBlock: "rounded-(--radius) border-0 bg-muted/60 font-mono text-small", codeBlockCode: "px-3 py-2" }}
+            />
+          </View>
         )}
       </If>
+      {/* what can be done with it, at its end: the demo's fix made in its code and the job run again (the loop in one
+          press), the store's side where it has one, or no change: a habit kept on purpose, which sonde check expects */}
+      <View class="flex-row flex-wrap items-center gap-2">
+        <If when={props.onApply && fixes().length}>
+          <Button small variant="primary" icon="play" label={t("fix.apply")} onPress={() => props.onApply?.(o())} testID="finding-apply" />
+        </If>
+        <StoreFixButton o={o()} onStore={props.onStore} />
+        <ExpectButton o={o()} onExpect={props.onExpect} />
+      </View>
     </View>
   );
 }
 
-/** Where each finding begins, by its number in the list: for the shape. */
+/** Where each diagnosis begins, by its number in the plan: for the shape. */
 export function findingMarks(v: RunView): { tMs: number; n: number }[] {
   const t0 = v.span ? Date.parse(v.span.start) : 0;
-  return v.observations.flatMap((o, i) => (o.firstStart ? [{ tMs: Math.max(0, Date.parse(o.firstStart) - t0), n: i + 1 }] : []));
+  return diagnosesOf(v).flatMap((d, i) => {
+    const at = headOf(v, d)?.firstStart;
+    return at ? [{ tMs: Math.max(0, Date.parse(at) - t0), n: i + 1 }] : [];
+  });
 }
 
 /** Acting on every finding at once, as an estimate: requests, waiting, cost. */
@@ -356,18 +400,15 @@ export function whatIfText(v: RunView): string | null {
   return t("whatIf.text", { n: w.findings, a: count(w.requests[0]), b: count(w.requests[1]), wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
 }
 
-/** What stands out in a run — its core result. Each finding says what
- * happened and why it matters, and narrows the operations to those it is
- * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: RunView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** a finding's fix applied to the program's code and the program run again (the demo's) */ onApply?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
-  const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
-  /** How many operations a finding is about (a view lists the first of them only). */
-  const about = (o: Observation) => o.operationsTotal ?? o.operations?.length ?? 0;
-  // a finding pressed opens what to change inside its own row, under its title; the row comes
-  // to the top of the findings' room, so its title stays in view over its advice
-  // (Native Shell's `reveal`: the scroll views around a view bring it to show)
+/** What stands out in a run — its core result, as a plan: a diagnosis a line, ranked by the time it saves, with what
+ * acting on it saves; chosen, its other findings under it, and (`onSelect`) its operations narrowed and its fix in
+ * the inspector. */
+export function Diagnoses(props: { view: RunView; selected?: number | null; onSelect?: (i: number | null) => void; dense?: boolean; narrow?: boolean; maxHeight?: number; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange> }) {
+  const press = (i: number) => props.onSelect?.(props.selected === i ? null : i);
+  const list = () => diagnosesOf(props.view);
+  // the row chosen comes into the findings' room (Native Shell's `reveal`: the scroll views around a view bring it to show)
   const places: (ViewRef | undefined)[] = [];
-  // each finding's height as drawn: a bounded room ends on a finding's edge, never through its text
+  // each row's height as drawn: a bounded room ends on a row's edge, never through its text
   const heights = signal<number[]>([]);
   const measured = (i: number) => ({ bounds }: { bounds: { size: { height: number } } }) => {
     const h = Math.round(bounds.size.height);
@@ -376,9 +417,8 @@ export function Observations(props: { view: RunView; filter?: number | null; onF
     next[i] = h;
     heights.set(next);
   };
-  /** The room the findings take, and how many show whole in it: all of them where they fit; else
-   * as many whole ones as fit (the rest scroll, and the heading says so). A finding opened taller
-   * than the room keeps the room: its advice scrolls within it. */
+  /** The room the plan takes, and how many show whole in it: all where they fit; else as many whole ones as fit
+   * (the rest scroll, and the heading says so). */
   const room = (): { height?: number; shown: number } => {
     const n = list().length;
     const max = props.maxHeight;
@@ -396,156 +436,100 @@ export function Observations(props: { view: RunView; filter?: number | null; onF
     if (shown === 0 || hs.some((h) => h > max)) return { height: max, shown: Math.max(shown, 1) };
     return { height: used, shown };
   };
-  const showChosen = () => {
-    const f = props.filter;
-    if (f != null) places[f]?.reveal({ vertical: "start" });
-  };
   effect(() => {
-    if (props.filter != null) showChosen();
+    const i = props.selected;
+    if (i != null) places[i]?.reveal({ vertical: "start" });
   });
-  /** Whether a finding has anything to open: its fixes, or (the app's own) a line for sonde.toml. */
-  const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity) || !!(props.onStore && storeFixOf(o));
-  const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
-  /** Its state against the run before, where it tells something: new, back or less (open is left unmarked). */
-  const state = (o: Observation) => {
-    const f = o.identity ? props.states?.[o.identity] : undefined;
+  /** Its state against the run before, where it tells something: new or less (open is left unmarked). */
+  const state = (d: Diagnosis) => {
+    const id = headOf(props.view, d)?.identity;
+    const f = id ? props.states?.[id] : undefined;
     return f && f.state !== "open" && f.state !== "fixed" ? f.state : null;
   };
-
-  // a line each, but the one chosen in full
-  const dense = () => props.compact || !!props.dense;
-  // whether the findings are folded away, and the SDK their fixes are shown for: this pane's own
+  // the open plan, and what acting on all of it saves when more than one diagnosis saves something
   const open = signal(true);
-  const fixSdk = signal<Sdk>("python");
-  const saving = (v: () => string, i: () => number) => (
-    <View class="shrink-0 flex-row items-center gap-1">
-      <Icon name="trending-down" size={ICON.small} tint="info" />
-      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small text-info">{v()}</Text>
-    </View>
-  );
-  /** A finding whose advice is open under it, with fixes: the advice says why and what it saves. */
-  const opened = (o: () => Observation, i: () => number) => !props.compact && props.filter === i() && !!o().fixes?.length;
-  const row = (o: () => Observation, i: () => number) => (
-    <ListRow
-      divided
-      top
-      first={i() === 0}
-      testID={`observation-${i()}`}
-      label={observationText(o())}
-      selected={props.filter === i()}
-      disabled={!props.onFilter || !about(o())}
-      onPress={() => press(i())}
-      class={dense() ? "py-1" : ""}
-      // by rank as the pane narrows: the finding's words keep their width; what acting on it
-      // saves goes first, then the count's words (its chevron stays)
-      trailing={
-        <>
-          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && !props.savingUnder && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
-          <If when={props.onFilter && about(o())}>
-            <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
-              <If when={!props.narrow}>
-                <Text class={`tabular-nums ${TEXT.meta} group-selected:text-foreground`}>{t("figure.operationsN", { n: count(about(o())) })}</Text>
-              </If>
-              <Icon name={props.filter === i() ? "x" : "chevron-right"} size={ICON.small} />
-            </View>
-          </If>
-        </>
-      }
-    >
-      {/* its number, in its level's tone: where it stands on the run's shape */}
-      <View class={`mt-1 size-4 shrink-0 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
-        {/* emphasis: the number the shape marks this finding with */}
-        <Text class={`tabular-nums ${TEXT.captionSize} ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
-      </View>
-      <View class="min-w-0 flex-1 gap-1">
-        <View class="flex-row items-start gap-2">
-          {/* where it stands against the program's run before: new, back, less */}
-          <If when={state(o())}>
-            {(st) => (
-              <View class="min-h-5 justify-center">
-                <StateBadge state={st()} testID={`observation-state-${i()}`} />
+  const saving = () => list().filter((d) => diagnosisSaving(props.view, d)).length;
+  const row = (d: () => Diagnosis, i: () => number) => {
+    const o = () => headOf(props.view, d())!;
+    const chosen = () => props.selected === i();
+    return (
+      <ListRow
+        divided
+        top
+        first={i() === 0}
+        testID={`observation-${i()}`}
+        label={observationText(o())}
+        selected={chosen()}
+        disabled={!props.onSelect}
+        onPress={() => press(i())}
+        class={props.dense ? "py-1" : ""}
+        // what acting on it saves at the row's end, but where the pane is narrow (the inspector says it)
+        trailing={
+          <If when={!props.narrow && diagnosisSaving(props.view, d())}>
+            {(v) => (
+              <View class="shrink-0 flex-row items-center gap-1">
+                <Icon name="trending-down" size={ICON.small} tint="info" />
+                <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small text-info">{v()}</Text>
               </View>
             )}
           </If>
-          <Text class={`min-w-0 flex-1 ${TEXT.body} ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        }
+      >
+        {/* its number, in its level's tone: where it stands on the run's shape */}
+        <View class={`mt-1 size-4 shrink-0 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
+          {/* emphasis: the number the shape marks this diagnosis with */}
+          <Text class={`tabular-nums ${TEXT.captionSize} ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
         </View>
-        {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
-        <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i() || props.savingUnder) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
-      </View>
-    </ListRow>
-  );
-  const findings = () => (
-    // a short window keeps room for the operations: the findings scroll
-    <Scroll class={`overflow-hidden ${CARD}`} style={room().height ? { maxHeight: room().height } : undefined} scrollbar={false}>
-      <Each of={list()}>
-        {(o: () => Observation, i) => (
-          <View ref={(r) => (places[i()] = r)} onLayout={measured(i())}>
-            {row(o, i)}
-            {/* the finding pressed: what to change, inside its own row — never under another finding's title */}
-            <If when={!props.compact && props.filter === i() && advised(o())}>
-              <View
-                testID="finding-advice"
-                ref={() => showChosen()}
-                class="border-t border-border bg-muted/40 p-3"
-              >
-                <If
-                  when={o().fixes?.length}
-                  else={
-                    <View class="flex-row items-center gap-2">
-                      <Text class={`min-w-0 flex-1 ${TEXT.note}`}>{t("expect.hint")}</Text>
-                      <StoreFixButton o={o()} onStore={props.onStore} />
-                      <ExpectButton o={o()} onExpect={props.onExpect} />
-                    </View>
-                  }
-                >
-                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} onStore={props.onStore} onApply={props.onApply} />
-                </If>
-              </View>
+        <View class="min-w-0 flex-1 gap-1">
+          <View class="flex-row items-start gap-2">
+            {/* where it stands against the program's run before: new, less */}
+            <If when={state(d())}>
+              {(st) => (
+                <View class="min-h-5 justify-center">
+                  <StateBadge state={st()} testID={`observation-state-${i()}`} />
+                </View>
+              )}
             </If>
+            <Text class={`min-w-0 flex-1 ${TEXT.body} ${chosen() ? "line-clamp-2" : "line-clamp-1"}`}>{observationText(o())}</Text>
           </View>
-        )}
-      </Each>
-    </Scroll>
-  );
+          {/* chosen: its other findings, a line each */}
+          <If when={chosen()}>
+            <Each of={alsoOf(props.view, d())}>{(x) => <Text testID="diagnosis-also" class={`${TEXT.note} line-clamp-2`}>{x()}</Text>}</Each>
+          </If>
+        </View>
+      </ListRow>
+    );
+  };
   return (
-    <If when={props.view.observations.length > 0}>
-      {/* beside a run's live operations: the sentences only, under no heading */}
-      <If when={!props.compact} else={<View testID="observations">{findings()}</View>}>
-        {/* the findings open and close under their heading; what acting on them saves is the
-            section's subtitle beside it, not a third voice */}
-        <Disclosure
-          title={t("obs.title")}
-          count={props.view.observations.length}
-          expanded={open()}
-          onToggle={(o) => open.set(o)}
-          itemTestID="observations"
-          testID="observations-toggle"
-          trailing={
-            <>
-              {/* the room shows some of them whole: the rest scroll, and that is said */}
-              <If when={open() && room().shown < list().length}>
-                <Text testID="observations-scroll" class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
-              </If>
-              {/* the first few of more: said, so the count beside the heading is not read as theirs */}
-              <If when={list().length < props.view.observations.length}>
-                <Text testID="observations-top" class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("obs.top", { n: count(list().length), of: count(props.view.observations.length) })}</Text>
-              </If>
-              <If when={!props.whatIfUnder && whatIfText(props.view)}>{(w) => <Text testID="what-if" class={`min-w-0 flex-1 tabular-nums ${TEXT.note} line-clamp-1`}>{w()}</Text>}</If>
-            </>
-          }
-        >
-          <If when={props.whatIfUnder && whatIfText(props.view)} else={findings()}>
-            {(w) => (
-              <View class="gap-2">
-                {findings()}
-                {/* the one figure for acting on them: a line of its own, which wraps rather than being cut */}
-                <Text testID="what-if" class={`px-1 tabular-nums ${TEXT.note}`}>{w()}</Text>
+    <If when={list().length > 0}>
+      <Disclosure
+        title={t("obs.title")}
+        count={list().length}
+        expanded={open()}
+        onToggle={(o) => open.set(o)}
+        itemTestID="observations"
+        testID="observations-toggle"
+        trailing={
+          <>
+            {/* the room shows some of them whole: the rest scroll, and that is said */}
+            <If when={open() && room().shown < list().length}>
+              <Text testID="observations-scroll" class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
+            </If>
+            <If when={saving() > 1 && whatIfText(props.view)}>{(w) => <Text testID="what-if" class={`min-w-0 flex-1 tabular-nums ${TEXT.note} line-clamp-1`}>{w()}</Text>}</If>
+          </>
+        }
+      >
+        {/* a short window keeps room for the operations: the plan scrolls */}
+        <Scroll class={`overflow-hidden ${CARD}`} style={room().height ? { maxHeight: room().height } : undefined} scrollbar={false}>
+          <Each of={list()}>
+            {(d: () => Diagnosis, i) => (
+              <View ref={(r) => (places[i()] = r)} onLayout={measured(i())}>
+                {row(d, i)}
               </View>
             )}
-          </If>
-        </Disclosure>
-      </If>
+          </Each>
+        </Scroll>
+      </Disclosure>
     </If>
   );
 }
