@@ -593,11 +593,22 @@ async fn a_program_that_retries_survives_every_scenario() {
         assert!(!name.contains('/'), "{name}");
         let file = b.path("trials").join(name);
         assert!(file.is_file(), "{}", file.display());
-        assert!(
-            o.stderr.contains(&format!("sonde show {}", file.display())),
-            "the hint names the file: {}",
-            o.stderr
-        );
+    }
+    // one hint names them all
+    let hint = format!(
+        "each trial is a run: sonde show {}",
+        b.path("trials").join("run.<scenario>.sonde").display()
+    );
+    assert!(o.stderr.contains(&hint), "{}", o.stderr);
+    // the verdicts, not the clean run's summary again: its head line alone
+    assert!(o.stderr.contains("  survived  slowdown"), "{}", o.stderr);
+    for not in [
+        "your program's own",
+        "kind ",
+        "since the run before",
+        "\nrun: ",
+    ] {
+        assert!(!o.stderr.contains(not), "{not}: {}", o.stderr);
     }
     assert_eq!(trial(&all, "slowdown")["faults"], 3);
     // a skewed clock: each request signed again and sent
@@ -2426,14 +2437,10 @@ async fn trying_again_reads_what_broke_fixed_and_says_it_survived_since() {
             again.stderr
         );
     }
-    assert!(
-        again.stderr.contains("since the trial before"),
-        "{}",
-        again.stderr
-    );
+    // the verdicts say it: survived now, broke before
     for s in &broke {
         assert!(
-            again.stderr.contains(&format!("✓ fixed  survives {s} now")),
+            again.stderr.contains(&format!("  survived  {s}")),
             "{s}: {}",
             again.stderr
         );

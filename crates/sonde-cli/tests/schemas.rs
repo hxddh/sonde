@@ -409,11 +409,8 @@ async fn every_json_output_is_as_its_schema_says() {
         sonde_analysis::import::save(&run, &m).unwrap();
         let m = m.to_str().unwrap();
         let summary = b.json(&["show", m, "-f", "json"], 0).await;
-        assert!(
-            summary["summary"]["kinds"][0].get("few").is_none(),
-            "{}",
-            summary["summary"]["kinds"][0]
-        );
+        // one table of the kinds of request: `waiting.byKind`
+        assert!(summary["summary"].get("kinds").is_none(), "{summary}");
         holds("show", &summary);
         // an imported log's month, at the rate of its span
         assert!(summary["month"].is_null() || summary["month"]["from"] == "log");
@@ -428,9 +425,10 @@ async fn every_json_output_is_as_its_schema_says() {
     );
     let summary = b.json(&["show", s, "-f", "json"], 0).await;
     assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
-    // the plan: every finding in one diagnosis, by its place; where the time went
-    let findings = summary["findings"].as_array().unwrap().len();
-    let mut placed: Vec<u64> = summary["diagnoses"]
+    // the plan (--all: by place): every finding in one diagnosis; where the time went
+    let whole = b.json(&["show", s, "--all", "-f", "json"], 0).await;
+    let findings = whole["findings"].as_array().unwrap().len();
+    let mut placed: Vec<u64> = whole["diagnoses"]
         .as_array()
         .unwrap()
         .iter()
@@ -447,7 +445,7 @@ async fn every_json_output_is_as_its_schema_says() {
         placed,
         (0..findings as u64).collect::<Vec<_>>(),
         "{}",
-        summary["diagnoses"]
+        whole["diagnoses"]
     );
     assert!(summary["time"]["wallMs"].is_number(), "{}", summary["time"]);
     // a verdict is its table's row: why, where and what to change are a
@@ -456,21 +454,21 @@ async fn every_json_output_is_as_its_schema_says() {
     for gone in ["where", "advice", "reasons", "reasonsText", "finding"] {
         assert!(t.get(gone).is_none(), "{gone}: {t}");
     }
-    let found = summary["findings"]
+    let found = summary["diagnoses"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|f| f["identity"] == "trial|slowdown")
-        .unwrap_or_else(|| panic!("{}", summary["findings"]));
+        .find(|d| d["identities"][0] == "trial|slowdown")
+        .unwrap_or_else(|| panic!("{}", summary["diagnoses"]));
     assert_eq!(found["kind"], "trial", "{found}");
-    assert_eq!(found["callers"][0]["place"], "etl.py:12 in save", "{found}");
+    assert_eq!(found["at"][0]["place"], "etl.py:12 in save", "{found}");
     assert!(
         found["text"]
             .as_str()
             .is_some_and(|x| x.starts_with("degraded under slowdown: gave up on 1 failed read")),
         "{found}"
     );
-    assert!(found.get("saving").is_none(), "{found}");
+    assert!(found.get("savingText").is_none(), "{found}");
     // and in its fix loop: degraded before, degraded now
     let open = summary["since"]["findings"]
         .as_array()
@@ -521,13 +519,13 @@ async fn every_json_output_is_as_its_schema_says() {
         let shown = b
             .json(&["show", file.to_str().unwrap(), "-f", "json"], 0)
             .await;
-        let listed = shown["findings"]
+        let listed = shown["diagnoses"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|f| f["kind"] == "obs.listed")
-            .unwrap_or_else(|| panic!("{}", shown["findings"]));
-        let s = &listed["fixes"][0]["setting"];
+            .find(|d| d["kind"] == "obs.listed")
+            .unwrap_or_else(|| panic!("{}", shown["diagnoses"]));
+        let s = &listed["fix"]["setting"];
         assert_eq!(s["key"], "manifest_poll_interval", "{listed}");
         assert_eq!(s["value"], "10s", "{listed}");
         assert_eq!(s["engine"], "SlateDB DbReader", "{listed}");
@@ -611,13 +609,13 @@ async fn every_json_output_is_as_its_schema_says() {
         let k = kept.to_str().unwrap();
         let shown = b.json(&["show", k, "-f", "json"], 0).await;
         assert!(
-            shown["findings"]
+            shown["diagnoses"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|f| f["expected"] == "kept"),
+                .any(|d| d["expected"]["obs.serial|"] == "kept"),
             "{}",
-            shown["findings"]
+            shown["diagnoses"]
         );
         holds("show", &shown);
         let checked = b.json(&["check", k, "-f", "json"], 0).await;

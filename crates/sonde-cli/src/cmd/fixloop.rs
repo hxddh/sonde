@@ -89,27 +89,7 @@ pub(super) fn diagnosis_lines(a: &Analysis, all: bool, color: bool) -> Vec<Strin
             continue;
         };
         if n == 0 || all {
-            // (one kept on purpose says why)
-            let said = |text: String, o: &Observation| match &o.expected {
-                Some(why) => format!("{text} (expected: {why})"),
-                None => text,
-            };
-            let mut also: Vec<String> = d.findings[1..]
-                .iter()
-                .filter(|&&i| Some(i) != d.serial)
-                .filter_map(|&i| a.observations.get(i))
-                .map(|o| said(o.text.clone(), o))
-                .collect();
-            if let (Some(rest), Some(o)) = (&d.rest, d.serial.and_then(|i| a.observations.get(i))) {
-                also.push(said(rest.en(), o));
-            }
-            out.extend(finding_lines(
-                head,
-                Some(&d.saving_text),
-                &also,
-                a.sdk.as_deref(),
-                color,
-            ));
+            out.extend(diagnosis_full(a, d, head, color));
             continue;
         }
         let mut line = format!("{} {}", mark(head, color), head.text);
@@ -129,6 +109,146 @@ pub(super) fn diagnosis_lines(a: &Analysis, all: bool, color: bool) -> Vec<Strin
         out.push(line);
     }
     out
+}
+
+/// A diagnosis in full: its head finding with the diagnosis's saving, its
+/// other findings (`also`), its callers and its fix.
+fn diagnosis_full(
+    a: &Analysis,
+    d: &sonde_analysis::fixes::Diagnosis,
+    head: &Observation,
+    color: bool,
+) -> Vec<String> {
+    finding_lines(
+        head,
+        Some(&d.saving_text),
+        &also_of(a, d),
+        a.sdk.as_deref(),
+        color,
+    )
+}
+
+/// A diagnosis's findings past its head, each said (one kept on purpose
+/// with why); its requests one after another as the rest of the change
+/// (`and send the other 87 requests 8 at once`).
+pub(super) fn also_of(a: &Analysis, d: &sonde_analysis::fixes::Diagnosis) -> Vec<String> {
+    let said = |text: String, o: &Observation| match &o.expected {
+        Some(why) => format!("{text} (expected: {why})"),
+        None => text,
+    };
+    let mut also: Vec<String> = d.findings[1..]
+        .iter()
+        .filter(|&&i| Some(i) != d.serial)
+        .filter_map(|&i| a.observations.get(i))
+        .map(|o| said(o.text.clone(), o))
+        .collect();
+    if let (Some(rest), Some(o)) = (&d.rest, d.serial.and_then(|i| a.observations.get(i))) {
+        also.push(said(rest.en(), o));
+    }
+    also
+}
+
+/// The findings against the run before as a run again says them, in place
+/// of its plan: each fixed with what it saved; each still there (open, less,
+/// more) on a line with its first line of code; each diagnosis with a new
+/// finding in full, as the plan says it.
+fn changed_lines(
+    a: &Analysis,
+    findings: &[FindingChange],
+    uncounted: Option<&str>,
+    color: bool,
+) -> Vec<String> {
+    let change = |id: &str| findings.iter().find(|f| f.identity == id);
+    let is_new = |id: &String| change(id).is_some_and(|f| f.state == State::New);
+    let mut out: Vec<String> = findings
+        .iter()
+        .filter(|f| f.state == State::Fixed)
+        .map(|f| change_line(f, uncounted, color))
+        .collect();
+    let (new, kept): (Vec<_>, Vec<_>) = a
+        .diagnoses
+        .iter()
+        .partition(|d| d.identities.iter().any(is_new));
+    // a diagnosis a line, its head's; a finding of it that moved (less,
+    // more) a line too, those as they were counted on the head's
+    let moved = |o: &Observation| {
+        change(&o.identity).is_some_and(|f| matches!(f.state, State::Less | State::More))
+    };
+    for d in kept {
+        let found: Vec<&Observation> = d
+            .findings
+            .iter()
+            .filter_map(|&i| a.observations.get(i))
+            .collect();
+        let Some((head, rest)) = found.split_first() else {
+            continue;
+        };
+        let (moved, same): (Vec<&Observation>, Vec<&Observation>) =
+            rest.iter().partition(|o| moved(o));
+        for (n, o) in std::iter::once(head).chain(&moved).enumerate() {
+            let mut line = match change(&o.identity) {
+                Some(f) => change_line(f, uncounted, color),
+                None => format!(
+                    "  {} {:<5}  {}",
+                    paint("·", "2", color),
+                    paint(State::Open.label(), "2", color),
+                    o.text
+                ),
+            };
+            if let Some(c) = o.callers.first() {
+                line.push_str(&paint(&format!(" (at {})", c.place), "2", color));
+            }
+            if let Some(why) = &o.expected {
+                line.push_str(&paint(&format!(" · expected: {why}"), "2", color));
+            }
+            if n == 0 && !same.is_empty() {
+                line.push_str(&paint(
+                    &format!(" · and {} beside it", output::count(same.len(), "finding")),
+                    "2",
+                    color,
+                ));
+            }
+            out.push(line);
+        }
+    }
+    // a change no finding of the run's is (a kind of failure that moved)
+    let found = |id: &str| a.observations.iter().any(|o| o.identity == id);
+    out.extend(
+        findings
+            .iter()
+            .filter(|f| f.state != State::Fixed && !found(&f.identity))
+            .map(|f| change_line(f, uncounted, color)),
+    );
+    for d in new {
+        let Some(head) = d.findings.first().and_then(|&i| a.observations.get(i)) else {
+            continue;
+        };
+        let mut lines = diagnosis_full(a, d, head, color);
+        // (its head as it stands: new, or still there with a new finding beside it)
+        lines[0] = match change(&head.identity) {
+            Some(f) if f.state != State::New => change_line(f, uncounted, color),
+            _ => format!(
+                "  {} {:<5}  {}",
+                paint("!", "33", color),
+                paint(State::New.label(), "33", color),
+                head.text
+            ),
+        };
+        out.extend(lines);
+    }
+    out
+}
+
+/// Whether a run's change since another can be said as a run again says it
+/// (what changed, in place of the plan): two runs of one program, neither
+/// failed nor empty.
+pub(super) fn comparable(since: &SinceLast) -> bool {
+    since.failed.is_none()
+        && !since.empty
+        && since.previous.is_some()
+        && since.change.as_ref().is_some_and(|c| {
+            c.same_program && c.failed.is_none() && c.requests.0 > 0 && c.requests.1 > 0
+        })
 }
 
 /// A finding between two runs, on one line: `✓ fixed  … · 1.2 s less
@@ -177,14 +297,9 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
 }
 
 /// The findings of a change worth a line (fixed, less, more, new),
-/// then those still open as they were, counted: `as above` when the run's
-/// findings are `listed` above (`run`, `show`).
-pub(super) fn change_lines(
-    findings: &[FindingChange],
-    uncounted: Option<&str>,
-    listed: bool,
-    color: bool,
-) -> Vec<String> {
+/// then those still open as they were, counted: each is listed above, with
+/// its line and fix (`show`).
+fn change_lines(findings: &[FindingChange], uncounted: Option<&str>, color: bool) -> Vec<String> {
     let mut out: Vec<String> = findings
         .iter()
         .filter(|f| f.state != State::Open)
@@ -193,9 +308,8 @@ pub(super) fn change_lines(
     let open: Vec<&FindingChange> = findings.iter().filter(|f| f.state == State::Open).collect();
     // (each is listed above, with its line and fix: counted here)
     if !open.is_empty() && !out.is_empty() {
-        let above = if listed { ", as above" } else { "" };
         out.push(paint(
-            &format!("  {} still open{above}", open.len()),
+            &format!("  {} still open, as above", open.len()),
             "2",
             color,
         ));
@@ -265,9 +379,16 @@ pub(super) fn cost_moved((a, b): (f64, f64), currency: &str) -> String {
 
 /// A run against the program's run before it (or the run `asked` for,
 /// `show --since`), in a few lines: what it asks of the store, the kinds of
-/// request that moved (asked), and its findings fixed, less, new and back.
-/// Nothing for a program's first run.
-pub(super) fn since_lines(since: &SinceLast, asked: bool, color: bool) -> Vec<String> {
+/// request that moved (asked), and its findings fixed, less, more and new.
+/// Nothing for a program's first run. With the run's analysis (`again`: a
+/// run again, its plan not said), each finding still there is on its own
+/// line and a new one in full ([`changed_lines`]).
+pub(super) fn since_lines(
+    since: &SinceLast,
+    asked: bool,
+    again: Option<&Analysis>,
+    color: bool,
+) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(why) = &since.unsaved {
         out.push(format!("note: {why}"));
@@ -332,16 +453,19 @@ pub(super) fn since_lines(since: &SinceLast, asked: bool, color: bool) -> Vec<St
     if asked {
         out.extend(kinds_moved(c));
     }
-    // what a fix's time is judged against: said once, when one says it
-    if since.findings.iter().any(|f| f.saved.is_some()) {
+    // what a fix's time is judged against: said once, when one says it (a
+    // run again: when one is within it)
+    let noise = match again {
+        Some(_) => since.findings.iter().any(|f| f.within_noise),
+        None => since.findings.iter().any(|f| f.saved.is_some()),
+    };
+    if noise {
         out.push(paint(&format!("  {}", noise_line(c.noise_ms)), "2", color));
     }
-    out.extend(change_lines(
-        &since.findings,
-        uncounted.as_deref(),
-        true,
-        color,
-    ));
+    out.extend(match again {
+        Some(a) => changed_lines(a, &since.findings, uncounted.as_deref(), color),
+        None => change_lines(&since.findings, uncounted.as_deref(), color),
+    });
     out
 }
 
@@ -605,7 +729,6 @@ mod tests {
                 change(State::Open, "hot key", None),
             ],
             None,
-            true,
             false,
         );
         assert_eq!(
@@ -619,20 +742,7 @@ mod tests {
             ]
         );
         // nothing moved: no "still open" alone
-        assert!(change_lines(&[change(State::Open, "x", None)], None, true, false).is_empty());
-        // none listed above: nothing is said to be
-        assert_eq!(
-            change_lines(
-                &[
-                    change(State::Less, "41 one after another", None),
-                    change(State::Open, "hot key", None),
-                ],
-                None,
-                false,
-                false,
-            ),
-            ["  ↓ less   41 one after another", "  1 still open"]
-        );
+        assert!(change_lines(&[change(State::Open, "x", None)], None, false).is_empty());
     }
 
     #[test]

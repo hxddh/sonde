@@ -305,27 +305,29 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         // and where; every operation (--all), the failed ones (--errors), the
         // requests (--requests) when asked, written as they are made
         Format::Json => {
+            use serde_json::{Value, json};
             use std::io::Write;
             let prof = &analysis.profile;
-            let sdk = analysis.sdk.as_deref();
             let cwd = run.header.cwd.as_deref().map(Path::new);
-            let findings: Vec<serde_json::Value> = analysis
-                .observations
-                .iter()
-                .map(|o| finding_json(o, a.all, sdk, cwd))
-                .collect();
             let out = crate::output::JsonWriter::new(std::io::BufWriter::with_capacity(
                 1 << 16,
                 crate::output::Stdout,
             ));
             let mut w = sonde_analysis::share::JsonOut::new(out, true);
+            // each part lean ([`lean`]) and rounded ([`rounded`])
+            let field = |w: &mut sonde_analysis::share::JsonOut<_>, key: &str, mut v: Value| {
+                lean(&mut v);
+                rounded(&mut v, key);
+                w.field(key, &v)
+            };
             w.begin_object()?;
             w.field("run", &run.header)?;
-            w.field("summary", &analysis.summary)?;
+            field(&mut w, "summary", json!(analysis.summary))?;
             w.field("operationsTotal", &eps.len())?;
-            w.field(
+            field(
+                &mut w,
                 "waiting",
-                &serde_json::json!({
+                json!({
                     "waitingMs": prof.waiting_ms,
                     "wallMs": prof.wall_ms,
                     "peakInFlight": prof.peak_in_flight,
@@ -335,15 +337,28 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "byKind": prof.groups,
                 }),
             )?;
-            w.field("cost", &prof.cost)?;
-            w.field("month", &analysis.month)?;
-            w.field("time", &analysis.time)?;
-            w.field("whatIf", &analysis.what_if)?;
-            w.field("diagnoses", &analysis.diagnoses)?;
-            w.field("findings", &findings)?;
+            field(&mut w, "cost", json!(prof.cost))?;
+            field(&mut w, "month", json!(analysis.month))?;
+            field(&mut w, "time", json!(analysis.time))?;
+            field(&mut w, "whatIf", json!(analysis.what_if))?;
+            let diagnoses: Vec<Value> = analysis
+                .diagnoses
+                .iter()
+                .map(|d| diagnosis_json(d, &analysis, a.all, cwd))
+                .collect();
+            field(&mut w, "diagnoses", json!(diagnoses))?;
+            if a.all {
+                let findings: Vec<Value> = analysis
+                    .observations
+                    .iter()
+                    .map(|o| finding_json(o, cwd))
+                    .collect();
+                field(&mut w, "findings", json!(findings))?;
+            }
             w.field("verify", &verify_command(&run.header))?;
-            w.field("since", &since)?;
-            w.field("trials", &trials)?;
+            let moved = a.all || a.since.is_some();
+            field(&mut w, "since", since_json(since.as_ref(), moved))?;
+            field(&mut w, "trials", json!(trials))?;
             if a.all || a.errors {
                 w.array(
                     "operations",
@@ -419,6 +434,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 true,
                 a.all,
                 since.as_ref().map(|s| (s, a.since.is_some())),
+                Says::Plan,
             );
             if !trials.is_empty() {
                 println!("\nUnder faults:");
@@ -487,47 +503,187 @@ pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
         false,
         false,
         since.as_ref().map(|s| (s, false)),
+        Says::Plan,
     );
     Ok(0)
 }
 
-/// Operations a finding names in `show -f json` (all of them with --all).
-const FINDING_OPERATIONS: usize = 20;
+/// What `show -f json` leaves out of every part, as display or as the
+/// same said twice: the phrases (their `text` beside them says it), a
+/// finding's requests and level, its saving as phrases (`savingText` says
+/// it), the per-kind table `summary` repeats (`waiting.byKind` is the one),
+/// a kind's latencies added up.
+const LEFT_OUT: [&str; 6] = ["phrases", "impact", "level", "saving", "kinds", "sumMs"];
 
-/// A finding as `show -f json` writes it: its first operations and how many
-/// there are, the fix for the run's SDK (each SDK's with `all`, or when
-/// none is known), and each caller's line of code read from the folder the
-/// program ran in (`cwd`), when the file is there.
-fn finding_json(
-    o: &sonde_analysis::episode::Observation,
+/// `v` without [`LEFT_OUT`], at any depth.
+fn lean(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(m) => {
+            for k in LEFT_OUT {
+                m.remove(k);
+            }
+            m.values_mut().for_each(lean);
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(lean),
+        _ => {}
+    }
+}
+
+/// `v`'s fractions rounded: a time (its key ends `Ms`, or is `ms`) to a
+/// tenth of a millisecond, any other figure to 6 significant digits.
+fn rounded(v: &mut serde_json::Value, key: &str) {
+    match v {
+        serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| rounded(x, k)),
+        serde_json::Value::Array(a) => a.iter_mut().for_each(|x| rounded(x, key)),
+        serde_json::Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap_or_default();
+            let r = if key.ends_with("Ms") || key == "ms" {
+                (f * 10.0).round() / 10.0
+            } else {
+                format!("{f:.5e}").parse().unwrap_or(f)
+            };
+            if let Some(r) = serde_json::Number::from_f64(r) {
+                *n = r;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A diagnosis as `show -f json` writes it: what an agent acts on, with no
+/// join to make. Its head finding's `kind` and `text`, its other findings
+/// said (`also`), why the project keeps any of them (`expected`, by
+/// identity), where (`at`: its head's callers, each with its line of code),
+/// what acting on it saves, and the `fix` for the SDK that sent its
+/// requests. `all` keeps its findings by place (`findings`, `serial`).
+fn diagnosis_json(
+    d: &sonde_analysis::fixes::Diagnosis,
+    a: &Analysis,
     all: bool,
-    sdk: Option<&str>,
     cwd: Option<&Path>,
 ) -> serde_json::Value {
-    let mut v = serde_json::to_value(o).unwrap_or_default();
+    let mut v = serde_json::to_value(d).unwrap_or_default();
     let Some(m) = v.as_object_mut() else {
         return v;
     };
-    m.insert("operationsTotal".into(), o.episodes.len().into());
+    m.remove("rest");
     if !all {
-        if o.episodes.len() > FINDING_OPERATIONS {
-            m.insert(
-                "operations".into(),
-                serde_json::json!(&o.episodes[..FINDING_OPERATIONS]),
-            );
-        }
-        let sdk = o.sdk.as_deref().or(sdk);
-        if let Some(fix) = sonde_analysis::fixes::for_sdk(&o.fixes, sdk) {
-            m.insert("fixes".into(), serde_json::json!([fix]));
+        m.remove("findings");
+        m.remove("serial");
+    }
+    let Some(head) = d.findings.first().and_then(|&i| a.observations.get(i)) else {
+        return v;
+    };
+    m.insert("kind".into(), head.kind.clone().into());
+    m.insert("text".into(), head.text.clone().into());
+    let also = super::fixloop::also_of(a, d);
+    if !also.is_empty() {
+        m.insert("also".into(), also.into());
+    }
+    let expected: serde_json::Map<String, serde_json::Value> = d
+        .findings
+        .iter()
+        .filter_map(|&i| a.observations.get(i))
+        .filter_map(|o| Some((o.identity.clone(), o.expected.clone()?.into())))
+        .collect();
+    if !expected.is_empty() {
+        m.insert("expected".into(), expected.into());
+    }
+    let at = callers_json(head, cwd);
+    if !at.is_empty() {
+        m.insert("at".into(), at.into());
+    }
+    let sdk = head.sdk.as_deref().or(a.sdk.as_deref());
+    if let Some(fix) = sonde_analysis::fixes::for_sdk(&head.fixes, sdk) {
+        m.insert("fix".into(), serde_json::json!(fix));
+    }
+    v
+}
+
+/// A finding as `show --all -f json` writes it: whole, every operation and
+/// each SDK's fix, and its callers with their lines of code.
+fn finding_json(o: &sonde_analysis::episode::Observation, cwd: Option<&Path>) -> serde_json::Value {
+    let mut v = serde_json::to_value(o).unwrap_or_default();
+    if let Some(m) = v.as_object_mut() {
+        m.insert("operationsTotal".into(), o.episodes.len().into());
+        let callers = callers_json(o, cwd);
+        if !callers.is_empty() {
+            m.insert("callers".into(), callers.into());
         }
     }
-    if let Some(callers) = m.get_mut("callers").and_then(|c| c.as_array_mut()) {
-        for (c, caller) in callers.iter_mut().zip(&o.callers) {
-            if let (Some(file), Some(line), Some(c)) =
+    v
+}
+
+/// A finding's callers, each with its line of code read from the folder the
+/// program ran in (`cwd`), when the file is there.
+fn callers_json(
+    o: &sonde_analysis::episode::Observation,
+    cwd: Option<&Path>,
+) -> Vec<serde_json::Value> {
+    o.callers
+        .iter()
+        .map(|caller| {
+            let mut c = serde_json::to_value(caller).unwrap_or_default();
+            if let (Some(file), Some(line), Some(m)) =
                 (caller.file.as_deref(), caller.line, c.as_object_mut())
                 && let Some(code) = code_line(cwd, file, line)
             {
-                c.insert("code".into(), code.into());
+                m.insert("code".into(), code.into());
+            }
+            c
+        })
+        .collect()
+}
+
+/// The change since the run before as `show -f json` writes it: none for a
+/// program's first run (nothing compared: its findings, all new, are the
+/// plan; a trial's against the program's trial before are compared).
+/// Each finding is said once, in `findings`, with what it saved (`saved`:
+/// the run's wall time, cost and requests that fell) beside what was
+/// predicted; the change keeps the figures, and each kind of request and
+/// prefix that moved when they are asked for (`moved`: `--since`, `--all`),
+/// as the text says them.
+fn since_json(
+    since: Option<&sonde_analysis::fixloop::SinceLast>,
+    moved: bool,
+) -> serde_json::Value {
+    let compared = |s: &&sonde_analysis::fixloop::SinceLast| {
+        s.previous.is_some()
+            || s.failed.is_some()
+            || s.empty
+            || s.unsaved.is_some()
+            || s.findings
+                .iter()
+                .any(|f| f.state != sonde_analysis::fixloop::State::New)
+    };
+    let Some(s) = since.filter(compared) else {
+        return serde_json::Value::Null;
+    };
+    let mut v = serde_json::to_value(s).unwrap_or_default();
+    if let Some(c) = v.get_mut("change").and_then(|c| c.as_object_mut()) {
+        for k in ["findings", "resolved", "appeared", "latency"] {
+            c.remove(k);
+        }
+        if !moved {
+            c.remove("groups");
+            c.remove("prefixes");
+        }
+    }
+    for f in v
+        .get_mut("findings")
+        .and_then(|f| f.as_array_mut())
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_object_mut())
+    {
+        // (`measured` read as a time, not as what fell: `saved`, beside `predicted`)
+        f.remove("saved");
+        match f.remove("measured") {
+            Some(m) => {
+                f.insert("saved".into(), m);
+            }
+            None => {
+                f.remove("predicted");
             }
         }
     }

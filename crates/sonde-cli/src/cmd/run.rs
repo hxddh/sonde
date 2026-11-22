@@ -429,7 +429,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         sonde_analysis::trial::choose(&clean_run.records, &clean_run.header.url)
     };
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean_run.header)?;
-    let program = sonde_analysis::program::key_of(&clean_run.header);
     let color = std::io::stderr().is_terminal();
     eprintln!(
         "\nTrial: the command runs {}.",
@@ -475,7 +474,6 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         );
         return Ok(128 + signal);
     }
-    use sonde_analysis::fixloop::State;
     use sonde_analysis::trial::Standing;
     let broke = trials
         .iter()
@@ -484,26 +482,30 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
     eprintln!("\n{}", trials_summary(&standings));
     // what did not survive, as findings of the clean run: why, at which
-    // line, and what to change for the SDK
+    // line, and what to change for the SDK (what survived since the trial
+    // before, its verdict says)
     for o in sonde_analysis::trial::findings(&trials) {
         for line in super::fixloop::finding_lines(&o, None, &[], None, color) {
             eprintln!("{line}");
         }
     }
-    // against the program's trial before: what is fixed, still open, new
-    let changed = sonde_analysis::trial::changes(&trials);
-    if program.is_some() && changed.iter().any(|c| c.state != State::New) {
-        eprintln!("{}", paint("since the trial before", "1", color));
-        for line in super::fixloop::change_lines(&changed, None, true, color) {
-            eprintln!("{line}");
-        }
-    }
-    eprintln!("Each trial is a run:");
-    for t in &trials {
-        if let Some(path) = sonde_analysis::trial::run_path(&file, t) {
-            eprintln!("  sonde show {}", path.display());
-        }
-    }
+    let stem = file
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    eprintln!(
+        "{}",
+        paint(
+            &format!(
+                "each trial is a run: sonde show {}",
+                sonde_analysis::trial::folder_for(&file)
+                    .join(format!("{stem}.<scenario>.sonde"))
+                    .display()
+            ),
+            "2",
+            color
+        )
+    );
     Ok(if broke > 0 { 1 } else { 0 })
 }
 
@@ -862,6 +864,8 @@ async fn run_once(
                 super::fixloop::since_last(s, &started.path, &run.header, &run.records, &analysis)
             })
             .flatten();
+        // a trial's clean run: its head line, then the verdicts (its plan
+        // is `show`'s); a run again: what changed
         print_summary_of(
             &analysis,
             &run.header,
@@ -870,8 +874,13 @@ async fn run_once(
             false,
             false,
             since.as_ref().map(|s| (s, false)),
+            if ctx.trying {
+                Says::Head
+            } else {
+                Says::Changes
+            },
         );
-        if apart {
+        if apart && !ctx.trying {
             eprintln!(
                 "{}",
                 paint(

@@ -48,7 +48,16 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>, force: bool) -> anyhow::
     let run = RunFile::open(&first).map_err(|e| anyhow::anyhow!(e))?;
     let analysis =
         sonde_analysis::view::Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
-    print_summary_of(&analysis, &run.header, &first, color, true, false, None);
+    print_summary_of(
+        &analysis,
+        &run.header,
+        &first,
+        color,
+        true,
+        false,
+        None,
+        Says::Plan,
+    );
     drop(run);
     println!(
         "\nThe same job with that fix ({}), played and recorded again:",
@@ -61,7 +70,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>, force: bool) -> anyhow::
     let since = super::fixloop::since_last(s, &fixed, &run.header, &run.records, &analysis);
     println!("run: {}", fixed.display());
     if let Some(since) = &since {
-        for line in super::fixloop::since_lines(since, false, color) {
+        for line in super::fixloop::since_lines(since, false, None, color) {
             println!("{line}");
         }
     }

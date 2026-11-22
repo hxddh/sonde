@@ -462,16 +462,40 @@ pub(super) fn print_summary(
     // (a run just recorded: its times are its own)
     let header = RunHeader::new(endpoint, "", "", None);
     let analysis = Analysis::of_records(&header, records, prices);
-    print_summary_of(&analysis, &header, path, color, stdout, false, None);
+    print_summary_of(
+        &analysis,
+        &header,
+        path,
+        color,
+        stdout,
+        false,
+        None,
+        Says::Plan,
+    );
+}
+
+/// How much of a run's summary is said.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Says {
+    /// The whole plan (`show`, the tour, an import).
+    Plan,
+    /// What changed since the program's run before (`run` again): the plan
+    /// when there is none to compare with.
+    Changes,
+    /// The head line alone (a trial's clean run: its verdicts follow).
+    Head,
 }
 
 /// What a run amounts to, in one fixed shape for `run`, `show` and
 /// the tour: the head line (requests, operations, the SDK, the store, the
-/// time, the waiting and the cost), the findings first (each with its
-/// saving, its line of code and its fix), what acting on them would leave,
-/// one table of the kinds of request, and the change since the program's
-/// run before (or the run asked for: `since`'s `true`). `all` adds the
-/// signals over the run and their tables.
+/// time, the waiting and the cost), where its time went, the findings first
+/// (each with its saving, its line of code and its fix), what acting on them
+/// would leave, one table of the kinds of request, and the change since the
+/// program's run before (or the run asked for: `since`'s `true`). `all` adds
+/// the signals over the run and their tables. A run again (`Says::Changes`
+/// with a run before to compare) says the head line, where its time went and
+/// the change alone; `Says::Head` the head line alone.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn print_summary_of(
     a: &Analysis,
     header: &RunHeader,
@@ -480,6 +504,7 @@ pub(super) fn print_summary_of(
     stdout: bool,
     all: bool,
     since: Option<(&sonde_analysis::fixloop::SinceLast, bool)>,
+    says: Says,
 ) {
     // `sonde show` answers on stdout; run keeps stdout for the program's own output
     let say = |line: String| {
@@ -548,7 +573,15 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
-    if let Some(line) = p.cost.line() {
+    if says == Says::Head {
+        return;
+    }
+    // a run again, against the program's run before: what changed
+    let changes = (says == Says::Changes)
+        .then_some(since)
+        .flatten()
+        .filter(|(s, _)| super::fixloop::comparable(s));
+    if let (None, Some(line)) = (changes, p.cost.line()) {
         say(format!("  {line}"));
     }
     // where its time went: the program's own, the round trips, the bytes
@@ -570,6 +603,18 @@ pub(super) fn print_summary_of(
     if header.whole_seconds {
         // where in its second a request began is not known
         say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once, and so the waiting, is not known".into());
+    }
+    if let Some((since, asked)) = changes {
+        for line in super::fixloop::since_lines(since, asked, Some(a), color) {
+            say(line);
+        }
+        say_refused(s, color, &say);
+        say(paint(
+            &format!("run: {} (the whole plan: sonde show)", path.display()),
+            "2",
+            color,
+        ));
+        return;
     }
     for line in super::fixloop::diagnosis_lines(a, all, color) {
         say(line);
@@ -611,11 +656,23 @@ pub(super) fn print_summary_of(
         }
     }
     if let Some((since, asked)) = since {
-        for line in super::fixloop::since_lines(since, asked, color) {
+        for line in super::fixloop::since_lines(since, asked, None, color) {
             say(line);
         }
     }
     say(paint(&format!("run: {}", path.display()), "2", color).to_string());
+}
+
+/// What sonde refused of a run's requests, each reason a line: said by a run
+/// again too (what changed leaves out the other errors, said as findings).
+fn say_refused(s: &sonde_analysis::summary::Summary, color: bool, say: &dyn Fn(String)) {
+    for (what, n) in &s.error_codes {
+        if what == "refused by sonde" {
+            for line in refused_lines(s, *n) {
+                say(paint(&line, "33", color));
+            }
+        }
+    }
 }
 
 /// `-o FILE` and a file there: refused (64) unless `--force`. One rule for

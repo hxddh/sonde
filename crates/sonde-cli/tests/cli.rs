@@ -205,7 +205,7 @@ fn the_demo_records_a_run_that_every_command_reads() {
     let json = sonde(t.path(), &["show", "--requests", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(v["requests"].as_array().unwrap().len(), 9);
-    assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
+    assert!(v["diagnoses"].as_array().unwrap().is_empty(), "{v}");
 
     let table = stdout(&sonde(t.path(), &["runs"]));
     assert!(
@@ -1027,41 +1027,177 @@ fn demo_run(dirs: &Path) -> String {
     tour_runs(dirs)[0].clone()
 }
 
-/// `show -f json` is the answer an agent reads: each finding's kind, its
-/// callers as file, line and function, the fix for the run's SDK alone, the
-/// command that records it again; a first run's findings are new.
+/// `show -f json` is the answer an agent reads, lean: each diagnosis
+/// carries what to change and where (its text, its callers as file, line and
+/// function, the fix for the run's SDK alone, what it saves), the command
+/// that records it again; no display phrases, no operation ids, times to a
+/// tenth of a millisecond, and no `since` for a program's first run.
 #[test]
-fn show_json_is_compact_and_names_what_to_change_and_where() {
+fn show_json_is_lean_and_each_diagnosis_names_what_to_change_and_where() {
     let t = tempfile::tempdir().unwrap();
     demo_run(t.path());
     // the tour's first run: the job before its fix
     let name = tour_runs(t.path())[1].clone();
     let shown = sonde(t.path(), &["show", &name, "-f", "json"]);
     assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
-    let j: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let text = stdout(&shown);
+    let j: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert!(j.get("operations").is_none(), "only with --all");
     assert_eq!(j["verify"], "sonde run --demo");
-    let f = &j["findings"][0];
-    assert_eq!(f["kind"], "obs.headget");
-    assert_eq!(f["callers"][0]["file"], "export.py");
-    assert!(f["callers"][0]["line"].as_u64().is_some(), "{f}");
-    assert_eq!(f["callers"][0]["function"], "read_reports");
-    assert_eq!(f["fixes"].as_array().unwrap().len(), 1, "{f}");
-    assert_eq!(f["fixes"][0]["sdk"], "python");
-    assert_eq!(
-        f["operationsTotal"],
-        f["operations"].as_array().unwrap().len()
+    let d = &j["diagnoses"][0];
+    assert_eq!(d["kind"], "obs.headget", "{d}");
+    assert!(
+        d["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("checked with HEAD")),
+        "{d}"
     );
-    assert_eq!(j["since"]["findings"][0]["state"], "new");
-    // --all: every SDK's fix and every operation
+    assert_eq!(d["at"][0]["file"], "export.py", "{d}");
+    assert!(d["at"][0]["line"].as_u64().is_some(), "{d}");
+    assert_eq!(d["at"][0]["function"], "read_reports", "{d}");
+    assert_eq!(d["fix"]["sdk"], "python", "{d}");
+    assert!(d["fix"]["code"].is_string(), "{d}");
+    assert!(
+        d["savesMs"].is_number() && d["savingText"].is_string(),
+        "{d}"
+    );
+    // no join to make: the findings, their places and display phrases are --all's
+    for gone in ["findings", "serial", "saving", "rest"] {
+        assert!(d.get(gone).is_none(), "{gone}: {d}");
+    }
+    assert!(j.get("findings").is_none(), "{text}");
+    for gone in [
+        "\"phrases\"",
+        "\"impact\"",
+        "\"level\"",
+        "\"kinds\"",
+        "\"sumMs\"",
+    ] {
+        assert!(!text.contains(gone), "{gone} in {text}");
+    }
+    // a program's first run: nothing to compare
+    assert!(j["since"].is_null(), "{}", j["since"]);
+    // a time to a tenth of a millisecond, a figure to six digits
+    fn walk(v: &serde_json::Value, key: &str, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| walk(x, k, out)),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, key, out)),
+            serde_json::Value::Number(n) if n.is_f64() => {
+                let shown = n.to_string();
+                let digits = shown.trim_start_matches(['-', '0', '.']).replace('.', "");
+                let digits = digits.split(['e', 'E']).next().unwrap_or("").len();
+                let tenth = shown.split_once('.').is_none_or(|(_, f)| f.len() <= 1);
+                let ms = key.ends_with("Ms") || key == "ms";
+                if (ms && !tenth) || (!ms && digits > 6) {
+                    out.push(format!("{key}: {shown}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut long = Vec::new();
+    walk(&j, "", &mut long);
+    assert!(long.is_empty(), "{long:?}");
+    // --all: the findings whole (every SDK's fix, every operation), and
+    // each diagnosis's by place
     let all: serde_json::Value =
         serde_json::from_slice(&sonde(t.path(), &["show", &name, "--all", "-f", "json"]).stdout)
             .unwrap();
     assert!(all["findings"][0]["fixes"].as_array().unwrap().len() > 1);
     assert_eq!(
+        all["findings"][0]["operationsTotal"],
+        all["findings"][0]["operations"].as_array().unwrap().len()
+    );
+    assert_eq!(all["diagnoses"][0]["findings"][0], 0);
+    assert_eq!(
         all["operations"].as_array().unwrap().len() as u64,
         all["operationsTotal"].as_u64().unwrap()
     );
+    // the fixed run against it: its finding fixed, what it saved beside
+    // what was predicted, said in one place (`since.findings`)
+    let fixed = tour_runs(t.path())[0].clone();
+    let j: serde_json::Value =
+        serde_json::from_slice(&sonde(t.path(), &["show", &fixed, "-f", "json"]).stdout).unwrap();
+    let f = &j["since"]["findings"][0];
+    assert_eq!(f["state"], "fixed", "{}", j["since"]);
+    assert!(
+        f["saved"]["ms"].is_number() && f["predicted"]["ms"].is_number(),
+        "{f}"
+    );
+    assert!(f.get("measured").is_none(), "{f}");
+    let change = &j["since"]["change"];
+    for gone in ["findings", "resolved", "appeared", "latency"] {
+        assert!(change.get(gone).is_none(), "{gone}: {change}");
+    }
+}
+
+/// A program run again says what changed, not its whole plan again: each
+/// finding fixed with what it saved, each still open on a line with its line
+/// of code, a new one in full; `sonde show` has the whole plan.
+#[test]
+fn a_run_again_says_only_what_changed() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    let tour = t.path().join("data/tour");
+    let run = |job: &str| {
+        std::fs::copy(tour.join(job), t.path().join("job.py")).unwrap();
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(["run", "--demo", "--name", "job", "--"])
+            .arg(env!("CARGO_BIN_EXE_sonde"))
+            .args(["demo-job", "job.py"])
+            .current_dir(t.path())
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        stderr(&o)
+    };
+    let plan = ["    fix for boto3:", "kind ", "    saving: "];
+    // a program's first run: the whole plan
+    let first = run("export.py");
+    for said in plan {
+        assert!(first.contains(said), "no {said:?} in:\n{first}");
+    }
+    // again, unchanged: each finding still open, a line each with its code line
+    let again = run("export.py");
+    for not in plan {
+        assert!(!again.contains(not), "{not:?} in:\n{again}");
+    }
+    assert!(again.contains("since the run before"), "{again}");
+    assert!(again.contains("  · open   "), "{again}");
+    assert!(again.contains(" (at job.py:"), "{again}");
+    assert!(again.contains("(the whole plan: sonde show)"), "{again}");
+    assert!(again.contains("  time "), "{again}");
+    // fixed: what it saved, and nothing of the plan
+    let fixed = run("export-fixed.py");
+    assert!(fixed.contains("  ✓ fixed  "), "{fixed}");
+    for not in plan {
+        assert!(!fixed.contains(not), "{not:?} in:\n{fixed}");
+    }
+    // undone: new again, in full as the plan says it
+    let undone = run("export.py");
+    assert!(undone.contains("  ! new    "), "{undone}");
+    assert!(undone.contains("    fix for boto3:"), "{undone}");
+    assert!(!undone.contains("kind "), "{undone}");
+    assert!(
+        undone.split_whitespace().count() * 2 < first.split_whitespace().count() * 3,
+        "{undone}"
+    );
+    // show: the whole plan
+    let shown = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["show"])
+        .current_dir(t.path())
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .output()
+        .unwrap();
+    let shown = stdout(&shown);
+    for said in plan {
+        assert!(shown.contains(said), "no {said:?} in:\n{shown}");
+    }
 }
 
 /// The runs listed, newest first (`runs -f json`).
@@ -2138,8 +2274,8 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     let fixed = &j["since"]["findings"][0];
     assert_eq!(fixed["state"], "fixed", "{j}");
     assert_eq!(fixed["predicted"]["requests"], 20);
-    assert_eq!(fixed["measured"]["requests"], 20);
-    assert_eq!(j["since"]["change"]["findings"][0]["state"], "fixed");
+    assert_eq!(fixed["saved"]["requests"], 20);
+    assert!(j["since"]["change"].get("findings").is_none(), "{j}");
     // a program's first run has nothing before it
     let none = sonde(t.path(), &["show", "etl-1-base"]);
     assert_eq!(none.status.code(), Some(0));
@@ -2235,23 +2371,16 @@ fn an_expected_finding_says_why_in_every_output() {
     let file = run.to_str().unwrap();
     let shown: serde_json::Value =
         serde_json::from_str(&here(&["show", file, "-f", "json"])).unwrap();
-    let serial = shown["findings"]
+    // on its diagnosis, by identity: only that one
+    let expected: Vec<&serde_json::Value> = shown["diagnoses"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|f| f["kind"] == "obs.serial")
-        .unwrap();
-    assert_eq!(serial["expected"], why);
-    // only that one
-    assert_eq!(
-        shown["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|f| f.get("expected").is_some())
-            .count(),
-        1
-    );
+        .filter_map(|d| d.get("expected"))
+        .collect();
+    assert_eq!(expected.len(), 1, "{}", shown["diagnoses"]);
+    assert_eq!(expected[0].as_object().unwrap().len(), 1, "{expected:?}");
+    assert_eq!(expected[0]["obs.serial|"], why);
     assert!(here(&["show", file]).contains(&format!("expected: {why}")));
     let checked: serde_json::Value =
         serde_json::from_str(&here(&["check", file, "-f", "json"])).unwrap();

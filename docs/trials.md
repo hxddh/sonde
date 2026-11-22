@@ -181,7 +181,8 @@ The program broke under 1 of 1.
 
 Change the program and run the same command: every scenario runs again, and each finding of the trial is read
 against the program's trial before, as the [fix loop](cli.md#the-fix-loop) reads a run's: `✓ fixed  survives
-slowdown now`, `· open`, `! new` (*since the trial before*; in `show`, among `since.findings`).
+slowdown now`, `· open`, `! new` (in `show`, among `since.findings`); `run` says it in each verdict (`survived  slowdown
+… broke on …, survived since`).
 
 | | |
 |---|---|
