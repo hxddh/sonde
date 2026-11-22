@@ -128,7 +128,9 @@ for (const v of variants) {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
       await chooseFrom(() => app.press("id:run-more"), v.lang ? zh : label);
     };
+    // (Runs pressed in Runs is a new run, its command bar: there already, the run shown stays)
     const go = async (area: string) => {
+      if (area === "runs" && app.shows("id:screen-runs")) return;
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
     };
