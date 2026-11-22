@@ -61,6 +61,7 @@ sonde's plan is true now: recording no longer slows a program, a change's time s
 - With `sonde run --demo`, an aws-chunked upload with a checksum (the AWS SDK for Java's default) stored its framing
   in the object, 72 bytes too long; real stores were never affected.
 - The app: Run while a program runs says why it cannot, with Stop; History's trend sentences are no longer cut.
+- `url` 2.5.9 (RUSTSEC-2026-0592: a nested `blob:` URL could overflow the stack in `Url::origin()`).
 
 ### 中文
 
@@ -81,6 +82,7 @@ sonde 的计划现在可信了：录制不再拖慢程序；连接池满载和�
 - 修复：sonde 给出的修复代码名副其实（boto3、JS、Go、Java，含两段编译不过的 Go 代码）。
 - 修复：`--demo` 下 aws-chunked 带校验和的上传把分块格式存进了对象；真实存储从未受影响。
 - 修复：程序运行时点"运行"会说明原因并提供"停止"；历史趋势说明不再被截断。
+- 依赖：`url` 2.5.9（RUSTSEC-2026-0592）。
 
 ## [29.0.0] - 2026-11-22
 
