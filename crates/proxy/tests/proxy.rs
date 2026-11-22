@@ -183,6 +183,13 @@ async fn serve(
                     .parse()
                     .unwrap();
                 assert_eq!(d.payload.len(), said, "the decoded length said");
+                // what S3 needs to read it as framing, not as the object
+                let h = |k: &str| parts.headers.get(k).map_or("", |v| v.to_str().unwrap());
+                assert!(h("content-encoding").contains("aws-chunked"), "{parts:?}");
+                assert!(
+                    h("x-amz-trailer").starts_with("x-amz-checksum-"),
+                    "{parts:?}"
+                );
                 data = d.payload;
                 checksums.retain(|(k, _)| k != "content-encoding");
                 checksums.extend(d.trailers);

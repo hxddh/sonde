@@ -1,7 +1,7 @@
 {
   "name": "sonde-viewer",
   "id": "dev.sonde.viewer",
-  "version": "29.0.0",
+  "version": "30.0.0",
   "nsh": ">=0.6, <0.7",
   "theme": "../app/theme.json",
   "tailwind": {

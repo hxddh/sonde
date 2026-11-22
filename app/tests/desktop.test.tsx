@@ -89,6 +89,33 @@ test("Store: browse the demo bucket and show object details", async () => {
   await app.waitFor("text:x-amz-request-id");
 });
 
+test("a new run is found three ways: ⌘N, File › New run, and the sidebar's Runs pressed in Runs; it says Runs once", async () => {
+  const { appMenus } = await import("../src/ui/shell");
+  const file = appMenus(() => {})[0].submenu;
+  expect(file.some((i) => "label" in i && i.label === "New run" && i.shortcut === "mod+n")).toBe(true);
+  const app = await open("../App.tsx", desktop);
+  await openExample(app);
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  // the place's name is its row: no heading of its list, no + beside it, no search field (⌘K finds a run)
+  expect(app.shows("id:new-run")).toBe(false);
+  expect(app.shows("id:run-search")).toBe(false);
+  expect(app.shows("text:Search runs")).toBe(false);
+  await app.keyboard.press("mod+n");
+  await app.waitFor("id:run-command");
+  expect(app.shows("id:run-pane")).toBe(false);
+  // (from another place too)
+  await app.press("id:run-0");
+  await app.waitFor("id:run-pane");
+  await app.press("id:nav-store");
+  await app.waitUntil(() => !app.shows("id:run-pane"), { timeout: 2000 });
+  await app.keyboard.press("mod+n");
+  await app.waitFor("id:run-command");
+  await app.press("id:run-0");
+  await app.waitFor("id:run-pane");
+  await app.press("id:nav-runs");
+  await app.waitFor("id:run-command");
+});
+
 test("the palette goes anywhere", async () => {
   const app = await open("../App.tsx", desktop);
   await app.press("id:palette");
@@ -753,8 +780,8 @@ test("what looks pressable answers a press: a chart without the pointer, its how
   await app.waitFor("id:chart-distribution-how-text", { timeout: 2000 });
   await app.keyboard.press("escape");
   await app.waitUntil(() => !app.shows("id:chart-distribution-how-text"), { timeout: 2000 });
-  // New run lets the run go: the command bar
-  await app.press("id:new-run");
+  // the sidebar's Runs, pressed in Runs, lets the run go: the command bar
+  await app.press("id:nav-runs");
   await app.waitUntil(() => !app.shows("id:run-pane"), { timeout: 2000 });
   await app.waitFor("id:run-command");
   // the sidebar's toggle always toggles, with a run chosen or none

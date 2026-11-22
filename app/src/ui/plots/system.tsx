@@ -76,8 +76,8 @@ export const STRIP = "h-16";
 export const STACK = "h-3";
 /** The shape of a run under its header (`RunShape strip`). */
 export const SHAPE_STRIP = "h-11";
-/** A mark a few points high, in a row or beside a figure (`Sparkline`). */
-export const MARK = { row: "h-4 w-16", pair: "h-5 w-12 shrink-0" } as const;
+/** A mark a few points high, in a row (`Sparkline`). */
+export const MARK = { row: "h-4 w-16" } as const;
 /** How thick a bar is, by what it is a bar of — the band's padding, and no
  * other anywhere: a row of a chart of rows, two marks on a row (a dumbbell,
  * a chain as it ran and at once), a slice of time, a bucket (a size, a
@@ -424,7 +424,7 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
 
 /** A chart in its frame, the same for every chart: what it asks (`title`,
  * the card's whole width), a sentence that answers it (`text`, computed from
- * what it draws: one line, the whole of it with how to read it), how it is cut (`action`, a row of its
+ * what it draws: one line, the whole of it with how to read it; whole, where there is no how), how it is cut (`action`, a row of its
  * own under the sentence), how to read it (`how`: the title opens it, in a popover); the plot, its `legend` at the
  * plot's left edge (`gutter` for a chart of rows), and `empty` said in the plot's room when there is nothing to
  * draw. */
@@ -442,9 +442,9 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
             </View>
           </If>
         </View>
-        {/* the answer, in a line (the whole of it where the title opens) */}
+        {/* the answer, in a line where the title opens the whole of it; whole where it does not (a trend card's) */}
         <If when={props.text}>
-          <Text testID="chart-text" accessibilityLabel={props.text} class={`tabular-nums ${TEXT.note} line-clamp-1`}>{props.text}</Text>
+          <Text testID="chart-text" accessibilityLabel={props.text} class={`tabular-nums ${TEXT.note} ${props.how ? "line-clamp-1" : ""}`}>{props.text}</Text>
         </If>
       </View>
       <If when={props.action}>

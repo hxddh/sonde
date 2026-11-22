@@ -34,10 +34,11 @@ export async function place(app: App, where: string) {
     return;
   }
   if (!app.shows("id:nav-runs")) await app.keyboard.press("mod+b");
-  await app.press("id:nav-runs");
-  // a new run: the command bar
+  // (pressed in Runs, Runs is a new run: the run shown stays unless one is asked for)
+  if (!app.shows("id:screen-runs")) await app.press("id:nav-runs");
+  // a new run: the command bar (Runs pressed again, in Runs)
   if (where === "run") {
-    if (!app.shows("id:run-command")) await app.press("id:new-run");
+    if (!app.shows("id:run-command")) await app.press("id:nav-runs");
     await app.waitFor("id:run-command");
   }
 }

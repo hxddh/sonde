@@ -617,6 +617,23 @@ async fn every_json_output_is_as_its_schema_says() {
             "{}",
             shown["diagnoses"]
         );
+        // its requests one after another counted, not only said
+        let at_once = shown["diagnoses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| {
+                d["identities"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|i| i == "obs.serial|")
+            })
+            .map(|d| d["atOnce"].clone())
+            .unwrap();
+        assert_eq!(at_once["concurrency"], 8, "{at_once}");
+        assert!(at_once["requests"].as_u64().unwrap() >= 10, "{at_once}");
+        assert!(at_once["savesMs"].as_f64().unwrap() > 0.0, "{at_once}");
         holds("show", &shown);
         let checked = b.json(&["check", k, "-f", "json"], 0).await;
         assert_eq!(checked["check"]["expected"][0]["expected"], "kept");
@@ -647,7 +664,8 @@ async fn every_json_output_is_as_its_schema_says() {
             .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
             .await;
         holds("check-init", &init);
-        assert_eq!(init["runArgs"], "--url <the S3 endpoint>", "{init}");
+        // the store as the run was told it: no placeholder to fill in
+        assert_eq!(init["runArgs"], "-e moto", "{init}");
         let known = init["findings"].as_object().unwrap();
         assert!(!known.is_empty(), "{init}");
         let toml = std::fs::read_to_string(b.path("sonde.toml")).unwrap();

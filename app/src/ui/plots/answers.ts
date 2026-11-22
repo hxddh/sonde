@@ -365,8 +365,6 @@ export function latencyChangeSaid(c: RunChange): string {
   return t("cdf.textChange", { a50: say(doneWithin(a, 0.5)), b50: say(doneWithin(b, 0.5)), a95: say(doneWithin(a, 0.95)), b95: say(doneWithin(b, 0.95)) });
 }
 
-/** Two runs over time: how long each took, and how many requests each sent. */
-export const overTimeSaid = (a: Profile, b: Profile): string => t("compare.overTimeText", { a: duration(a.wallMs), b: duration(b.wallMs), na: count(a.rate.reduce((k, x) => k + requests(x), 0)), nb: count(b.rate.reduce((k, x) => k + requests(x), 0)) });
 
 
 /** A busy kind's latency, slice by slice: its median and p95 in each slice it had requests. */

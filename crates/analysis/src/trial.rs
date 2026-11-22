@@ -2185,35 +2185,45 @@ fn phrase_of(s: &Said) -> Option<crate::phrase::Phrase> {
 fn fixes_for(advice: &Said) -> Vec<crate::fixes::Fix> {
     let said = advice.en();
     let said = said.trim_end_matches('.');
-    let code = |lang: &str| -> Option<&'static str> {
+    let code = |lang: &str| -> Option<std::borrow::Cow<'static, str>> {
+        use std::borrow::Cow::{Borrowed, Owned};
         Some(match (advice.key.as_str(), lang) {
+            // botocore signs again by the machine's clock: no retry helps it
+            ("trial.advice.skew", "python") => return None,
+            ("trial.advice.retries" | "trial.advice.retry", "python") => Owned(format!(
+                "from botocore.config import Config\ns3 = {}",
+                crate::fixes::retries_on("python")?
+            )),
             ("trial.advice.retries" | "trial.advice.retry" | "trial.advice.skew", l) => {
-                crate::fixes::retries_on(l)?
+                Borrowed(crate::fixes::retries_on(l)?)
             }
-            ("trial.advice.timeout", "python") => {
-                "boto3.client(\"s3\", config=Config(connect_timeout=5, read_timeout=10, retries={\"mode\": \"standard\", \"max_attempts\": 5}))"
-            }
-            ("trial.advice.timeout", "js") => {
-                "new S3Client({ maxAttempts: 5, requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 10000 }) })"
-            }
-            ("trial.advice.timeout", "go") => {
-                "s3.NewFromConfig(cfg, func(o *s3.Options) { o.HTTPClient = awshttp.NewBuildableClient().WithTimeout(10 * time.Second) })"
-            }
-            ("trial.advice.timeout", "java") => {
-                "S3Client.builder().overrideConfiguration(o -> o.apiCallAttemptTimeout(Duration.ofSeconds(10)).retryStrategy(RetryMode.STANDARD)).build()"
-            }
-            ("trial.advice.cut", "python") => {
-                "obj = s3.get_object(Bucket=b, Key=k)\nbody = obj[\"Body\"].read()\nwhile len(body) < obj[\"ContentLength\"]:\n    body += s3.get_object(Bucket=b, Key=k, Range=f\"bytes={len(body)}-\")[\"Body\"].read()"
-            }
-            ("trial.advice.cut", "js") => {
-                "const r = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nlet body = await r.Body.transformToByteArray();\nif (body.length < r.ContentLength) { /* read the rest: Range: `bytes=${body.length}-` */ }"
-            }
-            ("trial.advice.cut", "go") => {
-                "out, _ := client.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nbody, err := io.ReadAll(out.Body)\nif err != nil || int64(len(body)) < *out.ContentLength { /* read the rest: Range \"bytes=<len>-\" */ }"
-            }
-            ("trial.advice.cut", "java") => {
-                "ResponseBytes<GetObjectResponse> r = s3.getObjectAsBytes(req);\nif (r.asByteArray().length < r.response().contentLength()) { /* read the rest: .range(\"bytes=\" + have + \"-\") */ }"
-            }
+            // a stall is 5 s or more (sonde's slow-first-byte holds 10 s); a
+            // timeout of 2 s on each read, not on a whole download
+            ("trial.advice.timeout", "python") => Borrowed(
+                "from botocore.config import Config\ns3 = boto3.client(\"s3\", config=Config(connect_timeout=2, read_timeout=2, retries={\"mode\": \"standard\", \"max_attempts\": 5}))",
+            ),
+            ("trial.advice.timeout", "js") => Borrowed(
+                "new S3Client({ maxAttempts: 5, requestHandler: new NodeHttpHandler({ connectionTimeout: 2000, socketTimeout: 2000 }) })",
+            ),
+            ("trial.advice.timeout", "go") => Borrowed(
+                "s3.NewFromConfig(cfg, func(o *s3.Options) {\n    o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) { t.ResponseHeaderTimeout = 2 * time.Second })\n})",
+            ),
+            ("trial.advice.timeout", "java") => Borrowed(
+                "// (the artifact apache5-client, the SDK's HTTP client; on an older SDK, ApacheHttpClient of apache-client)\nS3Client.builder().httpClientBuilder(Apache5HttpClient.builder().socketTimeout(Duration.ofSeconds(2))).overrideConfiguration(o -> o.retryStrategy(RetryMode.STANDARD)).build()",
+            ),
+            // a body cut short is an error as it is read, never a short body
+            ("trial.advice.cut", "python") => Borrowed(
+                "from botocore.exceptions import IncompleteReadError, ResponseStreamingError\nobj = s3.get_object(Bucket=b, Key=k)\nstream, body = obj[\"Body\"], b\"\"\nfor attempt in range(5):\n    try:\n        for chunk in stream.iter_chunks():\n            body += chunk\n        break\n    except (IncompleteReadError, ResponseStreamingError):  # cut short: the rest, of the same object\n        stream = s3.get_object(Bucket=b, Key=k, Range=f\"bytes={len(body)}-\", IfMatch=obj[\"ETag\"])[\"Body\"]\nelse:\n    raise IOError(f\"{k}: cut short 5 times\")",
+            ),
+            ("trial.advice.cut", "js") => Borrowed(
+                "let body;\nfor (let attempt = 1; !body; attempt++) {\n  const r = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\n  try { body = await r.Body.transformToByteArray(); } // a body cut short rejects: read it again\n  catch (e) { if (attempt === 3) throw e; }\n}",
+            ),
+            ("trial.advice.cut", "go") => Borrowed(
+                "out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nif err != nil { return err }\nbody, err := io.ReadAll(out.Body) // cut short: what came, and io.ErrUnexpectedEOF\nout.Body.Close()\nif err != nil { // the rest, of the same object\n    rest, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: aws.String(fmt.Sprintf(\"bytes=%d-\", len(body))), IfMatch: out.ETag})\n    if err != nil { return err }\n    more, err := io.ReadAll(rest.Body)\n    rest.Body.Close()\n    if err != nil { return err }\n    body = append(body, more...)\n}",
+            ),
+            ("trial.advice.cut", "java") => Borrowed(
+                "// getObjectAsBytes reads the body within the request: one cut short is sent again by the SDK's retries\n// (a stream from getObject is yours: on an IOException, read the rest with .range(\"bytes=\" + have + \"-\"))\nbyte[] body = s3.getObjectAsBytes(r -> r.bucket(b).key(k)).asByteArray();",
+            ),
             _ => return None,
         })
     };
@@ -2341,8 +2351,7 @@ pub fn changes(trials: &[Trial]) -> Vec<crate::fixloop::FindingChange> {
                 was: None,
                 counts: None,
                 predicted: Saving::default(),
-                measured: None,
-                within_noise: false,
+                saved_requests: None,
                 saved: None,
                 saved_text: None,
             })
@@ -3497,6 +3506,8 @@ mod tests {
         assert!(o.fixes[0].code.starts_with(
             "# a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
         ), "{}", o.fixes[0].code);
+        // botocore signs again by the machine's clock: its retries are no fix
+        assert!(!o.fixes[0].code.contains("retries"), "{}", o.fixes[0].code);
     }
 
     #[test]
@@ -3636,8 +3647,29 @@ mod tests {
             "degraded under slow-first-byte: waited out 1 stall of 10.0 s before the first byte: no timeout cut it short (at GetObject b/a)"
         );
         assert_eq!(o.level, "info");
+        // each read's timeout, well under the stall (not the whole
+        // download's, which a large one takes longer than)
         let java = o.fixes.iter().find(|f| f.sdk == "java").unwrap();
-        assert!(java.code.contains("apiCallAttemptTimeout"), "{}", java.code);
+        assert!(
+            java.code.contains("socketTimeout(Duration.ofSeconds(2))"),
+            "{}",
+            java.code
+        );
+        let py = o.fixes.iter().find(|f| f.sdk == "python").unwrap();
+        assert!(
+            py.code.contains("s3 = boto3.client(") && py.code.contains("read_timeout=2,"),
+            "{}",
+            py.code
+        );
+        // (@smithy/node-http-handler 4's requestTimeout only warns)
+        let js = o.fixes.iter().find(|f| f.sdk == "js").unwrap();
+        assert!(js.code.contains("socketTimeout: 2000"), "{}", js.code);
+        let go = o.fixes.iter().find(|f| f.sdk == "go").unwrap();
+        assert!(
+            go.code.contains("ResponseHeaderTimeout = 2 * time.Second"),
+            "{}",
+            go.code
+        );
         assert_eq!(t.standing, Standing::Degraded);
         assert_eq!(
             t.reasons(),
@@ -3948,8 +3980,11 @@ mod tests {
             "broke under cut-body: 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) (at GetObject b/big)"
         );
         let py = o.fixes.iter().find(|f| f.sdk == "python").unwrap();
+        // botocore raises as it reads a body cut short: caught, and the rest read
         assert!(
-            py.code.contains("Range=f\"bytes={len(body)}-\""),
+            py.code
+                .contains("except (IncompleteReadError, ResponseStreamingError)")
+                && py.code.contains("Range=f\"bytes={len(body)}-\""),
             "{}",
             py.code
         );

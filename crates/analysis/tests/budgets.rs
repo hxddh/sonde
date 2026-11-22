@@ -100,7 +100,13 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     let opened = started.elapsed();
     let a = Analysis::of(&s, &RequestPrices::default());
     // and, a run of a program, against the run before it (none here)
-    let since = a.since_last(path, &s.header, &s.records, &|_| RequestPrices::default());
+    let since = a.since_last(
+        &sonde_analysis::fixloop::folder_of(path),
+        path,
+        &s.header,
+        &s.records,
+        &|_| RequestPrices::default(),
+    );
     assert!(since.is_some_and(|c| c.previous.is_none() && !c.findings.is_empty()));
     let took = started.elapsed();
     eprintln!(

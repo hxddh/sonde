@@ -469,7 +469,12 @@ impl Proxy {
         let task = tokio::spawn(async move {
             loop {
                 let stream = match listener.accept().await {
-                    Ok((stream, _)) => stream,
+                    Ok((stream, _)) => {
+                        // an answer's last piece goes at once: Nagle's wait for
+                        // the program's delayed ACK is ~40 ms a request
+                        let _ = stream.set_nodelay(true);
+                        stream
+                    }
                     // out of file descriptors, most likely: wait for some
                     // to close rather than spin
                     Err(_) => {

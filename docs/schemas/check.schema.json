@@ -74,6 +74,37 @@
             ]
           }
         },
+        "loose": {
+          "type": "array",
+          "description": "Findings `[check.findings]` knows that the run has none of now (`count` 0), or less of: `[check.findings]` may be tightened to them, so what was fixed fails the check if it comes back.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string",
+                "description": "The identity as `[check.findings]` names it."
+              },
+              "text": {
+                "type": "string",
+                "description": "Display text, not stable: empty for one gone."
+              },
+              "count": {
+                "type": "integer",
+                "description": "Its count in the run: 0 when gone."
+              },
+              "known": {
+                "type": "integer",
+                "description": "Its count in `[check.findings]`."
+              }
+            },
+            "required": [
+              "identity",
+              "text",
+              "count",
+              "known"
+            ]
+          }
+        },
         "expected": {
           "type": "array",
           "description": "The run's findings the project keeps on purpose (`[check] expect`), each with why: leave them.",

@@ -114,32 +114,50 @@ fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
 
 impl Analysis {
     /// Adds the trial's findings ([`crate::trial::findings`]) to the run's,
-    /// each a diagnosis of its own after the run's: no saving, so last.
+    /// each a diagnosis of its own: one that broke among what is wrong, first
+    /// ([`crate::fixes::wrong`]); one that degraded, no saving, last.
     pub fn add_trials(&mut self, trials: &[crate::trial::Trial]) {
+        let mut all: Vec<(crate::fixes::Diagnosis, Vec<usize>)> =
+            std::mem::take(&mut self.diagnoses)
+                .into_iter()
+                .map(|d| {
+                    let g = d.findings.clone();
+                    (d, g)
+                })
+                .collect();
         for o in crate::trial::findings(trials) {
-            self.diagnoses.push(crate::fixes::Diagnosis {
-                id: o.identity.clone(),
-                findings: vec![self.observations.len()],
-                identities: vec![o.identity.clone()],
-                serial: None,
-                saves_ms: 0.0,
-                saves_cost: 0.0,
-                saves_requests: 0,
-                saving: Vec::new(),
-                saving_text: String::new(),
-                rest: None,
-            });
+            all.push((
+                crate::fixes::Diagnosis {
+                    id: o.identity.clone(),
+                    findings: Vec::new(),
+                    identities: Vec::new(),
+                    serial: None,
+                    saves_ms: 0.0,
+                    saves_cost: 0.0,
+                    saves_requests: 0,
+                    saving: Vec::new(),
+                    saving_text: String::new(),
+                    rest: None,
+                    at_once: None,
+                },
+                vec![self.observations.len()],
+            ));
             self.observations.push(o);
         }
+        let obs = &self.observations;
+        all.sort_by_key(|(_, g)| !g.first().is_some_and(|&i| crate::fixes::wrong(&obs[i])));
+        self.diagnoses = crate::fixes::in_order(all, &mut self.observations);
     }
 
     /// `path` (a run, its `header` and `records`, analysed as this) against
-    /// its program's run before it ([`crate::fixloop::since_last`]). Its
+    /// its program's run before it, its history in `dir`
+    /// ([`crate::fixloop::since_last`]). Its
     /// operations are not made again, and its findings at any threshold
     /// only when there is a run before to judge: 18.0 made both for every
     /// `show`, a third more time and memory at a million requests.
     pub fn since_last(
         &self,
+        dir: &std::path::Path,
         path: &std::path::Path,
         header: &crate::run::RunHeader,
         records: &[reqlog::Record],
@@ -149,9 +167,8 @@ impl Analysis {
         if !header.is_recording() {
             return None;
         }
-        let dir = crate::fixloop::folder_of(path);
         let traces = match crate::fixloop::previous_run(
-            &dir,
+            dir,
             &key,
             header.created,
             path,
@@ -167,7 +184,7 @@ impl Analysis {
             self.observations.clone(),
             traces,
         );
-        crate::fixloop::since_last(&dir, path, header, records, run, prices)
+        crate::fixloop::since_last(dir, path, header, records, run, prices)
     }
 
     pub fn of(s: &RunFile, prices: &RequestPrices) -> Analysis {
@@ -190,34 +207,26 @@ impl Analysis {
         let mut observations = observations_of(header, records, &episodes);
         // (an imported log's times are to the second: its waiting is not known)
         let timed = !header.whole_seconds;
-        crate::fixes::rank_by_saving(&mut observations, records, &profile, timed);
+        let reckoning = crate::fixes::Reckoning::of(records, &profile, timed);
+        crate::fixes::rank_by_saving(&mut observations, &reckoning);
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
             .collect();
-        let what_if = crate::fixes::what_if(records, &profile, &observations, timed);
+        let what_if = crate::fixes::what_if(&reckoning, &observations);
         let month = crate::month::month(
             header,
             summary.seconds,
             profile.cost.amount,
             &profile.cost.currency,
         );
-        let diagnoses = crate::fixes::diagnose(
-            &mut observations,
-            &episodes,
-            records,
-            &profile,
-            timed,
-            month.as_ref(),
-        );
-        let time = crate::summary::time_account(records, &summary, &profile, header);
-        let owner = crate::episode::Owners::of(&episodes);
+        let diagnoses =
+            crate::fixes::diagnose(&mut observations, &episodes, &reckoning, month.as_ref());
         // the kinds each operation sent, a bit a kind
         let mut kind_names: Vec<String> = Vec::new();
         let mut kinds = vec![0u64; episodes.len()];
-        let by_id = crate::episode::RecordsById::of(records);
         for (e, bits) in episodes.iter().zip(&mut kinds) {
-            for r in e.records.iter().filter_map(|id| by_id.get(id)) {
+            for r in e.records.iter().filter_map(|id| reckoning.by_id.get(id)) {
                 let name: &str = &r.kind;
                 let bit = match kind_names.iter().position(|n| n == name) {
                     Some(b) => b,
@@ -230,6 +239,9 @@ impl Analysis {
                 *bits |= 1 << bit;
             }
         }
+        drop(reckoning);
+        let time = crate::summary::time_account(records, &summary, &profile, header);
+        let owner = crate::episode::Owners::of(&episodes);
         let span = episodes.iter().map(|e| e.start).min().and_then(|start| {
             let end = episodes.iter().map(|e| e.end).max()?;
             Some((start, end))

@@ -80,7 +80,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nsize := out.ContentLength",
+                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nsize := aws.ToInt64(out.ContentLength)",
             ),
             f(
                 "js",
@@ -110,11 +110,11 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// list the prefix once; look keys up in the result\np := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &prefix})",
+                "// list the prefix once; look keys up in the result\nkeys := map[string]bool{}\nfor p := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &prefix}); p.HasMorePages(); {\n    page, err := p.NextPage(ctx)\n    if err != nil { return err }\n    for _, o := range page.Contents { keys[*o.Key] = true }\n}",
             ),
             f(
                 "js",
-                "// list the prefix once; look keys up in the result\nfor await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: p })) keys.push(...(page.Contents ?? []));",
+                "// list the prefix once; look keys up in the result\nconst keys = new Set();\nfor await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: p })) for (const o of page.Contents ?? []) keys.add(o.Key);",
             ),
             f(
                 "rust",
@@ -124,19 +124,19 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.deletes" => vec![
             f(
                 "python",
-                "# up to 1,000 keys a request\nfor i in range(0, len(keys), 1000):\n    s3.delete_objects(Bucket=b, Delete={\"Objects\": [{\"Key\": k} for k in keys[i:i + 1000]], \"Quiet\": True})",
+                "# up to 1,000 keys a request; a key not deleted is in Errors, not raised\nfor i in range(0, len(keys), 1000):\n    out = s3.delete_objects(Bucket=b, Delete={\"Objects\": [{\"Key\": k} for k in keys[i:i + 1000]], \"Quiet\": True})\n    if out.get(\"Errors\"):\n        raise RuntimeError(f\"not deleted: {out['Errors']}\")",
             ),
             f(
                 "java",
-                "// up to 1,000 keys a request\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n}",
+                "// up to 1,000 keys a request; a key not deleted is in errors(), not thrown\nfor (int i = 0; i < keys.size(); i += 1000) {\n    List<ObjectIdentifier> ids = keys.subList(i, Math.min(i + 1000, keys.size())).stream().map(k -> ObjectIdentifier.builder().key(k).build()).toList();\n    DeleteObjectsResponse out = s3.deleteObjects(r -> r.bucket(b).delete(d -> d.objects(ids).quiet(true)));\n    if (!out.errors().isEmpty()) throw new IllegalStateException(\"not deleted: \" + out.errors());\n}",
             ),
             f(
                 "go",
-                "// up to 1,000 keys a request\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    _, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n}",
+                "// up to 1,000 keys a request; a key not deleted is in out.Errors, not err\nfor i := 0; i < len(keys); i += 1000 {\n    var ids []types.ObjectIdentifier\n    for _, k := range keys[i:min(i+1000, len(keys))] { ids = append(ids, types.ObjectIdentifier{Key: aws.String(k)}) }\n    out, err := s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &b, Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)}})\n    if err != nil { return err }\n    if len(out.Errors) > 0 { return fmt.Errorf(\"%d not deleted, the first %s: %s\", len(out.Errors), aws.ToString(out.Errors[0].Key), aws.ToString(out.Errors[0].Message)) }\n}",
             ),
             f(
                 "js",
-                "// up to 1,000 keys a request\nfor (let i = 0; i < keys.length; i += 1000)\n  await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));",
+                "// up to 1,000 keys a request; a key not deleted is in Errors, not thrown\nfor (let i = 0; i < keys.length; i += 1000) {\n  const out = await s3.send(new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));\n  if (out.Errors?.length) throw new Error(`not deleted: ${JSON.stringify(out.Errors)}`);\n}",
             ),
             f(
                 "rust",
@@ -164,19 +164,19 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         "obs.polled" => vec![
             f(
                 "python",
-                "# a waiter asks every 5 s, not in a loop as fast as it can\ns3.get_waiter(\"object_exists\").wait(Bucket=b, Key=k, WaiterConfig={\"Delay\": 5, \"MaxAttempts\": 60})",
+                "# back off between tries (1 s, doubling, up to a minute) until a deadline:\n# fewer requests, not less time (it may see the key a wait late); better, an event from its writer\nimport time\nfrom botocore.exceptions import ClientError\nwait, deadline = 1, time.monotonic() + 600\nwhile True:\n    try:\n        s3.head_object(Bucket=b, Key=k)\n        break\n    except ClientError as e:\n        if e.response[\"Error\"][\"Code\"] != \"404\" or time.monotonic() > deadline:\n            raise\n        time.sleep(wait)\n        wait = min(wait * 2, 60)",
             ),
             f(
                 "java",
-                "// a waiter backs off between tries\ns3.waiter().waitUntilObjectExists(r -> r.bucket(b).key(k));",
+                "// a waiter asks every 5 s, 20 times at most: fewer requests, not less time (it may see the key 5 s late)\ns3.waiter().waitUntilObjectExists(r -> r.bucket(b).key(k));",
             ),
             f(
                 "go",
-                "// a waiter backs off between tries\nerr := s3.NewObjectExistsWaiter(s3c).Wait(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k}, 10*time.Minute)",
+                "// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time\nerr := s3.NewObjectExistsWaiter(s3c).Wait(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k}, 10*time.Minute)",
             ),
             f(
                 "js",
-                "// a waiter backs off between tries\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
+                "// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
             ),
         ],
         "obs.small.parts" => vec![
@@ -186,7 +186,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "java",
-                "// one PUT under the threshold\nS3TransferManager.builder().s3Client(S3AsyncClient.crtBuilder().minimumPartSizeInBytes(64L << 20).build()).build();",
+                "// one PUT under the threshold\nS3TransferManager.builder().s3Client(S3AsyncClient.crtBuilder().thresholdInBytes(64L << 20).build()).build();",
             ),
             f(
                 "go",
@@ -496,28 +496,28 @@ fn at_once(op: &str) -> Vec<Fix> {
         "PUT" => (
             "s3.put_object(Bucket=b, Key=k, Body=bodies[k])",
             "s3Async.putObject(r -> r.bucket(b).key(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
-            "PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})",
+            "_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})\n        return err",
             "PutObjectCommand({ Bucket: b, Key: k, Body: bodies[k] })",
             "store.put(&p, payloads[&p].clone()).await",
         ),
         "HEAD" => (
             "s3.head_object(Bucket=b, Key=k)",
             "s3Async.headObject(r -> r.bucket(b).key(k))",
-            "HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})",
+            "_, err := s3c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})\n        return err",
             "HeadObjectCommand({ Bucket: b, Key: k })",
             "store.head(&p).await",
         ),
         "DELETE" => (
             "s3.delete_object(Bucket=b, Key=k)",
             "s3Async.deleteObject(r -> r.bucket(b).key(k))",
-            "DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})",
+            "_, err := s3c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})\n        return err",
             "DeleteObjectCommand({ Bucket: b, Key: k })",
             "store.delete(&p).await",
         ),
         _ => (
             "s3.get_object(Bucket=b, Key=k)[\"Body\"].read()",
             "s3Async.getObject(r -> r.bucket(b).key(k), AsyncResponseTransformer.toBytes())",
-            "GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})",
+            "out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n        if err != nil { return err }\n        defer out.Body.Close()\n        _, err = io.ReadAll(out.Body)\n        return err",
             "GetObjectCommand({ Bucket: b, Key: k })",
             "store.get(&p).await?.bytes().await",
         ),
@@ -533,13 +533,13 @@ fn at_once(op: &str) -> Vec<Fix> {
         owned(
             "java",
             format!(
-                "// {head}\nList<CompletableFuture<?>> all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
+                "// {head}\nvar all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
             ),
         ),
         owned(
             "go",
             format!(
-                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{ k := k; g.Go(func() error {{ _, err := s3c.{go}; return err }}) }}\nerr := g.Wait()"
+                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nerr := g.Wait()"
             ),
         ),
         owned(
@@ -605,50 +605,76 @@ pub struct WhatIf {
     pub counted: Vec<String>,
 }
 
-/// Prices what each finding would save ([`Observation::saves_cost`]),
-/// times it (its own [`what_if`]: the run without its requests, its
-/// waiting reckoned again) and orders the findings by it: those that save
-/// time first, the most first, then money, then requests; the rest as they
-/// were (warnings first, by the requests they bear on). A run whose times
-/// are not known (`timed` false) is ordered by money, then requests.
-pub fn rank_by_saving(
-    findings: &mut [Observation],
-    records: &[Record],
-    profile: &Profile,
-    timed: bool,
-) {
-    let prices = &profile.prices;
-    if findings
-        .iter()
-        .any(|o| !o.saved_ids.is_empty() || o.saves_bytes > 0)
-    {
-        let by_id = crate::episode::RecordsById::of(records);
-        for o in findings.iter_mut() {
-            o.saves_cost = o
-                .saved_ids
-                .iter()
-                .filter_map(|id| by_id.get(id))
-                .map(|r| match o.keeps_bytes {
-                    // its bytes are still read (and charged), in fewer requests
-                    true => crate::profile::request_price(r, prices),
-                    false => crate::profile::price(r, prices),
-                })
-                .sum::<f64>()
-                + bytes_only_cost(o, prices);
-            // (a sum of small prices, without its float's noise)
-            o.saves_cost = (o.saves_cost * 1e9).round() / 1e9;
+/// A run's requests as its findings are weighed against them, worked out
+/// once for [`rank_by_saving`], [`what_if`] and [`diagnose`]: each by its id,
+/// and each one's part of the waiting ([`crate::profile::waits_ms`]).
+pub struct Reckoning<'a> {
+    pub records: &'a [Record],
+    pub profile: &'a Profile,
+    /// Whether the run's times are known: an imported log's are to the second.
+    pub timed: bool,
+    pub(crate) by_id: crate::episode::RecordsById<'a>,
+    waits: Vec<f64>,
+}
+
+impl<'a> Reckoning<'a> {
+    pub fn of(records: &'a [Record], profile: &'a Profile, timed: bool) -> Reckoning<'a> {
+        Reckoning {
+            records,
+            profile,
+            timed,
+            by_id: crate::episode::RecordsById::of(records),
+            waits: match timed {
+                true => crate::profile::waits_ms(records),
+                false => Vec::new(),
+            },
         }
     }
-    if timed {
+
+    /// The time the run saves without these requests: their parts of its
+    /// waiting, in ms.
+    fn waited<'i>(&self, ids: impl Iterator<Item = &'i u64>) -> f64 {
+        ids.filter_map(|id| self.by_id.place(id))
+            .filter_map(|i| self.waits.get(i))
+            .sum()
+    }
+}
+
+/// Prices what each finding would save ([`Observation::saves_cost`]),
+/// times it (the parts of the waiting of the requests it takes away:
+/// [`crate::profile::waits_ms`]) and orders the findings by it: those that
+/// save time first, the most first, then money, then requests; the rest as
+/// they were (warnings first, by the requests they bear on). A run whose
+/// times are not known (`timed` false) is ordered by money, then requests.
+pub fn rank_by_saving(findings: &mut [Observation], r: &Reckoning) {
+    let prices = &r.profile.prices;
+    for o in findings.iter_mut() {
+        if o.saved_ids.is_empty() && o.saves_bytes == 0 {
+            continue;
+        }
+        o.saves_cost = o
+            .saved_ids
+            .iter()
+            .filter_map(|id| r.by_id.get(id))
+            .map(|x| match o.keeps_bytes {
+                // its bytes are still read (and charged), in fewer requests
+                true => crate::profile::request_price(x, prices),
+                false => crate::profile::price(x, prices),
+            })
+            .sum::<f64>()
+            + bytes_only_cost(o, prices);
+        // (a sum of small prices, without its float's noise)
+        o.saves_cost = (o.saves_cost * 1e9).round() / 1e9;
+    }
+    if r.timed {
         for o in findings.iter_mut() {
-            // a saving of time alone is reckoned where it is found
-            if o.saves_requests > 0
-                && let Some(w) = what_if_of(records, profile, &[&*o], 1, true)
-                && let Some((before, after)) = w.waiting_ms
-            {
-                o.saves_ms = ((before - after) * 10.0).round() / 10.0;
+            // a saving of time alone (sent at once) is reckoned where it is found
+            if o.saves_requests > 0 && !o.saved_ids.is_empty() && saves_time(o) {
+                let kept: std::collections::HashSet<u64> = o.kept_ids.iter().copied().collect();
+                let ms = r.waited(o.saved_ids.iter().filter(|id| !kept.contains(id)));
+                o.saves_ms = (ms.min(r.profile.waiting_ms) * 10.0).round() / 10.0;
             }
-            if let Some(s) = time_saved(o.saves_ms, profile.wall_ms) {
+            if let Some(s) = time_saved(o.saves_ms, r.profile.wall_ms) {
                 o.saving_text = Some(s.en());
                 o.saving = Some(s);
             }
@@ -684,11 +710,14 @@ fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
 }
 
 /// Findings that share a root cause, as one: what to change once, and what
-/// that saves. Findings are of one diagnosis when they save something and
-/// at least half of each one's objects are the other's (600 small objects
-/// written one each, read one each, each with a HEAD first).
+/// that saves. A finding that saves something joins the diagnosis whose
+/// headline (the first, the one that saves the most) it shares at least half
+/// of each one's objects with (600 small objects written one each, read one
+/// each, each with a HEAD first); never through a third.
 /// Requests one after another join the diagnosis whose objects or callers
-/// most of them are (`and send the other N at once`), or stand alone.
+/// most of them are (`and send the other N at once`), unless sending them at
+/// once saves more than its headline: then, as when no diagnosis owns them,
+/// they stand alone.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnosis {
@@ -720,6 +749,19 @@ pub struct Diagnosis {
     /// `and send the other 87 requests 8 at once`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rest: Option<crate::phrase::Phrase>,
+    /// Its requests one after another, counted: how many, how many at
+    /// once, and the time that saves on its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_once: Option<AtOnce>,
+}
+
+/// Requests sent at once that went one after another ([`Diagnosis::at_once`]).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtOnce {
+    pub requests: usize,
+    pub concurrency: usize,
+    pub saves_ms: f64,
 }
 
 fn is_zero_f(v: &f64) -> bool {
@@ -730,19 +772,25 @@ fn is_zero_n(v: &usize) -> bool {
     *v == 0
 }
 
-/// The run's findings as diagnoses ([`Diagnosis`]), in their order; the
-/// findings put in that order too, each diagnosis's together. `findings`
-/// ranked first ([`rank_by_saving`]).
+/// Whether a finding says something is wrong rather than slow: a warning
+/// that saves nothing to count (a lost update, a trial that broke, uploads
+/// left unfinished). Its diagnosis comes first, whatever the others save.
+pub(crate) fn wrong(o: &Observation) -> bool {
+    o.level == "warn" && !saves(o)
+}
+
+/// The run's findings as diagnoses ([`Diagnosis`]), in their order: those
+/// that say something is wrong ([`wrong`]) first, then the most time saved,
+/// then money, then requests. The findings put in that order too, each
+/// diagnosis's together. `findings` ranked first ([`rank_by_saving`]).
 pub fn diagnose(
     findings: &mut Vec<Observation>,
     episodes: &[crate::episode::Episode],
-    records: &[Record],
-    profile: &Profile,
-    timed: bool,
+    r: &Reckoning,
     month: Option<&crate::month::Month>,
 ) -> Vec<Diagnosis> {
-    use std::collections::{HashMap, HashSet};
-    let by_id = crate::episode::RecordsById::of(records);
+    use std::collections::HashSet;
+    let (by_id, profile, timed) = (&r.by_id, r.profile, r.timed);
     let key = |o: &Observation| o.phrases.first().map_or("", |p| p.key);
     // the objects each finding bears on
     let objects: Vec<HashSet<(&str, &str)>> = findings
@@ -757,48 +805,30 @@ pub fn diagnose(
         })
         .collect();
     let joins = |i: usize| saves(&findings[i]) && key(&findings[i]) != "obs.serial";
-    // one root, each finding's: the first of those it shares objects with
-    let n = findings.len();
-    let mut root: Vec<usize> = (0..n).collect();
-    fn top(root: &mut [usize], mut i: usize) -> usize {
-        while root[i] != i {
-            root[i] = root[root[i]];
-            i = root[i];
-        }
-        i
-    }
-    for a in (0..n).filter(|&a| joins(a)) {
-        for b in (a + 1..n).filter(|&b| joins(b)) {
-            let (x, y) = (&objects[a], &objects[b]);
-            let (small, large) = if x.len() <= y.len() { (x, y) } else { (y, x) };
-            // half of each's objects the other's (a key read again among
-            // 600 small objects is not their cause)
-            if small.is_empty() || small.len() * 2 < large.len() {
-                continue;
-            }
-            let shared = small.iter().filter(|o| large.contains(*o)).count();
-            if shared * 2 >= large.len() {
-                let (ra, rb) = (top(&mut root, a), top(&mut root, b));
-                root[ra.max(rb)] = ra.min(rb);
-            }
-        }
-    }
-    // groups in the findings' order (the first of each its headline)
+    // half of each's objects the other's (a key read again among 600 small
+    // objects is not their cause)
+    let alike = |a: usize, b: usize| {
+        let (x, y) = (&objects[a], &objects[b]);
+        let (small, large) = if x.len() <= y.len() { (x, y) } else { (y, x) };
+        !small.is_empty()
+            && small.len() * 2 >= large.len()
+            && small.iter().filter(|o| large.contains(*o)).count() * 2 >= large.len()
+    };
+    // groups in the findings' order (the first of each its headline): a
+    // finding joins the first headline it is alike with
     let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut group_of: HashMap<usize, usize> = HashMap::new();
     let mut serials: Vec<usize> = Vec::new();
     for (i, o) in findings.iter().enumerate() {
         if key(o) == "obs.serial" {
             serials.push(i);
             continue;
         }
-        let r = top(&mut root, i);
-        match group_of.get(&r) {
-            Some(&g) => groups[g].push(i),
-            None => {
-                group_of.insert(r, groups.len());
-                groups.push(vec![i]);
-            }
+        let home = joins(i)
+            .then(|| groups.iter().position(|g| joins(g[0]) && alike(g[0], i)))
+            .flatten();
+        match home {
+            Some(g) => groups[g].push(i),
+            None => groups.push(vec![i]),
         }
     }
     // requests one after another: with the diagnosis that owns most of
@@ -844,7 +874,13 @@ pub fn diagnose(
             .copied()
             .max_by_key(|&g| (owns[g], usize::MAX - g))
         {
-            Some(g) if owns[g] * 2 >= timed_rs.len().max(1) && serial_of[g].is_none() => {
+            // (sent at once saving more than the diagnosis's headline is a
+            // change of its own, ranked by what it saves)
+            Some(g)
+                if owns[g] * 2 >= timed_rs.len().max(1)
+                    && serial_of[g].is_none()
+                    && findings[s].saves_ms <= findings[groups[g][0]].saves_ms =>
+            {
                 serial_of[g] = Some(s);
                 groups[g].push(s);
             }
@@ -862,7 +898,7 @@ pub fn diagnose(
             let members: Vec<&Observation> = g.iter().map(|&i| &findings[i]).collect();
             let (ms, cost, requests) = match members.as_slice() {
                 [one] => (one.saves_ms, one.saves_cost, one.saves_requests),
-                _ => match what_if_of(records, profile, &members, members.len(), timed) {
+                _ => match what_if_of(r, &members, members.len()) {
                     Some(w) => (
                         w.waiting_ms
                             .map_or(0.0, |(a, b)| ((a - b) * 10.0).round() / 10.0),
@@ -874,6 +910,8 @@ pub fn diagnose(
             };
             let mut ids: Vec<&str> = members.iter().map(|o| o.identity.as_str()).collect();
             ids.sort_unstable();
+            // its requests one after another: joined, or its headline
+            let chained = serial.or((key(members[0]) == "obs.serial").then_some(g[0]));
             let mut d = Diagnosis {
                 id: diagnosis_id(&ids),
                 findings: Vec::new(),
@@ -886,6 +924,11 @@ pub fn diagnose(
                 saving: Vec::new(),
                 saving_text: String::new(),
                 rest: None,
+                at_once: chained.map(|s| AtOnce {
+                    requests: findings[s].impact,
+                    concurrency: crate::profile::CHAIN_CONCURRENCY,
+                    saves_ms: findings[s].saves_ms,
+                }),
             };
             d.rest = serial.map(|s| {
                 crate::phrase::p(
@@ -896,26 +939,38 @@ pub fn diagnose(
                     ],
                 )
             });
-            d.saving = saving_of(&d, members[0], profile, timed, month, records.len());
+            d.saving = saving_of(&d, members[0], profile, timed, month, r.records.len());
             d.saving_text = crate::phrase::en(&d.saving);
             (d, g)
         })
         .collect();
-    // the most time saved first, then money, then requests; the rest after
+    // what is wrong first; then the most time saved, money, requests; the rest after
     let some = |d: &Diagnosis| d.saves_ms > 0.0 || d.saves_cost > 0.0 || d.saves_requests > 0;
     out.sort_by(|(a, ga), (b, gb)| {
-        some(b)
-            .cmp(&some(a))
+        wrong(&findings[gb[0]])
+            .cmp(&wrong(&findings[ga[0]]))
+            .then(some(b).cmp(&some(a)))
             .then(b.saves_ms.total_cmp(&a.saves_ms))
             .then(b.saves_cost.total_cmp(&a.saves_cost))
             .then(b.saves_requests.cmp(&a.saves_requests))
             .then(ga[0].cmp(&gb[0]))
     });
-    // the findings in the diagnoses' order, each diagnosis's together
+    in_order(out, findings)
+}
+
+/// Diagnoses with their findings (by place in `findings`), as they are to
+/// be read: the findings put in that order too, each diagnosis's together,
+/// and the diagnoses' places and identities made again.
+pub(crate) fn in_order(
+    out: Vec<(Diagnosis, Vec<usize>)>,
+    findings: &mut Vec<Observation>,
+) -> Vec<Diagnosis> {
     let mut old: Vec<Option<Observation>> =
         std::mem::take(findings).into_iter().map(Some).collect();
     out.into_iter()
         .map(|(mut d, g)| {
+            d.findings.clear();
+            d.identities.clear();
             for i in g {
                 if let Some(o) = old[i].take() {
                     d.identities.push(o.identity.clone());
@@ -988,6 +1043,13 @@ fn saving_of(
     out
 }
 
+/// Whether the requests a finding takes away are time the program waits
+/// less: not a poll's, whose loop waits between tries already and whose fix
+/// (a capped backoff) waits as long, in fewer requests.
+fn saves_time(o: &Observation) -> bool {
+    o.phrases.first().is_none_or(|p| p.key != "obs.polled")
+}
+
 /// Whether acting on a finding saves something it can count: requests,
 /// time or bytes.
 fn saves(o: &Observation) -> bool {
@@ -1003,91 +1065,110 @@ fn bytes_only_cost(o: &Observation, prices: &crate::profile::RequestPrices) -> f
     }
 }
 
-/// What acting on the findings would leave, measured and not estimated: the
-/// requests the findings name are taken out of the run, and the run
-/// without them is reckoned again. The waiting is the time with a request
-/// in flight among those left (a request that ran beside another saves
-/// nothing by going), and a request one finding keeps in place of those it
-/// saves is never taken away by another's ([`Observation::kept_ids`]). The cost is the price of those left. A finding that
-/// saves time without removing a request (requests sent at once) takes its
-/// own figure off, when none of its requests is among those removed. A
-/// finding whose requests' bytes are read still, in fewer requests
+/// What acting on the findings would leave: the requests the findings name
+/// are taken out of the run, and the run without them is reckoned again.
+/// The waiting goes down by those requests' parts of it
+/// ([`crate::profile::waits_ms`]: one that ran beside seven others saves an
+/// eighth of its time), and a request one finding keeps in place of those it
+/// saves is never taken away by another's ([`Observation::kept_ids`]). The
+/// cost is the price of those left. A finding that saves time without
+/// removing a request (requests sent at once) takes its own figure off, in
+/// the part of its requests no other finding takes away. A finding whose
+/// requests' bytes are read still, in fewer requests
 /// ([`Observation::keeps_bytes`]), takes the requests away and not their
-/// bytes. A finding that does not name its requests is not counted. A run whose
-/// waiting is not known (`timed` false: an imported log's) says none, and
-/// counts no finding that saves only time.
-pub fn what_if(
-    records: &[Record],
-    profile: &Profile,
-    findings: &[Observation],
-    timed: bool,
-) -> Option<WhatIf> {
+/// bytes. A finding that does not name its requests is not counted. A run
+/// whose waiting is not known (`timed` false: an imported log's) says none,
+/// and counts no finding that saves only time.
+pub fn what_if(r: &Reckoning, findings: &[Observation]) -> Option<WhatIf> {
     let all: Vec<&Observation> = findings.iter().collect();
-    what_if_of(records, profile, &all, findings.len(), timed)
+    what_if_of(r, &all, findings.len())
 }
 
 /// [`what_if`] of some findings (`of` listed in all).
-fn what_if_of(
-    records: &[Record],
-    profile: &Profile,
-    findings: &[&Observation],
-    of: usize,
-    timed: bool,
-) -> Option<WhatIf> {
+fn what_if_of(r: &Reckoning, findings: &[&Observation], of: usize) -> Option<WhatIf> {
+    let (records, profile, timed) = (r.records, r.profile, r.timed);
     let saving: Vec<&Observation> = findings.iter().copied().filter(|o| saves(o)).collect();
     if saving.is_empty() || records.is_empty() {
         return None;
     }
-    let mut gone: std::collections::HashSet<u64> = Default::default();
+    // each request's place marked with what the findings do to it: one
+    // byte a request, not a set of ids (a million of them at a million)
+    const SAVED: u8 = 1;
+    const KEPT: u8 = 2;
+    const WITH_BYTES: u8 = 4;
+    const BYTES_KEPT: u8 = 8;
+    const TIMED: u8 = 16;
+    let mut marks = vec![0u8; records.len()];
     let mut counted: Vec<&Observation> = Vec::new();
     for o in saving.iter().filter(|o| o.saves_requests > 0) {
         if o.saved_ids.is_empty() {
             continue;
         }
-        gone.extend(o.saved_ids.iter().copied());
+        let mark = SAVED
+            | if o.keeps_bytes {
+                BYTES_KEPT
+            } else {
+                WITH_BYTES
+            }
+            | if saves_time(o) { TIMED } else { 0 };
+        for i in o.saved_ids.iter().filter_map(|id| r.by_id.place(id)) {
+            marks[i] |= mark;
+        }
         counted.push(o);
     }
     // what one finding keeps in place of what it saves stays, whatever
     // another saves: a cache's first read of a key is not also a HEAD
     // dropped before a GET the cache took away (one read is left, not none)
     for o in &counted {
-        for id in &o.kept_ids {
-            gone.remove(id);
+        for i in o.kept_ids.iter().filter_map(|id| r.by_id.place(id)) {
+            marks[i] |= KEPT;
         }
     }
+    let gone = |m: u8| m & SAVED != 0 && m & KEPT == 0;
     // the requests gone whose bytes are read still, in fewer requests (small
     // objects read from shards): unless another finding takes them away
     // with their bytes (a cache)
-    let with_bytes: std::collections::HashSet<u64> = counted
-        .iter()
-        .filter(|o| !o.keeps_bytes)
-        .flat_map(|o| o.saved_ids.iter().copied())
-        .collect();
-    let still_read: std::collections::HashSet<u64> = counted
-        .iter()
-        .filter(|o| o.keeps_bytes)
-        .flat_map(|o| o.saved_ids.iter().copied())
-        .filter(|id| gone.contains(id) && !with_bytes.contains(id))
-        .collect();
+    let still_read = |m: u8| gone(m) && m & BYTES_KEPT != 0 && m & WITH_BYTES == 0;
     // never the whole run: a request each finding keeps is among the ids
     // it does not name. Those left are added up where they are, not copied
-    let left = || records.iter().filter(|r| !gone.contains(&r.id));
+    let left = || {
+        records
+            .iter()
+            .zip(&marks)
+            .filter(|(_, m)| !gone(**m))
+            .map(|(r, _)| r)
+    };
     let moved = || {
         records
             .iter()
-            .filter(|r| still_read.contains(&r.id) && crate::profile::reached_store(r))
+            .zip(&marks)
+            .filter(|(r, m)| still_read(**m) && crate::profile::reached_store(r))
+            .map(|(r, _)| r)
     };
-    let mut waiting = crate::profile::waiting_ms_of(left());
+    // (a poll's requests go, not its time: [`saves_time`])
+    let mut waiting = profile.waiting_ms
+        - marks
+            .iter()
+            .zip(&r.waits)
+            .filter(|(m, _)| gone(**m) && **m & TIMED != 0)
+            .map(|(_, w)| w)
+            .sum::<f64>();
+    let is_gone = |id: &&u64| r.by_id.place(id).is_some_and(|i| gone(marks[i]));
     for o in saving.iter().filter(|o| timed && o.saves_requests == 0) {
-        // its figure was reckoned with every request there: with one of
-        // them gone it is another figure, and is left out
-        if o.timed_ids.is_empty()
-            || o.saves_ms > waiting
-            || o.timed_ids.iter().any(|id| gone.contains(id))
-        {
+        // its figure was reckoned with every one of its requests: those
+        // another finding takes away are not sent at once, its figure is
+        // the part of the rest (about)
+        let all = r.waited(o.timed_ids.iter());
+        let rest = r.waited(o.timed_ids.iter().filter(|id| !is_gone(id)));
+        let ms = if all > 0.0 {
+            o.saves_ms * rest / all
+        } else {
+            0.0
+        };
+        if ms <= 0.0 {
             continue;
         }
-        waiting -= o.saves_ms;
+        waiting -= ms.min(waiting.max(0.0));
         counted.push(o);
     }
     // a finding that saves bytes alone (ranges read for a whole object):
@@ -1248,6 +1329,40 @@ mod tests {
     }
 
     #[test]
+    fn each_fix_does_what_its_sdk_needs_for_it() {
+        let code = |key: &str, sdk: &str| {
+            for_key(key)
+                .into_iter()
+                .find(|f| f.sdk == sdk)
+                .unwrap()
+                .code
+        };
+        // a batch delete answers a key it did not delete in its errors, not
+        // as an error: every SDK's fix looks
+        for (sdk, errors) in [
+            ("python", "out.get(\"Errors\")"),
+            ("java", "out.errors()"),
+            ("go", "out.Errors"),
+            ("js", "out.Errors"),
+        ] {
+            assert!(code("obs.deletes", sdk).contains(errors), "{sdk}");
+        }
+        // a poll backed off asks fewer times; it is no sooner
+        for f in for_key("obs.polled") {
+            assert!(
+                f.code.contains("fewer requests, not less time"),
+                "{}",
+                f.code
+            );
+        }
+        // eight GETs at once: each body read and closed (Go's connection is
+        // kept only so)
+        assert!(at_once("GET")[2].code.contains("defer out.Body.Close()"));
+        // one PUT under the threshold: the CRT's threshold, not its part size
+        assert!(code("obs.small.parts", "java").contains("thresholdInBytes"));
+    }
+
+    #[test]
     fn no_fix_undoes_what_the_program_relies_on() {
         // throttled: the advice is to send fewer, never a larger pool than
         // the SDK's own (boto3's is 10)
@@ -1282,6 +1397,60 @@ mod tests {
         // missing, a prefix written between listings, a read of a write)
     }
 
+    /// 29.0 joined findings through a third: A with B, B with C, so A
+    /// with C, though A and C share no object.
+    #[test]
+    fn a_finding_joins_the_headline_it_is_alike_with_never_through_a_third() {
+        let rs: Vec<Record> = (0..24u64)
+            .map(|i| Record {
+                id: i + 1,
+                time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 5_000)
+                    .unwrap(),
+                method: "GET".into(),
+                kind: "GetObject".into(),
+                bucket: Some("b".into()),
+                key: Some(match i {
+                    0..4 => format!("k{i}").into(),
+                    _ => "conf.json".into(),
+                }),
+                status: Some(200),
+                latency_ms: 10.0,
+                ..Default::default()
+            })
+            .collect();
+        let eps = episodes(&rs);
+        let p = profile(&rs, &RequestPrices::default());
+        let hot = observations(&rs, &eps)
+            .into_iter()
+            .find(|o| o.phrases[0].key == "obs.hot")
+            .expect("a hot key");
+        let of = |key: &str| {
+            let id = rs
+                .iter()
+                .find(|r| r.key.as_deref() == Some(key))
+                .unwrap()
+                .id;
+            eps.iter().position(|e| e.records.contains(&id)).unwrap()
+        };
+        // A: k0 k1, B: k0 … k3, C: k2 k3; A saves the most, then B, then C
+        let finding = |name: &str, keys: &[&str], saves: usize| {
+            let mut o = hot.clone();
+            o.episodes = keys.iter().map(|k| of(k)).collect();
+            o.identity = name.into();
+            o.saves_requests = saves;
+            o.saves_ms = saves as f64;
+            o
+        };
+        let mut findings = vec![
+            finding("a", &["k0", "k1"], 3),
+            finding("b", &["k0", "k1", "k2", "k3"], 2),
+            finding("c", &["k2", "k3"], 1),
+        ];
+        let d = diagnose(&mut findings, &eps, &Reckoning::of(&rs, &p, true), None);
+        let ids: Vec<Vec<String>> = d.iter().map(|d| d.identities.clone()).collect();
+        assert_eq!(ids, [vec!["a", "b"], vec!["c"]]);
+    }
+
     #[test]
     fn acting_on_a_hot_key_leaves_one_read_and_shows_how() {
         let rs: Vec<Record> = (0..20u64)
@@ -1313,7 +1482,7 @@ mod tests {
                 .iter()
                 .any(|f| f.sdk == "python" && f.code.contains("lru_cache"))
         );
-        let w = what_if(&rs, &p, &obs, true).unwrap();
+        let w = what_if(&Reckoning::of(&rs, &p, true), &obs).unwrap();
         assert_eq!(w.requests, (20, 6));
         let waiting = w.waiting_ms.unwrap();
         assert!(waiting.1 < waiting.0 && w.cost.1 < w.cost.0);
@@ -1355,7 +1524,7 @@ mod tests {
         let p = profile(&rs, &prices);
         let obs = observations(&rs, &episodes(&rs));
         assert!(obs.iter().any(|o| o.phrases[0].key == "obs.headget"));
-        let w = what_if(&rs, &p, &obs, true).unwrap();
+        let w = what_if(&Reckoning::of(&rs, &p, true), &obs).unwrap();
         assert_eq!(w.requests, (9, 6));
         // 195 ms of waiting, of which the three HEADs were 6: not a third of it
         assert_eq!(w.waiting_ms, Some((195.0, 189.0)));
@@ -1363,7 +1532,10 @@ mod tests {
         assert!((w.cost.0 - 0.0174).abs() < 1e-9, "{:?}", w.cost);
         assert!((w.cost.1 - 0.0162).abs() < 1e-9, "{:?}", w.cost);
         // and it is the same on every reading
-        assert_eq!(what_if(&rs, &p, &obs, true), Some(w.clone()));
+        assert_eq!(
+            what_if(&Reckoning::of(&rs, &p, true), &obs),
+            Some(w.clone())
+        );
         assert_eq!(
             w.line(None),
             "in all (1 finding): waiting 195 ms → 189 ms · 9 → 6 requests",
@@ -1396,7 +1568,7 @@ mod tests {
         vague.saved_ids.clear();
         vague.phrases[0].key = "obs.listed";
         obs.push(vague.clone());
-        let w = what_if(&rs, &p, &obs, true).unwrap();
+        let w = what_if(&Reckoning::of(&rs, &p, true), &obs).unwrap();
         assert_eq!((w.findings, w.of_findings), (1, 2));
         assert_eq!(w.requests, (20, 1));
         assert!(
@@ -1407,6 +1579,6 @@ mod tests {
             w.line(None)
         );
         // nothing that can be counted: nothing is said
-        assert_eq!(what_if(&rs, &p, &[vague], true), None);
+        assert_eq!(what_if(&Reckoning::of(&rs, &p, true), &[vague]), None);
     }
 }

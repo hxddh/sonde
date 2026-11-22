@@ -165,19 +165,15 @@
               },
               "predicted": {
                 "$ref": "#/$defs/saving",
-                "description": "What acting on it was predicted to save: beside `saved`, when there is one."
-              },
-              "withinNoise": {
-                "type": "boolean",
-                "description": "Present (true) when the run's wall time moved by less than the program's runs vary (`noiseMs`): what it saved is not told from noise."
+                "description": "What acting on it was predicted to save, as the plan said it in the run it was found in (its time from the plan's ranking): beside `savedRequests`, when there is one."
               },
               "savedText": {
                 "type": "string",
-                "description": "Display text, not stable: the run's wall time against the predicted (`1.2 s less (predicted 1.5 s)`), or `within noise`."
+                "description": "Display text, not stable: its own requests saved, beside the time it was predicted to save (`40 fewer requests (predicted 1.5 s less)`). Absent when it saved no request and predicted no time. The run's time is said once, in the change (`wallMs`, `withinNoise`)."
               },
-              "saved": {
-                "$ref": "#/$defs/saving",
-                "description": "What it saved, measured between the runs (fixed, less): the requests of its own asks, and what the run's wall time (`ms`) and cost fell by (negative: they grew)."
+              "savedRequests": {
+                "type": "integer",
+                "description": "The requests of its own asks the later run did not send, measured between the runs (fixed, less). Never the run's time: that is the run's (`change.wallMs`), said once."
               }
             },
             "required": [
@@ -225,7 +221,7 @@
     },
     "diagnoses": {
       "type": "array",
-      "description": "The plan: findings that share a root cause are one diagnosis, with one saving and one fix (its headline finding's). Those that save the most time first, then money, then requests; the rest after: the first is the one to make. Each finding is in one diagnosis.",
+      "description": "The plan: findings that share a root cause are one diagnosis, with one saving and one fix (its headline finding's). What is wrong first (a warning that saves nothing: a lost update, a trial that broke), then those that save the most time, then money, then requests; the rest after: the first is the next step. Each finding is in one diagnosis.",
       "items": {
         "$ref": "#/$defs/diagnosis"
       }
@@ -1175,6 +1171,19 @@
           ],
           "items": false
         },
+        "objects": {
+          "type": "array",
+          "description": "The objects each run asked of (each key, each prefix listed, once): what its workload is judged by.",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
         "wallMs": {
           "type": "array",
           "prefixItems": [
@@ -1293,15 +1302,19 @@
         },
         "commandChanged": {
           "type": "string",
-          "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `measured` or `saved`."
+          "description": "Display text, not stable: how the command changed between two runs of one program (a named one's), `--limit 200 → 20`. Present only then: fixed, less and more carry no `savedRequests` or `savedText`."
         },
         "workloadChanged": {
           "type": "string",
-          "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`requests 120 → 402, 3.4×`): grown by half or more, or shrunk by a third or more below what fixing the first run's findings would leave. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+          "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`objects 120 → 402, 3.4×`), by the objects each asked of: grown by half or more, or shrunk by a third or more below what the first run's findings fixed or less did away with (small files written as fewer). Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `savedRequests` or `savedText`."
         },
         "noiseMs": {
           "type": "number",
-          "description": "How much the program's wall time varies run to run, in ms: the spread of its last runs of the same command (up to 5). A saving under it is within noise. Absent with fewer than two earlier runs (no band), or with `--since`."
+          "description": "How much the program's wall time varies run to run, in ms: of its runs before the later one alike in command and findings (no fix between them, up to 5), the largest move from one to the next. Absent with fewer than two such runs (no band)."
+        },
+        "withinNoise": {
+          "type": "boolean",
+          "description": "Present (true) when the run's wall time moved by less than `noiseMs`: what moved is not told from noise, run it again."
         },
         "endpoints": {
           "type": "array",
@@ -1350,6 +1363,7 @@
       },
       "required": [
         "requests",
+        "objects",
         "wallMs",
         "waitingMs",
         "errors",
@@ -1382,7 +1396,7 @@
     },
     "timeAccount": {
       "type": "object",
-      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving.",
+      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving. Absent for an import, a replay, or a run with no command (`run --listen`): their idle time is no program's own.",
       "properties": {
         "wallMs": {
           "type": "number",
@@ -1394,7 +1408,11 @@
         },
         "waitingMs": {
           "type": "number",
-          "description": "With a request in flight."
+          "description": "With a request in flight, S3's (not `injectedMs`)."
+        },
+        "injectedMs": {
+          "type": "number",
+          "description": "With only requests a trial's fault held or answered in flight: sonde's time, not S3's nor the program's. Absent when none."
         },
         "requests": {
           "type": "integer"
@@ -1444,7 +1462,7 @@
     },
     "diagnosis": {
       "type": "object",
-      "description": "Findings that share a root cause (at least half of each one's objects are the other's), as one change, with what an agent needs to make it: what (`text`, `kind`), where (`at`), the `fix`, what it saves. Requests one after another join the diagnosis that owns most of them.",
+      "description": "Findings that share a root cause (at least half of each one's objects are its headline's, and the headline's theirs), as one change, with what an agent needs to make it: what (`text`, `kind`), where (`at`), the `fix`, what it saves. Requests one after another join the diagnosis that owns most of them.",
       "properties": {
         "id": {
           "type": "string",
@@ -1470,7 +1488,7 @@
         },
         "savesMs": {
           "type": "number",
-          "description": "Time of the run acting on it saves: its findings' requests taken out together and the waiting reckoned again (never their sum)."
+          "description": "Time of the run acting on it saves: its findings' requests taken out together, each request's part of the waiting off (a moment's waiting split among the requests then in flight), never their sum."
         },
         "savesCost": {
           "type": "number",
@@ -1482,6 +1500,26 @@
         "savingText": {
           "type": "string",
           "description": "Display text, not stable."
+        },
+        "atOnce": {
+          "type": "object",
+          "description": "Its requests one after another (`obs.serial`), counted: sent `concurrency` at once, they save `savesMs` on their own.",
+          "properties": {
+            "requests": {
+              "type": "integer"
+            },
+            "concurrency": {
+              "type": "integer"
+            },
+            "savesMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "requests",
+            "concurrency",
+            "savesMs"
+          ]
         },
         "kind": {
           "type": "string",

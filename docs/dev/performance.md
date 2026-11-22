@@ -35,6 +35,13 @@ The same 1 KiB GET against a local RustFS, 2 000 times direct and 2 000 through 
 
 Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in the `record` job.
 
+**The program's sockets send at once** (`TCP_NODELAY`, as the store-facing ones always did). Without it an answer of
+a few pieces (8–64 KiB) waited ~40 ms on Nagle and the program's delayed ACK, a wait no record could see
+(`crates/proxy/tests/timing.rs`: 44 ms a GET through sonde against 0.1 ms direct, the record saying 1.1 ms; now
+1.1–1.6 ms, the record within 0.5 ms). `footer_v1.py` (91 serial requests, boto3, moto behind 25 ms), measured 2026-11-22: 4.3–4.5 s
+through 29.0, "your program's own 1.5–1.6 s"; 2.9–3.2 s through 30.0, own 0.2–0.3 s; ~3.0 s direct (3.3–3.6 s less
+Python's 0.5 s start).
+
 ## Large runs
 
 **A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `show --since` of two, about 500 MiB
@@ -82,6 +89,19 @@ How:
 - **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
   gets a page of operations at a time; `show --since` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
+
+## The plan
+
+A finding's time saved is its requests' parts of the waiting ([findings](../cli.md#findings)), reckoned
+in one pass over the run and summed per finding; 29.0 reckoned the run again for each finding (its intervals
+collected and sorted, its cost and bytes added up), a fifth more time at a million. Measured 2026-11-22 (30.0) on a
+shared 4 vCPU VM (load 3–6, other builds running), the same binaries alternated:
+
+| A million requests | v28.0.0 | v29.0.0 | 30.0 |
+| --- | --- | --- | --- |
+| the budget's `show` (4 runs each, median, range) | 10.7 s (9.1–11.4) | 11.3 s (9.3–12.8) | 9.6 s (9.3–10.7) |
+| its peak memory | 343–352 MiB | 343–348 MiB | 346–354 MiB |
+| the scale example's `plan:` (rank, in all, diagnoses; 3 runs) | | 2.0–2.4 s | 0.98–1.09 s |
 
 ## Headless UI
 

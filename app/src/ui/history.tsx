@@ -13,7 +13,7 @@ import { api } from "../native";
 import { copy, report, runsChanged, runsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, textual, SIZES, TEXT } from "./kit";
 import { cost, RunTrend } from "./plots";
 import { programOf, scrubCommand } from "./runview";
 
@@ -51,29 +51,6 @@ export interface VerdictRow {
   trial: Trial | null;
   state: "waiting" | "running" | "done";
   onOpen?: () => void;
-}
-
-/** What to change for a verdict, in the reader's language (a sentence of its own: its first letter raised);
- * none for one that survived or gives no advice. */
-export function adviceOf(x: Trial | null): string | null {
-  const a = !x || x.standing === "survived" ? null : x.finding?.advice;
-  const said = a ? say([{ key: a.key, args: a.args ?? {} }], "") : "";
-  return said ? said.charAt(0).toUpperCase() + said.slice(1) : null;
-}
-
-/** The verdicts grouped by their advice, each advice said once over the scenarios it is for, in the order the
- * advice first comes; then the verdicts with none (survived, untested); then the scenarios not judged yet. */
-export function groupByAdvice<R extends { trial: Trial | null }>(rows: R[]): { advice: string | null; rows: R[] }[] {
-  const groups = new Map<string, { advice: string | null; rows: R[] }>();
-  const plain: R[] = [];
-  const pending: R[] = [];
-  for (const r of rows) {
-    const a = adviceOf(r.trial);
-    if (!r.trial) pending.push(r);
-    else if (!a) plain.push(r);
-    else groups.set(a, { advice: a, rows: [...(groups.get(a)?.rows ?? []), r] });
-  }
-  return [...groups.values(), ...(plain.length ? [{ advice: null, rows: plain }] : []), ...(pending.length ? [{ advice: null, rows: pending }] : [])];
 }
 
 /** What a trial found, in figures: the faults and their retries (and those
@@ -158,37 +135,8 @@ function VerdictLine(props: { row: VerdictRow; first: boolean; testID: string; h
   );
 }
 
-/** A trial's verdicts, one way wherever they are drawn (the trial's dialog, the Runs pane): grouped by what to
- * change, each advice said once over its scenarios, a line each. `id` names the rows (`${id}-${scenario}`). */
-export function TrialVerdicts(props: { rows: VerdictRow[]; id: string; historyID: string }) {
-  const groups = () => groupByAdvice(props.rows);
-  return (
-    <Card pad="none" testID={`${props.id}s`}>
-      <Each of={groups()}>
-        {(g, gi) => (
-          <>
-            <If when={g().advice}>
-              {(a) => (
-                <Row first={gi() === 0} testID="trial-advice">
-                  <View class="min-h-5 shrink-0 justify-center">
-                    <Icon name="sparkles" size={ICON.small} />
-                  </View>
-                  <Text class={`min-w-0 flex-1 ${TEXT.small} leading-5`}>{a()}</Text>
-                </Row>
-              )}
-            </If>
-            <Each of={g().rows}>
-              {(r, i) => <VerdictLine row={r()} first={gi() === 0 && i() === 0 && !g().advice} testID={`${props.id}-${r().scenario}`} historyID={`${props.historyID}-${r().scenario}`} />}
-            </Each>
-          </>
-        )}
-      </Each>
-    </Card>
-  );
-}
-
-/** The run under faults, on its History: its verdicts grouped by what to change; a press opens a trial's own
- * run (a row whose run is gone only says what it found). A trial under way fills them as it goes, with how far
+/** The run under faults, on its History: a row per scenario, its verdict at its end; a press opens a trial's own
+ * run (a row whose run is gone only says what it found), where what broke is a finding with its fix. A trial under way fills them as it goes, with how far
  * it is and its Stop; else "Run trials again" asks the plan again. */
 function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; path: string; onTrials?: () => void }) {
   // this run's trial while it runs, and once it ended until the kept verdicts are read
@@ -229,7 +177,9 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; path:
         </If>
       }
     >
-      <TrialVerdicts rows={rows()} id="trial" historyID="trial-history" />
+      <Card pad="none" testID="trials">
+        <Each of={rows()}>{(r, i) => <VerdictLine row={r()} first={i() === 0} testID={`trial-${r().scenario}`} historyID={`trial-history-${r().scenario}`} />}</Each>
+      </Card>
     </Section>
   );
 }

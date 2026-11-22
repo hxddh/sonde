@@ -301,7 +301,13 @@ pub async fn start() -> std::io::Result<DemoServer> {
                             Ok(n) => buf.extend_from_slice(&chunk[..n]),
                         }
                     }
-                    let body = buf[head_end + 4..head_end + 4 + len].to_vec();
+                    let mut body = buf[head_end + 4..head_end + 4 + len].to_vec();
+                    if headers
+                        .iter()
+                        .any(|(k, v)| k == "x-amz-content-sha256" && v.starts_with("STREAMING-"))
+                    {
+                        body = unchunk(&body);
+                    }
                     buf.drain(..head_end + 4 + len);
                     let read = tokio::time::Instant::now();
                     let (status, extra, payload) = handle(&state, &request_line, &headers, body);
@@ -413,6 +419,28 @@ fn decode(s: &str) -> String {
     percent_encoding::percent_decode_str(s)
         .decode_utf8_lossy()
         .to_string()
+}
+
+/// An `aws-chunked` body's payload, as S3 stores it: the chunks' data
+/// without their sizes, signatures and trailer (the proxy sends a signed
+/// one with a checksum on framed again, unsigned).
+fn unchunk(body: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
+        let size = String::from_utf8_lossy(&rest[..eol]);
+        let size = size.split(';').next().unwrap_or("").trim();
+        let Ok(n) = usize::from_str_radix(size, 16) else {
+            break;
+        };
+        let data = &rest[eol + 2..];
+        if n == 0 || data.len() < n {
+            break;
+        }
+        payload.extend_from_slice(&data[..n]);
+        rest = data[n..].strip_prefix(b"\r\n").unwrap_or(&data[n..]);
+    }
+    payload
 }
 
 fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: Vec<u8>) -> Resp {
@@ -1407,6 +1435,42 @@ mod commits {
             took[took.len() / 2] < 20.0,
             "the median answer took {:.1} ms: {took:?}",
             took[took.len() / 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aws_chunked_upload_stores_its_payload_not_its_framing() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // as the proxy sends a signed one with a checksum (the Java SDK's,
+        // boto3's, JS's): unsigned chunks of 64 KiB and a trailer
+        let payload: Vec<u8> = (0..256u32 << 10).map(|i| (i % 251) as u8).collect();
+        let mut body = Vec::new();
+        for c in payload.chunks(64 << 10) {
+            body.extend(format!("{:x}\r\n", c.len()).as_bytes());
+            body.extend(c);
+            body.extend(b"\r\n");
+        }
+        body.extend(b"0\r\nx-amz-checksum-crc32:AAAAAA==\r\n\r\n");
+        let (server, c) = demo().await;
+        let mut s = tokio::net::TcpStream::connect(server.addr).await.unwrap();
+        let head = format!(
+            "PUT /demo/chunked HTTP/1.1\r\nhost: demo\r\ncontent-encoding: aws-chunked\r\n\
+             x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER\r\n\
+             x-amz-decoded-content-length: {}\r\nx-amz-trailer: x-amz-checksum-crc32\r\n\
+             content-length: {}\r\n\r\n",
+            payload.len(),
+            body.len()
+        );
+        s.write_all(head.as_bytes()).await.unwrap();
+        s.write_all(&body).await.unwrap();
+        let mut answer = [0u8; 12];
+        s.read_exact(&mut answer).await.unwrap();
+        assert_eq!(&answer, b"HTTP/1.1 200");
+        let got = c.get_object("demo", "chunked", None).await.unwrap();
+        assert_eq!(got.body.len(), payload.len());
+        assert!(
+            got.body.as_ref() == payload.as_slice(),
+            "the payload, whole"
         );
     }
 }

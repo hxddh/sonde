@@ -245,7 +245,7 @@ jobs:
   record:
     # sonde run with four AWS SDKs, the AWS CLI (the runner's v2, and its
     # image through `run -- docker run`), polars, DuckDB and one --tls pass against
-    # RustFS, and the proxy's overhead
+    # RustFS, the proxy's overhead, and the boto3 fixes sonde prints run under it
     runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: rustfsadmin
@@ -269,6 +269,9 @@ jobs:
           docker compose -f tests/integration/docker-compose.yml --profile rustfs up -d rustfs
           until curl -s -o /dev/null -m 2 http://127.0.0.1:9100; do sleep 2; done
       - run: cargo build -p sonde-cli
+      - name: The boto3 fixes sonde prints, run under it
+        env: { SONDE_BOTO3: "1" }
+        run: cargo test -p sonde-cli --test boto3_fixes
       - name: The smoke programs through sonde run
         env: { SMOKE_RUNS: runs }
         run: scripts/sdk-smoke.sh --url http://127.0.0.1:9100

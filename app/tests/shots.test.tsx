@@ -128,7 +128,9 @@ for (const v of variants) {
       if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
       await chooseFrom(() => app.press("id:run-more"), v.lang ? zh : label);
     };
+    // (Runs pressed in Runs is a new run, its command bar: there already, the run shown stays)
     const go = async (area: string) => {
+      if (area === "runs" && app.shows("id:screen-runs")) return;
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
     };
@@ -189,9 +191,9 @@ for (const v of variants) {
     await app.press("id:finding-apply");
     await app.waitFor("id:since-run", { timeout: 30000 });
     await charts("01b-demo-fixed");
-    // a new run: Runs' command bar, as the user's own program finds it
+    // a new run: Runs' command bar, as the user's own program finds it (Runs pressed again, in Runs)
     await go("runs");
-    await app.press("id:new-run");
+    await app.press("id:nav-runs");
     await app.waitFor("id:run-new", { timeout: 15000 });
     await shot("02-run");
     // recording a program started elsewhere: what it asks before it starts
@@ -226,7 +228,7 @@ for (const v of variants) {
     await ended();
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
-      await app.press("id:new-run");
+      await app.press("id:nav-runs");
       await app.clear("id:run-command");
       await enter(app, "id:run-command", command(!cmd, marker));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
@@ -236,12 +238,12 @@ for (const v of variants) {
     await ranView().catch(() => {
       throw new Error("the tour's program reached no store in either shell's form: the run has no requests to show");
     });
-    // the run's own view: its output beside its operations
+    // the run's own view, on its Output: its output beside its operations
     await app.waitFor("id:output", { timeout: 10000 });
     await charts("02b-ran");
     // run again from the command bar, the program fixed meanwhile (its config not read again):
     // what changed since the run before, the finding fixed with what it saved
-    await app.press("id:new-run");
+    await app.press("id:nav-runs");
     await app.waitFor("id:run-command");
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
@@ -290,8 +292,8 @@ for (const v of variants) {
     await app.press("id:trial-open-clean");
     await app.waitFor("id:trial-note", { state: "gone", timeout: 20000 });
     await app.waitFor("id:run-summary", { timeout: 10000 });
-    // the program's output lined up with what it did, beside its operations (the committed run kept its output)
-    await app.press("id:run-pane-mode-operations");
+    // the program's output lined up with what it did, beside its operations, on Output (the committed run kept its output)
+    await app.press("id:run-pane-mode-output");
     await app.waitFor("id:output", { timeout: 5000 }).catch(() => {
       throw new Error("the committed run has no output to line up beside its operations (tests/fixtures/runs)");
     });
@@ -449,9 +451,9 @@ for (const v of variants) {
       await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
     }
     await app.waitFor("id:run-change", { timeout: 10000 });
-    // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
+    // (the two runs' profiles arrive after the change: a picture taken at once showed the charts empty)
     await app.wait(1500);
-    await charts("03h-runs");
+    await charts("03p-compare");
     await app.press("id:compare-back");
 
     // will it work on another store: On another store… (in ⋯) says what its replay would send first

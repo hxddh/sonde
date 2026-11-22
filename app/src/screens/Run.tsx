@@ -9,7 +9,7 @@ import { cleanup, effect, resource, signal, Text, View, type ViewRef } from "nsh
 import { Terminal, type TerminalRef } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
-import { command, cwd, input, lastRun, onOutput, output, policy, resize, running, start, startedAt } from "../run";
+import { busy, command, cwd, input, lastRun, onOutput, output, policy, resize, running, start, startedAt } from "../run";
 import { endpoint, endpoints, report } from "../store";
 import type { SuggestedCommand } from "../types";
 import { Icon } from "../ui/icon";
@@ -30,8 +30,9 @@ const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).po
  * said at the field's start (as a shell's prompt does) only when they are not the usual. */
 function CommandBar() {
   let more: ViewRef | undefined;
-  // a press says why it cannot run (no command, no endpoint), never a control that does nothing
+  // a press says why it cannot run (another program running, no command, no endpoint), never a control that does nothing
   const run = () => {
+    if (running()) return busy();
     if (!command().trim()) return report({ kind: "config", message: t("run.needCommand") });
     const id = endpoint();
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
@@ -72,7 +73,7 @@ function CommandBar() {
           trailing={<IconButton inField ref={(r) => (more = r)} icon="ellipsis" label={t("run.options")} testID="run-options" onPress={options} />}
         />
         {/* the one primary of the place */}
-        <Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!!running()} testID="run-start" />
+        <Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} testID="run-start" />
       </View>
       <If when={!endpoints().some((e) => e.id === endpoint())}>
         <View class="flex-row items-center gap-2">

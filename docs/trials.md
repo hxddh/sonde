@@ -174,7 +174,8 @@ The program broke under 1 of 1.
     at etl.py:12 save (1 request)
     fix for boto3:
       # boto3 1.43 did not send it again: turn its retries on (…)
-      boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
+      from botocore.config import Config
+      s3 = boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
 ```
 
 ## Trying again
@@ -204,7 +205,8 @@ slowdown now`, `· open`, `! new` (in `show`, among `since.findings`); `run` say
 
 **In the app**: *Try under faults…* in a run's `⋯`. The dialog lists the
 scenarios with a box to leave each out, warns without `{trial}`; what the program may do is the dialog's policy; Cancel keeps nothing.
-Verdicts stay on the Runs pane; a row opens its trial run (cannot be run again, renamed or made a baseline).
+Verdicts stay on the run's History, a row per scenario; a row opens its trial run (cannot be run again, renamed or
+made a baseline), and what to change is the trial finding's fix, in the inspector.
 Injected requests are marked "Injected by sonde"; the runs list marks runs whose trial broke.
 
 ## A project's own scenarios

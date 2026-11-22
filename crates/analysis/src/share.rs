@@ -255,21 +255,16 @@ pub fn write_run_json(
     let profile = crate::profile::profile(&s.records, prices);
     let timed = !s.header.whole_seconds;
     let mut observations = crate::episode::observations_of(&s.header, &s.records, &eps);
-    crate::fixes::rank_by_saving(&mut observations, &s.records, &profile, timed);
+    let reckoning = crate::fixes::Reckoning::of(&s.records, &profile, timed);
+    crate::fixes::rank_by_saving(&mut observations, &reckoning);
     let month = crate::month::month(
         &s.header,
         summary.seconds,
         profile.cost.amount,
         &profile.cost.currency,
     );
-    let diagnoses = crate::fixes::diagnose(
-        &mut observations,
-        &eps,
-        &s.records,
-        &profile,
-        timed,
-        month.as_ref(),
-    );
+    let diagnoses = crate::fixes::diagnose(&mut observations, &eps, &reckoning, month.as_ref());
+    drop(reckoning);
     let time = crate::summary::time_account(&s.records, &summary, &profile, &s.header);
     let mut w = JsonOut::new(out, false);
     w.begin_object()?;
