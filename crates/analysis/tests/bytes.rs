@@ -155,6 +155,17 @@ fn a_versioned_buckets_overwrites_say_what_their_old_versions_cost() {
         "{:?}",
         c.line()
     );
+    // versions under a cent a month are not worth a line (28.0 said
+    // "≈ <0.000001 USD a month")
+    let mut rs = Vec::new();
+    for i in 0..3u64 {
+        let mut put = v(rec(i + 1, "PutObject", "state.json", 0), &format!("v{i}"));
+        put.request_bytes = Some(1536).into();
+        rs.push(put);
+    }
+    let c = profile(&rs, &RequestPrices::default()).cost;
+    assert_eq!(c.storage.noncurrent, 2);
+    assert_eq!(c.line(), None);
 }
 
 /// DuckDB and pyarrow read a Parquet file's footer for each query.
@@ -180,6 +191,17 @@ fn a_footer_read_again_by_each_query_is_a_range_read_again() {
     assert_eq!(o.kind, "obs.rangeagain");
     assert_eq!(o.identity, "obs.rangeagain|lake");
     assert!(!o.fixes.is_empty());
+    // one object is one object (28.0: "29 ranges of 1 objects")
+    let rs: Vec<Record> = (0..12u64)
+        .map(|i| ranged(i + 1, "events/one.parquet", "bytes=0-99", 100))
+        .collect();
+    let one = findings(&rs);
+    let o = find(&one, "obs.rangeagain").expect("a range read again");
+    assert!(
+        o.text.starts_with("11 ranges of 1 object under"),
+        "{}",
+        o.text
+    );
     // a range read again after the object was written is another object
     let mut rs = Vec::new();
     for i in 0..12u64 {

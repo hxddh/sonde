@@ -2284,6 +2284,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("n", n.to_string()),
                         ("m", objects.to_string()),
+                        ("os", plural(objects)),
                         ("size", human(again_bytes)),
                         (
                             "prefix",
@@ -2370,6 +2371,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     &[
                         ("n", whole.len().to_string()),
                         ("m", whole_objects.len().to_string()),
+                        ("os", plural(whole_objects.len())),
                         ("size", human(whole_bytes)),
                         (
                             "prefix",
