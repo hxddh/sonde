@@ -10,7 +10,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-006 | Rust ↔ TSX types | typed `JsObject` structs; JSON | **JSON, mirrored by `app/src/types.ts`**: NSH traits on core types would break the layering. |
 | D-007 | Static keys in the UI | a form field; config file only | **Config file only** (`config.toml`, 0600): a typed key would pass through the JS VM. |
 | D-009 | Hermetic UI tests | mock in TSX; a server | **A demo S3 server (`sonde-core::demo`)**: real HTTP through the real client; also `sonde tui --demo`. |
-| D-010 | The terminal host | `nsh-tui-host`; our own loop | **Our own loop on `nsh-platform-tui`** (FINDINGS #2): one binary with the bundle and sonde's CLI. |
+| D-010 | The terminal host | `nsh-tui-host`; our own loop | ~~Our own loop on `nsh-platform-tui`~~ — superseded by D-291: no terminal UI. |
 | D-013 | Second S3 implementation for CI | Ceph RGW; Garage; SeaweedFS | **Ceph RGW and RustFS**: the spec asks for Ceph; RustFS starts in seconds. MinIO optional (D-023). |
 | D-014 | Iceberg sample | hand-written; pyiceberg | **pyiceberg 0.9.1** (`tools/gen_iceberg.py`): a real table with every kind of change. |
 | D-015 | Woodpecker sample | a running Woodpecker; its codec | **Its own codec** (`tools/gen-woodpecker`, commit 3a8ce69): running it needs etcd and MinIO. |
@@ -27,7 +27,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-026 | How the recorder sees requests | HTTPS MITM; an endpoint that re-signs | **An endpoint that re-signs**: no CA to install, and the program never holds the real credentials. |
 | D-027 | 404 on GET/HEAD | errors; their own count | **"not found"**: formats probe for keys that do not exist yet (116 of SlateDB's 172 requests). |
 | D-028 | Replay | re-send bytes; re-enact | **Re-enact** (synthetic payloads, mapped ids, a fresh prefix): sessions hold no object data, and stores issue their own ids. |
-| D-029 | Direction for 2.0 | more sections; one place to start | **Run is the home**: a command beside its operations is the shortest path to the point. |
+| D-029 | Direction for 2.0 | more sections; one place to start | ~~Run is the home~~ — superseded by D-292: Runs is the one place for runs. |
 | D-031 | Plugins | keep; remove | **Remove**: their cost (signing, trust, sandbox) outweighed views that opened only in the terminal. Supersedes D-011, D-012. |
 | D-032 | The program's output | a log file; in the session | **In the session** (`{"log": …}` lines): one file, one clock. |
 | D-033 | Sharing a session | a hosted service; a static site | **A static site** (`sonde share`): nothing to run, any host. |
@@ -102,7 +102,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-107 | Charts | each its own; a registry and a lint | **One frame (`Chart`) and registries** checked by `scripts/lint-charts.py`. |
 | D-108 | A narrow pane | wrap and clip; rank | **Rank**: the lowest figures and columns leave first; nothing clipped mid-word. |
 | D-109 | Rust's sentences in Chinese | translate in Rust; phrases | **Phrases** (`decoders::phrase`; their words are `phrase.*` in `app/locales`); a test fails on a key without a template. The CLI stays English. |
-| D-111 | A trial in the app | a row of verdicts; a marked session | **A marked session**, in no list (D-099); refused on a read-only endpoint. |
+| D-111 | A trial in the app | a row of verdicts; a marked session | **A marked session**, in no list (D-099), and a run's row says nothing of its trials; refused on a read-only endpoint. |
 | D-112 | "Acting on N findings" | an estimate; the requests named | **The named requests, subtracted**: the estimate overstated tiny HEADs. |
 | D-113 | Moving the Native Shell pin | with UI work; last | **Last, alone**: a moved pixel has one cause. |
 | D-114 | A trial's name in a key | as written; taken out | **Taken out as a whole word**: `etl-{trial}` differs per run. |
@@ -227,8 +227,8 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-243 | Compatibility | every probe in Settings; what the program relies on | **Only the probes matching what the run used**, asked from a run (⋯ › On another store…); `probe` stays the catalogue. |
 | D-244 | Typed confirmation | always; above 100 | **Above 100 items, or a lifecycle**; below, a plain confirm. |
 | D-245 | Surfaces | cards in cards; one level | **One surface level**: tables fill their pane; a folded one-line run header on short panes and on Time and History. |
-| D-246 | A chart pressed with no mark under the pointer | nothing; its weightiest row | **The row that weighs most** (`pressedRow`); a chart's how-to-read is a popover. |
-| D-247 | What simplifying may take | anything quiet; nothing read | **Nothing a user reads**: the run header folds only on scroll; check-locales fails a release whose dropped phrases its changelog does not name. |
+| D-246 | A chart pressed with no mark under the pointer | nothing; its weightiest row | **The row that weighs most** (`pressedRow`); a chart's how-to-read is a popover from its title, no mark beside it. |
+| D-247 | What simplifying may take | anything quiet; nothing read | **Nothing a user reads**: the run header is one line of figures at every size (their detail in each one's tooltip); check-locales fails a release whose dropped phrases its changelog does not name. |
 | D-248 | A run's line in the sidebar | its argument or its requests; both, and what sent them | **Client · endpoint · requests**, the client read from user agents while counting (an application before its SDK; two when both send 10%). |
 | D-249 | Common mistakes | the kinds there were; four more, merged | **Small writes, single deletes, unconditional read-modify-write, a polled missing key**; throttling one kind, orphans one kind (identity rules 4). |
 | D-250 | Same-key reads | 10% of the run; a floor | **Per stretch between writes, at least 10 reads saving 1%** of requests or cost. |
@@ -248,7 +248,7 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-264 | `max-transfer` | budget and baseline; budget | **A budget only**: data volume varies from run to run. |
 | D-265 | `obs.wholeread`'s evidence | the format; ranges of the same object | **Range reads of the same object in the run**: no guessing which formats are read in part. |
 | D-266 | The welcome's demo | a curl or python command; a job sonde plays | **A job the app plays** behind `sonde demo-job export.py`, which the CLI runs too: every system, nothing installed. |
-| D-267 | Where the demo lands | Run; Runs | **Runs, on its first finding**: Run's intro stays as a newcomer's own program finds it. |
+| D-267 | Where the demo lands | Run; Runs | **Runs, on its first diagnosis** (D-292). |
 | D-268 | rclone and DuckDB | by hand; flags; variables; `-init` | **`RCLONE_S3_*` on every run; DuckDB's `-init` with `SET s3_*`** (no keys in it: DuckDB reads `AWS_*`). |
 | D-269 | An object request sonde cannot name | the method's operation; `Unknown`; `x-id` | **`x-id` when it names one, else `Unknown`**: an unknown write must not pass `no-delete` as PutObject. |
 | D-270 | RenameObject under `no-delete` | allow; refuse | **Refuse**: it removes its source key. |
@@ -266,3 +266,12 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-282 | A signed header value that is not ASCII | forward raw bytes; UTF-8 text, others refused | **UTF-8 text, others refused** with a reason: raw bytes would turn the whole signing path into bytes, for clients AWS rejects anyway. |
 | D-283 | A request naming an object subresource and an `x-id` | `x-id`; the subresource | **The subresource**: `x-id` is the client's to set; the subresource decides what the store does (and what no-delete guards). |
 | D-284 | A layout listing that reached its cap | list on without a cap; say so and stop judging | **Say so and stop judging** missing and orphaned files: past the cut is unknown, and the cap keeps the window responsive. |
+| D-285 | What a finding is worth | money, then time, then requests; the run's wall time saved | **The run's wall time saved**, each finding's from the what-if without its requests, money beside it from a cent: a request count said "saved 20" while the run took 30% longer, and money ranked a $0.00001 poll over 96% of the waiting. |
+| D-286 | Findings with one root cause | each its own; one diagnosis | **One diagnosis** when half of each one's objects are the other's (objects, not requests or callers: the same objects written, read and HEADed are one cause; a key read again among them is its own), one saving from the what-if over the union, one fix; requests one after another are an attribute of the diagnosis that owns them. |
+| D-287 | A fix measured | the requests it removed; the run's time and money against the program's spread | **The run's time and money**, "within noise" under the spread of the program's last 5 runs of the command; `back` merged into new and more, judged by absolute counts, as a threshold relative to the run read one count as a return. |
+| D-288 | A fault not survived | a verdict with advice; a finding | **A `trial` finding** with its line and the SDK's fix, in the same list and fix loop; `--again` went: every trial runs every scenario and the loop says what got fixed. |
+| D-289 | What a run again prints | the plan; what changed | **What changed**: fixed with what it saved, open a line each, new in full; the plan was read on the first run and `show` keeps it. In agent JSON a diagnosis is whole (text, `at`, fix, saving): `diagnoses[0]` is the next step. |
+| D-290 | One command per question | overlaps kept; folded | **Folded**: comparing runs is `show --since`, probing is `endpoints test --probes`, a standing endpoint is `run --listen`; each overlap had two code paths and two sets of docs. |
+| D-291 | A terminal UI | kept; none | **None**: the desktop app, the CLI's JSON and a share's page cover its users; one form halves the app's code paths (180 terminal branches). |
+| D-292 | Where a program is run in the app | Run; Runs | **Runs**: with no run chosen it is the command bar, and a run in progress is the newest run, its terminal beside its operations; Run duplicated Runs' view. Places: Runs, Buckets, Settings; Activity a panel. |
+| D-293 | `check` without a baseline | a request budget; the open findings too | **The open findings too** (`[check.findings]`, by counts; requests one after another past a fifth more, as timing moves them): CI catches a new finding with no baseline. |
