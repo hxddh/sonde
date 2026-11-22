@@ -94,7 +94,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const read = analysis(() => props.path, () => `${props.tick()}:${trialsKept()}`);
   const view = read.view;
   // the run against its program's run before: its findings' states, what was fixed
-  const since = sinceLastOf(() => props.path);
+  const since = sinceLastOf(() => props.path, () => running()?.path === props.path);
   // a trial's run: the clean run it is judged against, for the Time pane to draw it over
   const clean = analysis(() => view()?.trial?.clean ?? null);
   // the program's budget, for the Time pane's lines: read once per run shown

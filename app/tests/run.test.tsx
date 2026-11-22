@@ -477,7 +477,8 @@ test("quitting ends the program being recorded and leaves its run a finished fil
 function fixable() {
   const marker = `/tmp/sonde-fixed-${Date.now()}`;
   const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null";
-  return `if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
+  // (a pause first: the run opens as it starts, before it has anything to compare)
+  return `sleep 1; if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
 }
 
 test("the fix loop: a finding fixed by the next run is said fixed, with what it saved, in its run and compared", async () => {

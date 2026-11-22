@@ -16,9 +16,11 @@ import { Crumb, ICON, TEXT } from "./kit";
 import { savedText } from "./runchange";
 
 
-/** A run against its program's run before it, read off the interface's thread: null for a run that is no run of a program, or while it is read. */
-export function sinceLastOf(path: () => string | null) {
-  return resource(path, async (p): Promise<SinceLast | null> => {
+/** A run against its program's run before it, read off the interface's thread: null for a run that is no run of a program, or while it is read.
+ * Read again when `live` turns (a run opened as it starts has nothing to compare until it ends). */
+export function sinceLastOf(path: () => string | null, live: () => boolean = () => false) {
+  return resource(() => { const p = path(); return p ? `${live() ? 1 : 0}${p}` : null; }, async (k): Promise<SinceLast | null> => {
+    const p = k?.slice(1);
     if (!p) return null;
     try {
       return await api.runs.sinceLast(p);
