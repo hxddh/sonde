@@ -315,14 +315,24 @@ async fn every_json_output_is_as_its_schema_says() {
         let mut now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
         // one that degraded: the request it turns on, and what to change
         now.standing = trial::Standing::Degraded;
-        now.at = Some(trial::Where {
-            kind: "PutObject".into(),
-            key: "b/state".into(),
-            caller: Some("etl.py:12 in save".into()),
-        });
-        now.advice = Some(trial::Said {
-            key: "trial.advice.retry".into(),
-            args: Default::default(),
+        now.finding = Some(trial::TrialFinding {
+            why: vec![vec![trial::Said {
+                key: "trial.why.reads".into(),
+                args: [("n", "1"), ("s", ""), ("it", "it")]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            }]],
+            at: Some(trial::Where {
+                kind: "PutObject".into(),
+                key: "b/state".into(),
+                caller: Some("etl.py:12 in save".into()),
+            }),
+            sdk: Some("boto3 1.34".into()),
+            advice: Some(trial::Said {
+                key: "trial.advice.retry".into(),
+                args: Default::default(),
+            }),
         });
         trial::save(&run, std::slice::from_ref(&now)).unwrap();
         let mut then = now.clone();
@@ -440,23 +450,38 @@ async fn every_json_output_is_as_its_schema_says() {
         summary["diagnoses"]
     );
     assert!(summary["time"]["wallMs"].is_number(), "{}", summary["time"]);
-    // a trial's `where` and `advice` are in the output, and typed by the schema
+    // a verdict is its table's row: why, where and what to change are a
+    // finding of the run's, with its caller and its fix
     let t = &summary["trials"][0];
-    assert_eq!(t["where"]["kind"], "PutObject", "{t}");
-    assert_eq!(t["advice"]["key"], "trial.advice.retry", "{t}");
-    // with its English: an agent looks nothing up
+    for gone in ["where", "advice", "reasons", "reasonsText", "finding"] {
+        assert!(t.get(gone).is_none(), "{gone}: {t}");
+    }
+    let found = summary["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["identity"] == "trial|slowdown")
+        .unwrap_or_else(|| panic!("{}", summary["findings"]));
+    assert_eq!(found["kind"], "trial", "{found}");
+    assert_eq!(found["callers"][0]["place"], "etl.py:12 in save", "{found}");
     assert!(
-        t["advice"]["text"]
+        found["text"]
             .as_str()
-            .is_some_and(|x| x.starts_with("send a failed request again")),
-        "{t}"
+            .is_some_and(|x| x.starts_with("degraded under slowdown: gave up on 1 failed read")),
+        "{found}"
     );
-    let props = &schema("show")["$defs"]["trial"]["properties"];
-    assert_eq!(props["where"]["type"], "object", "{props}");
+    assert!(found.get("saving").is_none(), "{found}");
+    // and in its fix loop: degraded before, degraded now
+    let open = summary["since"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|f| f["identity"] == "trial|slowdown");
     assert_eq!(
-        props["advice"]["required"],
-        serde_json::json!(["key", "args", "text"]),
-        "{props}"
+        open.map(|f| &f["state"]),
+        Some(&Value::from("open")),
+        "{}",
+        summary["since"]
     );
     // a finding an engine's setting acts on: the setting, and where the
     // program's folder sets it (a SlateDB reader polling its manifest every
@@ -600,6 +625,79 @@ async fn every_json_output_is_as_its_schema_says() {
         holds("check", &checked);
         std::fs::remove_file(b.path("sonde.toml")).unwrap();
     }
+    // `check --init -f json` writes JSON (27.0 wrote text), the run's
+    // findings known by count and its own command; `check` then fails on a
+    // finding it does not know
+    {
+        // (the tour ran elsewhere: its project is the one named)
+        let toml_path = b.path("sonde.toml");
+        let config = toml_path.to_str().unwrap();
+        let init = b
+            .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
+            .await;
+        holds("check-init", &init);
+        assert_eq!(init["runArgs"], "--demo", "{init}");
+        assert!(
+            !init["command"].as_str().unwrap().contains("<your command>"),
+            "{init}"
+        );
+        std::fs::remove_file(&toml_path).unwrap();
+        // a run with findings (the etl fixture, on moto): known by count
+        let etl = b.path("etl.sonde");
+        let s = etl.to_str().unwrap();
+        let init = b
+            .json(&["check", s, "--config", config, "--init", "-f", "json"], 0)
+            .await;
+        holds("check-init", &init);
+        assert_eq!(init["runArgs"], "--url <the S3 endpoint>", "{init}");
+        let known = init["findings"].as_object().unwrap();
+        assert!(!known.is_empty(), "{init}");
+        let toml = std::fs::read_to_string(b.path("sonde.toml")).unwrap();
+        assert!(toml.contains("[check.findings]"), "{toml}");
+        assert!(!toml.contains("tolerance"), "{toml}");
+        let passed = b
+            .json(&["check", s, "--config", config, "-f", "json"], 0)
+            .await;
+        holds("check", &passed);
+        // one known with a smaller count, and one left out: grown and new
+        let mut ids = known.keys();
+        let (grown, gone) = (ids.next().unwrap().clone(), ids.next().cloned());
+        let mut cut = toml.replace(
+            &format!(
+                "{} = {}",
+                serde_json::to_string(&grown).unwrap(),
+                known[&grown]
+            ),
+            &format!("{} = 0", serde_json::to_string(&grown).unwrap()),
+        );
+        if let Some(g) = &gone {
+            cut = cut.replace(
+                &format!("{} = {}\n", serde_json::to_string(g).unwrap(), known[g]),
+                "",
+            );
+        }
+        std::fs::write(b.path("sonde.toml"), cut).unwrap();
+        let failed = b
+            .json(&["check", s, "--config", config, "-f", "json"], 1)
+            .await;
+        holds("check", &failed);
+        let gated = failed["check"]["findings"].as_array().unwrap();
+        assert!(
+            gated
+                .iter()
+                .any(|f| f["identity"] == grown.as_str() && f["known"] == 0),
+            "{failed}"
+        );
+        if let Some(g) = gone {
+            assert!(
+                gated
+                    .iter()
+                    .any(|f| f["identity"] == g.as_str() && f.get("known").is_none()),
+                "{failed}"
+            );
+        }
+        std::fs::remove_file(b.path("sonde.toml")).unwrap();
+    }
     holds(
         "show",
         &b.json(&["show", s, "--since", s, "-f", "json"], 0).await,
@@ -728,6 +826,7 @@ fn every_schema_is_checked_and_documented() {
         "show",
         "show-by",
         "check",
+        "check-init",
         "runs",
         "replay",
         "replay-stores",

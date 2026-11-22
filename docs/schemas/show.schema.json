@@ -93,7 +93,7 @@
         "string",
         "null"
       ],
-      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new, back or open. Null for a run that is no program's (an import, a replay)."
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
@@ -121,7 +121,7 @@
         },
         "findings": {
           "type": "array",
-          "description": "Each finding of either run, with its `state`: fixed, less, more, back, new or open.",
+          "description": "Each finding of either run, with its `state`: fixed, less, more, new or open.",
           "items": {
             "type": "object"
           }
@@ -135,7 +135,7 @@
           "description": "The exit code of a run that failed: not compared."
         }
       },
-      "description": "The run against its program's run before it, or against the run `--since` names, as `show` says it under \"since …\": `program`, `previous`, `change`, `findings`; or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program and no `--since`."
+      "description": "The run against its program's run before it, or against the run `--since` names, as `show` says it under \"since …\": `program`, `previous`, `change`, `findings` (each with its `state`: fixed, less, more, new, open; a trial's finding against the program's trial before: fixed, new, open); or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null for a run that is no run of a program and no `--since`."
     },
     "operations": {
       "type": "array",
@@ -433,7 +433,8 @@
             "obs.rename",
             "obs.markers",
             "obs.throttled",
-            "obs.serial"
+            "obs.serial",
+            "trial"
           ],
           "description": "What kind of finding it is, as `identity` begins (docs/cli.md#findings)."
         },
@@ -858,7 +859,7 @@
     },
     "trial": {
       "type": "object",
-      "description": "A trial's verdict (docs/trials.md).",
+      "description": "A trial's verdict, a row of its table (docs/trials.md): why it is not `survived`, where and what to change are a finding of the run's (`findings[]`, kind `trial`).",
       "properties": {
         "scenario": {
           "type": "string"
@@ -894,54 +895,6 @@
         },
         "attempts": {
           "type": "integer"
-        },
-        "where": {
-          "type": "object",
-          "description": "The request the verdict turns on, when it is not `survived`.",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "description": "The S3 call (`PutObject`)."
-            },
-            "key": {
-              "type": "string",
-              "description": "`bucket/key`, or the bucket and what was listed."
-            },
-            "caller": {
-              "type": "string",
-              "description": "The line of the program that sent it (`etl.py:12 in save`), when the run named callers."
-            }
-          },
-          "required": [
-            "kind",
-            "key"
-          ]
-        },
-        "advice": {
-          "type": "object",
-          "description": "What to change, where the requests say: a phrase (`trial.advice.retry`, …), its arguments, and its English.",
-          "properties": {
-            "key": {
-              "type": "string",
-              "description": "The phrase's key in the app's locales (en, zh)."
-            },
-            "args": {
-              "type": "object",
-              "description": "Its arguments, as text.",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
-            "text": {
-              "type": "string",
-              "description": "The advice in English: no lookup needed."
-            }
-          },
-          "required": [
-            "key",
-            "args",
-            "text"
-          ]
         },
         "history": {
           "type": "array",
@@ -1482,7 +1435,7 @@
         },
         "findings": {
           "type": "array",
-          "description": "Each finding of either run, where it stands: fixed first, then less, back, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`).",
+          "description": "Each finding of either run, where it stands: fixed first, then less, new, more, open; then each kind of failure whose count moved (`obs.errors|500 InternalError`).",
           "items": {
             "type": "object",
             "properties": {
@@ -1495,11 +1448,10 @@
                   "fixed",
                   "less",
                   "more",
-                  "back",
                   "new",
                   "open"
                 ],
-                "description": "fixed: gone at any threshold; less and more: still there at any threshold, by its counts; back: fixed in an earlier run, or under its threshold in the run before, over it again; open: as much in both."
+                "description": "Judged by its count alone (`counts`), never by a share of the run: fixed: gone at any threshold; less and more: still there at any threshold, its count fallen or grown; new: none of it in the run before, at any threshold; open: as much in both."
               },
               "level": {
                 "enum": [
@@ -1520,7 +1472,7 @@
               },
               "was": {
                 "type": "object",
-                "description": "As it read in the run before, when it reads otherwise now (less, more, back).",
+                "description": "As it read in the run before, when it reads otherwise now (less, more).",
                 "properties": {
                   "text": {
                     "type": "string",
@@ -1552,14 +1504,18 @@
               },
               "measured": {
                 "$ref": "#/$defs/saving",
-                "description": "What it saved, measured between the runs (fixed, less)."
+                "description": "What it saved, measured between the runs (fixed, less): the requests of its own asks, and what the run's wall time (`ms`) and cost fell by (negative: they grew)."
+              },
+              "withinNoise": {
+                "type": "boolean",
+                "description": "Present (true) when the run's wall time moved by less than the program's runs vary (`noiseMs`): what it saved is not told from noise."
               },
               "saved": {
                 "$ref": "#/$defs/phrase"
               },
               "savedText": {
                 "type": "string",
-                "description": "Display text, not stable: the measured saving against the predicted."
+                "description": "Display text, not stable: the run's wall time against the predicted (`1.2 s less (predicted 1.5 s)`), or `within noise`."
               }
             },
             "required": [
@@ -1587,6 +1543,10 @@
         "workloadChanged": {
           "type": "string",
           "description": "Display text, not stable: how much the workload changed between two runs of one program with the same command (`requests 120 → 402, 3.4×`): grown by half or more, or shrunk by a third or more below what fixing the first run's findings would leave. Present only then: what moved is the workload's doing as much as a fix's, and fixed, less and more carry no `measured` or `saved`."
+        },
+        "noiseMs": {
+          "type": "number",
+          "description": "How much the program's wall time varies run to run, in ms: the spread of its last runs of the same command (up to 5). A saving under it is within noise. Absent with fewer than two earlier runs (no band), or with `--since`."
         },
         "endpoints": {
           "type": "array",
@@ -1698,18 +1658,22 @@
     },
     "saving": {
       "type": "object",
-      "description": "Requests not sent and time not waited, in ms.",
+      "description": "Requests not sent, time not taken (ms) and money not spent (`cost`, in the run's currency).",
       "properties": {
         "requests": {
           "type": "integer"
         },
         "ms": {
           "type": "number"
+        },
+        "cost": {
+          "type": "number"
         }
       },
       "required": [
         "requests",
-        "ms"
+        "ms",
+        "cost"
       ]
     },
     "timeAccount": {

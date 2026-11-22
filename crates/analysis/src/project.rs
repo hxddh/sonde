@@ -28,6 +28,11 @@ pub struct Check {
     /// new warning; every output says the reason.
     #[serde(default)]
     pub expect: std::collections::BTreeMap<String, String>,
+    /// The findings the project knows, by identity, each with its count
+    /// (`[check.findings]`, written by `sonde check --init`): a run with a
+    /// finding of another identity, or more of one, fails.
+    #[serde(default)]
+    pub findings: std::collections::BTreeMap<String, usize>,
     pub tolerance: Option<f64>,
     pub baseline: Option<String>,
 }
@@ -57,8 +62,14 @@ impl Check {
             max_errors: self.max_errors,
             max_transfer: self.max_transfer_bytes()?,
             tolerance: None,
+            known: self.known(),
             untimed: false,
         })
+    }
+
+    /// `[check.findings]`, when it names any.
+    pub fn known(&self) -> Option<std::collections::BTreeMap<String, usize>> {
+        (!self.findings.is_empty()).then(|| self.findings.clone())
     }
 }
 

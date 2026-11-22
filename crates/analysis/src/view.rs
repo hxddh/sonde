@@ -113,6 +113,26 @@ fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
 }
 
 impl Analysis {
+    /// Adds the trial's findings ([`crate::trial::findings`]) to the run's,
+    /// each a diagnosis of its own after the run's: no saving, so last.
+    pub fn add_trials(&mut self, trials: &[crate::trial::Trial]) {
+        for o in crate::trial::findings(trials) {
+            self.diagnoses.push(crate::fixes::Diagnosis {
+                id: o.identity.clone(),
+                findings: vec![self.observations.len()],
+                identities: vec![o.identity.clone()],
+                serial: None,
+                saves_ms: 0.0,
+                saves_cost: 0.0,
+                saves_requests: 0,
+                saving: Vec::new(),
+                saving_text: String::new(),
+                rest: None,
+            });
+            self.observations.push(o);
+        }
+    }
+
     /// `path` (a run, its `header` and `records`, analysed as this) against
     /// its program's run before it ([`crate::fixloop::since_last`]). Its
     /// operations are not made again, and its findings at any threshold
@@ -130,7 +150,13 @@ impl Analysis {
             return None;
         }
         let dir = crate::fixloop::folder_of(path);
-        let traces = match crate::fixloop::previous_run(&dir, &key, header.created, path) {
+        let traces = match crate::fixloop::previous_run(
+            &dir,
+            &key,
+            header.created,
+            path,
+            header.command.as_deref(),
+        ) {
             Some(_) => crate::episode::traces_of(header, records, &self.episodes),
             None => Vec::new(),
         };

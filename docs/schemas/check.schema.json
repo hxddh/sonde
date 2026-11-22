@@ -44,6 +44,36 @@
             "type": "string"
           }
         },
+        "findings": {
+          "type": "array",
+          "description": "The run's findings `[check.findings]` does not know, or knows with a smaller count: what fails the `findings` row. Judged by counts alone, never by a share of the run.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string",
+                "description": "The finding's identity, as `show -f json` writes it."
+              },
+              "text": {
+                "type": "string",
+                "description": "Display text, not stable."
+              },
+              "count": {
+                "type": "integer",
+                "description": "Its count in the run."
+              },
+              "known": {
+                "type": "integer",
+                "description": "Its count in `[check.findings]`: absent for a new one."
+              }
+            },
+            "required": [
+              "identity",
+              "text",
+              "count"
+            ]
+          }
+        },
         "expected": {
           "type": "array",
           "description": "The run's findings the project keeps on purpose (`[check] expect`), each with why: leave them.",
@@ -331,8 +361,10 @@
             "transfer",
             "errors",
             "p95",
-            "warnings"
-          ]
+            "warnings",
+            "findings"
+          ],
+          "description": "`findings`: how many of the run's findings `[check.findings]` does not know, or knows with a smaller count (limit 0)."
         },
         "value": {
           "type": "number"

@@ -255,7 +255,6 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         &mut analysis.observations,
         &super::check::expect_of(&run.header),
     );
-    let eps = &analysis.episodes;
     if let Some(by) = a.by {
         let split = sonde_analysis::split::split(all, by, &prices);
         match a.format {
@@ -281,7 +280,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     );
     // against the program's run before it, as `run` said it, or against
     // the run asked for: in every format
-    let since = match other {
+    let mut since = match other {
         Some(other) => Some(super::fixloop::since_other(
             &file,
             &run.header,
@@ -291,6 +290,16 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         )),
         None => super::fixloop::since_last(s, &file, &run.header, all, &analysis),
     };
+    // what did not survive is among its findings, and in its fix loop
+    // against the program's trial before
+    analysis.add_trials(&trials);
+    let eps = &analysis.episodes;
+    if let Some(since) = &mut since {
+        since
+            .findings
+            .extend(sonde_analysis::trial::changes(&trials));
+    }
+    let trials: Vec<_> = trials.iter().map(|t| t.verdict()).collect();
     match a.format {
         // the answer: the summary, the findings each cut to what to change
         // and where; every operation (--all), the failed ones (--errors), the

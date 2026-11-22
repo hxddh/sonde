@@ -243,26 +243,11 @@ pub struct Trial {
     /// Not deletes (a delete made twice removed once), nor creates sent
     /// with `If-None-Match: *` (the store was asked not to).
     pub wrote_twice: usize,
-    /// Why it is not "survived", a line each.
-    pub reasons: Vec<String>,
-    /// The same reasons as phrases (each a sentence of one or more), for
-    /// the app to say in the reader's language.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reasons_text: Vec<Vec<Said>>,
-    /// The request the verdict turns on, when it is not "survived": the
-    /// first write never sent again, the first body taken cut, the first
-    /// race not run again, else the first read given up or (when only the
-    /// exit differs) the last request that failed.
-    #[serde(rename = "where", default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<Where>,
-    /// What to change, where the requests say: written with its English
-    /// (`text`), so an agent needs no phrase looked up.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "with_text"
-    )]
-    pub advice: Option<Said>,
+    /// Why it is not "survived", where and what to change: kept with the
+    /// verdict, said as a finding of the clean run ([`findings`]), never in
+    /// the verdicts a command writes ([`Trial::verdict`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding: Option<TrialFinding>,
     /// The trial's own run: its file's name in the clean run's `trials/`
     /// folder ([`run_path`] gives the path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -273,18 +258,25 @@ pub struct Trial {
     pub history: Vec<Seen>,
 }
 
-/// A phrase as JSON with its English beside it: `{key, args, text}`. Read
-/// back, `text` is left (it is made again from the key).
-fn with_text<S: serde::Serializer>(said: &Option<Said>, s: S) -> Result<S::Ok, S::Error> {
-    use serde::ser::SerializeStruct;
-    let Some(said) = said else {
-        return s.serialize_none();
-    };
-    let mut st = s.serialize_struct("Said", 3)?;
-    st.serialize_field("key", &said.key)?;
-    st.serialize_field("args", &said.args)?;
-    st.serialize_field("text", &said.en())?;
-    st.end()
+/// What a scenario not survived found: why, the request it turned on and
+/// what to change there. Said as a finding of the clean run ([`findings`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrialFinding {
+    /// Why it is not "survived": each reason a sentence of phrases.
+    pub why: Vec<Vec<Said>>,
+    /// The request the verdict turns on: the first write never sent again,
+    /// the first body taken cut, the first race not run again, else the
+    /// first read given up or (when only the exit differs) the last request
+    /// that failed.
+    #[serde(rename = "where", default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Where>,
+    /// The SDK that sent it, by its user agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<String>,
+    /// What to change (`trial.advice.*`), where the requests say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advice: Option<Said>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1482,11 +1474,6 @@ pub fn judge(
         args.push(("policy", policy));
         why.insert(0, vec![Said::new("trial.why.policy", &args)]);
     }
-    let reasons: Vec<String> = why
-        .iter()
-        .map(|r| r.iter().map(Said::en).collect())
-        .collect();
-
     // where: the request the verdict turns on, and what to change there
     let last_failed = || {
         in_time
@@ -1614,10 +1601,12 @@ pub fn judge(
         clean_wall_ms: span_ms(clean),
         left_uploads,
         wrote_twice,
-        reasons,
-        reasons_text: why,
-        at: turned_on.map(where_of),
-        advice,
+        finding: (!why.is_empty()).then(|| TrialFinding {
+            why,
+            at: turned_on.map(where_of),
+            sdk: turned_on.and_then(sonde_proxy::callers::sdk),
+            advice,
+        }),
         run: None,
         history: Vec::new(),
     }
@@ -1882,17 +1871,23 @@ impl Trying {
 
     /// Keeps the verdicts, beside the run and with its program's (the
     /// history is the program's, not the run's: kept apart). A trial that
-    /// judged nothing leaves no folder. Its trials, and whether keeping
-    /// them with the program's failed (said, not fatal).
-    pub fn finish(mut self) -> std::io::Result<(Vec<Trial>, Option<std::io::Error>)> {
+    /// judged nothing leaves no folder. Its trials, each with its history
+    /// ([`changes`] reads it), and whether keeping them with the program's
+    /// failed (said, not fatal).
+    pub fn finish(self) -> std::io::Result<(Vec<Trial>, Option<std::io::Error>)> {
         if self.trials.is_empty() {
             let _ = std::fs::remove_dir(folder_for(&self.file));
             return Ok((self.trials, None));
         }
-        for t in &mut self.trials {
-            t.history.clear();
-        }
-        save(&self.file, &self.trials)?;
+        let kept: Vec<Trial> = self
+            .trials
+            .iter()
+            .map(|t| Trial {
+                history: Vec::new(),
+                ..t.clone()
+            })
+            .collect();
+        save(&self.file, &kept)?;
         let kept = match &self.program {
             Some(p) => record(&runs_of(&self.file), p, &self.of, self.at, &self.trials).err(),
             None => None,
@@ -2140,31 +2135,240 @@ impl Trial {
         if self.wrote_twice > 0 {
             parts.push(format!("{} written twice", self.wrote_twice));
         }
-        parts.extend(self.reasons.iter().cloned());
-        if let Some(place) = self.place() {
-            parts.push(place);
-        }
-        if let Some(a) = &self.advice {
-            parts.push(a.en());
+        // why it is not "survived" is its finding's ([`findings`]); one that
+        // is none (it met nothing, the clean run failed) is said here
+        if !matches!(self.standing, Standing::Broke | Standing::Degraded) {
+            parts.extend(self.reasons());
+            parts.extend(self.advice().map(|a| a.en()));
         }
         parts.join(" · ")
     }
 
-    /// The request the verdict turns on: `at PutObject b/state (etl.py:12
-    /// in main)`.
-    pub fn place(&self) -> Option<String> {
-        let w = self.at.as_ref()?;
-        Some(match &w.caller {
-            // the file by its name: the whole path is in `where`
-            Some(c) => {
-                let (file, rest) = c.split_once(' ').unwrap_or((c, ""));
-                let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
-                let sep = if rest.is_empty() { "" } else { " " };
-                format!("at {} {} ({name}{sep}{rest})", w.kind, w.key)
-            }
-            None => format!("at {} {}", w.kind, w.key),
+    /// Why it is not "survived", a sentence each, in English.
+    pub fn reasons(&self) -> Vec<String> {
+        self.finding.as_ref().map_or_else(Vec::new, |f| {
+            f.why
+                .iter()
+                .map(|r| r.iter().map(Said::en).collect())
+                .collect()
         })
     }
+
+    /// The request the verdict turns on.
+    pub fn at(&self) -> Option<Where> {
+        self.finding.as_ref().and_then(|f| f.at.clone())
+    }
+
+    /// What to change, where the requests say.
+    pub fn advice(&self) -> Option<Said> {
+        self.finding.as_ref().and_then(|f| f.advice.clone())
+    }
+
+    /// The verdict as a command writes it (`show`, `check`): its finding is
+    /// the run's ([`findings`]), not said twice.
+    pub fn verdict(&self) -> Trial {
+        Trial {
+            finding: None,
+            ..self.clone()
+        }
+    }
+
+    /// Its finding's identity: `trial|slowdown:3`.
+    pub fn identity(&self) -> String {
+        format!("{TRIAL}|{}", self.asked())
+    }
+}
+
+/// The kind a trial's finding is of.
+pub const TRIAL: &str = "trial";
+
+/// A sentence of a verdict as a run's phrase: its key and its arguments by
+/// the names its English template gives them. None for a key the locale
+/// does not have.
+fn phrase_of(s: &Said) -> Option<crate::phrase::Phrase> {
+    let (key, template) = sonde_fmt::words::phrase_entry(&s.key)?;
+    let args: Vec<(&'static str, String)> = s
+        .args
+        .iter()
+        .filter_map(|(name, v)| {
+            let at = template.find(&format!("%{{{name}}}"))? + 2;
+            Some((&template[at..at + name.len()], v.clone()))
+        })
+        .collect();
+    Some(crate::phrase::p(key, &args))
+}
+
+/// What to change for a verdict's advice, in each SDK's language: the
+/// advice as a comment, then the setting or the code that does it, where a
+/// template says it (retries, a timeout, a body read to its end).
+fn fixes_for(advice: &Said) -> Vec<crate::fixes::Fix> {
+    let said = advice.en();
+    let said = said.trim_end_matches('.');
+    let code = |lang: &str| -> Option<&'static str> {
+        Some(match (advice.key.as_str(), lang) {
+            ("trial.advice.retries" | "trial.advice.retry" | "trial.advice.skew", l) => {
+                crate::fixes::retries_on(l)?
+            }
+            ("trial.advice.timeout", "python") => {
+                "boto3.client(\"s3\", config=Config(connect_timeout=5, read_timeout=10, retries={\"mode\": \"standard\", \"max_attempts\": 5}))"
+            }
+            ("trial.advice.timeout", "js") => {
+                "new S3Client({ maxAttempts: 5, requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 10000 }) })"
+            }
+            ("trial.advice.timeout", "go") => {
+                "s3.NewFromConfig(cfg, func(o *s3.Options) { o.HTTPClient = awshttp.NewBuildableClient().WithTimeout(10 * time.Second) })"
+            }
+            ("trial.advice.timeout", "java") => {
+                "S3Client.builder().overrideConfiguration(o -> o.apiCallAttemptTimeout(Duration.ofSeconds(10)).retryStrategy(RetryMode.STANDARD)).build()"
+            }
+            ("trial.advice.cut", "python") => {
+                "obj = s3.get_object(Bucket=b, Key=k)\nbody = obj[\"Body\"].read()\nwhile len(body) < obj[\"ContentLength\"]:\n    body += s3.get_object(Bucket=b, Key=k, Range=f\"bytes={len(body)}-\")[\"Body\"].read()"
+            }
+            ("trial.advice.cut", "js") => {
+                "const r = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nlet body = await r.Body.transformToByteArray();\nif (body.length < r.ContentLength) { /* read the rest: Range: `bytes=${body.length}-` */ }"
+            }
+            ("trial.advice.cut", "go") => {
+                "out, _ := client.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nbody, err := io.ReadAll(out.Body)\nif err != nil || int64(len(body)) < *out.ContentLength { /* read the rest: Range \"bytes=<len>-\" */ }"
+            }
+            ("trial.advice.cut", "java") => {
+                "ResponseBytes<GetObjectResponse> r = s3.getObjectAsBytes(req);\nif (r.asByteArray().length < r.response().contentLength()) { /* read the rest: .range(\"bytes=\" + have + \"-\") */ }"
+            }
+            _ => return None,
+        })
+    };
+    ["python", "js", "go", "java"]
+        .into_iter()
+        .map(|lang| {
+            let comment = if lang == "python" { "#" } else { "//" };
+            let text = match code(lang) {
+                Some(c) => format!("{comment} {said}\n{c}"),
+                None => format!("{comment} {said}"),
+            };
+            crate::fixes::Fix {
+                sdk: lang,
+                code: std::borrow::Cow::Owned(text),
+                setting: None,
+            }
+        })
+        .collect()
+}
+
+/// The verdicts that did not survive (broke, degraded) as findings of the
+/// clean run: `broke under cut-body: …`, at the program's line that met
+/// the fault, with what to change for its SDK. No saving: what a fault
+/// costs is not a run's figure. Refused (the policy's doing) and untested
+/// (nothing met) are none.
+pub fn findings(trials: &[Trial]) -> Vec<crate::episode::Observation> {
+    use crate::phrase::p;
+    trials
+        .iter()
+        .filter(|t| matches!(t.standing, Standing::Broke | Standing::Degraded))
+        .filter_map(|t| {
+            let f = t.finding.as_ref()?;
+            let broke = t.standing == Standing::Broke;
+            let mut phrases = vec![p(
+                if broke {
+                    "trial.brokeUnder"
+                } else {
+                    "trial.degradedUnder"
+                },
+                &[("scenario", t.asked())],
+            )];
+            for (i, reason) in f.why.iter().enumerate() {
+                if i > 0 {
+                    phrases.push(p("trial.then", &[]));
+                }
+                phrases.extend(reason.iter().filter_map(phrase_of));
+            }
+            // the request it turned on (its line of code is its caller)
+            if let Some(w) = &f.at {
+                phrases.push(p(
+                    "trial.atRequest",
+                    &[("kind", w.kind.clone()), ("key", w.key.clone())],
+                ));
+            }
+            Some(crate::episode::Observation {
+                level: if broke { "warn" } else { "info" },
+                text: crate::phrase::en(&phrases),
+                phrases,
+                episodes: Vec::new(),
+                impact: t.faults,
+                saving: None,
+                saving_text: None,
+                saves_requests: 0,
+                saves_ms: 0.0,
+                saves_bytes: 0,
+                saved_ids: Vec::new(),
+                kept_ids: Vec::new(),
+                keeps_bytes: false,
+                timed_ids: Vec::new(),
+                fixes: f.advice.as_ref().map(fixes_for).unwrap_or_default(),
+                callers: f
+                    .at
+                    .as_ref()
+                    .and_then(|w| w.caller.clone())
+                    .map(|c| vec![sonde_proxy::callers::Caller::at(c, 1)])
+                    .unwrap_or_default(),
+                sdk: f.sdk.clone(),
+                identity: t.identity(),
+                kind: TRIAL.to_string(),
+                saves_cost: 0.0,
+                expected: None,
+            })
+        })
+        .collect()
+}
+
+/// The fix loop of a trial's findings ([`findings`]): each scenario against
+/// its program's verdict before (its history, this verdict last), fixed
+/// when it survives now, open when it still does not, new when it did
+/// before (or was not tried).
+pub fn changes(trials: &[Trial]) -> Vec<crate::fixloop::FindingChange> {
+    use crate::fixloop::{FindingChange, Saving, State};
+    let found = findings(trials);
+    let failing = |s: Standing| matches!(s, Standing::Broke | Standing::Degraded);
+    let mut out: Vec<FindingChange> = trials
+        .iter()
+        .filter_map(|t| {
+            let before = t
+                .history
+                .len()
+                .checked_sub(2)
+                .map(|i| t.history[i].standing)
+                .is_some_and(failing);
+            let id = t.identity();
+            let now = found.iter().find(|o| o.identity == id);
+            let (state, level, phrases) = match (before, now) {
+                (true, Some(o)) => (State::Open, o.level, o.phrases.clone()),
+                (false, Some(o)) => (State::New, o.level, o.phrases.clone()),
+                (true, None) if t.standing == Standing::Survived => (
+                    State::Fixed,
+                    "info",
+                    vec![crate::phrase::p(
+                        "trial.survives",
+                        &[("scenario", t.asked())],
+                    )],
+                ),
+                _ => return None,
+            };
+            Some(FindingChange {
+                identity: id,
+                state,
+                level,
+                text: crate::phrase::en(&phrases),
+                phrases,
+                was: None,
+                counts: None,
+                predicted: Saving::default(),
+                measured: None,
+                within_noise: false,
+                saved: None,
+                saved_text: None,
+            })
+        })
+        .collect();
+    out.sort_by_key(|c| c.state);
+    out
 }
 
 /// Whether an SDK (as [`sonde_proxy::callers::sdk`] names it) sends a request
@@ -2344,7 +2548,7 @@ mod tests {
             rec(2, 105, "PUT", "PutObject", "a", 200),
         ];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
-        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons);
+        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons());
         assert_eq!((t.faults, t.retried, t.attempts), (1, 1, 2));
         assert_eq!(t.backoff_ms, Some([100.0, 100.0, 100.0]));
         assert_eq!(
@@ -2373,11 +2577,11 @@ mod tests {
         // where is the first reason's request: 24.0 said "gave up on 1
         // failed read … at PutObject b/state"
         assert!(
-            t.reasons[0].starts_with("gave up on 1 failed read"),
+            t.reasons()[0].starts_with("gave up on 1 failed read"),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
-        assert_eq!(t.at.as_ref().unwrap().kind, "GetObject");
+        assert_eq!(t.at().as_ref().unwrap().kind, "GetObject");
         assert_eq!(t.backoff_ms, None, "its own sleep is no backoff");
         assert_eq!(t.standing, Standing::Broke);
         // the same program, retrying: three answers for the two it means
@@ -2389,7 +2593,7 @@ mod tests {
         ];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!((t.faults, t.retried, t.attempts), (1, 1, 2));
-        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons);
+        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons());
         assert_eq!(t.backoff_ms, Some([100.0, 100.0, 100.0]));
     }
 
@@ -2526,7 +2730,7 @@ mod tests {
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert_eq!(
-            t.reasons[0],
+            t.reasons()[0],
             "1 write failed and was never sent again, and the program exited 0"
         );
 
@@ -2534,7 +2738,7 @@ mod tests {
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Degraded);
         assert_eq!(
-            t.reasons[0],
+            t.reasons()[0],
             "gave up on 1 failed read without sending it again"
         );
     }
@@ -2545,7 +2749,7 @@ mod tests {
         let run = vec![fault(rec(1, 0, "PUT", "PutObject", "a", 503), "slowdown")];
         let t = judge(&slowdown(), &clean, 0, &run, 1);
         assert_eq!(t.standing, Standing::Broke);
-        assert!(t.reasons.iter().any(|r| r.starts_with("exited 1")));
+        assert!(t.reasons().iter().any(|r| r.starts_with("exited 1")));
         // a program that fails without faults too is not broken by them
         let t = judge(&slowdown(), &clean, 1, &run, 1);
         assert_ne!(t.standing, Standing::Survived);
@@ -2583,7 +2787,7 @@ mod tests {
         assert_eq!((t.faults, t.retried), (1, 1));
         assert_eq!(t.standing, Standing::Broke);
         assert_eq!(
-            t.reasons,
+            t.reasons(),
             [
                 "exited 1 (the clean run exited 0)",
                 "the retried CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed"
@@ -2591,7 +2795,7 @@ mod tests {
         );
         // a program that reads the 404 as its own success survived
         let t = judge(&s, &clean, 0, &run, 0);
-        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons);
+        assert_eq!(t.standing, Standing::Survived, "{:?}", t.reasons());
     }
 
     #[test]
@@ -2615,12 +2819,12 @@ mod tests {
         assert_eq!(t.wrote_twice, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
-            t.reasons.contains(
+            t.reasons().contains(
                 &"2 writes answered 500 and not retried; the store has them, and the program exited 0"
                     .to_string()
             ),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         // a read whose answer was lost and was read again is not "written twice"
         let run = vec![lost(get(3, 20, "a", 500), 200), get(4, 130, "a", 200)];
@@ -2695,11 +2899,15 @@ mod tests {
         assert_eq!(t.line(), "1 fault, none a retry is owed for");
         let t = judge(&s, &clean, 0, &run, 3);
         assert_eq!(t.standing, Standing::Broke);
+        assert_eq!(t.line(), "1 fault, none a retry is owed for");
+        let o = &findings(std::slice::from_ref(&t))[0];
         assert_eq!(
-            t.line(),
-            "1 fault, none a retry is owed for · exited 3 (the clean run exited 0) · at GetObject b/a"
+            o.text,
+            "broke under gone: exited 3 (the clean run exited 0) (at GetObject b/a)"
         );
-        assert_eq!(t.advice, None, "a 404 is not to be sent again");
+        assert_eq!(t.at().unwrap().key, "b/a");
+        assert!(o.fixes.is_empty(), "no advice: nothing to change in code");
+        assert_eq!(t.advice(), None, "a 404 is not to be sent again");
         // a 429 is owed one
         let run = vec![fault(get(1, 0, "a", 429), "gone")];
         assert_eq!(judge(&s, &clean, 0, &run, 0).dropped_reads, 1);
@@ -3303,10 +3511,11 @@ mod tests {
         // a 403 taken as the answer: the write dropped, and it said all was well
         let t = judge(&skew(), &clean, 0, &run[..1], 0);
         assert_eq!((t.dropped_writes, t.standing), (1, Standing::Broke));
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.skew");
-        assert!(t.line().ends_with(
-            "a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
-        ), "{}", t.line());
+        assert_eq!(t.advice().unwrap().key, "trial.advice.skew");
+        let o = &findings(std::slice::from_ref(&t))[0];
+        assert!(o.fixes[0].code.starts_with(
+            "# a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
+        ), "{}", o.fixes[0].code);
     }
 
     #[test]
@@ -3344,9 +3553,9 @@ mod tests {
         let t = judge(&s, &clean, 0, &run, 1);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
-            t.reasons[1].contains("the upload had completed"),
+            t.reasons()[1].contains("the upload had completed"),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         // not retried, but looked for: the object is there
         let run = vec![upload(1, 0), part(2, 10, "u"), lost(), head(4, 60, 200)];
@@ -3387,7 +3596,7 @@ mod tests {
             t.line()
         );
         assert_eq!(
-            t.reasons,
+            t.reasons(),
             [
                 "1 upload made again from its first part though the store had completed it: every part sent twice"
             ]
@@ -3439,17 +3648,22 @@ mod tests {
         let run = vec![held(get(1, 0, "a", 200), true), put(2, 10_010, "b", 200)];
         let t = judge(&stall_scenario(), &clean, 0, &run, 0);
         assert_eq!((t.held, t.waited), (1, 1));
+        assert_eq!(t.line(), "1 delayed · took 10.0 s (the clean run 15 ms)");
+        let o = &findings(std::slice::from_ref(&t))[0];
         assert_eq!(
-            t.line(),
-            "1 delayed · took 10.0 s (the clean run 15 ms) · waited out 1 stall of 10.0 s before the first byte: no timeout cut it short · at GetObject b/a · give each attempt a timeout well under a stall (a first byte comes in well under a second), so that a stalled request is sent again"
+            o.text,
+            "degraded under slow-first-byte: waited out 1 stall of 10.0 s before the first byte: no timeout cut it short (at GetObject b/a)"
         );
+        assert_eq!(o.level, "info");
+        let java = o.fixes.iter().find(|f| f.sdk == "java").unwrap();
+        assert!(java.code.contains("apiCallAttemptTimeout"), "{}", java.code);
         assert_eq!(t.standing, Standing::Degraded);
         assert_eq!(
-            t.reasons,
+            t.reasons(),
             ["waited out 1 stall of 10.0 s before the first byte: no timeout cut it short"]
         );
-        assert_eq!(t.at.as_ref().unwrap().kind, "GetObject");
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.timeout");
+        assert_eq!(t.at().as_ref().unwrap().kind, "GetObject");
+        assert_eq!(t.advice().as_ref().unwrap().key, "trial.advice.timeout");
         // given up on, as another attempt began while it was held (a proxy
         // that saw the close only when it answered)
         let run = vec![
@@ -3527,13 +3741,13 @@ mod tests {
         assert_eq!((t.stale, t.missed), (1, 1), "{}", t.line());
         assert_eq!(t.standing, Standing::Broke);
         assert_eq!(
-            t.reasons,
+            t.reasons(),
             [
                 "1 key this run wrote and a listing left out was never read as the clean run read it: the program went on without it"
             ]
         );
-        assert_eq!(t.at.as_ref().unwrap().kind, "ListObjectsV2");
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.list");
+        assert_eq!(t.at().as_ref().unwrap().kind, "ListObjectsV2");
+        assert_eq!(t.advice().as_ref().unwrap().key, "trial.advice.list");
         // it listed again and read both
         let t = judge(
             &stale_scenario(),
@@ -3577,7 +3791,7 @@ mod tests {
         let run = vec![put(1, 0, "out/1", 200), listing(2, 20, "out/", &["out/1"])];
         let t = judge(&stale_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Untested, "{}", t.line());
-        assert!(t.reasons[0].starts_with("a listing left out 1 key this run wrote"));
+        assert!(t.reasons()[0].starts_with("a listing left out 1 key this run wrote"));
     }
 
     #[test]
@@ -3746,22 +3960,30 @@ mod tests {
         let t = judge(&cut_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert_eq!((t.faults, t.retried, t.dropped_reads), (1, 0, 1));
+        assert_eq!(t.line(), "1 fault, 0 retried");
+        let o = &findings(std::slice::from_ref(&t))[0];
         assert_eq!(
-            t.line(),
-            "1 fault, 0 retried · 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) · at GetObject b/big · check the bytes read against Content-Length, and read the rest (Range) or the whole again"
+            o.text,
+            "broke under cut-body: 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) (at GetObject b/big)"
         );
-        let w = t.at.as_ref().unwrap();
+        let py = o.fixes.iter().find(|f| f.sdk == "python").unwrap();
+        assert!(
+            py.code.contains("Range=f\"bytes={len(body)}-\""),
+            "{}",
+            py.code
+        );
+        let w = t.at().unwrap();
         assert_eq!((w.kind.as_str(), w.key.as_str()), ("GetObject", "b/big"));
         // it saw the short body and failed: broke by its exit, not by the half
         let t = judge(&cut_scenario(), &clean, 0, &run[..1], 1);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
-            t.reasons
+            t.reasons()
                 .contains(&"1 download cut short and the rest never read".to_string())
-                && t.reasons
+                && t.reasons()
                     .contains(&"exited 1 (the clean run exited 0)".to_string()),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         // resumed from past the cut: bytes 500 to 599 are missing
         let run = vec![
@@ -3771,9 +3993,9 @@ mod tests {
         let t = judge(&cut_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
-            t.reasons[0].contains("bytes are missing"),
+            t.reasons()[0].contains("bytes are missing"),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         // a range's own cut is made good by that range's rest, not by the next range
         let clean = vec![
@@ -3833,9 +4055,9 @@ mod tests {
         let t = judge(&lost_race_scenario(), &clean, 0, &again, 0);
         assert_eq!(t.standing, Standing::Degraded);
         assert!(
-            t.reasons[0].starts_with("1 more object left than the clean run leaves"),
+            t.reasons()[0].starts_with("1 more object left than the clean run leaves"),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         // it wrote its data again under the same name: one object, as the
         // clean run leaves, however many times it was uploaded
@@ -3847,20 +4069,20 @@ mod tests {
         let t = judge(&lost_race_scenario(), &clean, 0, &run[..2], 0);
         assert_eq!(t.standing, Standing::Broke);
         assert_eq!(
-            t.reasons,
+            t.reasons(),
             [
                 "1 conditional write lost its race: no commit followed it and nothing read back what won, and the program exited 0"
             ]
         );
-        assert_eq!(t.at.as_ref().unwrap().key, format!("b/{}", log(1)));
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.race");
+        assert_eq!(t.at().as_ref().unwrap().key, format!("b/{}", log(1)));
+        assert_eq!(t.advice().as_ref().unwrap().key, "trial.advice.race");
         // it reads the key it lost, finds its write there (sonde let it
         // through) and carries on: the store holds what the clean run's
         // does, and nothing more
         let t = judge(&lost_race_scenario(), &clean, 0, &run[..3], 0);
         assert_eq!(t.standing, Standing::Survived, "{}", t.line());
         assert_eq!((t.read_back, t.retried, t.dropped_writes), (1, 0, 0));
-        assert_eq!((t.at.clone(), t.advice.clone()), (None, None));
+        assert_eq!((t.at().clone(), t.advice().clone()), (None, None));
         assert_eq!(
             t.line(),
             "1 fault, 0 retried · 1 lost write read back and not written again: the store has it (sonde let it through), so no commit is missing · 1.5× the requests"
@@ -3910,9 +4132,11 @@ mod tests {
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
-            t.reasons.iter().any(|r| r.contains("without a condition")),
+            t.reasons()
+                .iter()
+                .any(|r| r.contains("without a condition")),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
     }
 
@@ -3966,9 +4190,9 @@ mod tests {
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 1);
         assert!(t.fenced, "{}", t.line());
         assert!(
-            t.reasons.iter().any(|r| r.contains("bytes are missing")),
+            t.reasons().iter().any(|r| r.contains("bytes are missing")),
             "{:?}",
-            t.reasons
+            t.reasons()
         );
         assert_eq!(t.standing, Standing::Broke, "{}", t.line());
     }
@@ -4048,44 +4272,64 @@ mod tests {
         assert_eq!(t.standing, Standing::Broke);
         // the first reason's request: the read given up on is said first
         // (24.0 said the write's place after the read's reason)
-        assert!(t.reasons[0].starts_with("gave up on 1 failed read"));
+        assert!(t.reasons()[0].starts_with("gave up on 1 failed read"));
         assert_eq!(
-            t.at,
+            t.at(),
             Some(Where {
                 kind: "GetObject".into(),
                 key: "b/job".into(),
                 caller: Some("/home/me/job/etl.py:12 in save".into()),
             })
         );
-        let a = t.advice.as_ref().unwrap();
+        let a = t.advice().unwrap();
         assert_eq!(a.key, "trial.advice.retries");
         assert_eq!(a.args["sdk"], "boto3 1.34");
         assert!(a.args["setting"].contains("retries="), "{a:?}");
+        // the verdict's line is its figures: why, where and what to change
+        // are its finding's
         let line = t.line();
         assert!(
-            line.ends_with(&format!(
-                " · at GetObject b/job (etl.py:12 in save) · boto3 1.34 did not send it again: turn its retries on ({})",
-                a.args["setting"]
-            )),
+            !line.contains("gave up") && !line.contains(" at "),
             "{line}"
         );
-        // as JSON, for the app
-        let j = serde_json::to_value(&t).unwrap();
-        assert_eq!(j["where"]["kind"], "GetObject");
-        assert_eq!(j["where"]["caller"], "/home/me/job/etl.py:12 in save");
-        assert_eq!(j["advice"]["key"], "trial.advice.retries");
-        // and in English, so an agent looks nothing up
-        assert_eq!(j["advice"]["text"], a.en());
+        // a finding of the clean run: at the program's line, with no saving,
+        // and the fix for its SDK
+        let found = findings(std::slice::from_ref(&t));
+        assert_eq!(found.len(), 1);
+        let o = &found[0];
+        assert_eq!((o.level, o.identity.as_str()), ("warn", "trial|slowdown"));
         assert!(
-            j["advice"]["text"]
-                .as_str()
-                .unwrap()
-                .starts_with("boto3 1.34 did not send it again"),
+            o.text
+                .starts_with("broke under slowdown: gave up on 1 failed read"),
             "{}",
-            j["advice"]["text"]
+            o.text
         );
+        assert_eq!(o.phrases[0].key, "trial.brokeUnder");
+        assert_eq!(o.phrases[1].key, "trial.why.reads");
+        assert_eq!(o.phrases[1].args["n"].as_ref() as &str, "1");
+        assert_eq!(o.callers[0].place, "/home/me/job/etl.py:12 in save");
+        assert_eq!(o.callers[0].line, Some(12));
+        assert!(o.saving.is_none() && o.saves_requests == 0 && o.saves_ms == 0.0);
+        let fix = crate::fixes::for_sdk(&o.fixes, o.sdk.as_deref()).unwrap();
+        assert_eq!(fix.sdk, "python");
+        assert!(
+            fix.code.starts_with("# boto3 1.34 did not send it again")
+                && fix.code.contains("\"max_attempts\": 5"),
+            "{}",
+            fix.code
+        );
+        for lang in ["js", "go", "java"] {
+            assert!(o.fixes.iter().any(|f| f.sdk == lang), "{lang}");
+        }
+        // kept with the verdict, read back the same; written without it
+        let j = serde_json::to_value(&t).unwrap();
+        assert_eq!(j["finding"]["where"]["kind"], "GetObject");
         let back: Trial = serde_json::from_value(j).unwrap();
         assert_eq!(back, t);
+        let shown = serde_json::to_value(t.verdict()).unwrap();
+        for gone in ["finding", "reasons", "reasonsText", "where", "advice"] {
+            assert!(shown.get(gone).is_none(), "{gone}: {shown:#}");
+        }
         // a program that survived has neither
         let run = vec![
             fault(put(1, 0, "state", 503), "slowdown"),
@@ -4093,11 +4337,11 @@ mod tests {
             get(3, 40, "job", 200),
         ];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
-        assert_eq!((t.at, t.advice), (None, None));
+        assert_eq!((t.at(), t.advice()), (None, None));
         // an SDK sonde has no setting for: the rule itself
         let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
-        assert_eq!(t.advice.unwrap().key, "trial.advice.retry");
+        assert_eq!(t.advice().unwrap().key, "trial.advice.retry");
     }
 
     #[test]
@@ -4140,18 +4384,21 @@ mod tests {
         assert_eq!(t.standing, Standing::Refused);
         assert_eq!(t.standing.label(), "refused");
         assert_eq!(
-            t.reasons[0],
+            t.reasons()[0],
             "refused by the recording policy (no-delete): 1 request more than in the clean run, so what the program does under the fault cannot be told"
         );
         // its key has the run's place already: not told to add one
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy.placed");
-        assert_eq!(t.at.as_ref().unwrap().key, "b/etl-slowdown/state");
+        assert_eq!(
+            t.advice().as_ref().unwrap().key,
+            "trial.advice.policy.placed"
+        );
+        assert_eq!(t.at().as_ref().unwrap().key, "b/etl-slowdown/state");
         assert_eq!(worst(std::slice::from_ref(&t)), Some(Standing::Refused));
         // a key the same in every run is told to take one
         let mut shared = run[0].clone();
         shared.key = Some("state".into());
         let t = judge(&slowdown(), &[put(1, 0, "state", 200)], 0, &[shared], 1);
-        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy");
+        assert_eq!(t.advice().as_ref().unwrap().key, "trial.advice.policy");
         // refused in the clean run as well: the program's own, judged as ever
         let t = judge(&slowdown(), &run, 0, &run, 1);
         assert_eq!(t.standing, Standing::Broke);
@@ -4225,6 +4472,43 @@ mod tests {
             record(dir, "q", "q.sonde", at(4), std::slice::from_ref(&fixed)).unwrap();
         }
         assert_eq!(read_verdicts(dir)["q"]["slowdown"].len(), HISTORY_KEPT);
+    }
+
+    /// 28.0 kept a trial's advice apart from the findings, with `--again`
+    /// to try what broke: a verdict not survived is a finding, and trying
+    /// again reads it new, open, or fixed once the scenario is survived.
+    #[test]
+    fn a_trials_findings_are_new_open_and_fixed_over_its_verdicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let at = |day: i64| DateTime::from_timestamp(1_700_000_000 + day * 86_400, 0).unwrap();
+        let clean = vec![put(1, 0, "state", 200)];
+        let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
+        let broke = judge(&slowdown(), &clean, 0, &run, 0);
+        let mut fixed = broke.clone();
+        (fixed.standing, fixed.finding) = (Standing::Survived, None);
+        let tried = |run: &str, day: i64, t: &Trial| {
+            record(dir, "p", run, at(day), std::slice::from_ref(t)).unwrap();
+            let mut v = vec![t.clone()];
+            with_history(dir, "p", run, &mut v);
+            changes(&v)
+        };
+        let first = tried("r1.sonde", 0, &broke);
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            (first[0].state, first[0].identity.as_str()),
+            (crate::fixloop::State::New, "trial|slowdown")
+        );
+        assert!(first[0].text.starts_with("broke under slowdown: "));
+        let again = tried("r2.sonde", 1, &broke);
+        assert_eq!(again[0].state, crate::fixloop::State::Open);
+        let then = tried("r3.sonde", 2, &fixed);
+        assert_eq!(then[0].state, crate::fixloop::State::Fixed);
+        assert_eq!(then[0].text, "survives slowdown now");
+        // survived again: nothing moved, nothing said
+        assert!(tried("r4.sonde", 3, &fixed).is_empty());
+        // a survived verdict is no finding
+        assert!(findings(&[fixed]).is_empty());
     }
 
     #[test]

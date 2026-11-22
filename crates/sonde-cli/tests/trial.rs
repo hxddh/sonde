@@ -719,14 +719,9 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
         )
         .await;
     assert_eq!(o.code, Some(1), "{}", o.stderr);
-    // the way to try again keeps the trial's flags
+    // what broke is a finding: why, and the request it turned on
     assert!(
-        o.stderr.contains(&format!(
-            "sonde run --fault slowdown -o {} --force --url {} --path-style --policy allow -- ",
-            // quoted as the hint quotes it (a Windows path is)
-            sonde_analysis::program::shell_join(&[run.to_string_lossy().into_owned()]),
-            b.store.url
-        )),
+        o.stderr.contains("! broke under slowdown: gave up on 1 failed read without sending it again; 1 write failed and was never sent again, and the program exited 0 (at GetObject data/job)"),
         "{}",
         o.stderr
     );
@@ -934,15 +929,14 @@ async fn a_completion_whose_answer_was_lost_says_why_the_program_broke() {
     let t = trial(&all, "lost-answer");
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!(t["leftUploads"], 0, "the store completed it: {t:#}");
-    let reasons: Vec<&str> = t["reasons"]
-        .as_array()
+    let reasons = sonde_analysis::trial::load(&run)
+        .into_iter()
+        .find(|t| t.scenario == "lost-answer")
         .unwrap()
-        .iter()
-        .filter_map(|r| r.as_str())
-        .collect();
+        .reasons();
     assert!(
-        reasons.contains(
-            &"the retried CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed"
+        reasons.iter().any(|r| r
+            == "the retried CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed"
         ),
         "{reasons:?}"
     );
@@ -1554,7 +1548,10 @@ async fn a_late_first_byte_waited_out_is_degraded() {
     let t = trial(&trials(&b.path("patient.sonde")), "slow-first-byte").clone();
     assert_eq!(t["standing"], "degraded", "{t:#}");
     assert_eq!((&t["held"], &t["waited"]), (&1.into(), &1.into()), "{t:#}");
-    assert_eq!(t["advice"]["key"], "trial.advice.timeout", "{t:#}");
+    assert_eq!(
+        t["finding"]["advice"]["key"], "trial.advice.timeout",
+        "{t:#}"
+    );
     assert!(
         o.stderr
             .contains("waited out 1 stall of 10.0 s before the first byte"),
@@ -1579,7 +1576,7 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
     let t = trial(&trials(&b.path("lists.sonde")), "stale-list").clone();
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!((&t["stale"], &t["missed"]), (&2.into(), &2.into()), "{t:#}");
-    assert_eq!(t["where"]["kind"], "ListObjectsV2", "{t:#}");
+    assert_eq!(t["finding"]["where"]["kind"], "ListObjectsV2", "{t:#}");
     // its run says which keys were left out
     let shown = b
         .run(
@@ -1889,12 +1886,12 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
     let t = trial(&all, "cut-body");
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!((&t["retried"], &t["cut"]), (&0.into(), &1.into()));
-    assert_eq!(t["where"]["kind"], "GetObject");
-    assert_eq!(t["where"]["key"], "data/big");
-    assert_eq!(t["advice"]["key"], "trial.advice.cut");
+    assert_eq!(t["finding"]["where"]["kind"], "GetObject");
+    assert_eq!(t["finding"]["where"]["key"], "data/big");
+    assert_eq!(t["finding"]["advice"]["key"], "trial.advice.cut");
     assert!(
         o.stderr
-            .contains("the half was taken as the whole (exit 0, as the clean run) · at GetObject data/big · check the bytes read against Content-Length"),
+            .contains("! broke under cut-body: 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) (at GetObject data/big)"),
         "{}",
         o.stderr
     );
@@ -1905,7 +1902,12 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
     for format in ["markdown", "github", "json"] {
         let c = b.run(None, &["check", "never.sonde", "-f", format]).await;
         assert_eq!(c.code, Some(1), "{format}: {}", c.stdout);
-        assert!(c.stdout.contains("data/big"), "{format}: {}", c.stdout);
+        // (JSON's verdicts are the table's rows: where is the finding's)
+        assert!(
+            format == "json" || c.stdout.contains("data/big"),
+            "{format}: {}",
+            c.stdout
+        );
     }
 }
 
@@ -1974,7 +1976,7 @@ async fn curl_resumes_a_cut_download_rereads_it_or_keeps_the_half() {
     let t = trial(&all, "cut-body");
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!(size("out-half-cut-body"), BIG as u64 / 2);
-    assert_eq!(t["where"]["key"], "data/big");
+    assert_eq!(t["finding"]["where"]["key"], "data/big");
 
     // no retry, and curl's own exit (18, a partial file): broke by the exit
     let o = run("fails", "", "").await;
@@ -2061,12 +2063,12 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
     let all = trials(&b.path("never.sonde"));
     let t = trial(&all, "lost-race");
     assert_eq!(t["standing"], "broke", "{t:#}");
-    assert_eq!(t["where"]["kind"], "PutObject");
+    assert_eq!(t["finding"]["where"]["kind"], "PutObject");
     assert_eq!(
-        t["where"]["key"],
+        t["finding"]["where"]["key"],
         format!("data/n-lost-race/_delta_log/{:020}.json", 1)
     );
-    assert_eq!(t["advice"]["key"], "trial.advice.race");
+    assert_eq!(t["finding"]["advice"]["key"], "trial.advice.race");
     assert!(
         o.stderr
             .contains("lost its race: no commit followed it and nothing read back what won, and the program exited 0"),
@@ -2370,7 +2372,7 @@ async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
     let t = trial(&all, "slowdown");
     assert_eq!(t["standing"], "refused", "{t:#}");
     // its keys carry the trial's name already: not told to add it
-    assert_eq!(t["advice"]["key"], "trial.advice.policy.placed");
+    assert_eq!(t["finding"]["advice"]["key"], "trial.advice.policy.placed");
     assert!(o.stderr.contains("refused   slowdown"), "{}", o.stderr);
     assert!(
         o.stderr
@@ -2383,10 +2385,12 @@ async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
     assert!(c.stdout.contains("refused   slowdown"), "{}", c.stdout);
 }
 
-/// Broke, changed, tried again: only what broke runs, and each verdict says
+/// Broke, changed, tried again: every scenario runs again, what broke is a
+/// finding of the run, and once survived it reads fixed; each verdict says
 /// what it was ("broke on …, survived since"), in `check` and `show` too.
+/// (28.0 had `--again` for what broke, and the advice apart from findings.)
 #[tokio::test(flavor = "multi_thread")]
-async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
+async fn trying_again_reads_what_broke_fixed_and_says_it_survived_since() {
     let b = Bench::new().await;
     let o = b
         .run(
@@ -2395,39 +2399,45 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         )
         .await;
     assert_eq!(o.code, Some(1), "{}", o.stderr);
-    assert!(
-        o.stderr
-            .contains("sonde run --again --name etl -o run.sonde --force --url "),
-        "the way to try again is said: {}",
-        o.stderr
-    );
+    // what broke is a finding: why, where, and what to change
+    assert!(o.stderr.contains("! broke under "), "{}", o.stderr);
+    assert!(!o.stderr.contains("--again"), "{}", o.stderr);
     let first = trials(&b.path("run.sonde"));
     let broke: Vec<String> = first
         .iter()
-        .filter(|t| t["standing"] != "survived" && t["standing"] != "untested")
+        .filter(|t| t["standing"] == "broke")
         .map(|t| t["scenario"].as_str().unwrap().to_string())
         .collect();
-    assert!(
-        !broke.is_empty() && broke.len() < first.len() + 1,
-        "{first:#?}"
-    );
-    // the program changed: it retries now
+    assert!(!broke.is_empty(), "{first:#?}");
+    // the program changed: it retries now, and the same command tries it
     let again = b
         .run(
             Some("retrying"),
-            &["run", "--again", "--name", "etl", "-o", "run.sonde"],
+            &["run", "--trial", "--name", "etl", "-o", "run.sonde"],
         )
         .await;
     assert_eq!(again.code, Some(0), "{}", again.stderr);
     let now = trials(&b.path("run.sonde"));
-    let mut tried: Vec<String> = now
-        .iter()
-        .map(|t| t["scenario"].as_str().unwrap().to_string())
-        .collect();
-    tried.sort();
-    let mut want = broke.clone();
-    want.sort();
-    assert_eq!(tried, want, "only what broke: {}", again.stderr);
+    // every scenario its clean run calls for, what broke among them
+    for s in &broke {
+        assert!(
+            now.iter().any(|t| t["scenario"] == s.as_str()),
+            "{s}: {}",
+            again.stderr
+        );
+    }
+    assert!(
+        again.stderr.contains("since the trial before"),
+        "{}",
+        again.stderr
+    );
+    for s in &broke {
+        assert!(
+            again.stderr.contains(&format!("✓ fixed  survives {s} now")),
+            "{s}: {}",
+            again.stderr
+        );
+    }
     assert!(
         again.stderr.contains(", survived since"),
         "{}",
@@ -2439,7 +2449,13 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert!(c.stdout.contains(", survived since"), "{}", c.stdout);
     let j = b.run(None, &["check", "run.sonde", "-f", "json"]).await;
     let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
-    let history = doc["trials"][0]["history"].as_array().unwrap();
+    let tried = doc["trials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["scenario"] == broke[0].as_str())
+        .unwrap();
+    let history = tried["history"].as_array().unwrap();
     assert_eq!(history.len(), 2, "{history:#?}");
     assert_eq!(history[1]["standing"], "survived");
     assert_eq!(history[1]["run"], "run.sonde");
@@ -2448,7 +2464,13 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
     assert!(s.stdout.contains(", survived since"), "{}", s.stdout);
     let j = b.run(None, &["show", "run.sonde", "-f", "json"]).await;
     let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
-    assert_eq!(doc["trials"][0]["history"].as_array().unwrap().len(), 2);
+    let fixed = doc["since"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["identity"] == format!("trial|{}", broke[0]))
+        .unwrap_or_else(|| panic!("{}", doc["since"]));
+    assert_eq!(fixed["state"], "fixed", "{fixed}");
     // recorded again to the same file: the verdicts are the program's, kept
     let plain = b
         .run(
@@ -2458,35 +2480,14 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         .await;
     assert_eq!(plain.code, Some(0), "{}", plain.stderr);
     assert!(!sonde_analysis::trial::read_verdicts(&b.path(".")).is_empty());
-    // nothing left to try
-    let none = b
+    // `--again` is no flag
+    let gone = b
         .run(
             Some("retrying"),
-            &[
-                "run",
-                "--trial",
-                "--again",
-                "--name",
-                "etl",
-                "-o",
-                "run.sonde",
-            ],
+            &["run", "--again", "--name", "etl", "-o", "run.sonde"],
         )
         .await;
-    assert_eq!(none.code, Some(0), "{}", none.stderr);
-    assert!(
-        none.stderr.contains("Nothing to try again"),
-        "{}",
-        none.stderr
-    );
-    // a program never tried: a usage error
-    let never = b
-        .run(
-            Some("retrying"),
-            &["run", "--again", "--name", "new", "-o", "n.sonde"],
-        )
-        .await;
-    assert_eq!(never.code, Some(64), "{}", never.stderr);
+    assert_eq!(gone.code, Some(64), "{}", gone.stderr);
 }
 
 /// `run --demo`: the program against the built-in store, no endpoint
@@ -2536,53 +2537,6 @@ async fn run_demo_records_a_program_against_the_built_in_store() {
         let o = out(sonde(&args, true).output().await.unwrap());
         assert_eq!(o.code, Some(64), "{other:?}: {}", o.stderr);
     }
-}
-
-/// Two strengths of one scenario stand broke: each is run again, into a
-/// run of its own; the name is trimmed as it was when kept.
-#[tokio::test(flavor = "multi_thread")]
-async fn trying_again_runs_every_strength_that_broke() {
-    let b = Bench::new().await;
-    let broke = serde_json::json!([{
-        "at": "2026-11-01T00:00:00Z", "standing": "broke", "run": "run.sonde"
-    }]);
-    let kept = serde_json::json!({ "slowdown": broke, "slowdown:3": broke });
-    sonde_analysis::index::update(&b.path("."), |_| {
-        (
-            vec![(
-                "etl".to_string(),
-                sonde_analysis::index::Change::Verdicts(Some(kept)),
-            )],
-            (),
-        )
-    })
-    .unwrap();
-    let o = b
-        .run(
-            Some("retrying"),
-            &[
-                "run",
-                "--trial",
-                "--again",
-                "--name",
-                " etl ",
-                "-o",
-                "run.sonde",
-            ],
-        )
-        .await;
-    assert_eq!(o.code, Some(0), "{}", o.stderr);
-    let mut runs: Vec<String> = trials(&b.path("run.sonde"))
-        .iter()
-        .map(|t| t["run"].as_str().unwrap().to_string())
-        .collect();
-    runs.sort();
-    assert_eq!(
-        runs,
-        ["run.slowdown-3x.sonde", "run.slowdown.sonde"],
-        "{}",
-        o.stderr
-    );
 }
 
 /// A boto3-like upload under a lost answer and a completion answered 500 on

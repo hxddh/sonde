@@ -131,8 +131,8 @@ pub(super) fn diagnosis_lines(a: &Analysis, all: bool, color: bool) -> Vec<Strin
     out
 }
 
-/// A finding between two runs, on one line: `✓ fixed  … · saved 20
-/// requests (predicted 20)`; with the command changed or the workload grown
+/// A finding between two runs, on one line: `✓ fixed  … · 1.2 s less
+/// (predicted 1.5 s)`, or `· within noise`; with the command changed or the workload grown
 /// between the runs (`uncounted`, [`RunChange::uncounted`]), fixed, less
 /// and more say so in place of a saving.
 pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: bool) -> String {
@@ -140,7 +140,7 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
         State::Fixed => ("✓", "32"),
         State::Less => ("↓", "36"),
         State::More => ("↑", "33"),
-        State::New | State::Back => ("!", "33"),
+        State::New => ("!", "33"),
         State::Open => ("·", "2"),
     };
     let mut line = format!(
@@ -176,7 +176,7 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
     line
 }
 
-/// The findings of a change worth a line (fixed, less, more, new, back),
+/// The findings of a change worth a line (fixed, less, more, new),
 /// then those still open as they were, counted: `as above` when the run's
 /// findings are `listed` above (`run`, `show`).
 pub(super) fn change_lines(
@@ -225,6 +225,18 @@ pub(super) fn moved(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
 /// changed, the workload grew): said before the figures.
 pub(super) fn uncounted_line(why: &str) -> String {
     format!("{why}: what moved is not counted as a fix")
+}
+
+/// How much the program's runs vary, as a fix's time is judged against
+/// it: `its runs vary by 220 ms`, or that no band is known yet.
+pub(super) fn noise_line(noise_ms: Option<f64>) -> String {
+    match noise_ms {
+        Some(ms) => format!(
+            "its runs vary by {} (its last runs of this command): a change under it is within noise",
+            ms_text(ms)
+        ),
+        None => "no noise band yet: fewer than 2 earlier runs of this command".into(),
+    }
 }
 
 /// The figures of a change on one line: requests, waiting, cost.
@@ -319,6 +331,10 @@ pub(super) fn since_lines(since: &SinceLast, asked: bool, color: bool) -> Vec<St
     out.push(format!("  {}", figures_line(c)));
     if asked {
         out.extend(kinds_moved(c));
+    }
+    // what a fix's time is judged against: said once, when one says it
+    if since.findings.iter().any(|f| f.saved.is_some()) {
+        out.push(paint(&format!("  {}", noise_line(c.noise_ms)), "2", color));
     }
     out.extend(change_lines(
         &since.findings,
@@ -421,7 +437,7 @@ impl Other {
 
 /// `path` (a run, its `header` and `records`, analysed as `a`) against
 /// `other` (`show --since`): as against the run before, but read only: the
-/// program's kept findings say what was fixed before and is back, and are
+/// program's kept findings say what was fixed below its threshold, and are
 /// left as they are. Two programs' figures compare, their findings do not;
 /// nor do a failed run's, nor those of a run nothing reached.
 pub(super) fn since_other(
@@ -455,12 +471,10 @@ pub(super) fn since_other(
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
         c = c.of_commands(hb.command.as_deref(), header.command.as_deref());
-        // a finding fixed by the other run or one before it is back, not new
         let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(path));
         if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
             program.mark_gone(&mut c.findings, &before, &after);
-            program.mark_back(&mut c.findings, &hb.created.to_rfc3339());
-            c.appeared = sonde_analysis::fixloop::said(&c.findings, &[State::New, State::Back]);
+            c.appeared = sonde_analysis::fixloop::said(&c.findings, &[State::New]);
             c.resolved = sonde_analysis::fixloop::said(&c.findings, &[State::Fixed]);
         }
     } else {
@@ -570,6 +584,7 @@ mod tests {
             counts: None,
             predicted: Saving::default(),
             measured: None,
+            within_noise: false,
             saved: None,
             saved_text: saved.map(String::from),
         }
@@ -582,10 +597,10 @@ mod tests {
                 change(
                     State::Fixed,
                     "HEAD before GET",
-                    Some("saved 20 requests (predicted 20)"),
+                    Some("1.2 s less (predicted 1.5 s)"),
                 ),
-                change(State::Less, "41 one after another", None),
-                change(State::Back, "listed 5 times", None),
+                change(State::Less, "41 one after another", Some("within noise")),
+                change(State::New, "listed 5 times", None),
                 change(State::Open, "small uploads", None),
                 change(State::Open, "hot key", None),
             ],
@@ -596,9 +611,9 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "  ✓ fixed  HEAD before GET · saved 20 requests (predicted 20)",
-                "  ↓ less   41 one after another",
-                "  ! back   listed 5 times",
+                "  ✓ fixed  HEAD before GET · 1.2 s less (predicted 1.5 s)",
+                "  ↓ less   41 one after another · within noise",
+                "  ! new    listed 5 times",
                 // each listed above, with its line and fix
                 "  2 still open, as above",
             ]
