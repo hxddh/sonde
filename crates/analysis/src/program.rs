@@ -776,8 +776,8 @@ pub struct Gated {
 
 /// The run's findings `known` does not name (by identity, an entry made
 /// by older rules read by these), or names with a smaller count: judged
-/// by counts alone, never by a share of the run. One kept on purpose
-/// (`expect`) is none.
+/// by counts alone, never by a share of the run (one of time alone, past a
+/// fifth more). One kept on purpose (`expect`) is none.
 pub fn gated(
     findings: &[Observation],
     known: &std::collections::BTreeMap<String, usize>,
@@ -795,7 +795,13 @@ pub fn gated(
                     k == identity || expected_identity(k) == identity
                 })
                 .map(|(_, n)| *n);
-            (was.is_none_or(|n| count > n)).then(|| Gated {
+            // requests one after another: their count moves with their
+            // timing, so it grew only past a fifth more (as the fix loop)
+            let grew = |n: usize| match crate::fixloop::of_time(o) {
+                true => count * 4 > n * 5,
+                false => count > n,
+            };
+            was.is_none_or(grew).then(|| Gated {
                 identity,
                 text: o.text.clone(),
                 count,
@@ -1672,6 +1678,56 @@ mod tests {
         let p = profile(rs, &RequestPrices::default());
         let o = observations(rs, &episodes(rs));
         (run_point("x", "", rs, &p, &o), p, o)
+    }
+
+    /// 28.0's `check` held a run to figures alone. `[check.findings]` holds
+    /// it to the findings it knows: another, or more of one by its count,
+    /// fails; requests one after another only past a fifth more.
+    #[test]
+    fn a_finding_not_known_or_grown_fails_the_check() {
+        let hot = |n: u64| -> Vec<Record> { (1..=n).map(|i| rec(i, "hot")).collect() };
+        let held = |rs: &[Record], known: &[(&str, usize)]| {
+            let (pt, pr, ob) = point(rs);
+            check(
+                (&pt, rs, &pr, &ob),
+                None,
+                &Budget {
+                    known: Some(known.iter().map(|(k, n)| (k.to_string(), *n)).collect()),
+                    ..Default::default()
+                },
+            )
+        };
+        let c = held(&hot(12), &[("obs.hot|b/hot", 12)]);
+        assert!(c.passed && c.findings.is_empty(), "{c:#?}");
+        assert_eq!(c.verdicts[0].what, "findings");
+        // fewer is no failure
+        assert!(held(&hot(11), &[("obs.hot|b/hot", 12)]).passed);
+        let grown = held(&hot(13), &[("obs.hot|b/hot", 12)]);
+        assert!(!grown.passed);
+        assert_eq!(
+            (grown.findings[0].count, grown.findings[0].known),
+            (13, Some(12))
+        );
+        let new = held(&hot(12), &[]);
+        assert!(!new.passed);
+        assert_eq!(new.findings[0].identity, "obs.hot|b/hot");
+        assert_eq!(new.findings[0].known, None);
+        // one of time alone: its count moves with its timing
+        let serial: Vec<Record> = (1..=40u64)
+            .map(|i| Record {
+                time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 11).unwrap(),
+                latency_ms: 10.0,
+                ..rec(i, &format!("k{i}"))
+            })
+            .collect();
+        let (_, _, ob) = point(&serial);
+        let s = ob
+            .iter()
+            .find(|o| o.kind == "obs.serial")
+            .expect("one after another");
+        let n = crate::fixloop::count_of(s);
+        assert!(held(&serial, &[("obs.serial|", n * 9 / 10)]).passed);
+        assert!(!held(&serial, &[("obs.serial|", n * 3 / 4)]).passed);
     }
 
     /// `max-errors` counts the requests that failed after their retries:

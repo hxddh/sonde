@@ -271,7 +271,7 @@ fn text_of(o: &Observation) -> FindingText {
 
 /// A finding of time alone (requests one after another): what it would
 /// save is waiting, not requests.
-fn of_time(o: &Observation) -> bool {
+pub fn of_time(o: &Observation) -> bool {
     o.saves_requests == 0 && o.saves_ms > 0.0
 }
 
