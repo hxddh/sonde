@@ -2,6 +2,86 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [30.0.0] - 2026-11-22
+
+sonde's plan is true now: recording no longer slows a program, a change's time saved holds on a busy pool and for requests sent one after another, a fix's saving is said once and honestly, the fix code works, the analysis is faster than before 29.0, and every run shows its time strip again.
+
+### Changed
+
+- A change's time saved is its requests' share of the waiting, each moment's waiting split among the requests in
+  flight: on a busy pool, removing a tenth of the requests saves about a tenth of the time, not nothing. A missing key
+  polled saves requests and money, not time.
+- Requests sent one after another are weighed on all of them, and come first when sending them at once saves the
+  most (an ETL's "206 requests at once, ≈5.33 s" ahead of "write fewer objects, 3.55 s"); a key read and written back
+  each time round a loop keeps only its own requests in order.
+- The plan puts what is wrong first (a lost update, `obs.rmw`, now a warning; a trial that broke), then what saves
+  the most time.
+- A fix says the requests it saved and the time its plan predicted ("30 fewer requests (predicted 910 ms less)");
+  the run's time is said once, on the since line, against its own noise — the largest move between earlier runs with
+  the same findings, so an earlier fix is no longer taken for noise. `show --since` has the band too.
+- `check --init` never records a lost update or a fault as known (they fail); `check` says when known findings are
+  gone so you can tighten `[check.findings]`; throttling counts get a fifth of room; `run-args` is the run's own store.
+- `show -f json`: a diagnosis has `atOnce` (`requests`, `concurrency`, `savesMs`); `time` has `injectedMs`;
+  `since.findings[]` has `savedRequests` (its `saved` and `withinNoise` went); `since.change` has `objects` and
+  `withinNoise`; `check` has `loose`; `check --init -f json` has `notKnown`.
+- The app: every run's Operations shows its time strip again, and a program's output is a tab of its own, Output,
+  lined up beside the operations (a program started from the app opens there, on its terminal). Run again opens the
+  new run, whose "Since the run before" sentence says what was fixed and links to Compare. A run's time account is one
+  uncut line (where most of it went, and the demo store's caveat, in its tooltip). The sidebar names Runs once:
+  Runs pressed in Runs, ⌘N and File › New run open the command bar, and ⌘K finds a run. History's Under faults is
+  one row per scenario, with its own icon. Compare's charts carry the figures before → after.
+
+### Removed
+
+- The app's sidebar heading, "+" and "Search runs" of the run list (⌘K finds runs); History's advice rows under
+  faults (the advice is the trial finding's fix); Compare's tiles.
+- "No noise band yet", the plan hint without a plan, the kinds table for a run of fewer than 10 requests (`--all`
+  shows it), and the `{trial}` warning for programs that write nothing.
+
+### Fixed
+
+- Requests through sonde no longer wait an extra ~40 ms when the answer comes in a few pieces (8–64 KiB): the
+  program-facing sockets send at once (TCP_NODELAY). The wait made a run slower than the program alone and was counted
+  as "your program's own"; a program of 91 requests went from 4.4 s to 3.0 s through sonde.
+- The analysis is faster than 29.0's and 28.0's: a million requests' plan takes about half the time (the waiting is
+  reckoned once per run, not once per finding).
+- A finding has one identity in the plan, the fix loop and `check`: a run again no longer says "open" and "new" for
+  the same finding, and `check` no longer flakes on it.
+- The same files read or written in fewer requests are no longer "the workload shrank"; a finding now only under its
+  threshold reads as it was; a fixed finding is no longer credited with the whole run's change.
+- Findings were joined into one diagnosis through a third finding they did not share objects with.
+- The time account no longer calls a `run --listen` run's or a log import's idle time "your program's own", and says
+  a trial's injected delays apart.
+- `verify` replays the run as it was given (`--url`, `-e`, `-o`), and a run finds its program's earlier runs with or
+  without `-o`.
+- The fix code sonde prints does what it says: boto3 reads the rest of a body cut short, times out well under a
+  stall, raises on keys DeleteObjects did not delete and backs a poll off (fewer requests, not less time); JS times
+  out with `socketTimeout`; Go reads the rest of a cut body, times out on the response header and checks DeleteObjects'
+  errors (two of its fixes did not compile); Java times out each read and its "eight at once" compiles.
+- With `sonde run --demo`, an aws-chunked upload with a checksum (the AWS SDK for Java's default) stored its framing
+  in the object, 72 bytes too long; real stores were never affected.
+- The app: Run while a program runs says why it cannot, with Stop; History's trend sentences are no longer cut.
+
+### 中文
+
+sonde 的计划现在可信了：录制不再拖慢程序；连接池满载和请求依次发出时，省下的时间都算得对；修复的节省只说一次且如实；修复代码能用；分析比 29.0 之前还快；每次运行都重新显示时间条。
+
+- 变更：一项改动省下的时间按其请求在等待中所占的份额计算（每一刻的等待由同时在途的请求均分）：连接池满载时去掉十分之一的请求约省十分之一的时间，而不是零；轮询缺失的键只省请求和费用，不省时间。
+- 变更：依次发出的请求按全部请求衡量，并发能省最多时间时排在第一；循环里每次读写回的键只让自己的请求保持顺序。
+- 变更：计划把出错的问题放在最前（丢失的更新 `obs.rmw` 现为警告、试验中崩溃），再按节省的时间排序。
+- 变更：修复只说它少了的请求和计划预计的时间；整次运行的时间只在 since 一行说一次，并与该程序发现相同的以往运行的波动比较，之前的修复不再被当作波动；`show --since` 也给出波动范围。
+- 变更：`check --init` 不再把丢失更新和故障记为已知；已知发现消失时 `check` 提示收紧；限流计数有五分之一余量；`run-args` 写运行自己的存储。
+- 变更：`show -f json` 诊断新增 `atOnce`，`time` 新增 `injectedMs`；`since.findings[]` 新增 `savedRequests`（去掉 `saved`、`withinNoise`）；`since.change` 新增 `objects`、`withinNoise`；`check` 新增 `loose`；`check --init -f json` 新增 `notKnown`。
+- 变更：应用中每次运行的"操作"页重新显示时间条，程序输出回到独立的"输出"标签页；"再次运行"打开新的运行；耗时说明只占一行不截断；侧边栏只出现一次"运行记录"，⌘N 和"文件 › 新建运行"打开命令栏，⌘K 查找运行；"历史"中故障场景每个一行；"对比"图表说明给出前 → 后的数字。
+- 移除：侧边栏运行列表的标题、"+"和"搜索运行"；"历史"故障下的建议行；"对比"的数字卡片；"还没有波动范围"、没有计划时的计划提示、少于 10 个请求时的类型表、不写入的程序的 `{trial}` 警告。
+- 修复：经 sonde 的请求在应答分几块到达（8–64 KiB）时不再多等约 40 ms（程序一侧也启用 TCP_NODELAY）；这段等待曾被算作"程序自身"的时间，一个 91 个请求的程序经 sonde 从 4.4 秒降到 3.0 秒。
+- 修复：分析比 29.0 和 28.0 都快，一百万请求的计划约省一半时间。
+- 修复：同一发现在计划、修复循环和 `check` 中只有一个标识；用更少请求读写同样的文件不再算"工作量变小"；修好的发现不再记上整次运行的变化；发现不再经由第三个发现被合并；时间账不再把 `run --listen` 和日志导入的空闲时间算作程序自身，并单独说明试验注入的延迟。
+- 修复：`verify` 按原样重放 `--url`、`-e`、`-o`；有无 `-o` 都能找到程序之前的运行。
+- 修复：sonde 给出的修复代码名副其实（boto3、JS、Go、Java，含两段编译不过的 Go 代码）。
+- 修复：`--demo` 下 aws-chunked 带校验和的上传把分块格式存进了对象；真实存储从未受影响。
+- 修复：程序运行时点"运行"会说明原因并提供"停止"；历史趋势说明不再被截断。
+
 ## [29.0.0] - 2026-11-22
 
 sonde answers with one plan: where the run's time went, then what to change, each change with the time it saves; a run again says only what changed, and sonde is smaller — fewer commands, one place for runs, no terminal UI.
