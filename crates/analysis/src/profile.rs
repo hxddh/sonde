@@ -904,22 +904,20 @@ pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
 /// part is its own time; one of eight at once, an eighth of it.
 pub fn waits_ms(records: &[Record]) -> Vec<f64> {
     let n = records.len();
-    let starts: Vec<i64> = records.iter().map(start_us).collect();
-    let ends: Vec<i64> = records
-        .iter()
-        .zip(&starts)
-        .map(|(r, &s)| end_us(r).max(s))
-        .collect();
-    // the places in order of their starts, and of their ends: records are
-    // mostly in the order they started, sorted only when not
-    let order = |at: &[i64]| {
+    let ends: Vec<i64> = records.iter().map(|r| end_us(r).max(start_us(r))).collect();
+    // the places in order of their ends, and of their starts: records are
+    // mostly in the order they started, sorted only when not (what is held
+    // at once is what a million's peak memory is made of)
+    let mut by_end: Vec<u32> = (0..n as u32).collect();
+    if !ends.is_sorted() {
+        by_end.sort_unstable_by_key(|&i| ends[i as usize]);
+    }
+    let by_start: Option<Vec<u32>> = (!records.is_sorted_by_key(start_us)).then(|| {
         let mut o: Vec<u32> = (0..n as u32).collect();
-        if !at.is_sorted() {
-            o.sort_unstable_by_key(|&i| at[i as usize]);
-        }
+        o.sort_by_cached_key(|&i| start_us(&records[i as usize]));
         o
-    };
-    let (by_start, by_end) = (order(&starts), order(&ends));
+    });
+    let start_at = |a: usize| by_start.as_ref().map_or(a, |o| o[a] as usize);
     // the time so far, each moment divided by the requests then in flight:
     // a request's part is this at its end less this at its start
     let mut out = vec![0f64; n];
@@ -927,15 +925,14 @@ pub fn waits_ms(records: &[Record]) -> Vec<f64> {
     for &e in &by_end {
         let e = e as usize;
         // the starts before this end, then the end (an end before a start at the same moment)
-        while let Some(&i) = by_start.get(a)
-            && starts[i as usize] < ends[e]
-        {
-            let t = starts[i as usize];
+        while a < n && start_us(&records[start_at(a)]) < ends[e] {
+            let i = start_at(a);
+            let t = start_us(&records[i]);
             if flying > 0 && t > last {
                 so_far += (t - last) as f64 / flying as f64;
             }
             last = last.max(t);
-            out[i as usize] -= so_far;
+            out[i] -= so_far;
             flying += 1;
             a += 1;
         }
@@ -2038,12 +2035,19 @@ pub fn name_findings(findings: &mut [Observation]) {
             .or_default()
             .insert(identity_as(o, true));
     }
+    // of each group read alike, the parts all its members share: once, not
+    // once a member (a run of a million has tens of thousands of traces)
+    let shared: HashMap<&str, Option<Vec<bool>>> = by
+        .iter()
+        .filter(|(_, g)| g.len() > 1)
+        .map(|(k, g)| (k.as_str(), shared_parts(g)))
+        .collect();
     let mut seen: HashMap<String, usize> = HashMap::new();
     for o in findings.iter_mut() {
         let id = identity_as(o, false);
-        let id = match by.get(&id) {
-            Some(group) if group.len() > 1 => told_apart(&identity_as(o, true), group),
-            _ => id,
+        let id = match shared.get(id.as_str()) {
+            Some(parts) => told_apart(&identity_as(o, true), parts.as_deref()),
+            None => id,
         };
         let n = seen.entry(id.clone()).or_default();
         *n += 1;
@@ -2052,25 +2056,35 @@ pub fn name_findings(findings: &mut [Observation]) {
     }
 }
 
-/// A literal identity among others that read the same once stable: each
-/// part (between `/`) all of them share made [`stable`], the parts that
-/// differ kept as they are. As it is when they are not cut alike.
-fn told_apart(literal: &str, group: &std::collections::HashSet<String>) -> String {
-    let parts: Vec<&str> = literal.split('/').collect();
-    let others: Vec<Vec<&str>> = group.iter().map(|g| g.split('/').collect()).collect();
-    if others.iter().any(|o| o.len() != parts.len()) {
-        return literal.to_string();
+/// Which parts (between `/`) every one of a group's literal identities
+/// shares; none when they are not cut alike.
+fn shared_parts(group: &std::collections::HashSet<String>) -> Option<Vec<bool>> {
+    let mut members = group.iter().map(|g| g.split('/').collect::<Vec<&str>>());
+    let first = members.next()?;
+    let mut shared = vec![true; first.len()];
+    for m in members {
+        if m.len() != first.len() {
+            return None;
+        }
+        for (i, p) in m.iter().enumerate() {
+            shared[i] &= *p == first[i];
+        }
     }
-    parts
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            if others.iter().all(|o| o[i] == *p) {
-                stable(p)
-            } else {
-                p.to_string()
-            }
-        })
+    Some(shared)
+}
+
+/// A literal identity among others that read the same once stable: each
+/// part (between `/`) all of them share ([`shared_parts`]) made [`stable`],
+/// the parts that differ kept as they are. As it is when they are not cut
+/// alike.
+fn told_apart(literal: &str, shared: Option<&[bool]>) -> String {
+    let Some(shared) = shared else {
+        return literal.to_string();
+    };
+    literal
+        .split('/')
+        .zip(shared)
+        .map(|(p, &same)| if same { stable(p) } else { p.to_string() })
         .collect::<Vec<_>>()
         .join("/")
 }
@@ -2419,8 +2433,10 @@ impl Run {
     ) -> Run {
         let mut folders: HashMap<String, usize> = HashMap::new();
         let mut name = String::new();
-        let mut objects: std::collections::HashSet<(&str, &str, &str)> =
-            std::collections::HashSet::new();
+        // each object (a listing by its prefix) as a hash of its name: eight
+        // bytes a request, sorted and counted once, not a set of names (a
+        // tenth of an outage's memory at its peak)
+        let mut objects: Vec<u64> = Vec::with_capacity(records.len());
         for r in records {
             // (a listing by its prefix: a key it is not)
             let prefix = match r.key.as_deref() {
@@ -2431,11 +2447,11 @@ impl Run {
                     .find(|(k, _)| k == "prefix")
                     .map_or("", |(_, v)| v.as_ref()),
             };
-            objects.insert((
-                r.bucket.as_deref().unwrap_or(""),
-                r.key.as_deref().unwrap_or(""),
-                prefix,
-            ));
+            objects.push({
+                use std::hash::{BuildHasher, BuildHasherDefault};
+                BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+                    .hash_one((r.bucket.as_deref().unwrap_or(""), r.key.as_deref(), prefix))
+            });
             // the folder named in a buffer: a string is kept once per folder
             name.clear();
             let b = r.bucket.as_deref().unwrap_or("");
@@ -2477,6 +2493,8 @@ impl Run {
                 (finding_identity(&o), o)
             })
             .collect();
+        objects.sort_unstable();
+        objects.dedup();
         let objects = objects.len();
         Run {
             requests: records.len(),
