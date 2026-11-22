@@ -580,12 +580,17 @@ pub struct Recent {
 }
 
 /// What a run's [`Recent::findings`] are: its command and each finding's
-/// identity and count, hashed (FNV-1a).
+/// identity and count, hashed (FNV-1a). A finding whose count moves with
+/// the timing ([`varying_count`]: requests one after another, throttled)
+/// by its identity alone: two runs of one program differ in it by noise.
 pub fn findings_of(command: Option<&str>, found: &[Observation]) -> String {
     let mut each: Vec<String> = found
         .iter()
         .filter(|o| !o.identity.is_empty())
-        .map(|o| format!("{}={}", o.identity, count_of(o)))
+        .map(|o| match varying_count(o) {
+            Some(_) => o.identity.clone(),
+            None => format!("{}={}", o.identity, count_of(o)),
+        })
         .collect();
     each.sort_unstable();
     let mut h: u64 = 0xcbf29ce484222325;

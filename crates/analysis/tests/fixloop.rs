@@ -1221,3 +1221,22 @@ fn the_same_objects_in_fewer_requests_is_no_smaller_workload() {
     assert_eq!(c.objects, (30, 30));
     assert!(c.workload_changed.is_none(), "{c:#?}");
 }
+
+/// After 30.0's merge: requests one after another counted 51 in one run and
+/// 61 in the next of the same program, so no two runs read alike and no
+/// noise band was known. A count that moves with the timing is not what
+/// tells a fix.
+#[test]
+fn runs_alike_but_for_their_timing_have_a_noise_band() {
+    let (a, b) = (run_of(&chain(20, 10)), run_of(&chain(17, 10)));
+    assert!(a.observations.iter().any(|o| o.identity == "obs.serial|"));
+    assert_eq!(
+        fixloop::findings_of(Some("x"), &a.observations),
+        fixloop::findings_of(Some("x"), &b.observations)
+    );
+    // a count of the program's own still tells them apart
+    assert_ne!(
+        fixloop::findings_of(Some("x"), &run_of(&hot(12)).observations),
+        fixloop::findings_of(Some("x"), &run_of(&hot(13)).observations)
+    );
+}
