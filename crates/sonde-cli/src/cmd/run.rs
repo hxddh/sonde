@@ -24,9 +24,17 @@ pub struct RunArgs {
     /// its line of code and fix, then the job fixed and the saving measured.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
-    /// Print each request on stderr as it happens.
-    #[arg(long)]
-    live: bool,
+    /// No command: serve the endpoint on ADDR (default 127.0.0.1:9000) for a
+    /// program started elsewhere, print each request, and stop at Ctrl-C.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1,
+          default_missing_value = "127.0.0.1:9000",
+          conflicts_with_all = ["demo", "trial", "faults", "again", "name", "no_callers"])]
+    listen: Option<SocketAddr>,
+    /// With --listen: take requests from other machines too (any Host).
+    /// Anyone who has the keys sonde prints can then use the endpoint's
+    /// credentials.
+    #[arg(long, requires = "listen")]
+    allow_remote: bool,
     /// Do not name the place in the program's code that sent each request.
     /// It is named by default for Python's boto3, the AWS SDK for
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
@@ -65,13 +73,69 @@ pub struct RunArgs {
     /// With -o: write over the file if it is there (else a run refuses it).
     #[arg(long, requires = "out")]
     force: bool,
-    /// The command, after `--` (none with --demo: the tour).
+    /// The command, after `--` (none with --demo: the tour; none with --listen).
     #[arg(
-        required_unless_present = "demo",
+        required_unless_present_any = ["demo", "listen"],
+        conflicts_with = "listen",
         trailing_var_arg = true,
         allow_hyphen_values = true
     )]
     command: Vec<String>,
+}
+
+/// `sonde run --listen`: the endpoint, standing, for a program started
+/// elsewhere: the variables to set, then each request as it comes, and the
+/// run's summary at Ctrl-C.
+async fn listen(
+    s: &Arc<Sonde>,
+    rec: &Recording,
+    addr: SocketAddr,
+    allow_remote: bool,
+) -> anyhow::Result<i32> {
+    if !addr.ip().is_loopback() && !allow_remote {
+        return Err(super::usage(format!(
+            "{addr} is reachable from other machines: add --allow-remote if that is what you want (anyone with the keys sonde prints can then use the endpoint's credentials)"
+        )));
+    }
+    if allow_remote {
+        eprintln!("warning: sonde takes requests from other machines on {addr}");
+    }
+    let mut started = start(s, rec, addr, None, allow_remote).await?;
+    let (set, unset) = started.proxy.env();
+    eprintln!(
+        "sonde is listening on {}. Point the application at it:\n",
+        started.proxy.url()
+    );
+    for k in &unset {
+        eprintln!("  unset {k}");
+    }
+    for (k, v) in &set {
+        eprintln!("  export {k}={v}");
+    }
+    eprintln!("\nCtrl-C stops.\n");
+    let printer = follow(&started.log, false);
+    tokio::signal::ctrl_c().await?;
+    printer.abort();
+    // requests still in flight are recorded before the file is read and packed
+    shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
+    started.writer.flush()?;
+    if let Some(lost) = started.writer.not_written() {
+        eprintln!("sonde: {lost}");
+    }
+    let run = RunFile::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+    print_summary(
+        &run.records,
+        &run.header.endpoint,
+        &started.path,
+        std::io::stderr().is_terminal(),
+        &request_prices_for(s, &run.header.endpoint),
+        false,
+    );
+    // finished: compressed to a tenth or less, still a .sonde file
+    let file = started.path.clone();
+    drop(started);
+    let _ = sonde_analysis::run::compress(&file);
+    Ok(0)
 }
 
 /// The signal that asked sonde to stop, once one has: 2 (Ctrl-C) or 15
@@ -271,6 +335,9 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     }
     if let Some(out) = &a.rec.out {
         refuse_existing(out, a.force)?;
+    }
+    if let Some(addr) = a.listen {
+        return listen(s, &a.rec, addr, a.allow_remote).await;
     }
     // `--demo` alone: the tour
     if a.demo && a.command.is_empty() {
@@ -769,15 +836,11 @@ async fn run_once(
         }
         (None, false) => {}
     }
-    let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
     let began = std::time::Instant::now();
     let mut child = match child.spawn() {
         Ok(c) => c,
         Err(e) => {
             // nothing ran: no run of it
-            if let Some(p) = printer {
-                p.abort();
-            }
             shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
             let path = started.path.clone();
             drop(started);
@@ -859,9 +922,6 @@ async fn run_once(
     if let Some(f) = feeder {
         f.abort();
     }
-    if let Some(p) = printer {
-        p.abort();
-    }
     // a run sonde ended on SIGTERM ended as sonde does (143), whatever
     // signal took its processes down
     let code = match signal {
@@ -901,7 +961,7 @@ async fn run_once(
             color,
             false,
             false,
-            since.as_ref(),
+            since.as_ref().map(|s| (s, false)),
         );
         // stopped from outside: said as such, not as a program that failed
         // (nor as one that sent nothing)

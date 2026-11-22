@@ -245,12 +245,11 @@ impl Sonde {
     /// Where the configuration, data, exports and downloads go.
     pub fn paths() -> JsonValue {
         let s = sonde();
-        let st = s.settings();
         json!({
             "config": s.paths().config_file(),
             "data": s.paths().data_dir,
-            "exports": st.exports_dir.clone().unwrap_or_else(|| s.paths().default_exports()),
-            "downloads": st.downloads_dir.clone().unwrap_or_else(|| s.paths().default_downloads()),
+            "exports": s.paths().default_exports(),
+            "downloads": s.paths().default_downloads(),
             "audit": s.paths().audit_log(),
         })
     }
@@ -328,12 +327,7 @@ impl Sonde {
     /// Downloads an object into the downloads directory (a job; its id).
     /// Never replaces a file: the result's `path` is where it went.
     pub async fn download(endpoint: String, bucket: String, key: String) -> Result<String, String> {
-        let s = sonde();
-        let st = s.settings();
-        let dir = st
-            .downloads_dir
-            .clone()
-            .unwrap_or_else(|| s.paths().default_downloads());
+        let dir = sonde().paths().default_downloads();
         // a name taken already gets ` (2)`: the job's result says the path
         let dest = dir.join(browse::download_name(&key));
         spawn(move || browse::download(&sonde(), &endpoint, &bucket, &key, dest)).await
@@ -636,12 +630,7 @@ fn stamp() -> String {
 }
 
 fn write_export(name: &str, bytes: &[u8]) -> Result<String, String> {
-    let s = sonde();
-    let dir = s
-        .settings()
-        .exports_dir
-        .clone()
-        .unwrap_or_else(|| s.paths().default_exports());
+    let dir = sonde().paths().default_exports();
     std::fs::create_dir_all(&dir).map_err(|e| err_msg(format!("{}: {e}", dir.display())))?;
     let path = dir.join(name);
     std::fs::write(&path, bytes).map_err(|e| err_msg(format!("{}: {e}", path.display())))?;

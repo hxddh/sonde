@@ -41,7 +41,7 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 
 ## Large runs
 
-**A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `compare` of two, about 500 MiB
+**A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `show --since` of two, about 500 MiB
 (it reads one run at a time). Memory grows with the requests: about 350 bytes each (a record's 96 bytes and what
 it shares, its operation's 88, and the analysis's room), so 8 GB holds about twenty million.
 
@@ -55,7 +55,7 @@ a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 | `sonde show -f json` | 13 s | 350 MiB |
 | `sonde show -f json --requests` (1.6 GiB of JSON) | 38 s | 349 MiB |
 | `sonde check --baseline` (another million) | 17 s | 391 MiB |
-| `sonde compare` (two millions) | 20 s | 510 MiB |
+| `sonde show --since` (two millions) | 20 s | 510 MiB |
 
 Budgets (`crates/analysis/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past
 its peak memory (what is measured and about an eighth more), which moves by a few percent from run to run. Time
@@ -76,7 +76,7 @@ How:
   size and the first byte's time take 8 bytes each; its query and headers are one list behind a pointer that records
   holding the same share; what few have (an error's body, a fault's mark) and what no analysis reads (the URL, the
   endpoint, the region, the store's ids) is behind another, there only when needed.
-- **The reading**: the file is streamed and parsed on every core; a lean reading (what `show`, `check` and `compare`
+- **The reading**: the file is streamed and parsed on every core; a lean reading (what `show` and `check`
   use) borrows a line's text and makes only what it keeps, the headers an analysis reads; repeated text is shared.
 - **The operation** (88 bytes): one request that went through is its record's names in place; any other's phrases,
   notes and outcome are behind one pointer; titles are made when asked for.
@@ -84,7 +84,7 @@ How:
   each kept what they let go: a fifth more memory, for 2.5 s less); work is done on sorted indexes and tables by id,
   not per-request maps and copies; a run's traces keep their counts and words, not the requests they name.
 - **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
-  gets a page of operations at a time; `compare` reads one run at a time. The app also caches each finished
+  gets a page of operations at a time; `show --since` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
 
 ## Terminal binary

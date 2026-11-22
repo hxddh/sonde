@@ -122,7 +122,7 @@
     },
     "change": {
       "type": "object",
-      "description": "With a baseline: the run against it, as `compare -f json` writes two runs (findings at any threshold, so less is not fixed). What the comment's figures, kinds and findings say."
+      "description": "With a baseline: the run against it, as `show --since` writes two runs in `since.change` (findings at any threshold, so less is not fixed). What the comment's figures, kinds and findings say."
     }
   },
   "required": [

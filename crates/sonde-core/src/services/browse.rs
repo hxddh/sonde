@@ -343,13 +343,12 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
         bucket.to_string(),
         key.to_string(),
     );
-    let settings = s.settings();
     // cooperative: a cancelled download still gets to remove its partial file
     s.jobs().spawn_cooperative(
         "download",
         ph!("job.download", bucket = b, key = k),
         1,
-        settings.rate_limit,
+        None,
         move |ctx| async move {
             let mut part = None;
             let r = tokio::select! {
@@ -457,12 +456,11 @@ pub fn search(
         prefix.to_string(),
         needle.to_lowercase(),
     );
-    let settings = s.settings();
     s.jobs().spawn(
         "search",
         ph!("job.search", bucket = b, prefix = p, needle = needle),
         1,
-        settings.rate_limit,
+        None,
         move |ctx| async move {
             let c = s2.job_client(&ep, &ctx)?;
             let mut token = None;

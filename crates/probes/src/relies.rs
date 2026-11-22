@@ -249,9 +249,8 @@ pub async fn answer(
         only: relies.iter().map(|r| r.probe.clone()).collect(),
         ..Default::default()
     };
-    let ids = crate::runner::spawn(s, &[endpoint.to_string()], opts);
-    let id = ids.first().ok_or("no probe run")?;
-    let v = s.jobs().wait(id).await.map_err(|e| e.message)?;
+    let id = crate::runner::spawn(s, endpoint, opts);
+    let v = s.jobs().wait(&id).await.map_err(|e| e.message)?;
     let run: Run = serde_json::from_value(v).map_err(|e| e.to_string())?;
     Ok(verdicts(relies, &run, &crate::catalog()))
 }

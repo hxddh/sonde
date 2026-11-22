@@ -59,10 +59,6 @@ pub struct CheckArgs {
     /// the program, and a `[[scenario]]` is the project's own to add.
     #[arg(long)]
     init: bool,
-    /// With -f markdown: the link to the whole report (`sonde share`'s
-    /// page, kept by CI) the comment ends with.
-    #[arg(long, value_name = "URL")]
-    report_url: Option<String>,
     /// The format written: text, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
@@ -407,10 +403,6 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
 }
 
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
-    if a.report_url.is_some() && a.format != Format::Markdown {
-        eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
-        return Ok(64);
-    }
     use sonde_analysis::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
@@ -893,8 +885,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         println!("sonde: {closing} · {judged}");
         return Ok(if passed { 0 } else { 1 });
     }
-    // a pull request's comment: the verdicts, what is new, and the run's findings
+    // a pull request's comment: the verdicts, what is new, and the run's
+    // findings; it ends with the link to the whole report CI keeps
+    // (SONDE_REPORT_URL, which the Action sets)
     if matches!(a.format, Format::Markdown) {
+        let report_url = std::env::var("SONDE_REPORT_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty());
         print!(
             "{}",
             sonde_analysis::program::check_comment(
@@ -906,7 +903,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                     trials: &trials,
                     change: change.as_ref(),
                     no_baseline: no_baseline.as_deref(),
-                    report_url: a.report_url.as_deref(),
+                    report_url: report_url.as_deref(),
                     failed: failed.map(|code| (code, run.0.refused.as_deref())),
                 }
             )

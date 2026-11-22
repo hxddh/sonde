@@ -6,9 +6,8 @@ credentials never reach the program.
 
 ```sh
 sonde run -- python etl.py                  # record a command
-sonde run --live -- ./my-service            # print requests as they happen
 sonde run --policy no-delete -- ./job      # refuse its deletes
-sonde proxy --listen 127.0.0.1:9000         # a standing endpoint for a program started elsewhere
+sonde run --listen                          # a standing endpoint (127.0.0.1:9000) for a program started elsewhere
 ```
 
 The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credentials as for every command
@@ -79,7 +78,7 @@ warns when they name another endpoint):
 Keys never go on a command line. Engines get plain HTTP even with `--tls`. Only a driver on this machine reaches
 127.0.0.1 (Spark `local[*]` or client mode, a local Flink cluster).
 
-By hand, with what `sonde proxy` prints (`--listen 127.0.0.1:9000` fixes the port; keys are new each time):
+By hand, with what `sonde run --listen` prints (its address fixes the port; keys are new each time):
 
 - **Spark**: the `spark.hadoop.fs.s3a.*` settings above; `s3://` paths also need
   `spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem`; `fs.s3a.bucket.<name>.endpoint` overrides the
@@ -136,7 +135,7 @@ ids, the error body, **latency** (the whole exchange, until the body is through 
 
 ## What a recorded program may do
 
-For `sonde run`, `proxy` and the app's Run (and its trials). It is the only answer to "what may a program do";
+For `sonde run` (`--listen` too) and the app's Run (and its trials). It is the only answer to "what may a program do";
 sonde's own destructive acts are each a dry run, then `--yes` ([security](security.md#one-safety-model)).
 
 | Policy | Allows | Refuses |
@@ -233,9 +232,8 @@ delta-rs 1.6 (49 → 5), boto3, the Java SDK.
 Will the program work on store X, and what will it cost there?
 
 ```sh
-sonde compare run.sonde --replay ceph                      # the plan: what it would send, where
-sonde compare run.sonde --replay r2 --bucket data=scratch --yes   # replay, clean up, compare
-sonde compare run.sonde replay.sonde                       # a run and its replay, later
+sonde replay run.sonde -e ceph                             # the plan: what it would send, where
+sonde replay run.sonde -e r2 --bucket data=scratch --yes   # replay, clean up, compare
 ```
 
 Re-enacted (a run holds no object data):
@@ -260,7 +258,7 @@ Re-enacted (a run holds no object data):
 Then what the program relies on: only the [probes](probes.md) that match features its requests used (checksum
 algorithms and types, conditional headers, ranges, multipart, DeleteObjects size, SSE-C, presigned URLs, paged
 listings), run against that store under `sonde-probe/` of the first bucket (removed after, audited), each with its
-verdict. Last, each store's request cost at its vendor's prices. `probe` is the whole catalogue.
+verdict. Last, each store's request cost at its vendor's prices. `endpoints test --probes` runs the whole catalogue.
 
 ```
 ✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)
@@ -277,15 +275,15 @@ so does a boto3 ETL that reads 40 objects it did not write (RustFS).
 
 In the app it is asked from a run: the run's ⋯ › On another store… shows the plan, runs it and opens the comparison:
 grouped differences, what the program relies on, the cost on each store, and both runs as transcripts
-(`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
+(`Op bucket/key [conditions] → outcome`).
 
 ## Limits
 
 - HTTP/1.1 between program and sonde; TLS only with `--tls`.
 - S3 Express One Zone (directory buckets, `<name>--<zone>--x-s3`): `CreateSession` and every request to one get
   `501 NotImplemented`, never forwarded, whatever the policy.
-- One target endpoint per proxy.
+- One target endpoint per run.
 - No overall time limit per exchange; 60 s without a byte cuts it. Connecting gives up after 10 s.
-- `run` and `proxy` wait up to 5 s at exit for requests in flight.
+- `run` waits up to 5 s at exit for requests in flight.
 - Replay is sequential: concurrency and timing are not reproduced.
 - Signed `aws-chunked` and length-less bodies are read whole: up to 1 GiB each, 2 GiB at once (more waits).

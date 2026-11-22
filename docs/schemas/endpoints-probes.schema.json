@@ -1,180 +1,177 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/probe.schema.json",
-  "title": "sonde probe -f json",
-  "description": "A probe run on each endpoint. Exit 1 when a guarantee broke, 2 when it differs from AWS, 3 when probes could not run.",
-  "type": "array",
-  "items": {
-    "type": "object",
-    "properties": {
-      "id": {
-        "type": "string",
-        "description": "The run's id."
-      },
-      "endpoint": {
-        "type": "string"
-      },
-      "endpointName": {
-        "type": "string"
-      },
-      "vendor": {
-        "type": "string"
-      },
-      "server": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "started": {
-        "type": "string"
-      },
-      "finished": {
-        "type": "string"
-      },
-      "sondeVersion": {
-        "type": "string"
-      },
-      "results": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "id": {
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/endpoints-probes.schema.json",
+  "title": "sonde endpoints test ENDPOINT --probes BUCKET -f json",
+  "description": "The compatibility probes run on one endpoint, each with its verdict next to AWS's ([probes.md](https://github.com/hxddh/sonde/blob/main/docs/probes.md)). Exit 1 when a guarantee broke, 2 when it differs from AWS, 70 when probes could not run.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "The run's id."
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "endpointName": {
+      "type": "string"
+    },
+    "vendor": {
+      "type": "string"
+    },
+    "server": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "started": {
+      "type": "string"
+    },
+    "finished": {
+      "type": "string"
+    },
+    "sondeVersion": {
+      "type": "string"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "description": "The guarantee's family (`conditionalWrites`, `multipart`, …)."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "differs",
+              "unsupported",
+              "error",
+              "skipped"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "summaryText": {
+            "type": "array",
+            "description": "Display text, not stable.",
+            "items": {
+              "$ref": "#/$defs/phrase"
+            }
+          },
+          "observations": {
+            "type": "array",
+            "items": {
               "type": "string"
-            },
-            "category": {
-              "type": "string",
-              "description": "The guarantee's family (`conditionalWrites`, `multipart`, …)."
-            },
-            "verdict": {
-              "type": "string",
-              "enum": [
-                "pass",
-                "fail",
-                "differs",
-                "unsupported",
-                "error",
-                "skipped"
-              ]
-            },
-            "summary": {
-              "type": "string"
-            },
-            "summaryText": {
+            }
+          },
+          "observationsText": {
+            "type": "array",
+            "description": "Display text, not stable.",
+            "items": {
               "type": "array",
-              "description": "Display text, not stable.",
               "items": {
                 "$ref": "#/$defs/phrase"
               }
-            },
-            "observations": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "observationsText": {
-              "type": "array",
-              "description": "Display text, not stable.",
-              "items": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/phrase"
-                }
-              }
-            },
-            "steps": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "label": {
-                    "type": "string"
-                  },
-                  "status": {
-                    "type": [
-                      "integer",
-                      "null"
-                    ]
-                  },
-                  "code": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "headers": {
-                    "type": "array",
-                    "items": {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "string"
-                        }
-                      ],
-                      "items": false
-                    }
-                  },
-                  "body": {
-                    "type": "string"
-                  },
-                  "recordId": {
-                    "type": [
-                      "integer",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "label",
-                  "status",
-                  "code",
-                  "headers",
-                  "body",
-                  "recordId"
-                ]
-              }
-            },
-            "exchanges": {
-              "type": "array",
-              "description": "The requests it sent.",
-              "items": {
-                "$ref": "#/$defs/record"
-              }
-            },
-            "durationMs": {
-              "type": "number"
             }
           },
-          "required": [
-            "id",
-            "category",
-            "verdict",
-            "summary",
-            "observations",
-            "steps",
-            "exchanges",
-            "durationMs"
-          ]
-        }
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "headers": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "items": false
+                  }
+                },
+                "body": {
+                  "type": "string"
+                },
+                "recordId": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "label",
+                "status",
+                "code",
+                "headers",
+                "body",
+                "recordId"
+              ]
+            }
+          },
+          "exchanges": {
+            "type": "array",
+            "description": "The requests it sent.",
+            "items": {
+              "$ref": "#/$defs/record"
+            }
+          },
+          "durationMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "verdict",
+          "summary",
+          "observations",
+          "steps",
+          "exchanges",
+          "durationMs"
+        ]
       }
-    },
-    "required": [
-      "id",
-      "endpoint",
-      "endpointName",
-      "vendor",
-      "server",
-      "started",
-      "finished",
-      "sondeVersion",
-      "results"
-    ]
+    }
   },
+  "required": [
+    "id",
+    "endpoint",
+    "endpointName",
+    "vendor",
+    "server",
+    "started",
+    "finished",
+    "sondeVersion",
+    "results"
+  ],
   "$defs": {
     "header": {
       "type": "object",

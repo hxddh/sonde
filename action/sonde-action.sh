@@ -296,7 +296,7 @@ report() {
 comment() {
   local md="$work/comment.md"
   check_args
-  [ -z "${SONDE_REPORT_URL:-}" ] || ARGS+=(--report-url "$SONDE_REPORT_URL")
+  # (sonde check reads SONDE_REPORT_URL, the link the comment ends with)
   sonde check "${ARGS[@]}" -f markdown >"$md" || [ $? -eq 1 ]
   cat "$md" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
   if [ -z "${SONDE_PR:-}" ] || [ "${SONDE_COMMENT:-true}" != true ]; then

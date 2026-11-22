@@ -1,6 +1,5 @@
 pub mod bucket;
 pub mod check;
-pub mod compare;
 pub mod demo;
 pub mod du;
 pub mod endpoints;
@@ -8,8 +7,6 @@ pub mod fixloop;
 pub mod layout;
 pub mod logs;
 pub mod mpu;
-pub mod probe;
-pub mod proxy;
 pub mod record;
 pub mod replay;
 pub mod run;
@@ -82,7 +79,7 @@ pub fn paths(cli: &Cli) -> Paths {
 
 pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     let s = Sonde::open(paths(cli))?;
-    // of this run only: neither the endpoint nor the limits are ever saved
+    // of this run only: the endpoint is never saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);
         let mut e = EndpointConfig::new(ADHOC, url, url, &region(cli, url), vendor);
@@ -91,10 +88,6 @@ pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
         e.credentials = CredentialSource::Default;
         s.add_transient_endpoint(e)?;
     }
-    s.set_overrides(sonde_core::sonde::Overrides {
-        rate_limit: cli.rate,
-        concurrency: cli.concurrency.map(|c| c.clamp(1, 1024)),
-    })?;
     Ok(s)
 }
 
@@ -175,7 +168,7 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
 
 /// The endpoint a recording goes to: [`endpoint`]'s, and with none
 /// configured, what an AWS SDK would use (the default credential chain and
-/// region, as `endpoints import` reads them), said on stderr. When that
+/// region), said on stderr. When that
 /// chain finds no credentials either, the usage error says both ways.
 pub async fn endpoint_to_record(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     if given.is_some() || s.endpoint_config(ADHOC).is_some() || !s.endpoints().is_empty() {
@@ -211,28 +204,6 @@ pub const AWS_DEFAULT: &str = "aws";
 /// Prints a job's progress on stderr while waiting for it.
 pub async fn wait(s: &Sonde, job: &str, quiet: bool) -> Result<serde_json::Value, s3raw::S3Error> {
     wait_on(s.jobs(), job, quiet).await
-}
-
-/// Waits for jobs started together, each to its end. One that fails leaves
-/// the others running to theirs; one that is cancelled (an interrupt) cancels
-/// the rest, and each is still waited for, since a cancelled job cleans up
-/// before it returns.
-pub async fn wait_all(
-    jobs: &sonde_core::JobManager,
-    ids: &[String],
-    quiet: bool,
-) -> Vec<Result<serde_json::Value, s3raw::S3Error>> {
-    let mut out = Vec::with_capacity(ids.len());
-    for (i, id) in ids.iter().enumerate() {
-        let r = wait_on(jobs, id, quiet).await;
-        if matches!(&r, Err(e) if e.kind == s3raw::ErrorKind::Cancelled) {
-            for rest in &ids[i + 1..] {
-                jobs.cancel(rest);
-            }
-        }
-        out.push(r);
-    }
-    out
 }
 
 async fn wait_on(
@@ -272,29 +243,6 @@ async fn wait_on(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
-
-    /// A job with something to undo, as a probe run has: `cleaned` counts the
-    /// ones that reached their cleanup.
-    fn run(jobs: &sonde_core::JobManager, cleaned: &Arc<AtomicUsize>, fails: bool) -> String {
-        let cleaned = cleaned.clone();
-        jobs.spawn_cooperative("probe", "t", 1, None, move |ctx| async move {
-            if fails {
-                return Err(s3raw::S3Error::config("no such bucket"));
-            }
-            for _ in 0..20 {
-                if ctx.is_cancelled() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            cleaned.fetch_add(1, Ordering::SeqCst);
-            ctx.check()?;
-            Ok(serde_json::json!(1))
-        })
-    }
 
     /// 27.0 stored us-east-1 for any URL without --region.
     #[test]
@@ -325,34 +273,5 @@ mod tests {
             said("billed but not listed as objects. See Incomplete uploads."),
             "billed but not listed as objects. See `sonde bucket uploads`."
         );
-    }
-
-    #[tokio::test]
-    async fn one_endpoint_failing_does_not_leave_the_others_runs_behind() {
-        let jobs = sonde_core::JobManager::new();
-        let cleaned = Arc::new(AtomicUsize::new(0));
-        let ids = [run(&jobs, &cleaned, true), run(&jobs, &cleaned, false)];
-        let r = wait_all(&jobs, &ids, true).await;
-        assert!(r[0].is_err() && r[1].is_ok());
-        assert_eq!(
-            cleaned.load(Ordering::SeqCst),
-            1,
-            "the second ran to its end"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_interrupt_ends_every_run_and_each_cleans_up() {
-        let jobs = sonde_core::JobManager::new();
-        let cleaned = Arc::new(AtomicUsize::new(0));
-        let ids = [run(&jobs, &cleaned, false), run(&jobs, &cleaned, false)];
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        jobs.cancel(&ids[0]);
-        let r = wait_all(&jobs, &ids, true).await;
-        assert!(
-            r.iter().all(|r| r.is_err()),
-            "the rest are cancelled with it"
-        );
-        assert_eq!(cleaned.load(Ordering::SeqCst), 2);
     }
 }

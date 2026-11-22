@@ -1,8 +1,9 @@
 //! The fix loop in the terminal: each finding with its saving, its line of
 //! code and the fix for the SDK that sent it; and a run against the
-//! program's run before it (`sonde run`, `show`, `compare`).
+//! program's run before it, or another run (`sonde run`, `show`, `show
+//! --since`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use reqlog::Record;
 use sonde_analysis::episode::Observation;
@@ -125,8 +126,7 @@ pub(super) fn change_line(f: &FindingChange, uncounted: Option<&str>, color: boo
 
 /// The findings of a change worth a line (fixed, less, more, new, back),
 /// then those still open as they were, counted: `as above` when the run's
-/// findings are `listed` above (`run`, `show`), not by `compare`, which
-/// lists none.
+/// findings are `listed` above (`run`, `show`).
 pub(super) fn change_lines(
     findings: &[FindingChange],
     uncounted: Option<&str>,
@@ -199,10 +199,11 @@ pub(super) fn cost_moved((a, b): (f64, f64), currency: &str) -> String {
     moved(a, b, |v| money_text(v, currency))
 }
 
-/// A run against the program's run before it, in a few lines: what it
-/// asks of the store, and its findings fixed, less, new and back. Nothing
-/// for a program's first run.
-pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
+/// A run against the program's run before it (or the run `asked` for,
+/// `show --since`), in a few lines: what it asks of the store, the kinds of
+/// request that moved (asked), and its findings fixed, less, new and back.
+/// Nothing for a program's first run.
+pub(super) fn since_lines(since: &SinceLast, asked: bool, color: bool) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(why) = &since.unsaved {
         out.push(format!("note: {why}"));
@@ -233,12 +234,40 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         .file_stem()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    out.push(paint(&format!("since the run before ({name})"), "1", color));
+    let head = match (&c.endpoints, asked) {
+        (Some((x, y)), _) => format!("since {name} on {x} (this run on {y})"),
+        (None, true) => format!("since {name}"),
+        (None, false) => format!("since the run before ({name})"),
+    };
+    out.push(paint(&head, "1", color));
+    // (said only of a run asked for: the run before is the program's)
+    let caveat = if !c.same_program {
+        Some(
+            "not two runs of one program: their figures compare, their findings do not".to_string(),
+        )
+    } else if let Some(x) = c.failed {
+        Some(format!(
+            "a run compared failed (exit {x}); their findings are not compared"
+        ))
+    } else if c.requests.0 == 0 || c.requests.1 == 0 {
+        Some(format!(
+            "{} in one of them: it recorded no request; their findings are not compared",
+            sonde_analysis::program::NOTHING_REACHED
+        ))
+    } else {
+        None
+    };
+    if asked && let Some(t) = caveat {
+        out.push(paint(&format!("  {t}"), "33", color));
+    }
     let uncounted = c.uncounted(false);
     if let Some(why) = c.uncounted(true) {
         out.push(paint(&format!("  {}", uncounted_line(&why)), "33", color));
     }
     out.push(format!("  {}", figures_line(c)));
+    if asked {
+        out.extend(kinds_moved(c));
+    }
     out.extend(change_lines(
         &since.findings,
         uncounted.as_deref(),
@@ -246,6 +275,164 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
         color,
     ));
     out
+}
+
+/// The kinds of request that moved between two runs, the largest change
+/// first, in a table; the rest counted.
+fn kinds_moved(c: &RunChange) -> Vec<String> {
+    const ROWS: usize = 10;
+    let changed: Vec<&sonde_analysis::profile::GroupChange> = c
+        .groups
+        .iter()
+        .filter(|g| {
+            g.requests.0 != g.requests.1
+                || (c.waiting_known && (g.waiting_ms.0 - g.waiting_ms.1).abs() >= 1.0)
+        })
+        .collect();
+    let rows: Vec<Vec<String>> = changed
+        .iter()
+        .take(ROWS)
+        .map(|g| {
+            vec![
+                if g.missed {
+                    format!("{} (not found)", g.kind)
+                } else {
+                    g.kind.clone()
+                },
+                format!(
+                    "{} → {}",
+                    output::grouped(g.requests.0 as u64),
+                    output::grouped(g.requests.1 as u64)
+                ),
+                if c.waiting_known {
+                    format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1))
+                } else {
+                    "—".into()
+                },
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = output::table(&["kind", "requests", "waiting"], &rows)
+        .to_string()
+        .lines()
+        .map(|l| format!("  {l}"))
+        .collect();
+    out.extend(more_kinds(
+        changed.len() - rows.len(),
+        c.groups.len() - changed.len(),
+    ));
+    out
+}
+
+/// What the table of kinds that moved leaves out: `cut` that changed past
+/// its rows, `same` that did not change.
+fn more_kinds(cut: usize, same: usize) -> Option<String> {
+    let kinds = |n: usize| if n == 1 { "kind" } else { "kinds" };
+    match (cut, same) {
+        (0, 0) => None,
+        (0, s) => Some(format!(
+            "  … and {s} more {} of request, unchanged",
+            kinds(s)
+        )),
+        (c, 0) => Some(format!("  … and {c} more {} of request", kinds(c))),
+        (c, s) => Some(format!(
+            "  … and {} more {} of request, {s} of them unchanged",
+            c + s,
+            kinds(c + s)
+        )),
+    }
+}
+
+/// A run to compare with (`show --since`), read, reckoned and let go
+/// before the run shown is read: two runs cost what the larger does.
+pub(super) struct Other {
+    path: PathBuf,
+    header: RunHeader,
+    run: sonde_analysis::profile::Run,
+}
+
+impl Other {
+    pub(super) fn read(s: &Sonde, path: &Path) -> anyhow::Result<Other> {
+        let (_, opened) = super::runs::open_lean(s, &path.to_path_buf())?;
+        let prices = request_prices_for(s, &opened.header.endpoint);
+        let run = sonde_analysis::profile::Run::analysed(&opened.header, &opened.records, &prices);
+        Ok(Other {
+            path: path.to_path_buf(),
+            header: opened.header,
+            run,
+        })
+    }
+}
+
+/// `path` (a run, its `header` and `records`, analysed as `a`) against
+/// `other` (`show --since`): as against the run before, but read only: the
+/// program's kept findings say what was fixed before and is back, and are
+/// left as they are. Two programs' figures compare, their findings do not;
+/// nor do a failed run's, nor those of a run nothing reached.
+pub(super) fn since_other(
+    path: &Path,
+    header: &RunHeader,
+    records: &[Record],
+    a: &Analysis,
+    other: Other,
+) -> SinceLast {
+    let Other {
+        path: other,
+        header: hb,
+        run: before,
+    } = other;
+    let traces = sonde_analysis::episode::traces_of(header, records, &a.episodes);
+    let mut after = sonde_analysis::profile::Run::later(
+        records,
+        a.profile.clone(),
+        a.observations.clone(),
+        traces,
+    );
+    after.measure(records, &before);
+    let (kb, ka) = (
+        sonde_analysis::program::key_of(&hb),
+        sonde_analysis::program::key_of(header),
+    );
+    let mut c = sonde_analysis::profile::compare_runs(&before, &after);
+    c.waiting_known = !hb.whole_seconds && !header.whole_seconds;
+    c.endpoints =
+        (hb.endpoint != header.endpoint).then(|| (hb.endpoint.clone(), header.endpoint.clone()));
+    c.same_program = ka.is_some() && ka == kb;
+    if c.same_program {
+        c = c.of_commands(hb.command.as_deref(), header.command.as_deref());
+        // a finding fixed by the other run or one before it is back, not new
+        let kept = sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(path));
+        if let Some(program) = ka.as_ref().and_then(|k| kept.get(k)) {
+            program.mark_gone(&mut c.findings, &before, &after);
+            program.mark_back(&mut c.findings, &hb.created.to_rfc3339());
+            c.appeared = sonde_analysis::fixloop::said(&c.findings, &[State::New, State::Back]);
+            c.resolved = sonde_analysis::fixloop::said(&c.findings, &[State::Fixed]);
+        }
+    } else {
+        c = c.of_programs(None, None);
+    }
+    c = c.of_exits((
+        sonde_analysis::fixloop::failed(&other),
+        sonde_analysis::fixloop::failed(path),
+    ));
+    // a run nothing reached: what it did not see is not fixed, nor new
+    if c.failed.is_none() && (before.requests == 0 || after.requests == 0) {
+        c.resolved.clear();
+        c.appeared.clear();
+        c.findings.clear();
+    }
+    SinceLast {
+        program: ka.unwrap_or_default(),
+        failed: None,
+        empty: false,
+        previous: Some(other.display().to_string()),
+        findings: c.findings.clone(),
+        change: Some(c),
+        unsaved: None,
+    }
 }
 
 /// `path` (a run, its `header` and `records`, analysed as `a`) against its
@@ -366,7 +553,7 @@ mod tests {
         );
         // nothing moved: no "still open" alone
         assert!(change_lines(&[change(State::Open, "x", None)], None, true, false).is_empty());
-        // compare lists no findings: nothing is above
+        // none listed above: nothing is said to be
         assert_eq!(
             change_lines(
                 &[
@@ -378,6 +565,23 @@ mod tests {
                 false,
             ),
             ["  ↓ less   41 one after another", "  1 still open"]
+        );
+    }
+
+    #[test]
+    fn the_kinds_that_moved_say_how_many_their_table_leaves_out() {
+        assert_eq!(more_kinds(0, 0), None);
+        assert_eq!(
+            more_kinds(0, 1).as_deref(),
+            Some("  … and 1 more kind of request, unchanged")
+        );
+        assert_eq!(
+            more_kinds(3, 0).as_deref(),
+            Some("  … and 3 more kinds of request")
+        );
+        assert_eq!(
+            more_kinds(2, 5).as_deref(),
+            Some("  … and 7 more kinds of request, 5 of them unchanged")
         );
     }
 

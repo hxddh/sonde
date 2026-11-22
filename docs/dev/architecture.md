@@ -15,7 +15,7 @@ crates/analysis           runs (the file, its index and counts), operations,  �
 crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  │ no UI framework
                           services: browse, mpu, versions, du, layout, exec;  │ (about three
                           demo S3 server                                      │ fifths of the
-crates/probes             52 probes, runner, run store, diff, matrix, reports │ code, the app's
+crates/probes             52 probes, runner, matrix, reports │ code, the app's
 crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │ TSX counted)
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
 crates/reqlog             records, redaction, ring buffer, HAR                │

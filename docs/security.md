@@ -54,10 +54,10 @@ never a switch away: each is a plan (`sonde-core::guard`):
 4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
 
-Probes write too (under `sonde-probe/` in the scratch bucket, and their own buckets when allowed):
+Probes write too (under `sonde-probe/` in the scratch bucket):
 
-- They run only on the scratch bucket the user names on the command line (naming it is the consent), or, after a
-  replay, in the bucket the replay wrote to (its dry run says so).
+- They run only on the scratch bucket the user names on the command line (`endpoints test --probes BUCKET`: naming
+  it is the consent), or, after a replay, in the bucket the replay wrote to (its dry run says so).
 - Each run is audited (`runProbes`: started, then the outcome, with anything cleanup could not remove).
 - A cancelled run still cleans up after the probe it stopped in.
 

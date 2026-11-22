@@ -34,7 +34,7 @@ python3 scripts/check-readme-images.py   # docs/images are the tour's approved l
 (cd app && nsh build App.tsx 2>&1 | tee build.log; ! grep -E "^warn" build.log)   # no warnings
 # unit
 cargo test --workspace --locked
-python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog makes (the debug sonde above)
+python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog makes
 # ui
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own
 # action (then the action itself, with this commit's sonde)

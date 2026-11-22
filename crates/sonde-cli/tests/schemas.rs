@@ -508,13 +508,12 @@ async fn every_json_output_is_as_its_schema_says() {
             &b.json(&["check", p, "--baseline", s, "-f", "json"], 0)
                 .await,
         );
-        holds(
-            "compare",
-            &b.json(&["compare", s, p, "-f", "json"], 0).await,
-        );
+        let since = b.json(&["show", p, "--since", s, "-f", "json"], 0).await;
+        assert!(since["since"]["change"].is_object(), "{}", since["since"]);
+        holds("show", &since);
         holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
     }
-    for by in ["kind", "prefix", "size", "caller", "sdk", "status", "key"] {
+    for by in ["kind", "prefix", "size", "caller", "key"] {
         holds(
             "show-by",
             &b.json(&["show", s, "--by", by, "-f", "json"], 0).await,
@@ -578,22 +577,22 @@ async fn every_json_output_is_as_its_schema_says() {
         std::fs::remove_file(b.path("sonde.toml")).unwrap();
     }
     holds(
-        "compare",
-        &b.json(&["compare", s, s, "-f", "json"], 0).await,
+        "show",
+        &b.json(&["show", s, "--since", s, "-f", "json"], 0).await,
     );
     holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
-    // replaying it on the small store, and the two compared (what the run
-    // read is written there first: nothing differs)
+    // replaying it on the small store (what the run read is written there
+    // first: nothing differs)
     let replayed = b.path("replay.sonde");
     let r = replayed.to_str().unwrap();
     holds(
-        "compare-replay",
+        "replay",
         &b.json(
             &[
-                "compare",
+                "replay",
                 s,
-                "--replay",
+                "-e",
                 "a",
                 "--bucket",
                 "demo=data",
@@ -608,18 +607,14 @@ async fn every_json_output_is_as_its_schema_says() {
         .await,
     );
     holds(
-        "compare-answers",
-        &b.json(&["compare", s, r, "-f", "json"], 0).await,
-    );
-    holds(
-        "compare-replay-stores",
+        "replay-stores",
         &b.json(
             &[
-                "compare",
+                "replay",
                 s,
-                "--replay",
+                "-e",
                 "a",
-                "--replay",
+                "-e",
                 "b",
                 "--bucket",
                 "demo=data",
@@ -667,37 +662,14 @@ async fn every_json_output_is_as_its_schema_says() {
         )
         .await,
     );
-    holds(
-        "probe-list",
-        &b.json(&["probe", "list", "-f", "json"], 0).await,
-    );
-    let run = b
+    let probed = b
         .json(
-            &[
-                "probe",
-                "-e",
-                "a",
-                "-b",
-                "data",
-                "--only",
-                "list.",
-                "--no-slow",
-                "-f",
-                "json",
-            ],
+            &["endpoints", "test", "a", "--probes", "data", "-f", "json"],
             // (the small store breaks a guarantee or two)
             1,
         )
         .await;
-    holds("probe", &run);
-    let runs = b.json(&["probe", "runs", "-f", "json"], 0).await;
-    holds("probe-runs", &runs);
-    let one = format!("{}:a", runs[0]["id"].as_str().unwrap());
-    holds(
-        "probe-diff",
-        &b.json(&["probe", "diff", &one, &one, "-f", "json"], 0)
-            .await,
-    );
+    holds("endpoints-probes", &probed);
 }
 
 /// The checker says what is wrong, and refuses a keyword it does not check.
@@ -732,20 +704,15 @@ fn every_schema_is_checked_and_documented() {
         "show",
         "show-by",
         "check",
-        "compare",
         "runs",
-        "compare-replay",
-        "compare-replay-stores",
-        "compare-answers",
+        "replay",
+        "replay-stores",
         "endpoints-list",
         "endpoints-test",
+        "endpoints-probes",
         "bucket-size",
         "bucket-uploads",
         "layout",
-        "probe-list",
-        "probe",
-        "probe-runs",
-        "probe-diff",
     ];
     let mut found: Vec<String> = std::fs::read_dir(schemas_dir())
         .unwrap()

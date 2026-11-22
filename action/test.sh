@@ -37,7 +37,8 @@ case "$1" in
     while [ $# -gt 0 ] && [ "$1" != -- ]; do [ "$1" = -o ] && touch "$2"; shift; done
     [ -z "${FAKE_EXEC:-}" ] || { shift; SONDE_UNDER=1 "$@" || true; }
     exit "${FAKE_RUN_EXIT:-0}" ;;
-  check) echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
+  check) printf '%s\n' "${SONDE_REPORT_URL:-}" >"$FAKE/sonde.report-url"
+    echo "### sonde: within budget ✅"; exit "${FAKE_CHECK:-0}" ;;
   show) exit "${FAKE_SHOW:-0}" ;;
   share) while [ $# -gt 0 ]; do [ "$1" = -o ] && echo page >"$2"; shift; done ;;
 esac
@@ -295,7 +296,8 @@ export SONDE_PR=7 SONDE_ARTIFACT=etl SONDE_REPORT_URL=https://github.test/artifa
 step comment
 is "no comment yet: one is written" "$(output url)" "https://github.test/repos/o/r/issues/7/comments"
 is "the comment starts with its marker" "$(head -n 1 "$t/body")" "<!-- sonde: etl -->"
-is "the comment links the report" "$(grep -c -- '--report-url' "$t/sonde.check")" 1
+is "the comment links the report: sonde reads it from the environment" "$(cat "$t/sonde.report-url")" "https://github.test/artifact/1"
+is "no flag carries the link" "$(grep -c -- '--report-url' "$t/sonde.check")" 0
 is "the summary has the comment" "$(grep -c 'within budget' "$t/summary")" 1
 SONDE_EXIT=1 step comment
 is "the program's status is the run's: no flag carries it" "$(grep -c -- '--program-exit' "$t/sonde.check")" 0

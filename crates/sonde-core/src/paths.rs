@@ -51,10 +51,7 @@ impl Paths {
     pub fn scan_cache(&self) -> PathBuf {
         self.data_dir.join("scans")
     }
-    pub fn probe_runs(&self) -> PathBuf {
-        self.data_dir.join("probe-runs")
-    }
-    /// Recorded runs (`sonde run`, `sonde proxy`, `sonde import`).
+    /// Recorded runs (`sonde run`, `sonde import`, `sonde replay`).
     pub fn runs(&self) -> PathBuf {
         self.data_dir.join("runs")
     }

@@ -36,10 +36,15 @@ pub struct ShowArgs {
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     pub(super) app: bool,
-    /// The requests split by kind, prefix, size, caller, sdk, status or
-    /// key, and where the slow and the costly requests are.
+    /// What changed since another run (a file or a name), in place of the
+    /// program's run before: the figures, each kind of request that moved,
+    /// and each finding fixed, less, more, back or new.
+    #[arg(long, value_name = "RUN", conflicts_with = "app")]
+    pub(super) since: Option<PathBuf>,
+    /// The requests split by kind, prefix, size, caller or key, and where
+    /// the slow and the costly requests are.
     #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
-          conflicts_with_all = ["errors", "requests", "all", "app"])]
+          conflicts_with_all = ["errors", "requests", "all", "app", "since"])]
     pub(super) by: Option<Dimension>,
     /// The format written: text or json.
     #[arg(
@@ -52,11 +57,23 @@ pub struct ShowArgs {
     pub(super) format: Format,
 }
 
+/// What `--by` splits by. Not the SDK, which the summary's head line
+/// names, nor the status, which its error lines count.
+const BY: [Dimension; 5] = [
+    Dimension::Kind,
+    Dimension::Prefix,
+    Dimension::Size,
+    Dimension::Caller,
+    Dimension::Key,
+];
+
 fn by_arg(text: &str) -> Result<Dimension, String> {
-    Dimension::parse(text).ok_or_else(|| {
-        let all: Vec<&str> = Dimension::ALL.iter().map(|d| d.name()).collect();
-        format!("{text:?} is not one of {}", all.join(", "))
-    })
+    Dimension::parse(text)
+        .filter(|d| BY.contains(d))
+        .ok_or_else(|| {
+            let all: Vec<&str> = BY.iter().map(|d| d.name()).collect();
+            format!("{text:?} is not one of {}", all.join(", "))
+        })
 }
 
 /// `sonde show --by`: the operations table split by one dimension, and the
@@ -218,6 +235,11 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         Some(f) => super::runs::resolve(s, f),
         None => which_run(s, project_name().as_deref())?.0,
     };
+    // the run to compare with, read and let go first
+    let other = match &a.since {
+        Some(o) => Some(super::fixloop::Other::read(s, &super::runs::resolve(s, o))?),
+        None => None,
+    };
     // read for what it amounts to: a request in full (`-f json`) is written
     // from the file, never held with the rest
     let (file, run) = super::runs::open_lean(s, &file)?;
@@ -257,8 +279,18 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         &file,
         sonde_analysis::program::key_of(&run.header).as_deref(),
     );
-    // against the program's run before it, as `run` said it: in every format
-    let since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
+    // against the program's run before it, as `run` said it, or against
+    // the run asked for: in every format
+    let since = match other {
+        Some(other) => Some(super::fixloop::since_other(
+            &file,
+            &run.header,
+            all,
+            &analysis,
+            other,
+        )),
+        None => super::fixloop::since_last(s, &file, &run.header, all, &analysis),
+    };
     match a.format {
         // the answer: the summary, the findings each cut to what to change
         // and where; every operation (--all), the failed ones (--errors), the
@@ -375,7 +407,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 color,
                 true,
                 a.all,
-                since.as_ref(),
+                since.as_ref().map(|s| (s, a.since.is_some())),
             );
             if !trials.is_empty() {
                 println!("\nUnder faults:");
@@ -443,7 +475,7 @@ pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
         std::io::stderr().is_terminal(),
         false,
         false,
-        since.as_ref(),
+        since.as_ref().map(|s| (s, false)),
     );
     Ok(0)
 }

@@ -44,7 +44,7 @@ requests and findings; its times are not meaningful, so no check holds a demo ru
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` in `working-directory` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
-| Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
+| Comment | `sonde check -f markdown` (the report's link from `SONDE_REPORT_URL`): the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
 | Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
 
 | Input | Default | |
@@ -95,12 +95,12 @@ Outputs: `passed` (`true`/`false`), `file` (the run's), `report-url`, `comment-u
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
 | Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure over the baseline in bold with its limit. Kinds of request that changed. |
-| New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
+| New findings, Gone | Against the baseline, as `sonde show --since` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
 | Warnings now | A finding the baseline had as a note, a warning in this run (a baseline always holds the run to no new warning). |
 | Trials | Those that broke or degraded; the survived counted. |
 | Expected | Findings `[check] expect` keeps on purpose, each with its reason (said here, not as new). |
 | Findings | Without a baseline: the run's first five findings, folded. |
-| The report | With `--report-url`. |
+| The report | With `SONDE_REPORT_URL` set. |
 
 ## Elsewhere
 
@@ -108,7 +108,7 @@ Three commands, in any CI:
 
 ```sh
 sonde run -o run.sonde -- python etl.py
-sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
+SONDE_REPORT_URL="$URL" sonde check run.sonde --baseline main.sonde -f markdown > comment.md
 sonde share run.sonde --baseline main.sonde -o report.html
 ```
 

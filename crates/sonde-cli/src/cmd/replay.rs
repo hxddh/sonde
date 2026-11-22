@@ -1,4 +1,5 @@
-//! `sonde compare --replay`: a run's requests sent again, to one store or several.
+//! `sonde replay`: a run's requests sent again, to one store or several,
+//! and the answers compared with the recording's.
 
 use sonde_analysis::program::ms_text;
 use std::io::IsTerminal;
@@ -6,13 +7,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
-use sonde_analysis::profile::{Profile, profile};
+use reqlog::Record;
+use sonde_analysis::profile::{Profile, RequestPrices, profile};
 use sonde_analysis::run::RunFile;
 use sonde_core::Sonde;
 
 use crate::output::{self, Format};
 
-use super::compare::{print_comparison, print_latency};
 use super::record::*;
 
 fn bucket_pair(s: &str) -> Result<(String, String), String> {
@@ -22,51 +23,44 @@ fn bucket_pair(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("{s:?}: expected original=target"))
 }
 
-/// How a run is replayed: where its writes go. It writes under a prefix
-/// of its own and removes what it wrote there, always.
-#[derive(Args, Clone, Default, PartialEq)]
-pub struct ReplayOpts {
+/// `sonde replay RUN -e ENDPOINT`: where, and how. It writes under a
+/// prefix of its own and removes what it wrote there, always.
+#[derive(Args)]
+pub struct ReplayArgs {
+    /// The run to replay (a file or a name).
+    #[arg(value_name = "RUN")]
+    file: PathBuf,
+    /// The endpoint to replay it on (default: --url, or the only one
+    /// configured). Several (`-e a -e b`) replay on each at once, side by
+    /// side.
+    #[arg(long, short = 'e', value_name = "ENDPOINT")]
+    endpoint: Vec<String>,
     /// Use another bucket: original=target (repeatable).
     #[arg(long, value_parser = bucket_pair)]
-    pub(super) bucket: Vec<(String, String)>,
+    bucket: Vec<(String, String)>,
     /// The key prefix the replay writes under (default: replay-<time>/).
     #[arg(long)]
-    pub(super) prefix: Option<String>,
+    prefix: Option<String>,
     /// Replay what the dry run says (what it writes, under its prefix, it removes).
     #[arg(long)]
-    pub(super) yes: bool,
+    yes: bool,
     /// The replay's file (default: in the data directory's runs/).
     #[arg(long, short = 'o')]
-    pub(super) out: Option<PathBuf>,
-}
-
-/// A run to replay, where, and how.
-struct ReplayArgs {
-    file: PathBuf,
-    endpoint: Vec<String>,
-    how: ReplayOpts,
+    out: Option<PathBuf>,
+    /// The format written: text or json.
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
-/// `file` replayed on `endpoints` (one, or several side by side), and the
-/// answers compared with the recording's.
-pub async fn replay(
-    s: &Arc<Sonde>,
-    file: &std::path::Path,
-    endpoints: &[String],
-    how: &ReplayOpts,
-    format: Format,
-) -> anyhow::Result<i32> {
-    let a = ReplayArgs {
-        file: file.to_path_buf(),
-        endpoint: endpoints.to_vec(),
-        how: how.clone(),
-        format,
-    };
-    replay_on(s, &a).await
-}
-
-async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
+/// `sonde replay`: the run replayed on its endpoints (one, or several side
+/// by side), and the answers compared with the recording's.
+pub async fn run(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_analysis::replay::{self as rp, ReplayOptions};
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
@@ -74,13 +68,13 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let (asked, original) = super::runs::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
-    let prefix = match &a.how.prefix {
+    let prefix = match &a.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
         None => rp::default_prefix(),
     };
     let opts = ReplayOptions {
         prefix: prefix.clone(),
-        buckets: a.how.bucket.clone(),
+        buckets: a.bucket.clone(),
     };
     let plan = rp::plan(&original.records, &opts);
     let relies = probes::relies::relied_on(&original.records);
@@ -111,11 +105,11 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         eprintln!("  {n} left out: {why}");
     }
     eprintln!("  Afterwards, everything under {prefix} is deleted.");
-    if !a.how.yes {
+    if !a.yes {
         eprintln!("\ndry run: to replay, run again with --yes");
         return Ok(4);
     }
-    let path = match &a.how.out {
+    let path = match &a.out {
         Some(p) => p.clone(),
         None => {
             let dir = s.paths().runs();
@@ -236,13 +230,13 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_analysis::replay::{self as rp, ReplayOptions};
     let (asked, original) = super::runs::open(s, &a.file)?;
-    let prefix = match &a.how.prefix {
+    let prefix = match &a.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
         None => rp::default_prefix(),
     };
     let opts = ReplayOptions {
         prefix: prefix.clone(),
-        buckets: a.how.bucket.clone(),
+        buckets: a.bucket.clone(),
     };
     let plan = rp::plan(&original.records, &opts);
     let relies = probes::relies::relied_on(&original.records);
@@ -263,7 +257,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     for line in before_lines(&plan, &relies, first_bucket.as_ref()) {
         eprintln!("  {line}");
     }
-    if !a.how.yes {
+    if !a.yes {
         eprintln!("\ndry run: to replay, run again with --yes");
         return Ok(4);
     }
@@ -548,6 +542,90 @@ fn opts_bucket(o: &sonde_analysis::replay::ReplayOptions, b: &str) -> String {
         .find(|(from, _)| from == b)
         .map(|(_, to)| to.clone())
         .unwrap_or_else(|| b.to_string())
+}
+
+fn print_comparison(c: &sonde_analysis::replay::Comparison, color: bool) {
+    let mut head = format!(
+        "{} compared: {} the same",
+        output::grouped(c.compared as u64),
+        output::grouped(c.same as u64)
+    );
+    if c.differ() > 0 {
+        head.push_str(&format!(
+            " · {}",
+            paint(
+                &format!("{} differ", output::grouped(c.differ() as u64)),
+                "33",
+                color
+            )
+        ));
+    }
+    if c.environment > 0 {
+        head.push_str(&format!(
+            " · {} because the target already held it",
+            c.environment
+        ));
+    }
+    println!("{}", paint(&head, "1", color));
+    for d in &c.differences {
+        let mut line = format!(
+            "{} {:<24} recorded {} → replay {}   ×{}   e.g. {}",
+            paint("✗", "33", color),
+            d.kind,
+            d.original,
+            d.replay,
+            d.count,
+            d.example
+        );
+        if !d.conditions.is_empty() {
+            line.push_str(&paint(
+                &format!("  ({})", d.conditions.join(", ")),
+                "2",
+                color,
+            ));
+        }
+        println!("{line}");
+    }
+    for (why, n) in &c.unmatched {
+        let line = if why == "not replayed" {
+            format!("  {n} not replayed")
+        } else {
+            format!("  {n} not replayed: {why}")
+        };
+        println!("{}", paint(&line, "2", color));
+    }
+}
+
+/// The same workload on two stores: each kind's p50 and p95 on each, slowest change first.
+fn print_latency(a: &[Record], b: &[Record], names: (&str, &str), prices: &RequestPrices) {
+    let changes =
+        sonde_analysis::profile::latency_changes(&profile(a, prices), &profile(b, prices));
+    if changes.is_empty() {
+        return;
+    }
+    let rows: Vec<Vec<String>> = changes
+        .iter()
+        .take(10)
+        .map(|c| {
+            let ratio = c.p95_ms.1.max(0.01) / c.p95_ms.0.max(0.01);
+            vec![
+                if c.missed {
+                    format!("{} (not found)", c.kind)
+                } else {
+                    c.kind.clone()
+                },
+                format!("{} → {}", ms_text(c.p50_ms.0), ms_text(c.p50_ms.1)),
+                format!("{} → {}", ms_text(c.p95_ms.0), ms_text(c.p95_ms.1)),
+                format!("{ratio:.1}×"),
+            ]
+        })
+        .collect();
+    println!(
+        "\nlatency, {} → {}\n{}",
+        names.0,
+        names.1,
+        output::table(&["kind", "p50", "p95", "p95 ×"], &rows)
+    );
 }
 
 #[cfg(test)]

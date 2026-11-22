@@ -15,10 +15,10 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Find and fix** | Hot keys, small files, deletes one at a time, writes back with no `If-Match`, a missing key polled, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a fix for your SDK and the line that sent it. Run again: each finding reads **fixed** (with the saving measured), **less**, **back** or **new**. |
 | **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--again` tries only what did not survive. |
 | **Gate CI** | `sonde check` fails a job over its budget or its baseline; the GitHub Action (`hxddh/sonde@v28`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
-| **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|sdk\|status\|key` splits the table and says where the slow and costly requests are. |
-| **Compare and replay** | `compare` two runs, or a run replayed on another store (`--replay`) to see where answers differ. |
+| **Why slow, why costly** | `show --by kind\|prefix\|size\|caller\|key` splits the table and says where the slow and costly requests are. |
+| **Compare and replay** | `show --since` another run, or `replay` a run on another store to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
-| **Look at stores** | Browse buckets, find incomplete uploads, run 52 compatibility probes across endpoints, decode table layouts. |
+| **Look at stores** | Browse buckets, find incomplete uploads, run 52 compatibility probes on an endpoint (`endpoints test --probes`), decode table layouts. |
 
 A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and Chinese.
 

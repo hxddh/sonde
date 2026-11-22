@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use probes::Fixture;
 use probes::phrase::{Phrase, en, say};
-use probes::store::Fixture;
 use probes::{ProbeMeta, Steps};
 
 fn fixtures() -> Vec<Fixture> {

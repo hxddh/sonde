@@ -92,7 +92,7 @@ jobs:
         with: { shared-key: debug, save-if: "${{ github.ref == 'refs/heads/main' }}" }
       # every member, the app's bridge (sonde-nsh) included
       - run: cargo test --workspace --locked
-      # (the debug sonde the tests built)
+      # (the probes crate's example prints the catalog)
       - name: docs/probes.md is what the probe catalog makes
         if: runner.os == 'Linux'
         run: python3 scripts/gen-probe-docs.py --check

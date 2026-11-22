@@ -154,7 +154,7 @@ fn a_million_requests_are_read_within_their_memory() {
     );
 }
 
-/// What `sonde compare` does with two runs: each read (lean), reckoned and
+/// What `sonde show --since` does with two runs: each read (lean), reckoned and
 /// let go before the other is read ([`Run::analysed`]), then compared.
 #[test]
 #[ignore = "two runs of a million requests: run in release, as CI does"]

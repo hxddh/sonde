@@ -61,7 +61,7 @@ pub async fn tour(s: &Arc<Sonde>, out: Option<PathBuf>, force: bool) -> anyhow::
     let since = super::fixloop::since_last(s, &fixed, &run.header, &run.records, &analysis);
     println!("run: {}", fixed.display());
     if let Some(since) = &since {
-        for line in super::fixloop::since_lines(since, color) {
+        for line in super::fixloop::since_lines(since, false, color) {
             println!("{line}");
         }
     }

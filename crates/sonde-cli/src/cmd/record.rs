@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy` and the tour share (the
+//! Recording: what `sonde run`, `run --listen` and the tour share (the
 //! recording's arguments, the proxy started, a run's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -21,8 +21,6 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::output;
 
 pub use super::check::{CheckArgs, check};
-pub use super::compare::{CompareArgs, compare};
-pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, summary_on_stderr};
 
@@ -466,7 +464,8 @@ pub(super) fn print_summary(
 /// time, the waiting and the cost), the findings first (each with its
 /// saving, its line of code and its fix), what acting on them would leave,
 /// one table of the kinds of request, and the change since the program's
-/// run before. `all` adds the signals over the run and their tables.
+/// run before (or the run asked for: `since`'s `true`). `all` adds the
+/// signals over the run and their tables.
 pub(super) fn print_summary_of(
     a: &Analysis,
     header: &RunHeader,
@@ -474,9 +473,9 @@ pub(super) fn print_summary_of(
     color: bool,
     stdout: bool,
     all: bool,
-    since: Option<&sonde_analysis::fixloop::SinceLast>,
+    since: Option<(&sonde_analysis::fixloop::SinceLast, bool)>,
 ) {
-    // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
+    // `sonde show` answers on stdout; run keeps stdout for the program's own output
     let say = |line: String| {
         if stdout {
             println!("{line}")
@@ -592,8 +591,8 @@ pub(super) fn print_summary_of(
             say(line.to_string());
         }
     }
-    if let Some(since) = since {
-        for line in super::fixloop::since_lines(since, color) {
+    if let Some((since, asked)) = since {
+        for line in super::fixloop::since_lines(since, asked, color) {
             say(line);
         }
     }

@@ -5,8 +5,8 @@
 //! temporary buckets), records each request as a [`model::Step`], and
 //! judges the steps with a pure function ([`Probe::judge`]) — so the
 //! judgement is unit-tested on recorded responses (`fixtures/`). The
-//! runner ([`runner`]) cleans up after every probe, keeps the raw
-//! exchanges, saves runs by time ([`store`]) and compares them.
+//! runner ([`runner`]) cleans up after every probe and keeps the raw
+//! exchanges.
 
 pub mod cx;
 pub mod model;
@@ -14,13 +14,12 @@ pub use sonde_core::phrase;
 pub mod relies;
 pub mod report;
 pub mod runner;
-pub mod store;
 pub mod suite;
 
 use async_trait::async_trait;
 
 pub use cx::ProbeCx;
-pub use model::{Category, Judgement, ProbeMeta, ProbeResult, Run, Step, Steps, Verdict};
+pub use model::{Category, Fixture, Judgement, ProbeMeta, ProbeResult, Run, Step, Steps, Verdict};
 
 #[async_trait]
 pub trait Probe: Send + Sync {
