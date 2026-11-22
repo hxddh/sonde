@@ -70,6 +70,17 @@
         }
       ]
     },
+    "time": {
+      "description": "Where the run's time went (the time account a reading opens with); null for an imported log or a replay (no program's own time), or a run that sent nothing.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timeAccount"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "whatIf": {
       "description": "The run with every finding's fix; null when no finding names what its fix saves (none, or none that can be counted).",
       "anyOf": [
@@ -81,12 +92,19 @@
         }
       ]
     },
+    "diagnoses": {
+      "type": "array",
+      "description": "The findings as one plan: findings that share a root cause are one diagnosis, with one saving and one fix (its first finding's). Those that save the most time first, then money, then requests; the rest after. Each finding is in one diagnosis.",
+      "items": {
+        "$ref": "#/$defs/diagnosis"
+      }
+    },
     "findings": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/observation"
       },
-      "description": "The findings, those that save the most money first, then those that save time, then the rest."
+      "description": "The findings, in the order of their diagnoses (`diagnoses[].findings` are places in this list): each diagnosis's together, its headline first."
     },
     "verify": {
       "type": [
@@ -141,7 +159,9 @@
     "waiting",
     "cost",
     "month",
+    "time",
     "whatIf",
+    "diagnoses",
     "findings",
     "verify",
     "trials"
@@ -400,7 +420,8 @@
           "description": "What kind of finding it is, as `identity` begins (docs/cli.md#findings)."
         },
         "saving": {
-          "$ref": "#/$defs/phrase"
+          "$ref": "#/$defs/phrase",
+          "description": "Its own saving said: time of the run (`obs.savesWall`), or with no times the requests or bytes."
         },
         "savingText": {
           "type": "string",
@@ -410,7 +431,8 @@
           "type": "integer"
         },
         "savesMs": {
-          "type": "number"
+          "type": "number",
+          "description": "Time of the run acting on it alone saves, in ms: the run without its requests, its waiting reckoned again (requests one after another: their waiting less the same at once). Absent for a run whose times are not known."
         },
         "savesBytes": {
           "type": "integer",
@@ -1266,6 +1288,133 @@
         "from",
         "cost",
         "currency"
+      ]
+    },
+    "timeAccount": {
+      "type": "object",
+      "description": "Where a run's time went: the program's own (no request in flight), the round trips (a request in flight), and of those the bytes moving.",
+      "properties": {
+        "wallMs": {
+          "type": "number",
+          "description": "From the first request to the end of the last."
+        },
+        "ownMs": {
+          "type": "number",
+          "description": "With no request in flight: the program's own work."
+        },
+        "waitingMs": {
+          "type": "number",
+          "description": "With a request in flight."
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "medianMs": {
+          "type": "number",
+          "description": "The median request's time."
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Bytes moved, up and down."
+        },
+        "transferMs": {
+          "type": "number",
+          "description": "Of the waiting, the part spent moving bytes (after the first byte), when the store says when that came; else 0."
+        },
+        "most": {
+          "type": "string",
+          "enum": [
+            "program",
+            "requests",
+            "bytes"
+          ],
+          "description": "What most of the time went to."
+        },
+        "indicative": {
+          "type": "boolean",
+          "description": "True: its times say little (the built-in demo store's)."
+        },
+        "phrases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "text": {
+          "type": "string",
+          "description": "Display text, not stable."
+        }
+      },
+      "required": [
+        "wallMs",
+        "ownMs",
+        "waitingMs",
+        "requests",
+        "medianMs",
+        "bytes",
+        "transferMs",
+        "most",
+        "indicative",
+        "phrases",
+        "text"
+      ]
+    },
+    "diagnosis": {
+      "type": "object",
+      "description": "Findings that share a root cause (at least half of each one's objects are the other's), as one change; requests one after another join the diagnosis that owns most of them.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The same diagnosis across runs: made of its findings' identities (`dx-` and a hash)."
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Its findings, as places in `findings`: the headline first (its text, callers and fix are the diagnosis's), its requests one after another (`serial`) last."
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Its findings' identities, in the same order."
+        },
+        "serial": {
+          "type": "integer",
+          "description": "The place in `findings` of its requests one after another (`obs.serial`), when they joined it: said as `rest`."
+        },
+        "savesMs": {
+          "type": "number",
+          "description": "Time of the run acting on it saves: its findings' requests taken out together and the waiting reckoned again (never their sum)."
+        },
+        "savesCost": {
+          "type": "number",
+          "description": "What it saves in the run's currency (times `month.times`: a month)."
+        },
+        "savesRequests": {
+          "type": "integer"
+        },
+        "saving": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          },
+          "description": "The saving said: time of the run, money beside it from a cent (a month's when `month` says one); with no times, the requests."
+        },
+        "savingText": {
+          "type": "string",
+          "description": "Display text, not stable."
+        },
+        "rest": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "required": [
+        "id",
+        "findings",
+        "identities"
       ]
     }
   }

@@ -64,6 +64,11 @@ pub fn retries_on(sdk: &str) -> Option<&'static str> {
 /// The changes that act on a finding, by its phrase key.
 pub fn for_key(key: &str) -> Vec<Fix> {
     match key {
+        "obs.hot" => cached(false),
+        "obs.rangeagain" => cached(true),
+        "obs.small" => packed(true, false),
+        "obs.smallreads" => packed(false, true),
+        "obs.serial" => at_once("GET"),
         "obs.headget" => vec![
             f(
                 "python",
@@ -94,24 +99,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             "config",
             "# keep markers: no delete after each file written beneath one\n# (every client of the bucket marker-aware: Hadoop 3.2.2+ or 3.3.1+)\nspark.hadoop.fs.s3a.directory.marker.retention=keep",
         )],
-        "obs.hot" => vec![
-            f(
-                "python",
-                "# read it once, keep it for the run\nfrom functools import lru_cache\n@lru_cache(maxsize=None)\ndef read(key):\n    return s3.get_object(Bucket=b, Key=key)[\"Body\"].read()",
-            ),
-            f(
-                "java",
-                "// read it once, keep it for the run\nMap<String, byte[]> cache = new ConcurrentHashMap<>();\nbyte[] read(String key) { return cache.computeIfAbsent(key, k -> s3.getObjectAsBytes(r -> r.bucket(b).key(k)).asByteArray()); }",
-            ),
-            f(
-                "go",
-                "// read it once, keep it for the run\nvar cache sync.Map\nif v, ok := cache.Load(k); ok { return v.([]byte), nil }",
-            ),
-            f(
-                "js",
-                "// read it once, keep it for the run\nconst cache = new Map();\nconst read = (k) => cache.get(k) ?? cache.set(k, fetchObject(k)).get(k);",
-            ),
-        ],
         "obs.listed" => vec![
             f(
                 "python",
@@ -132,24 +119,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "rust",
                 "// list the prefix once; look keys up in the result (object_store)\nlet keys: HashSet<Path> = store.list(Some(&prefix)).map_ok(|m| m.location).try_collect().await?;",
-            ),
-        ],
-        "obs.small" => vec![
-            f(
-                "python",
-                "# many records in one object, not one object each\nbody = \"\\n\".join(json.dumps(e) for e in batch).encode()\ns3.put_object(Bucket=b, Key=f\"{prefix}{batch_id}.jsonl\", Body=body)",
-            ),
-            f(
-                "java",
-                "// many records in one object, not one object each\nString body = batch.stream().map(Object::toString).collect(Collectors.joining(\"\\n\"));\ns3.putObject(r -> r.bucket(b).key(prefix + batchId + \".jsonl\"), RequestBody.fromString(body));",
-            ),
-            f(
-                "go",
-                "// many records in one object, not one object each\nbody := bytes.Join(batch, []byte(\"\\n\"))\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + \".jsonl\"), Body: bytes.NewReader(body)})",
-            ),
-            f(
-                "js",
-                "// many records in one object, not one object each\nconst Body = batch.map((e) => JSON.stringify(e)).join(\"\\n\");\nawait s3.send(new PutObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.jsonl`, Body }));",
             ),
         ],
         "obs.deletes" => vec![
@@ -228,28 +197,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "// one PUT under the threshold\nnew Upload({ client: s3, params, partSize: 64 * 1024 * 1024 })",
             ),
         ],
-        "obs.serial" => vec![
-            f(
-                "python",
-                "# eight at once instead of one after another\nfrom concurrent.futures import ThreadPoolExecutor\nwith ThreadPoolExecutor(8) as pool:\n    bodies = list(pool.map(lambda k: s3.get_object(Bucket=b, Key=k)[\"Body\"].read(), keys))",
-            ),
-            f(
-                "java",
-                "// eight at once instead of one after another\nList<CompletableFuture<ResponseBytes<GetObjectResponse>>> all = keys.stream()\n    .map(k -> s3Async.getObject(r -> r.bucket(b).key(k), AsyncResponseTransformer.toBytes())).toList();",
-            ),
-            f(
-                "go",
-                "// eight at once instead of one after another\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys { k := k; g.Go(func() error { return get(ctx, k) }) }\nerr := g.Wait()",
-            ),
-            f(
-                "js",
-                "// eight at once instead of one after another\nconst limit = pLimit(8);\nconst bodies = await Promise.all(keys.map((k) => limit(() => get(k))));",
-            ),
-            f(
-                "rust",
-                "// eight at once instead of one after another (object_store)\nlet bodies: Vec<Bytes> = futures::stream::iter(paths).map(|p| async move { store.get(&p).await?.bytes().await }).buffered(8).try_collect().await?;",
-            ),
-        ],
         "obs.throttled" | "obs.throttled.rate" => vec![
             f(
                 "python",
@@ -300,34 +247,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "// files no commit names: the table's own cleanup removes them\nspark.sql(\"CALL catalog.system.remove_orphan_files(table => 'db.events', older_than => TIMESTAMP '2026-01-01 00:00:00')\");",
             ),
         ],
-        "obs.rangeagain" => vec![
-            f(
-                "python",
-                "# read each range once and keep it (a Parquet footer, an index)
-from functools import lru_cache
-@lru_cache(maxsize=1024)
-def read_range(key, start, end):
-    return s3.get_object(Bucket=b, Key=key, Range=f\"bytes={start}-{end}\")[\"Body\"].read()",
-            ),
-            f(
-                "java",
-                "// read each range once and keep it (a Parquet footer, an index)
-Map<String, byte[]> ranges = new ConcurrentHashMap<>();
-byte[] read(String k, String range) { return ranges.computeIfAbsent(k + range, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(range)).asByteArray()); }",
-            ),
-            f(
-                "go",
-                "// read each range once and keep it (a Parquet footer, an index)
-var ranges sync.Map
-if v, ok := ranges.Load(k + rng); ok { return v.([]byte), nil }",
-            ),
-            f(
-                "js",
-                "// read each range once and keep it (a Parquet footer, an index)
-const ranges = new Map();
-const read = (k, Range) => ranges.get(k + Range) ?? ranges.set(k + Range, fetchRange(k, Range)).get(k + Range);",
-            ),
-        ],
         "obs.wholeread" => vec![
             f(
                 "python",
@@ -349,30 +268,6 @@ out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: aw
                 "js",
                 "// read the ranges used, not the whole object
 const part = await s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range: `bytes=${start}-${end}` }));",
-            ),
-        ],
-        "obs.smallreads" => vec![
-            f(
-                "python",
-                "# shard the samples into tar files (WebDataset) and read a shard at a time
-import webdataset as wds
-ds = wds.WebDataset(\"pipe:aws s3 cp s3://BUCKET/shards/train-{000000..000099}.tar -\").decode(\"pil\")",
-            ),
-            f(
-                "java",
-                "// pack small objects into larger files and read those: one GET a shard, not one a sample
-try (TarArchiveInputStream tar = new TarArchiveInputStream(s3.getObject(r -> r.bucket(b).key(\"shards/train-000000.tar\")))) { /* each entry a sample */ }",
-            ),
-            f(
-                "go",
-                "// pack small objects into larger files and read those: one GET a shard, not one a sample
-out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(\"shards/train-000000.tar\")})
-tr := tar.NewReader(out.Body)",
-            ),
-            f(
-                "js",
-                "// pack small objects into larger files and read those: one GET a shard, not one a sample
-const shard = await s3.send(new GetObjectCommand({ Bucket: b, Key: \"shards/train-000000.tar\" }));",
             ),
         ],
         "obs.crawl" => vec![
@@ -400,6 +295,266 @@ const manifest = JSON.parse(await (await s3.send(new GetObjectCommand({ Bucket: 
         ],
         _ => Vec::new(),
     }
+}
+
+/// The changes that act on a finding, from its requests (`rs`): small
+/// objects packed as what they are (records as JSONL, media as tar shards),
+/// requests sent at once by the operation they are. [`for_key`] for the rest.
+pub fn for_finding(key: &str, rs: &[&Record]) -> Vec<Fix> {
+    match key {
+        "obs.small" => packed(true, media(rs)),
+        "obs.smallreads" => packed(false, media(rs)),
+        "obs.serial" => at_once(operation(rs)),
+        _ => for_key(key),
+    }
+}
+
+/// Whether most of `rs` are media or other binary files, by their keys'
+/// extension: what is packed in tar shards, where records are packed as
+/// lines.
+fn media(rs: &[&Record]) -> bool {
+    const MEDIA: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "mp3", "wav", "flac",
+        "ogg", "mp4", "mov", "avi", "mkv", "webm", "npy", "npz", "pt", "bin", "pdf",
+    ];
+    let is_media = |r: &&&Record| {
+        r.key
+            .as_deref()
+            .and_then(|k| k.rsplit_once('.'))
+            .is_some_and(|(_, x)| MEDIA.contains(&x.to_ascii_lowercase().as_str()))
+    };
+    rs.iter().filter(is_media).count() * 2 > rs.len()
+}
+
+/// The operation most of `rs` are: `GET`, `PUT`, `HEAD` or `DELETE`.
+fn operation(rs: &[&Record]) -> &'static str {
+    let mut n = [0usize; 4];
+    const OPS: [&str; 4] = ["GET", "PUT", "HEAD", "DELETE"];
+    for r in rs {
+        if let Some(i) = OPS.iter().position(|o| *o == r.method.as_str()) {
+            n[i] += 1;
+        }
+    }
+    let most = (0..4).max_by_key(|i| (n[*i], 4 - i)).unwrap_or(0);
+    OPS[most]
+}
+
+fn owned(sdk: &'static str, code: String) -> Fix {
+    Fix {
+        sdk,
+        code: Cow::Owned(code),
+        setting: None,
+    }
+}
+
+/// Read once and kept for the run: a key (`range` false) or a range of one.
+fn cached(range: bool) -> Vec<Fix> {
+    let (what, py, java, go, js) = if range {
+        (
+            "each range once and keep it (a Parquet footer, an index)",
+            "def read_range(key, start, end):\n    return s3.get_object(Bucket=b, Key=key, Range=f\"bytes={start}-{end}\")[\"Body\"].read()",
+            "byte[] read(String k, String range) { return cache.computeIfAbsent(k + range, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(range)).asByteArray()); }",
+            "k + rng",
+            "const read = (k, Range) => cache.get(k + Range) ?? cache.set(k + Range, fetchRange(k, Range)).get(k + Range);",
+        )
+    } else {
+        (
+            "it once, keep it for the run",
+            "def read(key):\n    return s3.get_object(Bucket=b, Key=key)[\"Body\"].read()",
+            "byte[] read(String key) { return cache.computeIfAbsent(key, k -> s3.getObjectAsBytes(r -> r.bucket(b).key(k)).asByteArray()); }",
+            "k",
+            "const read = (k) => cache.get(k) ?? cache.set(k, fetchObject(k)).get(k);",
+        )
+    };
+    vec![
+        owned(
+            "python",
+            format!(
+                "# read {what}\nfrom functools import lru_cache\n@lru_cache(maxsize=1024)\n{py}"
+            ),
+        ),
+        owned(
+            "java",
+            format!(
+                "// read {what}\nMap<String, byte[]> cache = new ConcurrentHashMap<>();\n{java}"
+            ),
+        ),
+        owned(
+            "go",
+            format!(
+                "// read {what}\nvar cache sync.Map\nif v, ok := cache.Load({go}); ok {{ return v.([]byte), nil }}"
+            ),
+        ),
+        owned(
+            "js",
+            format!("// read {what}\nconst cache = new Map();\n{js}"),
+        ),
+    ]
+}
+
+/// Small objects packed many to one: written so (`write`), or read so; as
+/// lines of records (JSONL; Parquet for columns), or as tar shards for media.
+fn packed(write: bool, media: bool) -> Vec<Fix> {
+    let ext = if media { "tar" } else { "jsonl" };
+    let head = match (write, media) {
+        (true, false) => {
+            "many records in one object (JSONL, or Parquet for columns), not one object each"
+        }
+        (true, true) => "many files in one tar shard, not one object each",
+        (false, false) => "read a batch of records at a time (JSONL), not one object each",
+        (false, true) => "read a tar shard of files at a time, not one object each",
+    };
+    // (python, java, go, js): how a batch is made, or read
+    let (py, java, go, js) = match (write, media) {
+        (true, false) => (
+            "body = \"\\n\".join(json.dumps(e) for e in batch).encode()",
+            "String body = batch.stream().map(Object::toString).collect(Collectors.joining(\"\\n\"));",
+            "body := bytes.Join(batch, []byte(\"\\n\"))",
+            "const Body = batch.map((e) => JSON.stringify(e)).join(\"\\n\");",
+        ),
+        (true, true) => (
+            "body = io.BytesIO()\nwith tarfile.open(fileobj=body, mode=\"w\") as tar:\n    for name, path in batch: tar.add(path, arcname=name)\nbody = body.getvalue()",
+            "byte[] body = tarOf(batch); // TarArchiveOutputStream over a ByteArrayOutputStream",
+            "var body bytes.Buffer\ntw := tar.NewWriter(&body) // a header and the bytes of each file, then tw.Close()",
+            "const Body = tarOf(batch); // tar-stream: one entry a file",
+        ),
+        (false, false) => (
+            "records = [json.loads(line) for line in body.iter_lines()]",
+            "List<String> records = new String(body.readAllBytes()).lines().toList();",
+            "sc := bufio.NewScanner(out.Body) // a record a line",
+            "const records = (await Body.transformToString()).split(\"\\n\").map(JSON.parse);",
+        ),
+        (false, true) => (
+            "tar = tarfile.open(fileobj=body, mode=\"r|\")  # each member a file",
+            "TarArchiveInputStream tar = new TarArchiveInputStream(body); // each entry a file",
+            "tr := tar.NewReader(out.Body) // each entry a file",
+            "const entries = untar(Body); // tar-stream: each entry a file",
+        ),
+    };
+    if write {
+        vec![
+            owned(
+                "python",
+                format!(
+                    "# {head}\n{py}\ns3.put_object(Bucket=b, Key=f\"{{prefix}}{{batch_id}}.{ext}\", Body=body)"
+                ),
+            ),
+            owned(
+                "java",
+                format!(
+                    "// {head}\n{java}\ns3.putObject(r -> r.bucket(b).key(prefix + batchId + \".{ext}\"), RequestBody.fromBytes(body));"
+                ),
+            ),
+            owned(
+                "go",
+                format!(
+                    "// {head}\n{go}\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{{Bucket: &b, Key: aws.String(prefix + batchID + \".{ext}\"), Body: bytes.NewReader(body)}})"
+                ),
+            ),
+            owned(
+                "js",
+                format!(
+                    "// {head}\n{js}\nawait s3.send(new PutObjectCommand({{ Bucket: b, Key: `${{prefix}}${{batchId}}.{ext}`, Body }}));"
+                ),
+            ),
+        ]
+    } else {
+        vec![
+            owned(
+                "python",
+                format!(
+                    "# {head}\nbody = s3.get_object(Bucket=b, Key=f\"{{prefix}}{{batch_id}}.{ext}\")[\"Body\"]\n{py}"
+                ),
+            ),
+            owned(
+                "java",
+                format!(
+                    "// {head}\nResponseInputStream<GetObjectResponse> body = s3.getObject(r -> r.bucket(b).key(prefix + batchId + \".{ext}\"));\n{java}"
+                ),
+            ),
+            owned(
+                "go",
+                format!(
+                    "// {head}\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{{Bucket: &b, Key: aws.String(prefix + batchID + \".{ext}\")}})\n{go}"
+                ),
+            ),
+            owned(
+                "js",
+                format!(
+                    "// {head}\nconst {{ Body }} = await s3.send(new GetObjectCommand({{ Bucket: b, Key: `${{prefix}}${{batchId}}.{ext}` }}));\n{js}"
+                ),
+            ),
+        ]
+    }
+}
+
+/// Requests sent eight at once instead of one after another, as the
+/// operation they are (`GET`, `PUT`, `HEAD`, `DELETE`).
+fn at_once(op: &str) -> Vec<Fix> {
+    // (python, java's async client, go, js, object_store): one request
+    let (py, java, go, js, rust) = match op {
+        "PUT" => (
+            "s3.put_object(Bucket=b, Key=k, Body=bodies[k])",
+            "s3Async.putObject(r -> r.bucket(b).key(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
+            "PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})",
+            "PutObjectCommand({ Bucket: b, Key: k, Body: bodies[k] })",
+            "store.put(&p, payloads[&p].clone()).await",
+        ),
+        "HEAD" => (
+            "s3.head_object(Bucket=b, Key=k)",
+            "s3Async.headObject(r -> r.bucket(b).key(k))",
+            "HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})",
+            "HeadObjectCommand({ Bucket: b, Key: k })",
+            "store.head(&p).await",
+        ),
+        "DELETE" => (
+            "s3.delete_object(Bucket=b, Key=k)",
+            "s3Async.deleteObject(r -> r.bucket(b).key(k))",
+            "DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})",
+            "DeleteObjectCommand({ Bucket: b, Key: k })",
+            "store.delete(&p).await",
+        ),
+        _ => (
+            "s3.get_object(Bucket=b, Key=k)[\"Body\"].read()",
+            "s3Async.getObject(r -> r.bucket(b).key(k), AsyncResponseTransformer.toBytes())",
+            "GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})",
+            "GetObjectCommand({ Bucket: b, Key: k })",
+            "store.get(&p).await?.bytes().await",
+        ),
+    };
+    let head = "eight at once instead of one after another";
+    vec![
+        owned(
+            "python",
+            format!(
+                "# {head}\nfrom concurrent.futures import ThreadPoolExecutor\nwith ThreadPoolExecutor(8) as pool:\n    results = list(pool.map(lambda k: {py}, keys))"
+            ),
+        ),
+        owned(
+            "java",
+            format!(
+                "// {head}\nList<CompletableFuture<?>> all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
+            ),
+        ),
+        owned(
+            "go",
+            format!(
+                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{ k := k; g.Go(func() error {{ _, err := s3c.{go}; return err }}) }}\nerr := g.Wait()"
+            ),
+        ),
+        owned(
+            "js",
+            format!(
+                "// {head}\nconst limit = pLimit(8);\nconst results = await Promise.all(keys.map((k) => limit(() => s3.send(new {js}))));"
+            ),
+        ),
+        owned(
+            "rust",
+            format!(
+                "// {head} (object_store)\nlet results: Vec<_> = futures::stream::iter(paths).map(|p| async move {{ {rust} }}).buffered(8).try_collect().await?;"
+            ),
+        ),
+    ]
 }
 
 /// The language of an SDK as [`sonde_proxy::callers::sdk`] names it (`boto3
@@ -450,15 +605,19 @@ pub struct WhatIf {
     pub counted: Vec<String>,
 }
 
-/// Prices what each finding would save ([`Observation::saves_cost`]) and
-/// orders the findings by it: those that save money first, the most first,
-/// then those that save time, then those that save requests; the rest as
-/// they were (warnings first, by the requests they bear on).
+/// Prices what each finding would save ([`Observation::saves_cost`]),
+/// times it (its own [`what_if`]: the run without its requests, its
+/// waiting reckoned again) and orders the findings by it: those that save
+/// time first, the most first, then money, then requests; the rest as they
+/// were (warnings first, by the requests they bear on). A run whose times
+/// are not known (`timed` false) is ordered by money, then requests.
 pub fn rank_by_saving(
     findings: &mut [Observation],
     records: &[Record],
-    prices: &crate::profile::RequestPrices,
+    profile: &Profile,
+    timed: bool,
 ) {
+    let prices = &profile.prices;
     if findings
         .iter()
         .any(|o| !o.saved_ids.is_empty() || o.saves_bytes > 0)
@@ -480,14 +639,353 @@ pub fn rank_by_saving(
             o.saves_cost = (o.saves_cost * 1e9).round() / 1e9;
         }
     }
+    if timed {
+        for o in findings.iter_mut() {
+            // a saving of time alone is reckoned where it is found
+            if o.saves_requests > 0
+                && let Some(w) = what_if_of(records, profile, &[&*o], 1, true)
+                && let Some((before, after)) = w.waiting_ms
+            {
+                o.saves_ms = ((before - after) * 10.0).round() / 10.0;
+            }
+            if let Some(s) = time_saved(o.saves_ms, profile.wall_ms) {
+                o.saving_text = Some(s.en());
+                o.saving = Some(s);
+            }
+        }
+    }
     findings.sort_by(|a, b| {
-        let saves = |o: &Observation| saves(o);
         saves(b)
             .cmp(&saves(a))
-            .then(b.saves_cost.total_cmp(&a.saves_cost))
             .then(b.saves_ms.total_cmp(&a.saves_ms))
+            .then(b.saves_cost.total_cmp(&a.saves_cost))
             .then(b.saves_requests.cmp(&a.saves_requests))
     });
+}
+
+/// Time saved as time of the run: `≈1.9 s of 6.1 s (31%)`; none under a
+/// millisecond.
+fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
+    (ms >= 0.5 && wall_ms > 0.0).then(|| {
+        crate::phrase::p(
+            "obs.savesWall",
+            &[
+                ("time", sonde_fmt::duration(ms)),
+                ("wall", sonde_fmt::duration(wall_ms)),
+                (
+                    "pct",
+                    ((ms * 100.0 / wall_ms).round() as usize)
+                        .clamp(1, 100)
+                        .to_string(),
+                ),
+            ],
+        )
+    })
+}
+
+/// Findings that share a root cause, as one: what to change once, and what
+/// that saves. Findings are of one diagnosis when they save something and
+/// at least half of each one's objects are the other's (600 small objects
+/// written one each, read one each, each with a HEAD first).
+/// Requests one after another join the diagnosis whose objects or callers
+/// most of them are (`and send the other N at once`), or stand alone.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagnosis {
+    /// The same diagnosis across runs: made of its findings' identities.
+    pub id: String,
+    /// Its findings, by their place in the run's findings: the headline
+    /// first, the requests one after another (`serial`) last.
+    pub findings: Vec<usize>,
+    /// Their identities, in the same order: what the fix loop matches.
+    pub identities: Vec<String>,
+    /// Its findings' requests one after another, by place, when it has them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial: Option<usize>,
+    /// What acting on it saves, all its findings at once ([`what_if`] of
+    /// them together, never their sum): time waited, money, requests.
+    #[serde(skip_serializing_if = "is_zero_f")]
+    pub saves_ms: f64,
+    #[serde(skip_serializing_if = "is_zero_f")]
+    pub saves_cost: f64,
+    #[serde(skip_serializing_if = "is_zero_n")]
+    pub saves_requests: usize,
+    /// The saving said: time of the run, money beside it from a cent (a
+    /// month's, when the run says its runs a month), else the requests.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub saving: Vec<crate::phrase::Phrase>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub saving_text: String,
+    /// Its requests one after another, said as the rest of the change:
+    /// `and send the other 87 requests 8 at once`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest: Option<crate::phrase::Phrase>,
+}
+
+fn is_zero_f(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn is_zero_n(v: &usize) -> bool {
+    *v == 0
+}
+
+/// The run's findings as diagnoses ([`Diagnosis`]), in their order; the
+/// findings put in that order too, each diagnosis's together. `findings`
+/// ranked first ([`rank_by_saving`]).
+pub fn diagnose(
+    findings: &mut Vec<Observation>,
+    episodes: &[crate::episode::Episode],
+    records: &[Record],
+    profile: &Profile,
+    timed: bool,
+    month: Option<&crate::month::Month>,
+) -> Vec<Diagnosis> {
+    use std::collections::{HashMap, HashSet};
+    let by_id = crate::episode::RecordsById::of(records);
+    let key = |o: &Observation| o.phrases.first().map_or("", |p| p.key);
+    // the objects each finding bears on
+    let objects: Vec<HashSet<(&str, &str)>> = findings
+        .iter()
+        .map(|o| {
+            o.episodes
+                .iter()
+                .filter_map(|&i| episodes.get(i))
+                .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id)))
+                .filter_map(|r| Some((r.bucket.as_deref()?, r.key.as_deref()?)))
+                .collect()
+        })
+        .collect();
+    let joins = |i: usize| saves(&findings[i]) && key(&findings[i]) != "obs.serial";
+    // one root, each finding's: the first of those it shares objects with
+    let n = findings.len();
+    let mut root: Vec<usize> = (0..n).collect();
+    fn top(root: &mut [usize], mut i: usize) -> usize {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    for a in (0..n).filter(|&a| joins(a)) {
+        for b in (a + 1..n).filter(|&b| joins(b)) {
+            let (x, y) = (&objects[a], &objects[b]);
+            let (small, large) = if x.len() <= y.len() { (x, y) } else { (y, x) };
+            // half of each's objects the other's (a key read again among
+            // 600 small objects is not their cause)
+            if small.is_empty() || small.len() * 2 < large.len() {
+                continue;
+            }
+            let shared = small.iter().filter(|o| large.contains(*o)).count();
+            if shared * 2 >= large.len() {
+                let (ra, rb) = (top(&mut root, a), top(&mut root, b));
+                root[ra.max(rb)] = ra.min(rb);
+            }
+        }
+    }
+    // groups in the findings' order (the first of each its headline)
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut group_of: HashMap<usize, usize> = HashMap::new();
+    let mut serials: Vec<usize> = Vec::new();
+    for (i, o) in findings.iter().enumerate() {
+        if key(o) == "obs.serial" {
+            serials.push(i);
+            continue;
+        }
+        let r = top(&mut root, i);
+        match group_of.get(&r) {
+            Some(&g) => groups[g].push(i),
+            None => {
+                group_of.insert(r, groups.len());
+                groups.push(vec![i]);
+            }
+        }
+    }
+    // requests one after another: with the diagnosis that owns most of
+    // them, by their objects, else by where in the program they were sent
+    let mut serial_of: Vec<Option<usize>> = vec![None; groups.len()];
+    let saving: Vec<usize> = (0..groups.len())
+        .filter(|&g| saves(&findings[groups[g][0]]))
+        .collect();
+    for s in serials {
+        let mut owns = vec![0usize; groups.len()];
+        let places: Vec<HashSet<&str>> = groups
+            .iter()
+            .map(|g| {
+                g.iter()
+                    .flat_map(|&i| findings[i].callers.iter().map(|c| c.place.as_str()))
+                    .collect()
+            })
+            .collect();
+        let timed_rs: Vec<&Record> = findings[s]
+            .timed_ids
+            .iter()
+            .filter_map(|id| by_id.get(id))
+            .collect();
+        for r in &timed_rs {
+            let object = r.bucket.as_deref().zip(r.key.as_deref());
+            let caller = sonde_proxy::callers::caller(r);
+            let owner = saving
+                .iter()
+                .copied()
+                .find(|&g| {
+                    object.is_some_and(|o| groups[g].iter().any(|&i| objects[i].contains(&o)))
+                })
+                .or_else(|| {
+                    let c = caller.as_deref()?;
+                    saving.iter().copied().find(|&g| places[g].contains(c))
+                });
+            if let Some(g) = owner {
+                owns[g] += 1;
+            }
+        }
+        match saving
+            .iter()
+            .copied()
+            .max_by_key(|&g| (owns[g], usize::MAX - g))
+        {
+            Some(g) if owns[g] * 2 >= timed_rs.len().max(1) && serial_of[g].is_none() => {
+                serial_of[g] = Some(s);
+                groups[g].push(s);
+            }
+            _ => {
+                serial_of.push(None);
+                groups.push(vec![s]);
+            }
+        }
+    }
+    // what each saves, all of its findings at once
+    let mut out: Vec<(Diagnosis, Vec<usize>)> = groups
+        .into_iter()
+        .zip(serial_of)
+        .map(|(g, serial)| {
+            let members: Vec<&Observation> = g.iter().map(|&i| &findings[i]).collect();
+            let (ms, cost, requests) = match members.as_slice() {
+                [one] => (one.saves_ms, one.saves_cost, one.saves_requests),
+                _ => match what_if_of(records, profile, &members, members.len(), timed) {
+                    Some(w) => (
+                        w.waiting_ms
+                            .map_or(0.0, |(a, b)| ((a - b) * 10.0).round() / 10.0),
+                        ((w.cost.0 - w.cost.1) * 1e9).round() / 1e9,
+                        w.requests.0 - w.requests.1,
+                    ),
+                    None => (0.0, 0.0, 0),
+                },
+            };
+            let mut ids: Vec<&str> = members.iter().map(|o| o.identity.as_str()).collect();
+            ids.sort_unstable();
+            let mut d = Diagnosis {
+                id: diagnosis_id(&ids),
+                findings: Vec::new(),
+                identities: Vec::new(),
+                // (attached: its place is set below, once the findings are in order)
+                serial,
+                saves_ms: ms,
+                saves_cost: cost,
+                saves_requests: requests,
+                saving: Vec::new(),
+                saving_text: String::new(),
+                rest: None,
+            };
+            d.rest = serial.map(|s| {
+                crate::phrase::p(
+                    "obs.serial.rest",
+                    &[
+                        ("n", findings[s].impact.to_string()),
+                        ("k", crate::profile::CHAIN_CONCURRENCY.to_string()),
+                    ],
+                )
+            });
+            d.saving = saving_of(&d, members[0], profile, timed, month, records.len());
+            d.saving_text = crate::phrase::en(&d.saving);
+            (d, g)
+        })
+        .collect();
+    // the most time saved first, then money, then requests; the rest after
+    let some = |d: &Diagnosis| d.saves_ms > 0.0 || d.saves_cost > 0.0 || d.saves_requests > 0;
+    out.sort_by(|(a, ga), (b, gb)| {
+        some(b)
+            .cmp(&some(a))
+            .then(b.saves_ms.total_cmp(&a.saves_ms))
+            .then(b.saves_cost.total_cmp(&a.saves_cost))
+            .then(b.saves_requests.cmp(&a.saves_requests))
+            .then(ga[0].cmp(&gb[0]))
+    });
+    // the findings in the diagnoses' order, each diagnosis's together
+    let mut old: Vec<Option<Observation>> =
+        std::mem::take(findings).into_iter().map(Some).collect();
+    out.into_iter()
+        .map(|(mut d, g)| {
+            for i in g {
+                if let Some(o) = old[i].take() {
+                    d.identities.push(o.identity.clone());
+                    d.findings.push(findings.len());
+                    findings.push(o);
+                }
+            }
+            // attached, it is the last
+            if d.serial.is_some() {
+                d.serial = d.findings.last().copied();
+            }
+            d
+        })
+        .collect()
+}
+
+/// A diagnosis's id: its findings' identities (sorted), hashed (FNV-1a):
+/// the same findings, the same id, in any run.
+fn diagnosis_id(identities: &[&str]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in identities.join("\n").bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("dx-{:012x}", h >> 16)
+}
+
+/// A diagnosis's saving said: the time of the run it saves (with no
+/// times, the requests; with neither, its headline's saving), and beside it
+/// the money from a cent (a month's, when the run says how many a month).
+fn saving_of(
+    d: &Diagnosis,
+    head: &Observation,
+    profile: &Profile,
+    timed: bool,
+    month: Option<&crate::month::Month>,
+    total: usize,
+) -> Vec<crate::phrase::Phrase> {
+    use crate::phrase::p;
+    let first = match time_saved(d.saves_ms, profile.wall_ms).filter(|_| timed) {
+        Some(t) => Some(t),
+        None if d.saves_requests > 0 => Some(p(
+            "obs.saves",
+            &[
+                ("n", d.saves_requests.to_string()),
+                ("s", crate::phrase::plural(d.saves_requests)),
+                (
+                    "pct",
+                    crate::episode::share_pct(d.saves_requests, total).to_string(),
+                ),
+            ],
+        )),
+        None => head.saving.clone(),
+    };
+    let mut out: Vec<crate::phrase::Phrase> = first.into_iter().collect();
+    let (amount, key, currency) = match month {
+        Some(m) => (m.of(d.saves_cost), "obs.savesMonth", m.currency.as_str()),
+        None => (
+            d.saves_cost,
+            "obs.savesMoney",
+            profile.cost.currency.as_str(),
+        ),
+    };
+    if !out.is_empty() && amount >= crate::program::CENT {
+        out.push(p(
+            key,
+            &[("money", crate::program::money_text(amount, currency))],
+        ));
+    }
+    out
 }
 
 /// Whether acting on a finding saves something it can count: requests,
@@ -524,7 +1022,19 @@ pub fn what_if(
     findings: &[Observation],
     timed: bool,
 ) -> Option<WhatIf> {
-    let saving: Vec<&Observation> = findings.iter().filter(|o| saves(o)).collect();
+    let all: Vec<&Observation> = findings.iter().collect();
+    what_if_of(records, profile, &all, findings.len(), timed)
+}
+
+/// [`what_if`] of some findings (`of` listed in all).
+fn what_if_of(
+    records: &[Record],
+    profile: &Profile,
+    findings: &[&Observation],
+    of: usize,
+    timed: bool,
+) -> Option<WhatIf> {
+    let saving: Vec<&Observation> = findings.iter().copied().filter(|o| saves(o)).collect();
     if saving.is_empty() || records.is_empty() {
         return None;
     }
@@ -619,7 +1129,7 @@ pub fn what_if(
         cost: (profile.cost.amount, cost.clamp(0.0, profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),
-        of_findings: findings.len(),
+        of_findings: of,
         counted: counted
             .iter()
             .filter_map(|o| o.phrases.first().map(|p| p.key.to_string()))
@@ -650,18 +1160,28 @@ impl WhatIf {
                 if self.findings == 1 { "" } else { "s" }
             )
         };
+        // time first, then money, then requests and bytes
         let mut parts = Vec::new();
+        if let Some((before, after)) = self.waiting_ms
+            && ms_text(before) != ms_text(after)
+        {
+            parts.push(format!("waiting {} → {}", ms_text(before), ms_text(after)));
+        }
+        let (a, b, a_month) = match month {
+            Some(m) => (m.of(self.cost.0), m.of(self.cost.1), " a month"),
+            None => (self.cost.0, self.cost.1, ""),
+        };
+        let (before, after) = (money_text(a, &self.currency), money_text(b, &self.currency));
+        // under a cent, an amount nobody acts on: not said, nor its share
+        if a.max(b) >= crate::program::CENT && before != after {
+            parts.push(format!("cost {before} → {after}{a_month}"));
+        }
         if self.requests.0 != self.requests.1 {
             parts.push(format!(
                 "{} → {} requests",
                 count_text(self.requests.0),
                 count_text(self.requests.1)
             ));
-        }
-        if let Some((before, after)) = self.waiting_ms
-            && ms_text(before) != ms_text(after)
-        {
-            parts.push(format!("waiting {} → {}", ms_text(before), ms_text(after)));
         }
         let bytes = crate::episode::human_bytes;
         if bytes(self.bytes_out.0) != bytes(self.bytes_out.1) {
@@ -670,19 +1190,6 @@ impl WhatIf {
                 bytes(self.bytes_out.0),
                 bytes(self.bytes_out.1)
             ));
-        }
-        let (a, b, a_month) = match month {
-            Some(m) => (m.of(self.cost.0), m.of(self.cost.1), " a month"),
-            None => (self.cost.0, self.cost.1, ""),
-        };
-        let (before, after) = (money_text(a, &self.currency), money_text(b, &self.currency));
-        // under a cent, an amount nobody acts on: its share
-        if a.max(b) < crate::program::CENT {
-            if a != b {
-                parts.push(format!("cost {}", crate::program::share_moved(a, b)));
-            }
-        } else if before != after {
-            parts.push(format!("cost {before} → {after}{a_month}"));
         }
         format!("in all ({which}): {}", parts.join(" · "))
     }
@@ -859,7 +1366,7 @@ mod tests {
         assert_eq!(what_if(&rs, &p, &obs, true), Some(w.clone()));
         assert_eq!(
             w.line(None),
-            "in all (1 finding): 9 → 6 requests · waiting 195 ms → 189 ms",
+            "in all (1 finding): waiting 195 ms → 189 ms · 9 → 6 requests",
             "a cost that reads the same before and after is not printed as a change"
         );
     }
@@ -894,7 +1401,7 @@ mod tests {
         assert_eq!(w.requests, (20, 1));
         assert!(
             w.line(None).starts_with(
-                "in all (1 of 2 findings: a key read again and again): 20 → 1 requests"
+                "in all (1 of 2 findings: a key read again and again): waiting 200 ms → 10 ms · 20 → 1 requests"
             ),
             "{}",
             w.line(None)

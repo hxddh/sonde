@@ -7,7 +7,6 @@ use std::path::Path;
 use reqlog::Record;
 use sonde_analysis::episode::Observation;
 use sonde_analysis::fixloop::{FindingChange, SinceLast, State};
-use sonde_analysis::month::Month;
 use sonde_analysis::profile::RunChange;
 use sonde_analysis::program::{money_text, ms_text};
 use sonde_analysis::run::RunHeader;
@@ -17,23 +16,18 @@ use sonde_core::Sonde;
 use super::record::{paint, request_prices_for};
 use crate::output;
 
-/// A finding: what it is, what acting on it saves (in money a month, when
-/// `month` says one), where in the program, and the fix for the SDK that
-/// sent its requests (`sdk`: the run's, when the finding's own requests do
-/// not say).
+/// A finding as the head of its diagnosis: what it is, what acting on the
+/// diagnosis saves (`saving`), what else it is (`also`: its other findings,
+/// each a line), where in the program, and the fix for the SDK that sent its
+/// requests (`sdk`: the run's, when the finding's own requests do not say).
 pub(super) fn finding_lines(
     o: &Observation,
+    saving: Option<&str>,
+    also: &[String],
     sdk: Option<&str>,
-    month: Option<&Month>,
     color: bool,
 ) -> Vec<String> {
-    // one the project keeps on purpose is no warning: said with why
-    let mark = if o.level == "warn" && o.expected.is_none() {
-        paint("!", "33", color)
-    } else {
-        paint("·", "2", color)
-    };
-    let mut out = vec![format!("{mark} {}", o.text)];
+    let mut out = vec![format!("{} {}", mark(o, color), o.text)];
     if let Some(why) = &o.expected {
         out.push(paint(
             &format!("    expected: {why} (sonde.toml)"),
@@ -41,15 +35,11 @@ pub(super) fn finding_lines(
             color,
         ));
     }
-    if let Some(saving) = &o.saving_text {
-        let money = match month {
-            Some(m) if m.of(o.saves_cost) >= sonde_analysis::program::CENT => format!(
-                " · ≈ {} a month",
-                money_text(m.of(o.saves_cost), &m.currency)
-            ),
-            _ => String::new(),
-        };
-        out.push(paint(&format!("    saving: {saving}{money}"), "32", color));
+    if let Some(saving) = saving.filter(|s| !s.is_empty()) {
+        out.push(paint(&format!("    saving: {saving}"), "32", color));
+    }
+    for line in also {
+        out.push(paint(&format!("    also: {line}"), "2", color));
     }
     for c in &o.callers {
         out.push(paint(
@@ -74,6 +64,68 @@ pub(super) fn finding_lines(
         };
         out.push(paint(&format!("    {whose}"), "2", color));
         out.extend(fix.code.lines().map(|l| format!("      {l}")));
+    }
+    out
+}
+
+/// `!` for a warning, `·` for the rest (and for one the project keeps on
+/// purpose).
+fn mark(o: &Observation, color: bool) -> String {
+    if o.level == "warn" && o.expected.is_none() {
+        paint("!", "33", color)
+    } else {
+        paint("·", "2", color)
+    }
+}
+
+/// A run's diagnoses: the first in full (its saving, its other findings,
+/// its callers, its fix), the others a line each with where in the program
+/// (each in full with `all`).
+pub(super) fn diagnosis_lines(a: &Analysis, all: bool, color: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    for (n, d) in a.diagnoses.iter().enumerate() {
+        let Some(head) = d.findings.first().and_then(|&i| a.observations.get(i)) else {
+            continue;
+        };
+        if n == 0 || all {
+            // (one kept on purpose says why)
+            let said = |text: String, o: &Observation| match &o.expected {
+                Some(why) => format!("{text} (expected: {why})"),
+                None => text,
+            };
+            let mut also: Vec<String> = d.findings[1..]
+                .iter()
+                .filter(|&&i| Some(i) != d.serial)
+                .filter_map(|&i| a.observations.get(i))
+                .map(|o| said(o.text.clone(), o))
+                .collect();
+            if let (Some(rest), Some(o)) = (&d.rest, d.serial.and_then(|i| a.observations.get(i))) {
+                also.push(said(rest.en(), o));
+            }
+            out.extend(finding_lines(
+                head,
+                Some(&d.saving_text),
+                &also,
+                a.sdk.as_deref(),
+                color,
+            ));
+            continue;
+        }
+        let mut line = format!("{} {}", mark(head, color), head.text);
+        if !d.saving_text.is_empty() {
+            line.push_str(&paint(&format!(" · {}", d.saving_text), "32", color));
+        }
+        if let Some(c) = head.callers.first() {
+            line.push_str(&paint(&format!(" (at {})", c.place), "2", color));
+        }
+        if let Some(why) = &head.expected {
+            line.push_str(&paint(
+                &format!(" · expected: {why} (sonde.toml)"),
+                "2",
+                color,
+            ));
+        }
+        out.push(line);
     }
     out
 }
@@ -311,7 +363,7 @@ mod tests {
             .collect();
         let obs = observations(&rs, &episodes(&rs));
         let o = obs.iter().find(|o| o.kind == "obs.headget").unwrap();
-        let lines = finding_lines(o, None, None, false);
+        let lines = finding_lines(o, None, &[], None, false);
         let set = lines
             .iter()
             .position(|l| l == "    set: --s3-no-head-object = true (rclone)")

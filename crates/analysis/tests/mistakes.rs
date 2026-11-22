@@ -139,7 +139,8 @@ fn small_objects_written_one_each_are_found_priced_and_fixed_by_a_batch() {
     has_every_fix(o);
     // priced: 1,800 writes at S3's price
     let mut ranked = vec![o.clone()];
-    sonde_analysis::fixes::rank_by_saving(&mut ranked, &job.0, &RequestPrices::default());
+    let p = sonde_analysis::profile::profile(&job.0, &RequestPrices::default());
+    sonde_analysis::fixes::rank_by_saving(&mut ranked, &job.0, &p, true);
     assert!(
         (ranked[0].saves_cost - 0.009).abs() < 1e-9,
         "{}",

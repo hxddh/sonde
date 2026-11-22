@@ -285,7 +285,9 @@ fn many_small_objects_each_read_whole_are_a_storm_to_shard() {
     );
     // 63 MiB fits one shard of 64 MiB: one read left of 600
     assert_eq!(o.saves_requests, 599);
-    assert!(o.fixes.iter().any(|f| f.code.contains("WebDataset")));
+    // images: packed in tar shards (records would be lines: JSONL)
+    assert!(o.fixes.iter().any(|f| f.code.contains("tarfile")));
+    assert!(o.fixes.iter().all(|f| !f.code.contains("jsonl")));
     // fewer than 500, or large objects: no storm
     assert!(find(&findings(&rs[..400]), "obs.smallreads").is_none());
     let big: Vec<Record> = (0..600u64)
