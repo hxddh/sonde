@@ -105,7 +105,7 @@ while the demo runs) is hidden for that run, not replaced.
 
 ## sonde.toml
 
-Read by `run`, `check`, `proxy` and the app's Run from the folder they run in or the nearest one above it, up to the
+Read by `run`, `check`, `proxy` and the app's command bar from the folder they run in or the nearest one above it, up to the
 repository's root (`check --config FILE` names another). `show`, `compare` and `share` read it too: `[program] name`
 to find the program's newest run, and `show` what `[check] expect` keeps. Every key is checked: an unknown key, a
 policy that is not one of three or a scenario sonde cannot run is an error (exit 64), in the CLI and the app alike.
@@ -137,5 +137,5 @@ on = ["PutObject"]
   `runs-per-month` alone applies to every program run in the folder.
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
 - `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
-  app, the project's policy may narrow Run's own choice, never widen it.
+  app, the project's policy may narrow the command bar's own choice, never widen it.
 - `[[scenario]]`: [trials](trials.md#a-projects-own-scenarios).

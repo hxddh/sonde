@@ -7,7 +7,7 @@ import { duration } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, RecordSummary } from "../../types";
 import { pressedRow, AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
-import { terminal, TEXT } from "../kit";
+import { TEXT } from "../kit";
 
 /** An operation's requests in time: a bar from each one's start to its end, so waits and overlaps show. */
 /** A key as a row's name: its last two parts (`…/manifest/00012.json`). */
@@ -38,7 +38,7 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
   };
   const anyFirst = () => rows().some((r) => r.first != null);
   return (
-    <If when={!terminal() && props.records.length > 1}>
+    <If when={props.records.length > 1}>
       <BaseButton
         testID="waterfall"
         accessibilityLabel={t("profile.waterfallText", { n: props.records.length, time: duration(end()) })}

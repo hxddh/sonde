@@ -42,8 +42,7 @@ The contract starts at 19.0 (D-138). A break comes only in a major, in the major
 - Display text inside JSON: each property a schema says is "Display text, not stable": the `*Text` phrase arrays,
   a finding's and an operation's sentences (`text`, `phrases`, `title`, `notes`), `show --by`'s sentence, and `layout
   -f json`'s `headline`, `facts` and `tables` (which may also be absent). Read the figures and ids beside them.
-- The desktop app, the terminal UI (its developer flags `--bundle`, `--fps`, `--log-file` too, left out of help), the
-  shared HTML page, the app–Rust bridge.
+- The desktop app, the shared HTML page, the app–Rust bridge.
 - The runs folder's index and the data directory's other files (probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.

@@ -7,7 +7,7 @@ import { Grid, PlotAxis } from "nsh/base/plot";
 import { count, duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, IconButton, InfoMark, LEADING, POPUP, SPRING, terminal, TEXT, TONE, TYPE, REVEAL } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, HowTitle, IconButton, LEADING, POPUP, SPRING, TEXT, TONE, TYPE, REVEAL } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "kind" | "missed">) => (g.missed ? t("profile.notFound", { op: g.kind }) : g.kind);
@@ -77,7 +77,7 @@ export const STACK = "h-3";
 /** The shape of a run under its header (`RunShape strip`). */
 export const SHAPE_STRIP = "h-11";
 /** A mark a few points high, in a row or beside a figure (`Sparkline`). */
-export const MARK = { row: "h-4 w-16", tile: "h-5 w-16 shrink-0", pair: "h-5 w-12 shrink-0" } as const;
+export const MARK = { row: "h-4 w-16", pair: "h-5 w-12 shrink-0" } as const;
 /** How thick a bar is, by what it is a bar of — the band's padding, and no
  * other anywhere: a row of a chart of rows, two marks on a row (a dumbbell,
  * a chain as it ran and at once), a slice of time, a bucket (a size, a
@@ -421,45 +421,30 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
 /** A frame's own controls (how to read it, its rows out as CSV): quiet, never
  * hidden (the kit's `REVEAL`), whole under the pointer or the keys; the same on
  * every chart. */
-const CHROME = `flex-row ${REVEAL}`;
 
 /** A chart in its frame, the same for every chart: what it asks (`title`,
  * the card's whole width), a sentence that answers it (`text`, computed from
- * what it draws; it wraps: never cut), how it is cut (`action`, a row of its
- * own under the sentence), how to read it (`how`: an info mark at the
- * title's end, the words its tooltip); the plot, its `legend` at the plot's left edge
- * (`gutter` for a chart of rows), and `empty` said in the plot's room when
- * there is nothing to draw. A terminal gets the title and what the chart
- * says in words. */
+ * what it draws: one line, the whole of it with how to read it), how it is cut (`action`, a row of its
+ * own under the sentence), how to read it (`how`: the title opens it, in a popover); the plot, its `legend` at the
+ * plot's left edge (`gutter` for a chart of rows), and `empty` said in the plot's room when there is nothing to
+ * draw. */
 export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** a board's chart (the Time pane): its fill without the card's edge, the board's sections parting the charts */ flat?: boolean }) {
-  if (terminal()) {
-    return (
-      <View testID={props.testID} class="gap-0">
-        <Heading>{props.title}</Heading>
-        <If when={!props.empty} else={<Text class="text-muted-foreground">{props.empty}</Text>}>
-          {props.children}
-        </If>
-      </View>
-    );
-  }
   return (
     <Card testID={props.testID} class={`group ${props.flat ? "border-transparent" : ""} ${props.class ?? ""}`}>
       <View class="gap-1">
-        <View class="min-h-7 flex-row items-center gap-2">
+        <View class="min-h-7 flex-row items-center">
           {/* a question, short: a unit is said in the sentence or on the axis, not here, so cards abreast keep
-              their titles to a line where they can (two at most, never cut mid-question in a wide pane) */}
-          <View class="min-w-0 flex-1">
-            <Heading class="line-clamp-2">{props.title}</Heading>
-          </View>
-          {/* how to read it, behind its mark (a press opens it): the sentence under the title says what it shows */}
-          <If when={props.how}>
-            <View class={CHROME}>
-              <InfoMark text={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
+              their titles to a line where they can (two at most, never cut mid-question in a wide pane); a press
+              on it says how to read the chart */}
+          <If when={props.how} else={<Heading class="min-w-0 flex-1 line-clamp-2">{props.title}</Heading>}>
+            <View class="min-w-0 flex-1 flex-row">
+              <HowTitle title={props.title} how={props.how!} text={props.text} testID={props.testID ? `${props.testID}-how` : undefined} />
             </View>
           </If>
         </View>
+        {/* the answer, in a line (the whole of it where the title opens) */}
         <If when={props.text}>
-          <Text testID="chart-text" class={`tabular-nums ${TEXT.note}`}>{props.text}</Text>
+          <Text testID="chart-text" accessibilityLabel={props.text} class={`tabular-nums ${TEXT.note} line-clamp-1`}>{props.text}</Text>
         </If>
       </View>
       <If when={props.action}>

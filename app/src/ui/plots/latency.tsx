@@ -10,7 +10,7 @@ import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
 import { FEW } from "../../signals";
 import { pressedRow, AXIS_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, GUTTER_SCALE, GUTTER_SCALE_END, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_FIGURE, ROW_FIGURE_BEFORE, ROW_LABEL, TICK_ROOM, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, type LegendItem, OUTCOMES, TimeAxis, ValueAxis, runSpan, BARS, DASH, FOCUS_RULE, GRID, HEADROOM, STRIP, STROKE, TIP, CELLS, HOVER, sinceTick, slotMs, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
-import { terminal, textual, SimpleTable, TEXT } from "../kit";
+import { textual, SimpleTable, TEXT } from "../kit";
 import { kindRates, scatterSaid } from "./answers";
 
 /** The two tones of latency's bands: the body of the requests (median to
@@ -72,7 +72,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     return { title: `+${duration(b.tMs)}`, lines: [tells(b) ? t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) }) : t("band.lineFew", { p50: duration(b.p50Ms) }), t("runs.requestsN", { n: inSlice(b) })] };
   };
   return (
-    <If when={!terminal() && answered().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
+    <If when={answered().length > 1}>
       <Plot
         testID={props.testID ?? "latency-band"}
         data={rows()}
@@ -146,7 +146,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
     return b !== undefined && b % PER_DECADE === 0 ? `≤ ${duration(edge(b))}` : "";
   };
   return (
-    <If when={!terminal() && bins().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
+    <If when={bins().length > 1}>
       <If when={rows().length > 0} else={<NoneInStretch />}>
         <Plot
           testID="latency-heat"
@@ -323,7 +323,7 @@ export function Distribution(props: { profile: Profile }) {
   // between the first bucket that holds a request and the last
   const inside = (i: number) => rows().findIndex((r) => r.n > 0) < i && i < rows().length - 1 - [...rows()].reverse().findIndex((r) => r.n > 0);
   return (
-    // the frame says the figures (its sentence); a terminal's table says them again as rows
+    // the frame says the figures (its sentence)
     <If when={buckets().length > 1} else={<Text class={TEXT.note}>{label()}</Text>}>
       <View class="gap-2">
         <If when={!textual()} else={<SimpleTable columns={[t("dist.took"), t("figure.requests"), "%"]} rows={rows().map((r) => [r.name, count(r.n), percent(r.cum / 100)])} />}>
@@ -411,7 +411,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
   const label = () => scatterSaid(props.profile, props.domainMs);
   return (
     // a stretch with one request draws its one dot; with none, says so in the chart's room
-    <If when={!terminal() && rows().length > 0} else={terminal() ? <Text class={TEXT.note}>{label()}</Text> : <NoneInStretch />}>
+    <If when={rows().length > 0} else={<NoneInStretch />}>
       <BaseButton
         accessibilityLabel={label()}
         disabled={!props.onRequest}

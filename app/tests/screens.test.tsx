@@ -17,8 +17,10 @@ test("a run's request in the inspector: details, copy as curl without a signatur
   expect(app.clipboard()).not.toContain("Signature=");
   await app.press("id:copy-cli");
   await app.waitUntil(() => (app.clipboard() ?? "").startsWith("aws s3api"));
-  // sonde's own requests are no list of their own: Activity is its jobs and its changes
-  await app.press("id:activity-open");
+  // sonde's own requests are no list of their own: Activity is its jobs and its changes, a panel from the View
+  // menu, ⌘⇧A or the palette (the toolbar has no button for it while nothing is at work)
+  expect(app.shows("id:activity-open")).toBe(false);
+  await app.keyboard.press("mod+shift+a");
   await app.waitFor("id:activity");
   expect(app.shows("id:activity-tab-requests")).toBe(false);
 });
@@ -159,7 +161,8 @@ test("errors are readable: what went wrong, said whole", async () => {
   await app.type("id:ep-url", "http://127.0.0.1:9");
   await app.press("id:ep-save");
   await app.waitFor("id:endpoint-broken");
-  await app.press("id:test-broken");
+  await app.press("id:endpoint-more-broken");
+  await app.chooseMenuItem("Test connection");
   await app.waitFor("id:test-result", { timeout: 15000 });
   expect(app.shows("text:Not reachable")).toBe(true);
   // the error itself, not a way to a list of sonde's own requests
@@ -170,7 +173,7 @@ test("errors are readable: what went wrong, said whole", async () => {
 test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  // what a recorded program may do is the project's (sonde.toml) and Run's, not a setting
+  // what a recorded program may do is the project's (sonde.toml) and the command bar's, not a setting
   expect(app.shows("id:record-policy")).toBe(false);
   expect(app.shows("id:read-only")).toBe(false);
   expect(app.shows("id:toolbar-lock")).toBe(false);
@@ -306,7 +309,8 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
   await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   // the endpoint, tested: not reachable, and why
-  await app.press("id:test-demo");
+  await app.press("id:endpoint-more-demo");
+  await app.chooseMenuItem("Test connection");
   await app.waitFor("id:test-result");
   expect(app.shows("text:Not reachable")).toBe(true);
   expect(app.shows("text:/connection refused/")).toBe(true);

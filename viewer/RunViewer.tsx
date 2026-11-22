@@ -68,7 +68,7 @@ export interface SharedRun extends WholeRun {
   compare?: { name: string; change: RunChange; signals: [Signals, Signals]; profiles: [Profile, Profile] };
 }
 
-type Pane = "compare" | "operations" | "aligned" | "time";
+type Pane = "compare" | "operations" | "time";
 
 export function RunViewer(props: { data: SharedRun }) {
   // the page's run in the shape a view has, and its operations answered from the page as the
@@ -83,7 +83,7 @@ export function RunViewer(props: { data: SharedRun }) {
   const filter = signal<number | null>(null);
   // an address that names a stretch of time opens on the Time pane, over it
   // a run shared against another opens on what changed
-  const pane = signal<Pane>((hashRange || hashTime) && d.profile ? "time" : props.data.compare ? "compare" : d.lines.length ? "aligned" : "operations");
+  const pane = signal<Pane>((hashRange || hashTime) && d.profile ? "time" : props.data.compare ? "compare" : "operations");
   // a signal pressed in the header: the Time pane, on its chart
   const reveal = signal<{ id: SignalId; n: number } | null>(null);
   const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
@@ -150,7 +150,7 @@ export function RunViewer(props: { data: SharedRun }) {
     opHighlight.set([]);
   };
 
-  const operations = () => <OperationsTable view={d} source={source} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || inspecting()} />;
+  const operations = () => <OperationsTable view={d} source={source} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={d.lines.length > 0 || inspecting()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's run page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the run and what stands out over its operations
@@ -170,7 +170,8 @@ export function RunViewer(props: { data: SharedRun }) {
         </View>
       );
     if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} range={hashRange} onRange={keepRange} />;
-    if (pane() === "operations" || !d.lines.length)
+    // with output: the output beside the operations, each lighting up the other
+    if (!d.lines.length)
       return (
         <View class="min-h-0 flex-1 gap-3">
           {strip()}
@@ -215,8 +216,6 @@ export function RunViewer(props: { data: SharedRun }) {
           items={[
             ...(props.data.compare ? [{ value: "compare", title: t("viewer.compared"), icon: "git-compare-arrows" as const }] : []),
             { value: "operations", title: t("runs.operations"), icon: "list-filter" as const },
-            // (as in the app: a tab with nothing to show is dimmed, it does not go)
-            { value: "aligned", title: t("runs.withOutput"), icon: "scroll-text" as const, disabled: !d.lines.length, why: t("runs.noOutput") },
             { value: "time", title: t("profile.pane"), icon: "chart-pie" as const, disabled: !d.profile },
           ]}
           onChange={(p) => pane.set(p as Pane)}

@@ -20,13 +20,13 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
 | **Look at stores** | Browse buckets, find incomplete uploads, run 52 compatibility probes across endpoints, decode table layouts. |
 
-A desktop app (macOS, Linux, Windows), a terminal UI and a CLI, in English and Chinese.
+A desktop app (macOS, Linux, Windows) and a CLI, in English and Chinese.
 
 | | |
 |---|---|
 | ![A run: its figures, what stands out, operations](docs/images/run-view.png) | ![A trial: what the program did under each fault](docs/images/trial.png) |
 | ![Time: one timeline, each chart in its frame](docs/images/time.png) | ![Buckets: objects and their details](docs/images/store.png) |
-| ![Run: a program in its terminal, its S3 requests as operations beside it](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
+| ![A run: the program's output beside its S3 requests, as operations](docs/images/run.png) | ![What the run cost, and when: requests, bytes out and storage](docs/images/cost.png) |
 
 ## Where it helps
 

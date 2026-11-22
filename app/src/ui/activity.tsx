@@ -1,7 +1,7 @@
 // Activity: what sonde itself does — its jobs, and the changes it
 // made (Changes). One place for "what is sonde doing, what did it
-// do": a sheet from the window's edge, opened from the toolbar; a place of
-// its own in a terminal.
+// do": a sheet from the window's edge, opened from the View menu, ⌘⇧A or the
+// palette (the toolbar's button shows only while sonde is at work).
 
 import { cleanup, effect, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { count, date, duration, since } from "../format";
@@ -10,7 +10,7 @@ import { core } from "../phrases";
 import { api } from "../native";
 import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
 import type { AuditEntry, JobInfo } from "../types";
-import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, TONE, type Tone, TEXT, Tip } from "./kit";
+import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, Row, Segmented, TONE, type Tone, TEXT, Tip } from "./kit";
 
 export const activityOpen = signal(false);
 
@@ -160,25 +160,12 @@ export function Activity(props: { onClose?: () => void }) {
     </Each>
   );
   return (
-    <If
-      when={terminal()}
-      else={
-        <View testID="activity" class="flex-1">
-          <PanelHeader icon="activity" title={t("nav.activity")} onClose={props.onClose} closeTestID="activity-close">
-            {tabs()}
-          </PanelHeader>
-          <View class="min-h-0 flex-1 px-4 pt-3">{content()}</View>
-        </View>
-      }
-    >
-      <View testID="activity" class="flex-1 gap-1 p-1">
-        <View class="flex-row items-center gap-2">
-          <View class="flex-1" />
-          {tabs()}
-        </View>
-        {content()}
-      </View>
-    </If>
+    <View testID="activity" class="flex-1">
+      <PanelHeader icon="activity" title={t("nav.activity")} onClose={props.onClose} closeTestID="activity-close">
+        {tabs()}
+      </PanelHeader>
+      <View class="min-h-0 flex-1 px-4 pt-3">{content()}</View>
+    </View>
   );
 }
 

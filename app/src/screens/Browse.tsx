@@ -12,11 +12,10 @@ import { bucket, copy, endpoint, notify, offerCommands, type PlaceCommand, prefi
 import { KeyVersions } from "./Versions";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, BARE_TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
+import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, BARE_TABLE, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, useBucketFacts } from "../ui/overview";
 import { ShowSidebar } from "../ui/shell";
-import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
 
@@ -50,9 +49,7 @@ function Breadcrumbs() {
       <Each of={parts()}>
         {(p, i) => (
           <View class="flex-row items-center gap-1">
-            <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
-              <Icon name="chevron-right" size={ICON.small} />
-            </If>
+            <Icon name="chevron-right" size={ICON.small} />
             <Crumb href={`s3://${bucket()}/${p().prefix}`} onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} label={p().name}>
               <Text class={i() === parts().length - 1 ? `${TEXT.body}` : `${TEXT.bodyQuiet}`}>{p().name}</Text>
             </Crumb>
@@ -66,7 +63,7 @@ function Breadcrumbs() {
 /** An object in the inspector: its address, what can be done with it (Download, Versions, and behind ⋯ what
  * copies it), then one list of what it is — its ETag, checksums and encryption where it has them — and its
  * response headers as the one section that opens. Versions opens in its place, with the way back. */
-function Detail(props: { entry: Entry; onBack?: () => void; /** open on its versions */ versions?: boolean }) {
+function Detail(props: { entry: Entry; /** open on its versions */ versions?: boolean }) {
   const ep = endpoint()!;
   const b = bucket()!;
   // a failure shows in the panel, with Try again: not a wait that never ends
@@ -161,13 +158,6 @@ function Detail(props: { entry: Entry; onBack?: () => void; /** open on its vers
     <If when={!versions()} else={<KeyVersions objectKey={props.entry.key} onBack={() => versions.set(false)} />}>
       <View selectable class="gap-4" testID="object-detail">
         <View class="gap-1">
-          {/* in the panel, its header names the object; on its own (a terminal), this does */}
-          <If when={props.onBack}>
-            <View class="flex-row items-center gap-2">
-              <Back onPress={() => props.onBack?.()} testID="detail-back" />
-              <Title lines={2} class="min-w-0 flex-1">{props.entry.name}</Title>
-            </View>
-          </If>
           <Text class={`${TEXT.codeQuiet} line-clamp-2`}>{uri()}</Text>
         </View>
         {/* what takes the object, what opens its history; behind ⋯ what copies it */}
@@ -221,7 +211,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
   let table: DataTableRef | undefined;
   // the table's own width decides which columns it shows
   const width = signal(0);
-  const ranked = () => fitColumns(terminal() ? 0 : width(), SIZE + 2, NAME, [...OBJECT_COLUMNS]);
+  const ranked = () => fitColumns(width(), SIZE + 2, NAME, [...OBJECT_COLUMNS]);
   let searchJob: string | null = null;
   // counted at each stop: a search whose job is still being started when another stops it cancels it on arrival
   let searches = 0;
@@ -302,8 +292,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
   };
   const tableData = () =>
     rows().map((e) => ({
-      // a terminal has no icons: a folder says so with a mark of its own (what a row is, is the entry's `isPrefix`)
-      name: terminal() && e.isPrefix ? `▸ ${e.name}` : e.name,
+      name: e.name,
       size: e.isPrefix ? "" : bytes(e.size),
       modified: e.isPrefix ? "" : date(e.lastModified),
       class: e.storageClass ?? "",
@@ -390,7 +379,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
       : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versionsOpen"), icon: "file-clock", run: () => props.onSelect(e, true) }];
   };
   const menuRow = signal<number | null>(null);
-  // the system's menus, a framed box in a terminal; the in-window one on the web
+  // the system's menus; the in-window one on the web
   const systemMenus = isAvailable;
   const menu = (row: number) => {
     menuRow.set(row);
@@ -418,7 +407,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
   );
   // the listing's columns: the name takes what the others leave
   const objectColumns = () => [
-    { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
+    { key: "name", title: t("browse.name"), width: width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
     { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
     ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
     ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
@@ -498,7 +487,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
             accessibilityLabel={t("nav.objects")}
             class="min-h-0 flex-1"
             columns={objectColumns()}
-            renderHeaderCell={terminal() ? undefined : titleCells(objectColumns)}
+            renderHeaderCell={titleCells(objectColumns)}
             data={tableData()}
             dataStart={start()}
             rowCount={total()}
@@ -510,9 +499,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
             fontSize={TYPE.body}
             rowHeight={rowHeight(ROW.table)}
             renderCell={
-              terminal()
-                ? undefined
-                : (c) => {
+              (c) => {
                     if (c.key === "name") {
                       // what the row is comes from its entry, not from its text
                       const folder = rows()[c.row - start()]?.isPrefix ?? false;
@@ -546,7 +533,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
               if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
             }}
             onRowPress={({ row }) => open(row)}
-            classes={terminal() ? undefined : BARE_TABLE}
+            classes={BARE_TABLE}
             empty={
               // each of its three states in its own words: on its way, failed, or truly nothing
               <Await loading={loading()} error={failure()} retry={refresh} waiting={t("browse.listing")} testID="listing">
@@ -573,7 +560,7 @@ const detailWidth = rememberedSize("browse.detail", 400);
 
 export function Browse() {
   // what the sections say of this bucket and prefix, found out as it opens (the section row is the way to them)
-  if (!terminal()) useBucketFacts();
+  useBucketFacts();
   // the object in the inspector, and whether it opened on its versions
   const selected = signal<Entry | null>(null);
   const onVersions = signal(false);
@@ -585,47 +572,28 @@ export function Browse() {
   });
   return (
     <View class="flex-1" testID="screen-browse">
-      <If when={terminal()}>
-        <View class="flex-row gap-2 px-1 pb-1">
-          <EndpointPicker />
-          <BucketPicker />
-        </View>
-      </If>
       <If when={endpoint() && bucket()} else={<Empty icon="database" title={endpoint() ? t("store.pickTitle") : undefined} text={endpoint() ? t("store.pickText") : t("common.chooseEndpoint")}><If when={endpoint()}><ShowSidebar /></If></Empty>}>
-        <If
-          when={terminal()}
-          else={
-            <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
-              <ResizablePanel minSize={PANE.objectsLeast} class="min-w-0 gap-3 px-4 py-4">
-                <Objects onSelect={choose} selected={selected()?.key ?? null} />
-              </ResizablePanel>
-              <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={PANE.detailLeast} maxSize={PANE.detailMost} onResize={detailWidth.onResize} class="bg-inspector">
-              <If when={selected()}>
-                {(e) => (
-                  <View class="flex-1">
-                    {/* the panel is named for what it shows: the object */}
-                    <PanelHeader title={e().name || e().key} icon="file" onClose={() => choose(null)} closeTestID="detail-close" />
-                    <Scroll class="flex-1" contentClass="p-4">
-                      {/* one object's: what was asked for another never shows here */}
-                      <Each of={[{ e: e(), versions: onVersions() }]} key={(x) => `${x.e.key}\n${x.versions}`}>
-                        {(x) => <Detail entry={x().e} versions={x().versions} />}
-                      </Each>
-                    </Scroll>
-                  </View>
-                )}
-              </If>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          }
-        >
-          <If when={selected()} else={<Objects onSelect={choose} selected={null} />}>
+        <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
+          <ResizablePanel minSize={PANE.objectsLeast} class="min-w-0 gap-3 px-4 py-4">
+            <Objects onSelect={choose} selected={selected()?.key ?? null} />
+          </ResizablePanel>
+          <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={PANE.detailLeast} maxSize={PANE.detailMost} onResize={detailWidth.onResize} class="bg-inspector">
+          <If when={selected()}>
             {(e) => (
-              <Scroll class="flex-1" contentClass="p-1">
-                <Detail entry={e()} versions={onVersions()} onBack={() => choose(null)} />
-              </Scroll>
+              <View class="flex-1">
+                {/* the panel is named for what it shows: the object */}
+                <PanelHeader title={e().name || e().key} icon="file" onClose={() => choose(null)} closeTestID="detail-close" />
+                <Scroll class="flex-1" contentClass="p-4">
+                  {/* one object's: what was asked for another never shows here */}
+                  <Each of={[{ e: e(), versions: onVersions() }]} key={(x) => `${x.e.key}\n${x.versions}`}>
+                    {(x) => <Detail entry={x().e} versions={x().versions} />}
+                  </Each>
+                </Scroll>
+              </View>
             )}
           </If>
-        </If>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </If>
     </View>
   );

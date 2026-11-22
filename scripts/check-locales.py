@@ -120,7 +120,47 @@ for k in en:
 
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
-GONE: dict[str, str] = {}
+GONE: dict[str, str] = {
+    "app.tagline": "the terminal UI's home list is gone (29.0)",
+    "app.tuiKeys": "the terminal UI is gone (29.0)",
+    "nav.run": "the Run place is merged into Runs (29.0)",
+    "run.title": "Run's introduction is gone: Runs opens on the command bar (29.0)",
+    "run.hint": "Run's introduction is gone: the command field's placeholder says it (29.0)",
+    "run.cwd": "the folder is said at the command field's start, as a prompt (29.0)",
+    "run.exited": "the live band is gone: the run's view says how it ended (run.exitNote)",
+    "run.killed": "the live band is gone: the run's view says it was stopped (run.stoppedNote)",
+    "run.waiting": "a live run opens in its own view, its table empty until requests come",
+    "run.lineUp": "a run that ended is already in Runs, where it ran",
+    "run.recent": "the commands run before are the runs' list",
+    "run.recentNone": "the commands run before are the runs' list",
+    "run.bandErrors": "the live band is gone: the run header's figures say it",
+    "run.bandErrors.one": "the live band is gone: the run header's figures say it",
+    "run.bandMisses": "the live band is gone: the run header's figures say it",
+    "run.resizeOperations": "Run's split is gone: the output stands beside the operations (runs.resizeOutput)",
+    "live.title": "the live panel is gone: a live run is drawn by its own view",
+    "live.hint": "the live panel is gone: a live run is drawn by its own view",
+    "live.text": "the live panel is gone: a live run is drawn by its own view",
+    "live.text.one": "the live panel is gone: a live run is drawn by its own view",
+    "live.none": "the live panel is gone: a live run is drawn by its own view",
+    "live.perSecond": "the live panel is gone: a live run is drawn by its own view",
+    "live.failed": "the live panel is gone: a live run is drawn by its own view",
+    "live.inFlight": "the live panel is gone: a live run is drawn by its own view",
+    "figure.errors": "the live band is gone: the run header's figures say it",
+    "figure.notFound": "the live band is gone: the run header's figures say it",
+    "timeline.runs": "the terminal UI's way back is gone (29.0)",
+    "timeline.pick": "Runs with no run chosen is the command bar",
+    "runs.noneTitle": "Runs with no run is the command bar",
+    "runs.noneText": "Runs with no run is the command bar",
+    "runs.runOne": "Runs with no run is the command bar",
+    "runs.withOutput": "the Output tab is gone: Operations shows the output beside the table",
+    "runs.showOutput": "the Output tab is gone: Operations shows the output beside the table",
+    "runs.noOutput": "the Output tab is gone",
+    "signal.open": "the header's figures are buttons that say their chart where the pointer rests",
+    "chart.value": "Capacity's charts had a terminal's table only",
+    "ops.shared": "the shared notes are in the operation's inspector",
+    "trial.ofBroke": "a run's row no longer says how its trials stood (D-111): its History does",
+    "trial.ofBrokeSaid": "a run's row no longer says how its trials stood (D-111): its History does",
+}
 
 
 def git(*args):

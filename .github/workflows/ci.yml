@@ -39,7 +39,6 @@ jobs:
       - uses: ./.github/actions/nsh
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-shear@1.14.1 }
       - name: No unused dependencies

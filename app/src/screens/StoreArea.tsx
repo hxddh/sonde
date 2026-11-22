@@ -15,7 +15,7 @@ import { api, asError, Listing } from "../native";
 import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeTab } from "../store";
 import type { Entry } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, ICON, IconButton, Loading, Notice, popupMenu, ROWS, Segmented, SideHeader, terminal, WIDTH, TEXT } from "../ui/kit";
+import { Button, ICON, IconButton, Loading, Notice, popupMenu, ROWS, Segmented, SideHeader, WIDTH, TEXT } from "../ui/kit";
 import { bytes, count } from "../format";
 import { here, LAYOUT_LABEL } from "../ui/overview";
 import { Browse } from "./Browse";
@@ -241,16 +241,6 @@ function Section() {
 }
 
 export function StoreArea() {
-  if (terminal()) {
-    return (
-      <View class="flex-1" testID="screen-store">
-        <View class="flex-row px-1">
-          <Segmented testID="tab" value={storeTab()} items={sections()} onChange={(s) => go(s as StoreTab)} />
-        </View>
-        <View class="flex-1">{screen(storeTab())}</View>
-      </View>
-    );
-  }
   // the buckets are the sidebar's list while this place shows
   const { list } = useBuckets();
   cleanup(showInSidebar("store", list));

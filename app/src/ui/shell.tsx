@@ -1,21 +1,21 @@
-// The window's chrome on the desktops: a title bar of the app's own (the
-// toolbar), the sidebar with the places and the current place's list, and the
-// application's menus. A terminal has none of this (App.tsx's TerminalShell).
+// The window's chrome: a title bar of the app's own (the toolbar), the
+// sidebar with the places and the current place's list, and the
+// application's menus.
 
 import { computed, ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Select, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
-import { areaLabel, sectionLabel, vendorName } from "../labels";
+import { areaLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, crumb, crumbBack, endpoint, endpoints, go, notify, openRun, openRunFile, section, settings, runsTick, sideList, storeTab, useEndpoint } from "../store";
+import { type Area, area, shellWidth, endpoint, endpoints, go, openRun, openRunFile, settings, runsTick, sideList, useEndpoint } from "../store";
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./runview";
-import { BREAK, Button, CONTROL, Crumb, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, terminal, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
-import { ActivityButton, activityOpen } from "./activity";
+import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
+import { ActivityButton, activityOpen, runningJobs } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
 
@@ -38,14 +38,14 @@ export function toggleSidebar() {
 /** Under an empty pane's words, while the sidebar is hidden: the list it waits on, a press away. */
 export function ShowSidebar() {
   return (
-    <If when={!sidebarOpen() && !terminal()}>
+    <If when={!sidebarOpen()}>
       <Button small variant="outline" icon="panel-left" label={t("sidebar.show")} shortcut="mod+b" onPress={toggleSidebar} testID="show-sidebar" />
     </If>
   );
 }
 
-export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", runs: "list-clock", store: "database", activity: "activity", settings: "settings" };
-export const AREA_KEY: Record<Area, string> = { run: "mod+1", runs: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
+export const AREA_ICON: Record<Area, IconName> = { runs: "list-clock", store: "database", activity: "activity", settings: "settings" };
+export const AREA_KEY: Record<Area, string> = { runs: "mod+1", store: "mod+2", activity: "mod+shift+a", settings: "mod+," };
 
 /** The newest runs, read again only as the list changes: a menu rebuilt for a place's check mark reads none. */
 const recentRuns = computed<RunInfo[]>(() => {
@@ -73,7 +73,7 @@ function recentMenu(): MenuItem[] {
 
 /** The application's menus: macOS's menu bar; the toolbar's menu button elsewhere. */
 export function appMenus(open: (a: Area) => void): { label: string; submenu: MenuItem[] }[] {
-  const places: MenuItem[] = (["run", "runs", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
+  const places: MenuItem[] = (["runs", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
   return [
     {
       label: t("menu.file"),
@@ -89,36 +89,6 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
     // (the system's own Window menu: macOS's; elsewhere the window's title bar has these)
     ...(mac ? [{ label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] as MenuItem[] }] : []),
   ];
-}
-
-/** Where the window is: the place, then what it shows (a run, a bucket, a tab). */
-function Breadcrumb() {
-  const detail = () => {
-    // Buckets says its section and the bucket it looks at in the section's own header: the title bar does not repeat them
-    if (area() === "store") return null;
-    if (area() === "settings") return sectionLabel(section());
-    return crumb();
-  };
-  return (
-    <View class="min-w-0 flex-row items-center gap-2">
-      {/* the place, as a link back to its list while it shows one of them (a run): a press there lets it go */}
-      <If when={detail() ? crumbBack() : null} else={<Strong>{areaLabel(area())}</Strong>}>
-        {(back) => (
-          <Crumb testID="crumb-place" href={`sonde://${area()}`} label={areaLabel(area())} onOpen={() => back()()}>
-            <Strong>{areaLabel(area())}</Strong>
-          </Crumb>
-        )}
-      </If>
-      <If when={detail()}>
-        {(d) => (
-          <>
-            <Icon name="chevron-right" size={ICON.small} />
-            <Text class={`min-w-0 shrink ${TEXT.bodyQuiet} line-clamp-1`}>{d()}</Text>
-          </>
-        )}
-      </If>
-    </View>
-  );
 }
 
 /** The endpoint everything talks to: a press anywhere on it opens the list (searchable), whose last row
@@ -183,7 +153,10 @@ function RunningPill() {
         <BaseButton
           testID="running-pill"
           accessibilityLabel={t("run.running")}
-          onPress={() => go("run")}
+          onPress={() => {
+            if (r().path) openRun.set(r().path);
+            go("runs");
+          }}
           tooltip={<Tip text={scrubCommand(r().command)} />}
           class={`h-7 ${WIDTH.pill} flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
@@ -196,7 +169,7 @@ function RunningPill() {
 }
 
 /** The search field's stand-in: opens the command palette; an icon alone
- * in a narrow window, so the breadcrumb keeps its room. */
+ * in a narrow window. */
 function SearchButton() {
   return (
     <If when={shellWidth() >= BREAK.toolbar} else={<IconButton testID="palette" icon="search" label={t("palette.open")} shortcut="mod+k" onPress={() => paletteOpen.set(true)} />}>
@@ -230,14 +203,15 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: left() + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
     >
       <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
-      <View class="ml-1 min-w-0 flex-1">
-        <Breadcrumb />
-      </View>
+      <View class="min-w-0 flex-1" />
       {/* one stop of Tab, the arrows between its commands */}
       <ToolbarGroup accessibilityLabel={t("toolbar.label")} class="flex-row items-center gap-2">
       <RunningPill />
       <EndpointSwitcher />
-      <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
+      {/* sonde at work (a scan, a trial): its count, a press away from Activity; nothing while it rests */}
+      <If when={runningJobs() > 0}>
+        <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
+      </If>
       <SearchButton />
       <If when={!mac}>
         <IconButton
@@ -266,7 +240,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
     >
       <Icon name={AREA_ICON[props.area]} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
       <Text class={on() ? "flex-1 text-body text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
-      <If when={props.area === "run" && running()}>
+      <If when={props.area === "runs" && running()}>
         <View class={`${DOT} ${TONE.live.dot}`} />
       </If>
     </BaseButton>
@@ -288,11 +262,10 @@ export function Sidebar(props: { open: (a: Area) => void }) {
         {mac ? <View desktop={{ windowDrag: true }} style={{ height: titleBarHeight(), flexShrink: 0 }} /> : null}
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
-          <Place area="run" open={props.open} />
           <Place area="runs" open={props.open} />
           <Place area="store" open={props.open} />
         </ToolbarGroup>
-        {/* under them, the place's own list: its runs, its buckets, the commands run before */}
+        {/* under them, the place's own list: its runs, its buckets */}
         <Each of={sideList() ? [sideList()!] : []} key={(l) => l.key}>
           {(l) => (
             <View class="min-h-0 flex-1 pt-3">

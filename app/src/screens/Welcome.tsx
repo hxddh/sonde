@@ -3,15 +3,15 @@
 // which runs a small job on its own store and opens the run on its finding
 // (the line of code, the fix, and the fix applied and measured a press
 // later). The AWS profiles already on this machine, an endpoint by hand and
-// the example run are a line below, for those who know what they want.
+// a log to open are a line below, for those who know what they want.
 
 import { signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { runDemo } from "../demo";
-import { endpointsMode, go, notify, openExample, openRunFile, refreshEndpoints, report } from "../store";
+import { endpointsMode, go, notify, openRunFile, refreshEndpoints, report } from "../store";
 import type { EndpointView } from "../types";
-import { Actions, Button, Card, Check, Heading, READING, terminal, Title, TEXT } from "../ui/kit";
+import { Actions, Button, Card, Check, Heading, READING, Title, TEXT } from "../ui/kit";
 
 export function Welcome() {
   const profiles = (() => {
@@ -44,7 +44,7 @@ export function Welcome() {
 
   return (
     <View testID="welcome" class="flex-1 items-center justify-center p-6">
-      <View class={terminal() ? "w-full gap-2" : `${READING} gap-6`}>
+      <View class={`${READING} gap-6`}>
         <View class="gap-2">
           <Title page>{t("welcome.title")}</Title>
           <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
@@ -80,10 +80,7 @@ export function Welcome() {
               testID="welcome-add" class="justify-start"
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
-            <If when={!terminal()}>
-              <Button small variant="ghost" icon="file-clock" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
-            </If>
-            <Button small variant="ghost" icon="scroll-text" label={t("example.open")} onPress={openExample} testID="open-example" class="justify-start" />
+            <Button small variant="ghost" icon="file-clock" label={t("welcome.openLog")} onPress={() => void openRunFile()} testID="welcome-open-log" class="justify-start" />
           </View>
           <If when={showProfiles()}>
             <Card>

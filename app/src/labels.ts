@@ -4,7 +4,6 @@ import type { Verdict } from "./types";
 import type { Tone } from "./ui/kit";
 
 const LABEL: Record<Section, Key> = {
-  run: "nav.run",
   runs: "nav.runs",
   browse: "nav.browse",
   multipart: "nav.multipart",
@@ -17,7 +16,6 @@ const LABEL: Record<Section, Key> = {
 };
 
 const AREA: Record<Area, Key> = {
-  run: "nav.run",
   runs: "nav.runs",
   store: "nav.store",
   settings: "nav.settings",

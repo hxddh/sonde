@@ -8,7 +8,7 @@ import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
 import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, TICK_ROOM, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP, slotMs, type Focus, type LegendItem, FOCUS_RULE, GRID, HEADROOM, PLOT, ValueAxis, nearest, stretch } from "./system";
-import { Options, terminal, textual, SimpleTable, TONE } from "../kit";
+import { Options, textual, SimpleTable, TONE } from "../kit";
 import { costTimeRows, costTimeSaid, prefixSaid } from "./answers";
 
 // --- prefixes, named ---------------------------------------------------------------
@@ -111,7 +111,7 @@ export function Flows(props: { profile: Profile }) {
     return t("flows.text", { n: all, ok: pct(ok / Math.max(all, 1)), prefix: top?.prefix ?? "", share: pct((top?.requests ?? 0) / Math.max(all, 1)) });
   };
   return (
-    <If when={!terminal() && props.profile.flows.length > 0} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
+    <If when={props.profile.flows.length > 0}>
       <View class="gap-1">
       <Plot
         testID="flows"
@@ -180,8 +180,8 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   };
   return (
     <If
-      when={!terminal() && p().heat.length > 0 && bins().length > 1}
-      // a terminal: each prefix's requests and its busiest second, as figures
+      when={p().heat.length > 0 && bins().length > 1}
+      // too few slices for a map: each prefix's requests and its busiest second, as figures
       else={<If when={p().prefixes.length > 0}><SimpleTable columns={[t("common.prefix"), t("heat.requests"), t("heat.peak"), t("heat.errors")]} rows={p().prefixes.map((x, i) => [whole(i), count(x.requests), count(x.peakPerSecond), count(x.errors)])} /></If>}
     >
       <View class="gap-1">
@@ -356,37 +356,35 @@ export function CostOverTime(props: { profile: Profile; range?: [number, number]
   };
   const focused = () => (hovered() === null ? nearest(rows(), props.focus?.() ?? null) : null);
   return (
-    <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
-      <If when={rows().some((r) => total(r) > 0)} else={<NoneInStretch />}>
-        <Plot
-          testID="cost-over-time"
-          data={rows()}
-          xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [0, top()] }}
-          accessibilityLabel={label()}
-          accessibilityValue={tipValue(tip())}
-          appearGeneration={1}
-          motion={MOTION}
-          crossLineClass={CROSS_BAND}
-          tooltipPlacement="pointer"
-          tooltipOffset={10}
-          tooltipContent={<ChartTip tip={tip()} />}
-          onHoverChange={({ index }) => {
-            hovered.set(index);
-            props.focus?.set(index === null ? null : rows()[index].tMs + p().binMs / 2);
-          }}
-          class={`${TICK_ROOM} ${PLOT} w-full`}
-        >
-          <Grid y={[0]} class={GRID} />
-          {/* one stem per slice: its requests, then its bytes out, then what it left stored */}
-          <Bar value="requests" stack="cost" class="fill-chart-1" inactiveOpacity={INACTIVE} />
-          <Bar value="transfer" stack="cost" class="fill-chart-4" inactiveOpacity={INACTIVE} />
-          <Bar value="storage" stack="cost" class="fill-chart-2" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={0} class={FOCUS_RULE} />
-          <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + p().binMs]} slices={rows().length} />
-          <ValueAxis peak={top() / HEADROOM.plot} say={money} />
-        </Plot>
-      </If>
+    <If when={rows().some((r) => total(r) > 0)} else={<NoneInStretch />}>
+      <Plot
+        testID="cost-over-time"
+        data={rows()}
+        xScale={{ type: "band", ...BARS.slices }}
+        yScale={{ type: "linear", domain: [0, top()] }}
+        accessibilityLabel={label()}
+        accessibilityValue={tipValue(tip())}
+        appearGeneration={1}
+        motion={MOTION}
+        crossLineClass={CROSS_BAND}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<ChartTip tip={tip()} />}
+        onHoverChange={({ index }) => {
+          hovered.set(index);
+          props.focus?.set(index === null ? null : rows()[index].tMs + p().binMs / 2);
+        }}
+        class={`${TICK_ROOM} ${PLOT} w-full`}
+      >
+        <Grid y={[0]} class={GRID} />
+        {/* one stem per slice: its requests, then its bytes out, then what it left stored */}
+        <Bar value="requests" stack="cost" class="fill-chart-1" inactiveOpacity={INACTIVE} />
+        <Bar value="transfer" stack="cost" class="fill-chart-4" inactiveOpacity={INACTIVE} />
+        <Bar value="storage" stack="cost" class="fill-chart-2" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+        <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={0} class={FOCUS_RULE} />
+        <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + p().binMs]} slices={rows().length} />
+        <ValueAxis peak={top() / HEADROOM.plot} say={money} />
+      </Plot>
     </If>
   );
 }

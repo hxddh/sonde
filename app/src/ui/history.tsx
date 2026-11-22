@@ -11,7 +11,7 @@ import { api } from "../native";
 import { copy, report, runsChanged, runsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Row, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, textual, SIZES, WIDTH, TEXT } from "./kit";
 import { cost, RunTrend } from "./plots";
 import { programOf, scrubCommand } from "./runview";
 
@@ -217,7 +217,7 @@ function Verdicts(props: { h: ProgramHistory }) {
     <>
       <Notice testID="history-check" tone={c().passed ? "info" : "warn"} icon={c().passed ? "circle-check" : undefined} title={c().passed ? t("history.passed") : t("history.failed")} text={lines()}>
         {/* what CI would comment on the pull request, read here first */}
-        <If when={props.h.markdown && !terminal()}>
+        <If when={props.h.markdown}>
           <Button small variant="outline" icon="scroll-text" label={t("history.commentOpen")} onPress={() => open.set(true)} testID="history-comment" />
         </If>
       </Notice>
@@ -263,7 +263,7 @@ function SinceRow(props: { h: ProgramHistory }) {
     <View testID="history-since" class="flex-row items-center gap-2">
       <Icon name="git-compare-arrows" tint="warn" />
       <Text class={`min-w-0 flex-1 tabular-nums ${TEXT.small}`}>{text()}</Text>
-      <If when={!terminal() && canDiff()}>
+      <If when={canDiff()}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("history.codeChangeOpen")} onPress={() => open.set(true)} testID="history-code-change" />
       </If>
       <If when={open()}>
@@ -328,7 +328,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; /** whether the pane is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -385,39 +385,37 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
     <Await loading={h.loading() && !h()} error={h.error()} retry={() => h.refetch()}>
       <If when={h()} else={<Empty icon="list-clock" text={t("history.none")} />}>
         {(x) => (
-          <Scroll testID="history-pane" class="min-h-0 flex-1" onScroll={(e) => props.onScrolled?.(e.offset.y > 8)} contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
+          <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass="gap-4 pb-4 pr-2">
             {/* the command is the run's header, over this pane: not said again; the dashed line said where one is drawn */}
             <PageHeader title={t("history.title", { n: x().runs.length })} subtitle={!textual() && x().baseline && x().runs.length > 1 && shown(x()).runs.length > 0 ? t("history.hint") : undefined}>
-              <If when={!terminal()}>
-                <DatePicker
-                  range
-                  value={range()}
-                  onChange={({ value }) => range.set(Array.isArray(value) ? value : null)}
-                  cleanable
-                  presets={[
-                    { label: t("history.last7"), value: [daysAgo(7), daysAgo(0)] },
-                    { label: t("history.last30"), value: [daysAgo(30), daysAgo(0)] },
-                  ]}
-                  accessibilityLabel={t("history.range")}
-                  align="end"
-                  offset={4}
-                  popupClass={`${POPUP} p-2 ${POPUP_MOTION.class}`}
-                  popupStartingClass={POPUP_MOTION.starting}
-                  popupEndingClass={POPUP_MOTION.ending}
-                  contentClass="flex-row gap-2"
-                  presetsClass="gap-1"
-                  presetClass={`rounded-(--radius-sm) px-2 py-1 ${TEXT.small} hover:bg-muted`}
-                  itemClass={`size-8 items-center justify-center rounded-(--radius-sm) ${TEXT.small} hover:bg-muted selected:bg-primary selected:text-primary-foreground`}
-                  trigger={
-                    // a small outline button, as the baseline's beside it
-                    <View testID="history-range" class={CONTROL.trigger}>
-                      <Icon name="calendar-clock" />
-                      <Text class={TEXT.small}>{rangeText()}</Text>
-                      <Icon name="chevron-down" size={ICON.small} />
-                    </View>
-                  }
-                />
-              </If>
+              <DatePicker
+                range
+                value={range()}
+                onChange={({ value }) => range.set(Array.isArray(value) ? value : null)}
+                cleanable
+                presets={[
+                  { label: t("history.last7"), value: [daysAgo(7), daysAgo(0)] },
+                  { label: t("history.last30"), value: [daysAgo(30), daysAgo(0)] },
+                ]}
+                accessibilityLabel={t("history.range")}
+                align="end"
+                offset={4}
+                popupClass={`${POPUP} p-2 ${POPUP_MOTION.class}`}
+                popupStartingClass={POPUP_MOTION.starting}
+                popupEndingClass={POPUP_MOTION.ending}
+                contentClass="flex-row gap-2"
+                presetsClass="gap-1"
+                presetClass={`rounded-(--radius-sm) px-2 py-1 ${TEXT.small} hover:bg-muted`}
+                itemClass={`size-8 items-center justify-center rounded-(--radius-sm) ${TEXT.small} hover:bg-muted selected:bg-primary selected:text-primary-foreground`}
+                trigger={
+                  // a small outline button, as the baseline's beside it
+                  <View testID="history-range" class={CONTROL.trigger}>
+                    <Icon name="calendar-clock" />
+                    <Text class={TEXT.small}>{rangeText()}</Text>
+                    <Icon name="chevron-down" size={ICON.small} />
+                  </View>
+                }
+              />
               {/* one button, its words the action: set, or (already the baseline) clear */}
               {/* a run written elsewhere (`-o`) cannot be one: the button stays, and says why */}
               <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : props.elsewhere ? t("history.elsewhere") : undefined} disabled={props.elsewhere && !isBase()} onPress={toggle} testID="history-baseline" />
@@ -431,7 +429,7 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
                 onOpen={props.onOpen}
                 action={
                   // after a change to the program: only what did not survive, on a fresh run
-                  <If when={props.onTryAgain && !terminal() && toTryAgain(x().trials).length > 0}>
+                  <If when={props.onTryAgain && toTryAgain(x().trials).length > 0}>
                     <Button small variant="outline" icon="rotate-ccw" label={t("trial.again")} onPress={() => props.onTryAgain?.(toTryAgain(x().trials))} testID="trial-again" />
                   </If>
                 }

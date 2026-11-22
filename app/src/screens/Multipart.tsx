@@ -12,31 +12,26 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, offerCommands, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
 import { sectionLabel } from "../labels";
-import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
-import { BucketPicker, EndpointPicker } from "../ui/picker";
+import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
 import { here, remember } from "../ui/overview";
 
-/** The sheet's page: in a window it has the sheet's height, so its table fills what the rest leaves; a terminal scrolls. */
+/** The sheet's page: it has the sheet's height, so its table fills what the rest leaves. */
 function Sheet(props: { children: JSX.Element }) {
-  return terminal() ? (
-    <Scroll testID="screen-multipart" class="flex-1" contentClass="gap-4 p-4">
-      {props.children}
-    </Scroll>
-  ) : (
+  return (
     <View testID="screen-multipart" class="min-h-0 flex-1 gap-4 p-4">
       {props.children}
     </View>
   );
 }
-const FILL = terminal() ? "gap-4" : "min-h-0 flex-1 gap-4";
-const TABLE_BOX = terminal() ? "h-96" : "min-h-40 flex-1";
+const FILL = "min-h-0 flex-1 gap-4";
+const TABLE_BOX = "min-h-40 flex-1";
 
 export function Multipart() {
-  // a window looks at the prefix the objects show; a terminal asks for one
-  const pfx = terminal() ? signal("") : prefix;
-  const report_ = signal<MpuReport | null>(terminal() ? null : (here().mpu ?? null));
+  // the prefix the objects show
+  const pfx = prefix;
+  const report_ = signal<MpuReport | null>((here().mpu ?? null));
   const progress = signal<string | null>(null);
   // why the first scan gave nothing: said in place, with Try again
   const failure = signal<string | null>(null);
@@ -107,16 +102,11 @@ export function Multipart() {
       { id: "mpu-abort", label: report_() ? t("mpu.abortOlder", { age: age(report_()!) }) : t("mpu.abort"), icon: "trash", shortcut: "mod+shift+backspace", disabled: !report_() || report_()!.staleUploads === 0, run: planAbort },
     ],
   );
-  if (!terminal() && !report_()) void scan();
+  if (!report_()) void scan();
 
   return (
     <Sheet>
-      <ToolBar scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
-        <If when={terminal()}>
-          <EndpointPicker />
-          <BucketPicker />
-          <Field bare class={WIDTH.field} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={scan} mono />
-        </If>
+      <ToolBar scope={`${bucket() ?? ""}/${pfx()}`}>
         {/* once, by hand: beside the rule that does it for good (its dialog says what goes) */}
         <If when={report_()}>
           {(r) => <Button small variant="outline" label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} tip={r().staleUploads === 0 ? t("mpu.noneOlder", { age: age(r()) }) : undefined} testID="plan-abort" />}
@@ -185,17 +175,15 @@ export function Multipart() {
                       { key: "cost", title: t("mpu.costMonth"), width: COLUMN.cost, align: "end", sortable: true },
                     ]}
                     // the titles as every table draws them: the key sorts, and the four figures at their end
-                    renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, { sortable: true }, ...Array.from({ length: 4 }, () => ({ sortable: true, align: "end" }))])}
-                    // an old upload is marked in its first cell (an icon; "!" in a terminal), not shouted: the one way a row says it
+                    renderHeaderCell={titleCells(() => [{}, { sortable: true }, ...Array.from({ length: 4 }, () => ({ sortable: true, align: "end" }))])}
+                    // an old upload is marked in its first cell (an icon), not shouted: the one way a row says it
                     data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                     fontSize={TYPE.body}
                     rowHeight={rowHeight(ROW.table)}
-                    classes={terminal() ? undefined : TABLE}
+                    classes={TABLE}
                     // figures at the end of their cells (no tabular digits in a cell: GTK cuts the last one)
                     renderCell={
-                      terminal()
-                        ? undefined
-                        : (c) =>
+                      (c) =>
                             c.key === "flag" ? (
                               c.text ? (
                                 <Icon name="triangle-exclamation-point" size={ICON.small} tint="warn" />
@@ -215,7 +203,7 @@ export function Multipart() {
                     onSortChange={({ sort }) => uploadSort.set(sort)}
                   />
                 </Card>
-                <Text class={TEXT.meta}>{`${t("mpu.scanned")} ${date(r().scannedAt)} · ${r().endpoint}`}</Text>
+                <Text class={TEXT.meta}>{`${t("mpu.scanned")} ${date(r().scannedAt)}`}</Text>
               </If>
             </View>
           )}

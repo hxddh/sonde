@@ -1,5 +1,4 @@
-// Capacity's charts, on Native Shell's Plot in windows; in a terminal, a
-// table and a sentence. Every constant they are drawn with (the gutter, the
+// Capacity's charts, on Native Shell's Plot. Every constant they are drawn with (the gutter, the
 // row pitch, the tooltip, the legend, the fade) is the chart system's, from
 // `plots.tsx`; each is the body of a `Chart` frame.
 
@@ -7,7 +6,7 @@ import { computed, signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
-import { SimpleTable, terminal, textual, TEXT } from "./kit";
+import { SimpleTable, textual, TEXT } from "./kit";
 import { areasWithRoom, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, rowsHeight, TREEMAP, BARS, TIP, STACK } from "./plots";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
@@ -26,36 +25,26 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
     return i ? { title: i.label, lines: [figures(i.value)] } : null;
   };
   return (
-    <If
-      when={!terminal()}
-      else={
-        <View class="gap-1">
-          <SimpleTable columns={["", t("chart.value"), t("profile.share")]} rows={props.items.map((i) => [i.label, fmt(i.value), pct(i.value, total())])} />
-          <Text class={TEXT.note}>{sentence()}</Text>
-        </View>
-      }
+    <Plot
+      testID={props.testID}
+      data={props.items}
+      yScale={{ type: "band", ...BARS.rows }}
+      xScale={{ type: "linear", domain: [0, Math.max(1, ...props.items.map((i) => i.value)) * 1.8] }}
+      accessibilityLabel={sentence()}
+      accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
+      appearGeneration={total()}
+      motion={MOTION}
+      crossLineClass={CROSS_BAND}
+      tooltipPlacement="pointer"
+      tooltipOffset={10}
+      tooltipContent={<ChartTip tip={tip()} />}
+      onHoverChange={({ index }) => hovered.set(index)}
+      class={GUTTER}
+      style={{ height: rowsHeight(props.items.length) }}
     >
-      <Plot
-        testID={props.testID}
-        data={props.items}
-        yScale={{ type: "band", ...BARS.rows }}
-        xScale={{ type: "linear", domain: [0, Math.max(1, ...props.items.map((i) => i.value)) * 1.8] }}
-        accessibilityLabel={sentence()}
-        accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
-        appearGeneration={total()}
-        motion={MOTION}
-        crossLineClass={CROSS_BAND}
-        tooltipPlacement="pointer"
-        tooltipOffset={10}
-        tooltipContent={<ChartTip tip={tip()} />}
-        onHoverChange={({ index }) => hovered.set(index)}
-        class={GUTTER}
-        style={{ height: rowsHeight(props.items.length) }}
-      >
-        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass={LABEL.bar} />
-        <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
-      </Plot>
-    </If>
+      <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass={LABEL.bar} />
+      <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
+    </Plot>
   );
 }
 
@@ -70,26 +59,24 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
   const hovered = signal<number | null>(null);
   return (
     <View class="gap-2">
-      <If when={!terminal()}>
-        <Plot
-          testID={props.testID}
-          data={row()}
-          yScale={{ type: "band" }}
-          xScale={{ type: "linear", domain: [0, total()] }}
-          accessibilityLabel={props.parts.map((p) => `${p.label} ${fmt(p.value)}`).join(", ")}
-          appearGeneration={total()}
-          motion={MOTION}
-          // the whole, and each part of it: one row, so the pointer is over all of them
-          tooltipPlacement="pointer"
-          tooltipOffset={10}
-          tooltipContent={<ChartTip tip={hovered() !== null ? { title: fmt(sum()), lines: props.parts.map(part) } : null} />}
-          onHoverChange={({ index }) => hovered.set(index)}
-          // one bar, not rows
-          class={`${STACK} overflow-hidden rounded-full bg-muted`}
-        >
-          <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
-        </Plot>
-      </If>
+      <Plot
+        testID={props.testID}
+        data={row()}
+        yScale={{ type: "band" }}
+        xScale={{ type: "linear", domain: [0, total()] }}
+        accessibilityLabel={props.parts.map((p) => `${p.label} ${fmt(p.value)}`).join(", ")}
+        appearGeneration={total()}
+        motion={MOTION}
+        // the whole, and each part of it: one row, so the pointer is over all of them
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<ChartTip tip={hovered() !== null ? { title: fmt(sum()), lines: props.parts.map(part) } : null} />}
+        onHoverChange={({ index }) => hovered.set(index)}
+        // one bar, not rows
+        class={`${STACK} overflow-hidden rounded-full bg-muted`}
+      >
+        <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
+      </Plot>
       {/* the parts there are: a part of none is not drawn, nor named */}
       <Legend items={props.parts.flatMap((p, i) => (p.value > 0 ? [{ label: part(p), swatch: `bg-${PALETTE[i % PALETTE.length]}` }] : []))}>
         <If when={props.note}>

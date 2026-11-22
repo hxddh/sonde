@@ -190,7 +190,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | Deleting a run | removes its verdicts and its own `trials/` files; a verdict's file name is never followed as a path |
 | Exit | the command's status if the clean run failed; 130 / 143 interrupted; 1 if a trial broke; else 0 |
 
-**In the app**: *Try under faults…* on Run (after a run) and on a run's Runs pane. The dialog lists the
+**In the app**: *Try under faults…* in a run's `⋯`. The dialog lists the
 scenarios with a box to leave each out, warns without `{trial}`; what the program may do is the dialog's policy; Cancel keeps nothing.
 Verdicts stay on the Runs pane; a row opens its trial run (cannot be run again, renamed or made a baseline).
 Injected requests are marked "Injected by sonde"; the runs list marks runs whose trial broke.

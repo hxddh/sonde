@@ -1,8 +1,7 @@
 // sonde's one icon family: Lucide, as images in a theme token's color
-// (lucide.ts, made by scripts/lucide.py). A terminal draws no icons: labels
-// carry the meaning there.
+// (lucide.ts, made by scripts/lucide.py).
 
-import { Image, platform, token, View } from "nsh";
+import { Image, token, View } from "nsh";
 import { type IconName, lucide, type LucideElement } from "./lucide";
 
 export type { IconName };
@@ -32,8 +31,6 @@ export type Tint =
  * template image), so a theme or the dark appearance reaches it natively. */
 export function Icon(props: { name: IconName; size?: number; tint?: Tint; stroke?: number }) {
   const size = () => props.size ?? 16;
-  // a terminal draws no icons (labels carry the meaning there): the icon's room, empty, as its canvas was
-  if (platform.idiom === "terminal") return <View style={{ pointerEvents: "none", width: size(), height: size(), flexShrink: 0 }} />;
   return (
     <Image
       // thinner strokes at small sizes keep the family's weight even

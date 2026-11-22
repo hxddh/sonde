@@ -15,7 +15,7 @@ import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import type { ChartRows } from "../csv";
 import type { ProjectBudget, RunView, Signals, Split, SplitBy, Stretch } from "../types";
-import { Await, Button, DOT, Heading, Notice, Options, terminal, Title, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
+import { Await, Button, DOT, Heading, Notice, Options, Title, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./runview";
 import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, costTimeSaid, costTimeLegend, CostOverTime, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, RunShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid, KindsOverTime, kindRates, kindsLegend, kindsSaid } from "./plots";
 
@@ -50,7 +50,7 @@ interface ChartSpec {
 }
 
 /** A row of the board: a group's heading (its hairline and name), or a line of
- * its charts (a wide one, or two abreast; one in a terminal). The board is a
+ * its charts (a wide one, or two abreast). The board is a
  * list in the pane's scroll, so a chart is built as it comes into view. */
 type BoardRow = { key: string; group: Group; index: number } & ({ head: true } | { head: false; charts: ChartSpec[]; under: boolean });
 
@@ -206,7 +206,7 @@ function ByKind(props: { view: Pick<RunView, "summary" | "profile">; selected?: 
 }
 
 /** The Time pane of a run. */
-export function TimePane(props: { /** whether the board is scrolled from its top (the run's header folds while it is) */ onScrolled?: (away: boolean) => void; /** what Group by splits the operations by, and the split read (the app's bridge): the table of groups follows it */ groupBy?: SplitBy | null; splitOf?: (by: SplitBy) => Promise<Split>; /** the kind of request chosen (the operations narrowed to it), and a press on a kind's row: the operations of that kind */ kind?: string | null; onKind?: (kind: string | null) => void; view: RunView; onRequest?: (id: number) => void; /** a failure bar pressed: the operations that failed in its slice (from, to: ms from the run's start) */ onFailures?: (ms: [number, number]) => void; /** a stretch to open over (a link's), in ms from the run's start */ range?: Range | null; /** the stretch shown changed (null: the whole run): for a link to keep it */ onRange?: (r: Range | null) => void; /** the stretch chosen, as slices, when it is the run's one selection of time (the Operations strip's too); with `onStretch` the pane follows it and says its picks there */ stretch?: [number, number] | null; onStretch?: (s: [number, number] | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's run: the clean run it is judged against, when that run is still there */ clean?: RunView | null; /** the requests that started in a stretch, reckoned as a run (the app's bridge; a shared page has none, and says its charts not over time are of the whole run) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
+export function TimePane(props: { /** what Group by splits the operations by, and the split read (the app's bridge): the table of groups follows it */ groupBy?: SplitBy | null; splitOf?: (by: SplitBy) => Promise<Split>; /** the kind of request chosen (the operations narrowed to it), and a press on a kind's row: the operations of that kind */ kind?: string | null; onKind?: (kind: string | null) => void; view: RunView; onRequest?: (id: number) => void; /** a failure bar pressed: the operations that failed in its slice (from, to: ms from the run's start) */ onFailures?: (ms: [number, number]) => void; /** a stretch to open over (a link's), in ms from the run's start */ range?: Range | null; /** the stretch shown changed (null: the whole run): for a link to keep it */ onRange?: (r: Range | null) => void; /** the stretch chosen, as slices, when it is the run's one selection of time (the Operations strip's too); with `onStretch` the pane follows it and says its picks there */ stretch?: [number, number] | null; onStretch?: (s: [number, number] | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's run: the clean run it is judged against, when that run is still there */ clean?: RunView | null; /** the requests that started in a stretch, reckoned as a run (the app's bridge; a shared page has none, and says its charts not over time are of the whole run) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
   const p = () => props.view.profile;
   // the four signals, as Rust counted them (an older share: what its profile holds of them)
   const sig = () => signalsOf(props.view)!;
@@ -306,7 +306,6 @@ export function TimePane(props: { /** whether the board is scrolled from its top
   const focus = focusOf();
   // above what a run keeps of its requests, a chart of single requests is of a sample: said
   const sampled = () => (zp().samples.length < requestsOf(zp()) ? ` · ${t("plots.sampled", { n: count(zp().samples.length), of: count(requestsOf(zp())) })}` : "");
-  const graphic = () => !terminal();
   const overTime = () => timed(p()) && shaped();
   const failed = () => sig().errors.count + sig().errors.retriesTotal > 0;
   // the budget's lines, and how far the run is from each (a share of the run's requests for its errors)
@@ -321,7 +320,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "traffic",
       wide: true,
       zooms: true,
-      when: () => graphic() && overTime() && !!props.clean && timed(props.clean.profile) && props.clean.profile.rate.length > 2,
+      when: () => overTime() && !!props.clean && timed(props.clean.profile) && props.clean.profile.rate.length > 2,
       title: () => t("trialOver.title"),
       text: () => trialSaid(sig(), faults().length, p().wallMs, props.clean!.profile.wallMs),
       how: () => t("trialOver.hint"),
@@ -334,7 +333,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "traffic",
       wide: true,
       zooms: true,
-      when: () => graphic() && shaped(),
+      when: () => shaped(),
       title: () => t("timeline.title"),
       // what the slices shown hold; a first slice pressed asks where to end
       text: () => [timelineSaid(zp(), zr()), zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : ""].filter(Boolean).join(" · "),
@@ -356,7 +355,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "traffic",
       zooms: true,
       testID: "lanes-chart",
-      when: () => graphic() && timed(p()) && p().samples.length > 1,
+      when: () => timed(p()) && p().samples.length > 1,
       title: () => t("lanes.title"),
       text: () => lanesSaid(zp(), zoomMs()),
       how: () => t("lanes.hint"),
@@ -432,7 +431,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "latency",
       group: "latency",
       zooms: true,
-      when: () => graphic() && overTime(),
+      when: () => overTime(),
       title: () => t("latencyTime.title"),
       text: () => latencySaid(zp(), zr()),
       // (no slice with a tail: said, rather than a band named and not drawn)
@@ -447,7 +446,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "latency",
       zooms: true,
       testID: "latency-heat-chart",
-      when: () => graphic() && overTime(),
+      when: () => overTime(),
       title: () => t("latencyHeat.title"),
       text: () => heatLatencySaid(zp(), zr()),
       how: () => t("latencyHeat.hint"),
@@ -459,7 +458,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "kinds",
       group: "latency",
       zooms: true,
-      when: () => graphic() && overTime() && kindRates(p()).length > 0,
+      when: () => overTime() && kindRates(p()).length > 0,
       title: () => t("kinds.title"),
       text: () => kindsSaid(zp(), zoomMs()),
       how: () => t("kinds.hint"),
@@ -472,7 +471,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "scatter",
       group: "latency",
       zooms: true,
-      when: () => graphic() && timed(p()) && p().samples.length > 1,
+      when: () => timed(p()) && p().samples.length > 1,
       title: () => t("scatter.title"),
       // above what a run keeps of its requests, the dots are of a sample: said
       text: () => `${scatterSaid(zp(), zoomMs())}${sampled()}`,
@@ -485,7 +484,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "latency",
       zooms: true,
       testID: "scatter-size-chart",
-      when: () => graphic() && timed(p()) && p().samples.some((x) => (x.bytes ?? 0) > 0),
+      when: () => timed(p()) && p().samples.some((x) => (x.bytes ?? 0) > 0),
       title: () => t("scatterSize.title"),
       text: () => `${sizeSaid(zp(), zoomMs())}${sampled()}`,
       how: () => t("scatterSize.hint"),
@@ -521,7 +520,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       group: "errors",
       zooms: true,
       // (an error-free run says so in the card, rather than leaving it out)
-      when: () => shaped() || terminal(),
+      when: () => shaped(),
       title: () => t("failures.title"),
       text: () => failuresSaid(zs(), zr(), sa()),
       how: () => t("failures.hint"),
@@ -535,7 +534,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       id: "errorRate",
       group: "errors",
       zooms: true,
-      when: () => graphic() && sig().errors.count > 0 && shaped() && timed(p()),
+      when: () => sig().errors.count > 0 && shaped() && timed(p()),
       title: () => t("errorRate.title"),
       text: () => errorRateSaid(zs(), zr()) + (props.budget?.maxErrors != null ? budgetSaid("errors", sig().errors.count > props.budget.maxErrors, { n: count(sig().errors.count), budget: count(props.budget.maxErrors) }) : ""),
       how: () => t("errorRate.hint"),
@@ -571,7 +570,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
     },
     { id: "cost", group: "where", stretched: true, when: () => sig().cost.kinds.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => costSaid(sa()), how: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
     { id: "heat", group: "where", zooms: true, when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => heatSaid(zp(), zr()), how: () => t("heat.hint"), legend: () => heatLegend(zp().heat.filter((c) => !zr() || (c.bin >= zr()![0] && c.bin <= zr()![1])).map((c) => c.n)), body: () => <Heat profile={zp()} range={zr()} /> },
-    { id: "flows", group: "where", wide: true, stretched: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => flowsSaid(pa()), how: () => t("flows.hint"), body: () => <Flows profile={pa()} /> },
+    { id: "flows", group: "where", wide: true, stretched: true, testID: "flows-chart", when: () => !!p().flows?.length, title: () => t("flows.title"), text: () => flowsSaid(pa()), how: () => t("flows.hint"), body: () => <Flows profile={pa()} /> },
   ];
   const of = (g: Group) => charts.filter((c) => c.group === g && c.when());
   /** a chart's sentence, and beside it the stretch it is of: one reckoned again for the stretch chosen, or one zoomed to it */
@@ -592,9 +591,9 @@ export function TimePane(props: { /** whether the board is scrolled from its top
         line = [];
       };
       for (const c of of(group)) {
-        if (c.wide || terminal()) flush();
+        if (c.wide) flush();
         line.push(c);
-        if (c.wide || terminal() || line.length === 2) flush();
+        if (c.wide || line.length === 2) flush();
       }
       flush();
     });
@@ -620,11 +619,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
     if (target) show(target.id);
   });
   return (
-    <Scroll testID="time-pane" class="min-h-0 flex-1" onScroll={(e) => props.onScrolled?.(e.offset.y > 8)} contentClass="gap-6 pb-4 terminal:gap-2 terminal:pb-0">
-      {/* the figures are the run header's; here, a terminal's sentence */}
-      <If when={terminal() && timed(p())}>
-        <Text class="text-foreground">{shapeSentence(p())}</Text>
-      </If>
+    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass="gap-6 pb-4">
       {/* a log without times (CloudTrail): when and what, never how long */}
       <If when={!timed(p())}>
         <Notice testID="untimed" text={t("profile.untimed")} />
@@ -646,10 +641,10 @@ export function TimePane(props: { /** whether the board is scrolled from its top
             when={r().head}
             else={
               // two abreast where there is room (a last one alone takes the row); a chart is as high as its content
-              <View class={`flex-row flex-wrap items-start gap-4 terminal:flex-col terminal:flex-nowrap terminal:items-stretch terminal:gap-2 ${(r() as { under?: boolean }).under ? "pt-3" : "pt-4"} terminal:pt-2`}>
+              <View class={`flex-row flex-wrap items-start gap-4 ${(r() as { under?: boolean }).under ? "pt-3" : "pt-4"}`}>
                 <Each of={r().head ? [] : (r() as { charts: ChartSpec[] }).charts} key={(c) => c.id}>
                   {(c) => (
-                    <View class={terminal() ? "" : c().wide ? "w-full" : HALF}>
+                    <View class={c().wide ? "w-full" : HALF}>
                       <Chart flat testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null}>
                         {c().body()}
                       </Chart>
@@ -660,11 +655,12 @@ export function TimePane(props: { /** whether the board is scrolled from its top
             }
           >
             {/* one surface: each group a section under a hairline and its name, its charts unboxed under it (each
-                says its question); a terminal, with no cards, names it plainly */}
-            <View testID={`board-${r().group}`} class={`gap-3 ${r().index > 0 ? "pt-6" : ""} terminal:gap-2 ${r().index > 0 ? "terminal:pt-2" : ""}`}>
-              <If when={terminal()} else={<><If when={r().index > 0}><View class="h-px bg-border" /></If><Title>{t(`board.${r().group}`)}</Title></>}>
-                <Heading>{t(`board.${r().group}`)}</Heading>
+                says its question) */}
+            <View testID={`board-${r().group}`} class={`gap-3 ${r().index > 0 ? "pt-6" : ""}`}>
+              <If when={r().index > 0}>
+                <View class="h-px bg-border" />
               </If>
+              <Title>{t(`board.${r().group}`)}</Title>
             </View>
           </If>
         )}

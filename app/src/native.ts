@@ -72,8 +72,6 @@ export const api = {
     view: async (path: string) => (await Runs.view(path)) as T.RunView,
     /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a run of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
     stretch: async (path: string, fromMs: number, toMs: number) => (await Runs.stretch(path, fromMs, toMs)) as T.Stretch,
-    /** A run as it goes: the requests that started in its last half minute, reckoned alone (the live panel). Off the interface's thread. */
-    live: async (path: string) => (await (Runs as unknown as { live(p: string): Promise<unknown> }).live(path)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
     episodes: async (path: string, query: T.EpisodeQuery) => (await Runs.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */

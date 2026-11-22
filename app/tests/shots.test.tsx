@@ -188,9 +188,10 @@ for (const v of variants) {
     await app.press("id:finding-apply");
     await app.waitFor("id:since-run", { timeout: 30000 });
     await charts("01b-demo-fixed");
-    // Run, as the user's own program finds it
-    await go("run");
-    await app.waitFor("id:screen-run", { timeout: 15000 });
+    // a new run: Runs' command bar, as the user's own program finds it
+    await go("runs");
+    await app.press("id:new-run");
+    await app.waitFor("id:run-new", { timeout: 15000 });
     await shot("02-run");
     // recording a program started elsewhere: what it asks before it starts
     await app.press("id:record");
@@ -215,25 +216,35 @@ for (const v of variants) {
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
-    // (ended: its own view, or what to point at sonde when it reached no store)
-    await app.waitUntil(() => app.shows("id:run-pane") || app.shows("id:run-no-requests"), { timeout: 30000 });
+    // (its run opens as it starts, the newest in the list; ended: its own view, or what to point at sonde when it
+    // reached no store)
+    const ended = async () => {
+      await app.waitFor("id:run-pane", { timeout: 30000 });
+      await app.waitFor("id:run-stop", { state: "gone", timeout: 60000 });
+    };
+    await ended();
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
+      await app.press("id:new-run");
       await app.clear("id:run-command");
       await enter(app, "id:run-command", command(!cmd, marker));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
-      await app.waitUntil(() => app.shows("id:run-pane"), { timeout: 30000 });
+      await ended();
     }
     await ranView().catch(() => {
       throw new Error("the tour's program reached no store in either shell's form: the run has no requests to show");
     });
-    // the run's own view on Run, under the command bar, opened on its output
+    // the run's own view: its output beside its operations
+    await app.waitFor("id:output", { timeout: 10000 });
     await charts("02b-ran");
-    // run again by the bar's one Run, the program fixed meanwhile (its config not read again):
+    // run again from the command bar, the program fixed meanwhile (its config not read again):
     // what changed since the run before, the finding fixed with what it saved
+    await app.press("id:new-run");
+    await app.waitFor("id:run-command");
+    await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
-    await app.waitFor("id:run-status", { timeout: 10000 });
+    await ended();
     await ranView();
     await app.waitFor("id:since-run", { timeout: 10000 });
     await charts("02bb-since");
@@ -292,12 +303,11 @@ for (const v of variants) {
     await app.press("id:trial-open-clean");
     await app.waitFor("id:trial-note", { state: "gone", timeout: 20000 });
     await app.waitFor("id:run-summary", { timeout: 10000 });
-    // the program's output lined up with what it did (the committed run kept its output)
-    await app.waitUntil(() => app.enabled("id:run-pane-mode-aligned"), { timeout: 5000 }).catch(() => {
-      throw new Error("the committed run has no output to line up: Output is disabled (tests/fixtures/runs)");
+    // the program's output lined up with what it did, beside its operations (the committed run kept its output)
+    await app.press("id:run-pane-mode-operations");
+    await app.waitFor("id:output", { timeout: 5000 }).catch(() => {
+      throw new Error("the committed run has no output to line up beside its operations (tests/fixtures/runs)");
     });
-    await app.press("id:run-pane-mode-aligned");
-    await app.waitFor("id:output", { timeout: 5000 });
     await shot("02k-output");
     // the run's own view (the committed run, its clean run): what failed over its time, and the first byte against
     // the rest
@@ -345,8 +355,9 @@ for (const v of variants) {
     await app.press("id:inspector-close");
     // the operations narrowed to a kind of request (the example has no finding to narrow them: SlateDB rewrites what
     // it lists and probes keys that are not there)
-    await app.press(v.lang ? "label:分组" : "label:Group by");
-    await app.press(v.lang ? "text:请求类型" : "text:Kind of request");
+    // (Group by is the operations' title)
+    const groupBy = (label: string, zh: string) => chooseFrom(() => app.press("id:group-by"), v.lang ? zh : label);
+    await groupBy("Kind of request", "请求类型");
     await app.waitFor("id:split-table", { timeout: 10000 });
     await app.press("id:split-table >> text:PutObject");
     await app.waitFor("id:operations");
@@ -354,12 +365,10 @@ for (const v of variants) {
     await shot("03d-filtered");
     await app.press("id:clear-filter");
     // why slow: the operations split by kind of request, and where the slow ones are, in a sentence
-    await app.press(v.lang ? "label:分组" : "label:Group by");
-    await app.press(v.lang ? "text:请求类型" : "text:Kind of request");
+    await groupBy("Kind of request", "请求类型");
     await app.waitFor("id:split-table", { timeout: 10000 });
     await shot("03e-group-by");
-    await app.press(v.lang ? "label:分组" : "label:Group by");
-    await app.press(v.lang ? "text:逐个操作" : "text:Each operation");
+    await app.press("id:clear-group");
     await app.waitFor("id:operations");
     // a slice pressed on the run's shape: on the strip over the operations, or, in a window too short for the
     // strip (under the kit's BREAK.short, 600, the operations keep its room), on the same shape on the Time pane
@@ -412,9 +421,8 @@ for (const v of variants) {
     await app.press("id:signal-latency");
     await app.wait(700);
     await charts("03m-latency");
-    // the folded header holds the first three figures: bytes is pressed from the header unfolded, the board at its top
-    // (a narrow pane keeps the signals that fit, bytes the fourth: the least window's puts the sidebar away for it, and
-    // takes it back after; putting it away moves the board, so the board is brought back to its top after)
+    // bytes, from the header's line of figures, the board at its top (should a narrow pane's line have no room for it,
+    // the sidebar is put away for it, and taken back after; putting it away moves the board, so it goes back to its top)
     const top = async () => {
       await app.scroll("id:time-pane", -10000);
       await app.wait(500);
