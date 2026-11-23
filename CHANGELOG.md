@@ -2,6 +2,58 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [31.0.0] - 2026-11-23
+
+sonde counts the fixes it recommends, finds requests one after another behind a listing, keeps one identity per finding, knows when anything is at work, and looks at home on macOS, Windows and Linux.
+
+### Changed
+
+- Linux takes macOS's layout: the sidebar is the window's height with its toggle on top, and the menu sits behind ☰.
+  macOS: the sidebar toggle sits beside the window buttons, and shortcuts are in the system font. Windows: dialogs
+  put the commit before Cancel, the CA example is a Windows path, and no Mica is requested. The sidebar toggle never
+  looks pressed.
+- Run and Run again use the default policy, narrowed by the project's `[record] policy`; trials and Record… keep
+  their own choice.
+
+### Removed
+
+- The command bar's policy choice; the system-wide ⌘⌥R / Ctrl+Alt+R shortcut (and the command history only it read:
+  `run.shortcutNothing`, `run.shortcutStarted`); "Start the demo" and the place rows that repeat a tab row in the
+  palette (the demo is listed among endpoints); the separate days of an abort rule (`mpu.days`: it uses Abort's age);
+  Record…'s own live card and Stop (`timeline.stop`: it is a run like any other).
+
+### Fixed
+
+- Small reads packed into shards, and a crawl read as one listing, are counted fixes with their saving, not "the
+  workload shrank".
+- Requests that need an earlier one (uploads after a listing, reads of what was just written) wait only for it:
+  "one after another" is found and saves its time.
+- A finding keeps one identity when a sibling key drops under its threshold: `show --since` no longer lists it
+  twice, and `check` no longer flakes.
+- "And send the other N requests at once", and `atOnce.requests`, count only what the change leaves; a saving under
+  half a percent reads `<1%`; `check -f json` rounds its figures as `show` does.
+- A trial, the demo and Record… count as at work like a program: the toolbar, the Dock, and Stop in the palette and
+  tray follow them, and nothing starts beside them, not even between a trial's scenarios. Record… opens as the
+  newest run, live, and stays open once stopped; the demo and "Apply and run again" open their run as it starts.
+- Quitting or closing the window while something is at work asks first. A run that ends shows a toast unless it is
+  the run on screen; "Check for updates" opens the tab that has it; the palette opens empty; a replay's dialog
+  cannot be closed while it runs.
+- Dark mode: run and setting titles are no longer near-black. A figure and its unit never part at a line's end. The
+  sidebar shows seconds only when the same command ran twice in one minute. Tables measure their columns ("When"
+  and sizes are no longer cut on Linux); macOS's Output times are no longer cut; Chinese "·" leaves no wide gaps on
+  Linux; History's figures line up across a row and its axis tells runs in one minute apart.
+
+### 中文
+
+sonde 现在认可它自己推荐的修复，能识别列举之后的串行请求，每条发现只有一个标识，知道何时有任务在进行，并在 macOS、Windows、Linux 上更像本地应用。
+
+- 变更：Linux 采用 macOS 的布局（侧栏占满窗口高度、菜单收在 ☰ 后）；macOS 侧栏切换按钮在窗口按钮旁、快捷键用系统字体；Windows 对话框提交在"取消"之前、不再请求 Mica；侧栏切换按钮不再显示为按下。
+- 变更："运行"与"再次运行"使用默认策略，由项目的 `[record] policy` 收紧；试运行和"录制…"保留各自的选择。
+- 移除：命令栏中的策略选项；全局快捷键 ⌘⌥R / Ctrl+Alt+R；命令面板中的"启动演示"和重复的位置行；中止规则单独的天数；"录制…"自己的实时卡片和停止按钮。
+- 修复：小对象打包成分片、逐个前缀列举改为一次列举，算作修复并计入节省；依赖前一个请求的请求只等待它，"逐个请求"能被发现；同类键降到阈值以下时发现的标识不再变化；"其余 N 个请求同时发"只计入改动留下的请求；不足 0.5% 显示 `<1%`；`check -f json` 取整。
+- 修复：试运行、演示和"录制…"与程序一样算作进行中，期间不会启动其他程序（试运行的场景之间也不会）；"录制…"作为最新的运行实时打开；演示和"应用并再次运行"开始即打开其运行；有任务进行时退出或关闭窗口会先询问。
+- 修复：深色模式下标题不再接近黑色；数字与单位不在行尾分开；侧栏只在同一分钟内重复时显示秒；表格按实测设定列宽；macOS 输出时间不再截断；Linux 中文"·"不再留大空隙；历史卡片数字对齐。
+
 ## [30.0.0] - 2026-11-22
 
 sonde's plan is true now: recording no longer slows a program, a change's time saved holds on a busy pool and for requests sent one after another, a fix's saving is said once and honestly, the fix code works, the analysis is faster than before 29.0, and every run shows its time strip again.
