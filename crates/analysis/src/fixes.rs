@@ -944,7 +944,7 @@ pub fn diagnose(
                     saves_ms: findings[s].saves_ms,
                 }),
             };
-            d.rest = serial.map(|s| {
+            d.rest = serial.map(|_| {
                 crate::phrase::p(
                     "obs.serial.rest",
                     &[

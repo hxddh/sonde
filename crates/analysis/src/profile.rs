@@ -2061,16 +2061,90 @@ pub fn varies(o: &Observation) -> bool {
     identity_as(o, true) != identity_as(o, false)
 }
 
+/// The objects of `records` (a key, a listing's prefix, or a folder as
+/// deep as what the finding is about) that read the same as one of
+/// `findings` once what changes between runs is taken out ([`stable`]),
+/// and are not it: each as `(identity, literal identity)` of a finding of
+/// that kind about it. One pass, each name cut where it first differs from
+/// what a finding is about made stable.
+pub fn alike(findings: &[Observation], records: &[Record]) -> Vec<(String, String)> {
+    // each finding about one thing that varies: its kind, what it is
+    // about as it was, and that made stable, by part
+    let wanted: Vec<(String, String, Vec<String>)> = findings
+        .iter()
+        .filter(|o| varies(o))
+        .filter_map(|o| {
+            let literal = identity_as(o, true);
+            let (kind, about) = literal.split_once('|')?;
+            (!about.contains('|')).then(|| {
+                let parts = stable(about).split('/').map(String::from).collect();
+                (kind.to_string(), about.to_string(), parts)
+            })
+        })
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut name = String::new();
+    for r in records {
+        name.clear();
+        name.push_str(r.bucket.as_deref().unwrap_or(""));
+        name.push('/');
+        match r.key.as_deref() {
+            Some(k) => name.push_str(k),
+            None => name.push_str(
+                r.query()
+                    .iter()
+                    .find(|(k, _)| k == "prefix")
+                    .map_or("", |(_, v)| v.as_ref()),
+            ),
+        }
+        for (kind, about, parts) in &wanted {
+            // as deep as what the finding is about: a folder of the name
+            let cut = if about.ends_with('/') {
+                match name.match_indices('/').nth(parts.len() - 2) {
+                    Some((i, _)) => &name[..=i],
+                    None => continue,
+                }
+            } else {
+                name.as_str()
+            };
+            if cut == about {
+                continue;
+            }
+            let mut theirs = cut.split('/');
+            let same = parts.iter().all(|p| {
+                theirs.next().is_some_and(|t| {
+                    if p.contains('{') {
+                        stable(t) == *p
+                    } else {
+                        t == p
+                    }
+                })
+            }) && theirs.next().is_none();
+            if same {
+                found.insert((
+                    format!("{kind}|{}", parts.join("/")),
+                    format!("{kind}|{cut}"),
+                ));
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
 /// Names each of a run's findings ([`Observation::identity`]) by what it is
 /// about made [`stable`]; but where two of them read the same so, or one
-/// and one of `among` (the run's findings at any threshold), each keeps as
-/// they were the parts of what it is about that tell them apart, the rest
-/// made stable: `t00/` and `t01/` listed again and again are two findings
-/// (`runs/run-{n}/t00/`, whatever the run's own folder), not one, though
-/// `t01/` is listed under its threshold. Two that read the same even so
-/// are told apart by rank (`#2`). A run's findings are named so once, where
-/// they are made, and never again.
-pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
+/// and one of `among` (the run's other objects read alike, [`alike`]: as
+/// `(identity, literal identity)`), each keeps as they were the parts of
+/// what it is about that tell them apart, the rest made stable: `t00/` and
+/// `t01/` listed again and again are two findings (`runs/run-{n}/t00/`,
+/// whatever the run's own folder), not one, though `t01/` is listed under
+/// its threshold. Two that read the same even so are told apart by rank
+/// (`#2`). A run's findings are named so once, where they are made, and
+/// never again.
+pub fn name_findings(findings: &mut [Observation], among: &[(String, String)]) {
     use std::collections::HashSet;
     let mut by: HashMap<String, HashSet<String>> = HashMap::new();
     for o in findings.iter() {
@@ -2078,11 +2152,9 @@ pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
             .or_default()
             .insert(identity_as(o, true));
     }
-    // of the traces, only those read alike with a finding (a run of a
-    // million has tens of thousands)
-    for o in among.iter().filter(|o| varies(o)) {
-        if let Some(g) = by.get_mut(&identity_as(o, false)) {
-            g.insert(identity_as(o, true));
+    for (id, literal) in among {
+        if let Some(g) = by.get_mut(id) {
+            g.insert(literal.clone());
         }
     }
     // of each group read alike, the parts all its members share: once, not
@@ -2561,12 +2633,12 @@ impl Run {
         // (one after another, as [`crate::view::Analysis::of_records`])
         let profile = profile(records, prices);
         let episodes = crate::episode::episodes(records);
-        let (mut observations, traces) =
-            crate::episode::findings_and_traces_of(header, records, &episodes);
+        let mut observations = crate::episode::observations_of(header, records, &episodes);
         // ranked as a plan ranks them: what each is predicted to save
         let reckoning = crate::fixes::Reckoning::of(records, &profile, !header.whole_seconds);
         crate::fixes::rank_by_saving(&mut observations, &reckoning);
         drop(reckoning);
+        let traces = crate::episode::traces_of(header, records, &episodes);
         drop(episodes);
         Run::with(records, profile, observations, traces)
     }
@@ -2804,19 +2876,32 @@ mod tests {
         name_findings(&mut runs, &[]);
         assert_eq!(runs[0].identity, "obs.listed|b/runs/run-{n}/t00/");
         assert_eq!(runs[1].identity, "obs.listed|b/runs/run-{n}/t01/");
-        // one over its threshold, the other under it: told apart among the
-        // run's findings at any threshold, whatever the other's count
+        // one over its threshold, the other only listed: told apart among
+        // the run's objects, whatever the other's count
+        let list = |id: u64, prefix: &str| {
+            let mut r = rec(id, 0, "ListObjectsV2", 200, 1.0);
+            r.bucket = Some("b".into());
+            r.lists_mut().query = vec![("prefix".into(), prefix.to_string().into())];
+            r
+        };
+        let mut one = vec![listed("b/t00/")];
+        let others = alike(&one, &[list(1, "t00/"), list(2, "t01/"), list(3, "x/")]);
+        assert_eq!(
+            others,
+            [("obs.listed|b/t{n}/".into(), "obs.listed|b/t01/".into())]
+        );
+        name_findings(&mut one, &others);
+        assert_eq!(one[0].identity, "obs.listed|b/t00/");
         let mut traces = vec![listed("b/t00/"), listed("b/t01/")];
         name_findings(&mut traces, &[]);
-        let mut one = vec![listed("b/t00/")];
-        name_findings(&mut one, &traces);
-        assert_eq!(one[0].identity, "obs.listed|b/t00/");
         name_traces(&mut traces, &one);
         assert_eq!(traces[0].identity, "obs.listed|b/t00/");
         assert_eq!(traces[1].identity, "obs.listed|b/t01/");
-        // alone at any threshold, what changes between runs is taken out
+        // alone in the run, what changes between runs is taken out
         let mut alone = vec![listed("b/t00/")];
-        name_findings(&mut alone, &[listed("b/t00/")]);
+        let none = alike(&alone, &[list(1, "t00/")]);
+        assert!(none.is_empty());
+        name_findings(&mut alone, &none);
         assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
         // the same key twice is told apart by rank
         let mut same = vec![listed("b/t00/"), listed("b/t00/")];

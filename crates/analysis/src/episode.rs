@@ -1784,7 +1784,15 @@ fn backoff_tries(span_s: f64, n: usize) -> usize {
 }
 
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
-    observations_at(records, episodes, false, &mut None)
+    let mut out = observations_at(records, episodes, false);
+    // two that read the same once what changes between runs is taken out,
+    // one a finding and the other any object of the run (`t/01/` read under
+    // a threshold): told apart, as two findings are
+    let alike = crate::profile::alike(&out, records);
+    if !alike.is_empty() {
+        crate::profile::name_findings(&mut out, &alike);
+    }
+    out
 }
 
 /// The findings at any threshold: each pattern however little of it there
@@ -1792,31 +1800,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
 /// that would save a millisecond). What tells a finding fixed (gone) from
 /// one only under its threshold (less).
 pub fn traces(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
-    observations_at(records, episodes, true, &mut None)
+    observations_at(records, episodes, true)
 }
 
-/// [`observations`] and [`traces`], each made once: a finding is named
-/// among the traces ([`crate::profile::name_findings`]), when they are made
-/// for it.
-pub fn findings_and_traces(
-    records: &[Record],
-    episodes: &[Episode],
-) -> (Vec<Observation>, Vec<Observation>) {
-    let mut traces = None;
-    let findings = observations_at(records, episodes, false, &mut traces);
-    let traces = traces.unwrap_or_else(|| self::traces(records, episodes));
-    (findings, traces)
-}
-
-/// [`observations`], or at `any` threshold ([`traces`]). The findings are
-/// named among the traces where what they are about holds what changes
-/// between runs (`t/00/`, `t/01/`): `traces`, made then if not made yet.
-fn observations_at(
-    records: &[Record],
-    episodes: &[Episode],
-    any: bool,
-    traces: &mut Option<Vec<Observation>>,
-) -> Vec<Observation> {
+/// [`observations`], or at `any` threshold ([`traces`]).
+fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<Observation> {
     use std::collections::{BTreeSet, HashMap};
     // a threshold, or the least that is still the pattern
     let at = |normal: usize, least: usize| if any { least } else { normal };
@@ -3043,14 +3031,8 @@ fn observations_at(
             .then(b.impact.cmp(&a.impact))
     });
     // two of a run's findings that read the same once what changes between
-    // runs is taken out (`t00/`, `t01/`) stay two, by their keys as they
-    // were, whether the other is over its threshold or under it (a trace)
-    let among: &[Observation] = if !any && out.iter().any(crate::profile::varies) {
-        traces.get_or_insert_with(|| observations_at(records, episodes, true, &mut None))
-    } else {
-        &[]
-    };
-    crate::profile::name_findings(&mut out, among);
+    // runs is taken out (`t00/`, `t01/`) stay two, by their keys as they were
+    crate::profile::name_findings(&mut out, &[]);
     for o in &mut out {
         // a trace is only told apart from a finding: no fix, no callers
         if any {
@@ -3278,17 +3260,6 @@ pub fn observations_of(
     episodes: &[Episode],
 ) -> Vec<Observation> {
     of_header(header, observations(records, episodes))
-}
-
-/// [`findings_and_traces`] of a run, as [`observations_of`] and
-/// [`traces_of`] say them.
-pub fn findings_and_traces_of(
-    header: &crate::run::RunHeader,
-    records: &[Record],
-    episodes: &[Episode],
-) -> (Vec<Observation>, Vec<Observation>) {
-    let (findings, traces) = findings_and_traces(records, episodes);
-    (of_header(header, findings), of_header(header, traces))
 }
 
 /// [`traces`] of a run, as [`observations_of`] says its findings.
