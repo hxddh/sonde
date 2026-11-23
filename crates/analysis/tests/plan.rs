@@ -271,3 +271,26 @@ fn the_parts_of_the_waiting_add_up_to_it() {
     assert!((sum - waiting).abs() < 1e-6, "{sum} of {waiting}");
     assert!(parts.iter().all(|&p| p >= 0.0));
 }
+
+#[test]
+fn the_requests_sent_at_once_beside_a_change_are_those_it_leaves() {
+    // 40 files, a slow HEAD then a GET each, one after another: dropping
+    // the HEADs saves more than sending all 80 at once, and the 40 GETs it
+    // leaves are what is sent at once beside it (30.0 said "the other 80")
+    let mut rs = Vec::new();
+    let mut at = 0;
+    for i in 0..40 {
+        let key = format!("in/{i}.csv");
+        for (op, ms) in [("HeadObject", 100.0), ("GetObject", 5.0)] {
+            rs.push(rec(rs.len() as u64 + 1, at, ms, op, &key));
+            at += (ms as i64 + 1) * 1000;
+        }
+    }
+    let a = analysed(&rs);
+    let d = &a.diagnoses[0];
+    assert_eq!(heads(&a)[0], "obs.headget", "{:#?}", a.diagnoses);
+    assert!(d.serial.is_some(), "{d:#?}");
+    let rest = d.rest.as_ref().expect("the rest at once");
+    assert_eq!(rest.args["n"], "40", "{rest:?}");
+    assert_eq!(d.at_once.as_ref().unwrap().requests, 40);
+}

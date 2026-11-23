@@ -910,8 +910,20 @@ pub fn diagnose(
             };
             let mut ids: Vec<&str> = members.iter().map(|o| o.identity.as_str()).collect();
             ids.sort_unstable();
-            // its requests one after another: joined, or its headline
+            // its requests one after another: joined, or its headline; of
+            // them, those the diagnosis's other findings leave
             let chained = serial.or((key(members[0]) == "obs.serial").then_some(g[0]));
+            let left = chained.map_or(0, |s| {
+                let gone: HashSet<u64> = members
+                    .iter()
+                    .flat_map(|o| o.saved_ids.iter().copied())
+                    .collect();
+                findings[s]
+                    .timed_ids
+                    .iter()
+                    .filter(|id| !gone.contains(id))
+                    .count()
+            });
             let mut d = Diagnosis {
                 id: diagnosis_id(&ids),
                 findings: Vec::new(),
@@ -925,7 +937,7 @@ pub fn diagnose(
                 saving_text: String::new(),
                 rest: None,
                 at_once: chained.map(|s| AtOnce {
-                    requests: findings[s].impact,
+                    requests: left,
                     concurrency: crate::profile::CHAIN_CONCURRENCY,
                     saves_ms: findings[s].saves_ms,
                 }),
@@ -934,7 +946,7 @@ pub fn diagnose(
                 crate::phrase::p(
                     "obs.serial.rest",
                     &[
-                        ("n", findings[s].impact.to_string()),
+                        ("n", left.to_string()),
                         ("k", crate::profile::CHAIN_CONCURRENCY.to_string()),
                     ],
                 )
