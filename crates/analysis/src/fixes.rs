@@ -689,8 +689,8 @@ pub fn rank_by_saving(findings: &mut [Observation], r: &Reckoning) {
     });
 }
 
-/// Time saved as time of the run: `≈1.9 s of 6.1 s (31%)`; none under a
-/// millisecond.
+/// Time saved as time of the run: `≈1.9 s of 6.1 s (31%)`, `(<1%)` under
+/// half a percent; none under a millisecond.
 fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
     (ms >= 0.5 && wall_ms > 0.0).then(|| {
         crate::phrase::p(
@@ -698,12 +698,14 @@ fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
             &[
                 ("time", sonde_fmt::duration(ms)),
                 ("wall", sonde_fmt::duration(wall_ms)),
-                (
-                    "pct",
-                    ((ms * 100.0 / wall_ms).round() as usize)
-                        .clamp(1, 100)
-                        .to_string(),
-                ),
+                ("pct", {
+                    let pct = ms * 100.0 / wall_ms;
+                    if pct < 0.5 {
+                        "<1".to_string()
+                    } else {
+                        (pct.round() as usize).min(100).to_string()
+                    }
+                }),
             ],
         )
     })
@@ -1314,6 +1316,14 @@ mod tests {
     use crate::episode::{episodes, observations};
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
+
+    #[test]
+    fn a_saving_under_half_a_percent_of_the_run_is_under_one_percent() {
+        let pct = |ms: f64| time_saved(ms, 10_000.0).unwrap().args["pct"].to_string();
+        assert_eq!(pct(4.0), "<1");
+        assert_eq!(pct(50.0), "1");
+        assert_eq!(pct(10_000.0), "100");
+    }
 
     #[test]
     fn the_fix_shown_is_the_detected_sdks_and_a_setting_for_any() {
