@@ -2055,14 +2055,22 @@ pub fn by_rules(id: &str) -> String {
     format!("{kind}|{}", about.join("|"))
 }
 
+/// Whether what a finding is about holds what changes between runs
+/// ([`stable`] changes it): then another of the run's could read the same.
+pub fn varies(o: &Observation) -> bool {
+    identity_as(o, true) != identity_as(o, false)
+}
+
 /// Names each of a run's findings ([`Observation::identity`]) by what it is
-/// about made [`stable`]; but where two of them read the same so, each keeps
-/// as they were the parts of what it is about that tell them apart, the
-/// rest made stable: `t00/` and `t01/` listed again and again are two
-/// findings (`runs/run-{n}/t00/`, whatever the run's own folder), not one.
-/// Two that read the same even so are told apart by rank (`#2`). A run's
-/// findings are named so once, where they are made, and never again.
-pub fn name_findings(findings: &mut [Observation]) {
+/// about made [`stable`]; but where two of them read the same so, or one
+/// and one of `among` (the run's findings at any threshold), each keeps as
+/// they were the parts of what it is about that tell them apart, the rest
+/// made stable: `t00/` and `t01/` listed again and again are two findings
+/// (`runs/run-{n}/t00/`, whatever the run's own folder), not one, though
+/// `t01/` is listed under its threshold. Two that read the same even so
+/// are told apart by rank (`#2`). A run's findings are named so once, where
+/// they are made, and never again.
+pub fn name_findings(findings: &mut [Observation], among: &[Observation]) {
     use std::collections::HashSet;
     let mut by: HashMap<String, HashSet<String>> = HashMap::new();
     for o in findings.iter() {
@@ -2070,8 +2078,15 @@ pub fn name_findings(findings: &mut [Observation]) {
             .or_default()
             .insert(identity_as(o, true));
     }
+    // of the traces, only those read alike with a finding (a run of a
+    // million has tens of thousands)
+    for o in among.iter().filter(|o| varies(o)) {
+        if let Some(g) = by.get_mut(&identity_as(o, false)) {
+            g.insert(identity_as(o, true));
+        }
+    }
     // of each group read alike, the parts all its members share: once, not
-    // once a member (a run of a million has tens of thousands of traces)
+    // once a member
     let shared: HashMap<&str, Option<Vec<bool>>> = by
         .iter()
         .filter(|(_, g)| g.len() > 1)
@@ -2546,12 +2561,12 @@ impl Run {
         // (one after another, as [`crate::view::Analysis::of_records`])
         let profile = profile(records, prices);
         let episodes = crate::episode::episodes(records);
-        let mut observations = crate::episode::observations_of(header, records, &episodes);
+        let (mut observations, traces) =
+            crate::episode::findings_and_traces_of(header, records, &episodes);
         // ranked as a plan ranks them: what each is predicted to save
         let reckoning = crate::fixes::Reckoning::of(records, &profile, !header.whole_seconds);
         crate::fixes::rank_by_saving(&mut observations, &reckoning);
         drop(reckoning);
-        let traces = crate::episode::traces_of(header, records, &episodes);
         drop(episodes);
         Run::with(records, profile, observations, traces)
     }
@@ -2781,27 +2796,31 @@ mod tests {
             expected: None,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
-        name_findings(&mut two);
+        name_findings(&mut two, &[]);
         assert_eq!(two[0].identity, "obs.listed|b/t00/");
         assert_eq!(two[1].identity, "obs.listed|b/t01/");
         // what tells them apart is kept, a run's own folder is not
         let mut runs = vec![listed("b/runs/run-17/t00/"), listed("b/runs/run-17/t01/")];
-        name_findings(&mut runs);
+        name_findings(&mut runs, &[]);
         assert_eq!(runs[0].identity, "obs.listed|b/runs/run-{n}/t00/");
         assert_eq!(runs[1].identity, "obs.listed|b/runs/run-{n}/t01/");
-        // one over its threshold, the other under it: the finding is named
-        // once, as it is made, and its trace takes its name
-        let mut alone = vec![listed("b/t00/")];
-        name_findings(&mut alone);
-        assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
+        // one over its threshold, the other under it: told apart among the
+        // run's findings at any threshold, whatever the other's count
         let mut traces = vec![listed("b/t00/"), listed("b/t01/")];
-        name_findings(&mut traces);
-        name_traces(&mut traces, &alone);
-        assert_eq!(traces[0].identity, "obs.listed|b/t{n}/");
+        name_findings(&mut traces, &[]);
+        let mut one = vec![listed("b/t00/")];
+        name_findings(&mut one, &traces);
+        assert_eq!(one[0].identity, "obs.listed|b/t00/");
+        name_traces(&mut traces, &one);
+        assert_eq!(traces[0].identity, "obs.listed|b/t00/");
         assert_eq!(traces[1].identity, "obs.listed|b/t01/");
+        // alone at any threshold, what changes between runs is taken out
+        let mut alone = vec![listed("b/t00/")];
+        name_findings(&mut alone, &[listed("b/t00/")]);
+        assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
         // the same key twice is told apart by rank
         let mut same = vec![listed("b/t00/"), listed("b/t00/")];
-        name_findings(&mut same);
+        name_findings(&mut same, &[]);
         assert_eq!(same[1].identity, "obs.listed|b/t{n}/#2");
     }
 

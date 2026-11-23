@@ -1149,7 +1149,8 @@ fn a_trials_clean_run_of_another_command_is_not_the_programs_newest() {
 /// 29.0's eval: a finding was named once as it was made (`b/t{n}/`, what
 /// the plan and `check` say) and again by the fix loop among the run's
 /// findings at any threshold (`b/t00/`): a run again said it open and new.
-/// A finding is named once; its trace takes its name.
+/// A finding is named once, among the run's findings at any threshold; its
+/// trace takes its name.
 #[test]
 fn a_finding_has_one_identity_in_the_plan_and_in_the_fix_loop() {
     let lists = |t00: usize, t01: usize| -> Vec<Record> {
@@ -1166,13 +1167,13 @@ fn a_finding_has_one_identity_in_the_plan_and_in_the_fix_loop() {
     let eps = sonde_analysis::episode::episodes(&ra);
     let plan = sonde_analysis::episode::observations(&ra, &eps);
     let a = run_of(&ra);
-    assert_eq!(kinds(&a), ["obs.listed|b/t{n}/"]);
+    assert_eq!(kinds(&a), ["obs.listed|b/t00/"]);
     assert_eq!(
         a.observations[0].identity, plan[0].identity,
         "the plan's and the loop's"
     );
     assert!(
-        a.traces.contains_key("obs.listed|b/t{n}/"),
+        a.traces.contains_key("obs.listed|b/t00/"),
         "{:?}",
         a.traces.keys()
     );
@@ -1290,4 +1291,52 @@ fn objects_a_fix_reads_or_lists_no_more_are_no_smaller_workload() {
         .find(|f| f.identity.starts_with("obs.crawl"))
         .unwrap();
     assert_eq!((f.state, f.saved_requests), (State::Fixed, Some(59)));
+}
+
+/// 31.0's eval: two keys read again and again, `t/00/x.json` and
+/// `t/01/x.json`, were two findings; with the second read under its
+/// threshold the first was named `t/{n}/x.json`, so the run said it fixed
+/// and new at once, and kept both. A finding is told apart among the run's
+/// findings at any threshold, not only among those over it.
+#[test]
+fn a_findings_identity_does_not_move_with_a_siblings_count() {
+    let reads = |n01: u64| -> Vec<Record> {
+        let mut rs: Vec<Record> = Vec::new();
+        for i in 0..12u64 {
+            rs.push(get(rs.len() as u64 + 1, "t/00/x.json"));
+            if i < n01 {
+                rs.push(get(rs.len() as u64 + 1, "t/01/x.json"));
+            }
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let first = ran(dir.path(), 1, &reads(12), Some(0));
+    let hot = |f: &&fixloop::FindingChange| f.identity.starts_with("obs.hot");
+    let mut ids: Vec<&str> = first
+        .findings
+        .iter()
+        .filter(hot)
+        .map(|f| f.identity.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["obs.hot|b/t/00/x.json", "obs.hot|b/t/01/x.json"]);
+    let later = ran(dir.path(), 2, &reads(5), Some(0));
+    let said: Vec<(&str, State)> = later
+        .findings
+        .iter()
+        .filter(hot)
+        .map(|f| (f.identity.as_str(), f.state))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("obs.hot|b/t/01/x.json", State::Less),
+            ("obs.hot|b/t/00/x.json", State::Open),
+        ],
+        "{:#?}",
+        later.findings
+    );
+    let kept = &fixloop::read(dir.path())["job"].findings;
+    assert_eq!(kept.keys().filter(|k| k.starts_with("obs.hot")).count(), 2);
 }

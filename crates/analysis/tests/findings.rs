@@ -669,7 +669,14 @@ fn requests_that_need_one_before_them_go_at_once_after_it() {
     let uploads = |from: u64| -> Vec<Record> {
         (0..100u64)
             .map(|i| {
-                let mut r = rec(i + from, (i + from) as i64 * 51, "PutObject", None, 200, lat);
+                let mut r = rec(
+                    i + from,
+                    (i + from) as i64 * 51,
+                    "PutObject",
+                    None,
+                    200,
+                    lat,
+                );
                 r.key = Some(format!("out/{i}.bin").into());
                 r
             })
@@ -686,8 +693,22 @@ fn requests_that_need_one_before_them_go_at_once_after_it() {
         .flat_map(|i| {
             let k = format!("out/{i}.bin");
             [
-                rec(2 * i + 1, (2 * i) as i64 * 51, "PutObject", Some(&k), 200, lat),
-                rec(2 * i + 2, (2 * i + 1) as i64 * 51, "GetObject", Some(&k), 200, lat),
+                rec(
+                    2 * i + 1,
+                    (2 * i) as i64 * 51,
+                    "PutObject",
+                    Some(&k),
+                    200,
+                    lat,
+                ),
+                rec(
+                    2 * i + 2,
+                    (2 * i + 1) as i64 * 51,
+                    "GetObject",
+                    Some(&k),
+                    200,
+                    lat,
+                ),
             ]
         })
         .collect();
