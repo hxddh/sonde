@@ -1615,8 +1615,8 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                 &kinds,
             ));
         }
-        // new first: what this change brought, as `compare` says it (one
-        // kept on purpose is said under Expected, with why)
+        // new first: what this change brought, as `show --since` says it
+        // (one kept on purpose is said under Expected, with why)
         let new: Vec<&str> = ch
             .appeared
             .iter()
@@ -2560,7 +2560,7 @@ mod tests {
             "{md}"
         );
         // a note of the baseline's that is a warning now is not new: the
-        // finding is the same one, as `compare` says
+        // finding is the same one, as `show --since` says
         let same = compare_runs(
             &Run::of(&after, pra.clone(), oa.to_vec()),
             &Run::of(&after, pra.clone(), oa.to_vec()),

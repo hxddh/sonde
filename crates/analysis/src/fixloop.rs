@@ -419,27 +419,52 @@ fn by_counts(was: usize, now: usize) -> State {
     }
 }
 
-/// The finding at any threshold of `run` that is `o` (of the other run,
-/// `id` its identity): by its identity; else, a run with no finding to
-/// name it after, by what it is about as it was (`b/t00/`); else by what it
-/// is about made stable, when `o` was named so and one alone reads so.
-fn trace_of<'a>(run: &'a Run, id: &str, o: &Observation) -> Option<&'a Observation> {
-    use crate::profile::{identity, literal_identity};
-    if let Some(t) = run.traces.get(id) {
-        return Some(t);
+/// A run's findings at any threshold, looked up as a finding of the other
+/// run is ([`Traces::of_finding`]): each made into what it is about once a
+/// run, not once a finding.
+struct Traces<'a> {
+    run: &'a Run,
+    /// By what each is about as it was (the first of two).
+    literal: HashMap<String, &'a Observation>,
+    /// By what each is about made stable: none where two read so.
+    stable: HashMap<String, Option<&'a Observation>>,
+}
+
+impl<'a> Traces<'a> {
+    fn of(run: &'a Run) -> Self {
+        use crate::profile::{identity, literal_identity};
+        let (mut literal, mut stable) = (HashMap::new(), HashMap::new());
+        for t in run.traces.values() {
+            literal.entry(literal_identity(t)).or_insert(t);
+            stable
+                .entry(identity(t))
+                .and_modify(|one: &mut Option<&Observation>| *one = None)
+                .or_insert(Some(t));
+        }
+        Traces {
+            run,
+            literal,
+            stable,
+        }
     }
-    let literal = literal_identity(o);
-    if let Some(t) = run.traces.values().find(|t| literal_identity(t) == literal) {
-        return Some(t);
-    }
-    let stable = identity(o);
-    if stable != id {
-        return None;
-    }
-    let mut alike = run.traces.values().filter(|t| identity(t) == stable);
-    match (alike.next(), alike.next()) {
-        (Some(t), None) => Some(t),
-        _ => None,
+
+    /// The trace that is `o` (of the other run, `id` its identity): by its
+    /// identity; else, a run with no finding to name it after, by what it
+    /// is about as it was (`b/t00/`); else by what it is about made stable,
+    /// when `o` was named so and one alone reads so.
+    fn of_finding(&self, id: &str, o: &Observation) -> Option<&'a Observation> {
+        use crate::profile::{identity, literal_identity};
+        if let Some(t) = self.run.traces.get(id) {
+            return Some(t);
+        }
+        if let Some(t) = self.literal.get(&literal_identity(o)) {
+            return Some(t);
+        }
+        let stable = identity(o);
+        if stable != id {
+            return None;
+        }
+        self.stable.get(&stable).copied().flatten()
     }
 }
 
@@ -460,6 +485,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             .collect()
     };
     let (ia, ib) = (named(&a.observations), named(&b.observations));
+    let (in_a, in_b) = (Traces::of(a), Traces::of(b));
     let change = |id: &str, state: State, now: &Observation, was: &Observation| FindingChange {
         identity: id.to_string(),
         state,
@@ -479,7 +505,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         let left = ib
             .get(id)
             .map(|&j| &b.observations[j])
-            .or_else(|| trace_of(b, id, o));
+            .or_else(|| in_b.of_finding(id, o));
         // requests one after another, or throttled: their count moves with
         // the timing, so within a fifth either way it is as much
         if let Some(was) = varying_count(o)
@@ -534,7 +560,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         let now = &b.observations[j];
         // under its threshold before and over it now: by its counts, as
         // any other (6 then 6 is as much, not back)
-        let c = match trace_of(a, id, now) {
+        let c = match in_a.of_finding(id, now) {
             Some(t) => change(id, by_counts(count_of(t), count_of(now)), now, t),
             None => {
                 let mut c = change(id, State::New, now, now);

@@ -2204,7 +2204,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
         let from = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../analysis/tests/fixtures")
             .join(format!("{r}.sonde"));
-        // recorded where `sonde` runs, so that `compare` alone takes them
+        // recorded where `sonde` runs, so that `show` alone takes them
         let mut text = String::new();
         std::io::Read::read_to_string(
             &mut flate2::read::MultiGzDecoder::new(std::fs::File::open(from).unwrap()),
@@ -2235,8 +2235,8 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     for said in [
         "  time 739 ms: your program's own 250 ms (34%) · S3 round trips 489 ms (91 requests, median 3.3 ms)",
         // sent at once saves more than dropping the HEADs: its own change, first
-        "! 51 requests ran one after another for 450 ms",
-        "    saving: ≈160 ms of 739 ms (22%)",
+        "! 85 requests ran one after another for 587 ms",
+        "    saving: ≈273 ms of 739 ms (37%)",
         "    at etl.py:14 <module> (20 requests)",
         "    fix for boto3:",
         "      with ThreadPoolExecutor(8) as pool:",

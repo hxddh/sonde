@@ -27,7 +27,7 @@ const RUNS: [&str; 5] = [
     "etl-5-undone.sonde",
 ];
 
-/// A run as `sonde compare` reads it, counted against `before` when given.
+/// A run as `sonde show --since` reads it, counted against `before` when given.
 fn run(name: &str, before: Option<&Run>) -> Run {
     let s = RunFile::open_lean(&fixture(name)).expect("the fixture opens");
     let mut r = Run::analysed(&s.header, &s.records, &RequestPrices::default());
