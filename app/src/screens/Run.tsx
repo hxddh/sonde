@@ -5,29 +5,24 @@
 // starts it, its requests signed for the endpoint in the toolbar, and its
 // run opens as the newest in the list.
 
-import { cleanup, effect, resource, signal, Text, View, type ViewRef } from "nsh";
+import { cleanup, effect, resource, Text, View, type ViewRef } from "nsh";
 import { Terminal, type TerminalRef } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
-import { busy, command, cwd, input, lastRun, onOutput, output, policy, resize, running, start, startedAt } from "../run";
+import { busy, command, cwd, input, lastRun, onOutput, output, resize, running, start, startedAt } from "../run";
 import { endpoint, endpoints, report } from "../store";
 import type { SuggestedCommand } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Card, CARD, Empty, Field, IconButton, KeyValue, popupMenu, SURFACE, TEXT, Tip, Title } from "../ui/kit";
 import { scrubCommand } from "../ui/runview";
-import { type Policy, RecordPanel } from "../ui/runparts";
-
-const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
-  { value: "allow", title: t("timeline.allow"), icon: "shield-check" },
-  { value: "no-delete", title: t("timeline.noDelete"), icon: "ban" },
-  { value: "read-only", title: t("timeline.readOnly"), icon: "lock" },
-];
+import { RecordPanel } from "../ui/runparts";
 
 /** The last part of a folder's path: what its prompt says. */
 const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
 
-/** The command: the one field that matters, its Run at its end; where it runs and what it may do behind its `⋯`,
- * said at the field's start (as a shell's prompt does) only when they are not the usual. */
+/** The command: the one field that matters, its Run at its end; where it runs behind its `⋯`, said at the field's
+ * start (as a shell's prompt does) once it is not the usual. What the program may do is its project's (sonde.toml's
+ * `[record] policy`). */
 function CommandBar() {
   let more: ViewRef | undefined;
   // a press says why it cannot run (another program running, no command, no endpoint), never a control that does nothing
@@ -38,15 +33,12 @@ function CommandBar() {
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
     start(command(), id);
   };
-  const chosen = () => POLICIES().find((p) => p.value === policy());
   const options = () =>
     void popupMenu(
       [
         { label: t("run.cwdPick"), icon: "folder", run: () => void api.runs.pickFolder().then((f) => f && cwd.set(f), report) },
         { label: t("run.cwdHome"), checked: !cwd(), onSelect: () => cwd.set("") },
         ...(cwd() ? [{ label: cwd(), checked: true, onSelect: () => {} }] : []),
-        { type: "separator" as const },
-        ...POLICIES().map((p) => ({ label: p.title, checked: policy() === p.value, onSelect: () => policy.set(p.value) })),
       ],
       more,
     );
@@ -65,8 +57,7 @@ function CommandBar() {
           onChange={(v) => command.set(v)}
           onSubmit={run}
           leading={
-            <View class="flex-row items-center gap-1" tooltip={cwd() || policy() !== "allow" ? <Tip text={[cwd(), policy() !== "allow" ? chosen()?.title : ""].filter(Boolean).join(" · ")} /> : undefined}>
-              <If when={policy() !== "allow" ? chosen() : null}>{(p) => <Icon name={p().icon} />}</If>
+            <View class="flex-row items-center gap-1" tooltip={cwd() ? <Tip text={cwd()} /> : undefined}>
               <Text class={`font-mono ${TEXT.bodyQuiet}`}>{cwd() ? `${folderName(cwd())} $` : "$"}</Text>
             </View>
           }
@@ -171,7 +162,6 @@ export function NoRequests() {
 /** Runs with no run chosen: the command bar, and under it recording without a program — or, after a run that sent
  * nothing and was not kept, why. */
 export function NewRun() {
-  const recording = signal(api.runs.current());
   // the last run sent nothing: it was not kept, and what to point at sonde is said here
   const empty = () => !running() && !!lastRun()?.removed && !lastRun()?.deleted;
   return (
@@ -179,7 +169,7 @@ export function NewRun() {
       <View class="shrink-0 px-4 pt-4">
         <CommandBar />
       </View>
-      <If when={empty()} else={<View class="p-4"><RecordPanel recording={recording()} onChange={() => recording.set(api.runs.current())} policy={policy} /></View>}>
+      <If when={empty()} else={<View class="p-4"><RecordPanel /></View>}>
         <NoRequests />
       </If>
     </View>

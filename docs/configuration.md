@@ -128,6 +128,6 @@ on = ["PutObject"]
 - `[program]`: `name` and `runs` both or neither; without them, a program is what its command runs ([cli](cli.md)).
   `runs-per-month` alone applies to every program run in the folder.
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
-- `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
-  app, the project's policy may narrow the command bar's own choice, never widen it.
+- `[record] policy`: what each policy refuses, and which applies, is in
+  [recording](recording.md#what-a-recorded-program-may-do).
 - `[[scenario]]`: [trials](trials.md#a-projects-own-scenarios).

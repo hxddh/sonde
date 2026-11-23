@@ -14,6 +14,10 @@ test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in th
     await app.press("id:welcome-demo");
     await app.waitUntil(took, { timeout: 4000 }).catch(() => {});
   }
+  // its run opens as it starts, at work as any program is (no empty command bar while it plays)
+  await app.waitFor("id:running-pill", { timeout: 10000 });
+  await app.waitFor("id:run-pane", { timeout: 10000 });
+  expect(app.shows("id:run-command")).toBe(false);
   // one press: the job ran, and its run is open on its first diagnosis — in the inspector, the line that sent it and
   // the fix for the program's own SDK alone (no SDK to choose: one fix shown), Apply the screen's one primary
   await app.waitFor("id:screen-runs", { timeout: 20000 });
@@ -116,7 +120,7 @@ test("a new run is found three ways: ⌘N, File › New run, and the sidebar's R
   await app.waitFor("id:run-command");
 });
 
-test("the palette goes anywhere", async () => {
+test("the palette goes anywhere, ⌘K opens and closes it, and it opens again on an empty field", async () => {
   const app = await open("../App.tsx", desktop);
   await app.press("id:palette");
   await app.waitFor("id:palette-command");
@@ -124,6 +128,32 @@ test("the palette goes anywhere", async () => {
   await app.press("text:Buckets › Incomplete uploads");
   await app.waitFor("id:screen-multipart");
   expect(app.shows("id:palette-command")).toBe(false);
+  // ⌘K is the menu's: it opens the palette, and closes it
+  await app.keyboard.press("mod+k");
+  await app.waitFor("id:palette-command");
+  await app.type("id:palette-command", "zzzz");
+  await app.waitFor("id:palette-dialog >> text:Recent runs", { state: "gone" });
+  await app.keyboard.press("mod+k");
+  await app.waitFor("id:palette-command", { state: "gone" });
+  // what was typed went with it
+  await app.keyboard.press("mod+k");
+  await app.waitFor("id:palette-dialog >> text:Recent runs");
+  // one door each: the demo is an endpoint (no "Start the demo" of its own), a place's tab is its row
+  expect(app.shows("id:palette-dialog >> text:Start the demo")).toBe(false);
+  await app.keyboard.press("escape");
+  await app.waitFor("id:palette-command", { state: "gone" });
+});
+
+test("Check for updates in the palette opens Settings on the tab that has it", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "endpoints");
+  await app.waitFor("id:screen-settings-area");
+  expect(app.shows("id:updates")).toBe(false);
+  await app.press("id:palette");
+  await app.waitFor("id:palette-command");
+  await app.type("id:palette-command", "updates");
+  await app.press("id:palette-dialog >> text:Check for updates");
+  await app.waitFor("id:updates", { timeout: 5000 });
 });
 
 test("updates: asking is the user's move; a development run is up to date", async () => {

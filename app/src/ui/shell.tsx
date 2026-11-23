@@ -9,11 +9,11 @@ import { date } from "../format";
 import { t } from "../i18n";
 import { areaLabel, vendorName } from "../labels";
 import { api } from "../native";
-import { running } from "../run";
+import { running, workName } from "../run";
 import { type Area, area, shellWidth, endpoint, endpoints, go, newRun, openRun, openRunFile, settings, runsTick, sideList, useEndpoint } from "../store";
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { programOf, scrubCommand } from "./runview";
+import { scrubCommand } from "./runview";
 import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen, runningJobs } from "./activity";
 import { runName } from "./manage";
@@ -81,7 +81,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
         { label: t("run.new"), shortcut: "mod+n", onSelect: newRun },
         { label: t("runs.openFile"), shortcut: "mod+o", onSelect: () => void openRunFile() },
         { label: t("runs.openRecent"), submenu: recentMenu() },
-        { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
+        { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(!paletteOpen()) },
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: platform.os === "windows" ? t("menu.exit") : t("menu.quit") } as const]),
       ],
     },
@@ -158,11 +158,11 @@ function RunningPill() {
             if (r().path) openRun.set(r().path);
             go("runs");
           }}
-          tooltip={<Tip text={scrubCommand(r().command)} />}
+          tooltip={<Tip text={scrubCommand(r().command) || workName(r())} />}
           class={`h-7 ${WIDTH.pill} flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
           <View class={`${DOT} ${TONE.live.dot} motion-safe:animate-pulse`} />
-          <Text class="text-small text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
+          <Text class="text-small text-primary line-clamp-1">{workName(r())}</Text>
         </BaseButton>
       )}
     </If>
