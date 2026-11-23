@@ -135,7 +135,7 @@ test("an example run reads as operations, each opening on its requests", async (
   const example = api.runs.list().find((s) => (s.command ?? "").includes("gen-slatedb"))!;
   await app.openWithUrl(`sonde://run/${encodeURIComponent(example.path.split(/[\\/]/).pop()!)}?range=0-200`);
   await app.waitFor("id:time-pane", { timeout: 10000 });
-  await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
+  await app.waitFor("text:/ · in \\+.* – \\+200\u00a0ms$/", { timeout: 5000 });
   await app.press("id:run-pane-mode-operations");
   await app.waitFor("id:operations");
   await app.waitFor("text:/^\\+.* – \\+.* · \\d+ of 34 operations$/", { timeout: 5000 });
@@ -233,7 +233,7 @@ test("a run's time: where it went, and two runs before and after", async () => {
   expect(app.shows("text:/^median \\d/")).toBe(true);
   expect(app.shows("text:8 at once")).toBe(true);
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
-  expect(app.shows("label:/^Requests: 172, in 467 ms$/")).toBe(true);
+  expect(app.shows("label:/^Requests: 172, in 467\u00a0ms$/")).toBe(true);
   // what found nothing is no failure, and is said beside them
   expect(app.shows("label:/^Errors: 0%, 67% not found/")).toBe(true);
   // no tiles: no chevron, no line over the run in the header
@@ -583,7 +583,8 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   expect(app.shows("id:operations")).toBe(false);
   // the Time pane's table, one component: its columns, the cost's unit once in its title
   expect(app.shows("text:Kind of request")).toBe(true);
-  expect(app.shows("text:/^Cost \\(USD/")).toBe(true);
+  // (once the pane has its width: narrower, a table drops its last columns first)
+  await app.waitFor("text:/^Cost \\(USD/", { timeout: 5000 });
   // a kind pressed is its operations: select, inspect, act
   await app.press("id:split-table >> text:PutObject");
   await app.waitFor("id:operations");

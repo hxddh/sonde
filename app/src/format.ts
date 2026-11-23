@@ -90,9 +90,9 @@ export function moments(isos: (string | null | undefined)[]): (iso: string) => s
   return days.size > 1 ? (iso) => date(iso) : hm;
 }
 
-/** Between a figure and its unit: a space that does not break in Chinese, where a line may break at any
- * character and left "5.7" at one line's end and "ms" at the next's start (English breaks at words). */
-const unitGap = () => (lang() === "zh" ? "\u00a0" : " ");
+/** Between a figure and its unit: a space that does not break, in every language ("346" at one line's end and
+ * "ms" at the next's start read as two things). */
+export const UNIT_GAP = "\u00a0";
 
 export function bytes(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
@@ -109,7 +109,7 @@ export function bytes(n: number | null | undefined): string {
     v /= 1024;
     i++;
   }
-  return i === 0 ? `${decimal(Math.round(n))}${unitGap()}B` : `${decimal(v, v >= 100 ? 0 : 1)}${unitGap()}${units[i]}`;
+  return i === 0 ? `${decimal(Math.round(n))}${UNIT_GAP}B` : `${decimal(v, v >= 100 ? 0 : 1)}${UNIT_GAP}${units[i]}`;
 }
 
 /** Bytes sent and received, the one way everywhere: "↑ 78.1 KiB ↓ 75.1 KiB". */
@@ -178,7 +178,7 @@ export function duration(v: number, as: "measured" | "age" | "counter" = "measur
     return h ? `${h}:${p2(Math.floor((s % 3600) / 60))}:${p2(s % 60)}` : `${Math.floor(s / 60)}:${p2(s % 60)}`;
   }
   const a = Math.abs(v);
-  const g = unitGap();
+  const g = UNIT_GAP;
   if (a === 0) return `0${g}ms`;
   if (a < 9.95) return `${decimal(v, 1)}${g}ms`;
   if (a < 999.5) return `${decimal(Math.round(v))}${g}ms`;

@@ -4,7 +4,7 @@
 import { computed, signal, token, View, Text } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from "nsh/base/plot";
-import { change, count, day, duration, factor, hm, percent } from "../../format";
+import { change, clock, count, day, duration, factor, hm, percent } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
 import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, runSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
@@ -307,8 +307,9 @@ export function trendSaid(runs: { created: string; v: number }[], base: number |
   return t("trend.textFirst", { change: ab(runs[0].v), day: when(runs[0].created, runs[runs.length - 1].created), a: format(runs[0].v), b: format(last) });
 }
 
-/** A run's moment beside another's: its time where both are of one day, else its day. */
-const when = (s: string | undefined, other: string | undefined) => (other && day(s) === day(other) ? hm(s) : day(s));
+/** A run's moment beside another's: its time where both are of one day (to the second where they are of one minute),
+ * else its day. */
+export const when = (s: string | undefined, other: string | undefined): string => (!s || !other || day(s) !== day(other) ? day(s) : hm(s) !== hm(other) ? hm(s) : clock(s, "s"));
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
 export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; /** the figures' unit where the format does not say it (a cost's): in the sentence, not the title */ unit?: string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
@@ -337,7 +338,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
   const said = () => [trendSaid(runs().map((r) => ({ created: r.created, v: r[props.measure] as number })), base(), props.format), props.unit ? t("trend.unit", { unit: props.unit }) : ""].filter(Boolean).join(" · ");
   return (
     // the latest run's figure (or the one under the pointer) where a chart's control is
-    <Chart testID={`trend-${props.measure}`} class={`${SURFACE.trend} flex-1`} title={props.title} text={said()} action={<Figure value={props.format(shown()[props.measure] as number)} label={day(shown().created)} />}>
+    <Chart testID={`trend-${props.measure}`} class={`${SURFACE.trend} flex-1`} title={props.title} text={said()} figure={<Figure value={props.format(shown()[props.measure] as number)} label={day(shown().created)} />}>
       <BaseButton
         accessibilityLabel={label()}
         disabled={!props.onOpen}
