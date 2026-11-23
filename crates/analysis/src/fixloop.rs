@@ -150,14 +150,30 @@ pub fn asked(r: &Record) -> String {
     )
 }
 
-/// What each finding would save, by what its requests asked: for each
-/// identity, `(asked, of them saved, of them in the run)`.
-pub type Asks = BTreeMap<String, Vec<(String, usize, usize)>>;
+/// One thing a finding's requests asked ([`asked`]), and what acting on
+/// the finding would save of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ask {
+    /// `HeadObject b/in/part-{n}.json?`
+    pub asked: String,
+    /// Of its requests, those the finding would save.
+    pub saved: usize,
+    /// Of the run's requests, those that asked it.
+    pub all: usize,
+    /// The objects the saved requests named that no other request of the
+    /// run asked of, whatever its operation: objects the fix does away
+    /// with (small reads packed into a shard), not work left undone.
+    pub alone: usize,
+}
+
+/// What each finding would save, by what its requests asked, by identity.
+pub type Asks = BTreeMap<String, Vec<Ask>>;
 
 /// The asks of the findings that name the requests they save. Each ask is
 /// made once, its text kept once and its requests by index (a finding of
-/// small reads names a request of each of a run's objects).
-pub fn asks_of(records: &[Record], findings: &[Observation]) -> Asks {
+/// small reads names a request of each of a run's objects). `objects` is
+/// each record's object ([`crate::profile::object_of`]), in their order.
+pub fn asks_of(records: &[Record], findings: &[Observation], objects: &[u64]) -> Asks {
     let mut saved: Vec<u64> = findings
         .iter()
         .flat_map(|o| o.saved_ids.iter().copied())
@@ -167,17 +183,44 @@ pub fn asks_of(records: &[Record], findings: &[Observation]) -> Asks {
     }
     saved.sort_unstable();
     saved.dedup();
-    // what each saved request asked: an index into `names`
+    // what each saved request asked: an index into `names`; and its object
     let mut names: HashMap<String, u32> = HashMap::new();
     let mut of_id: Vec<(u64, u32)> = Vec::new();
-    for r in records
+    let mut named: Vec<(u64, u32)> = Vec::new();
+    for (r, &object) in records
         .iter()
-        .filter(|r| saved.binary_search(&r.id).is_ok())
+        .zip(objects)
+        .filter(|(r, _)| saved.binary_search(&r.id).is_ok())
     {
         let next = names.len() as u32;
-        of_id.push((r.id, *names.entry(asked(r)).or_insert(next)));
+        let i = *names.entry(asked(r)).or_insert(next);
+        of_id.push((r.id, i));
+        named.push((object, i));
+    }
+    // the objects of saved requests another request asks of too
+    let mut shared: Vec<u64> = named.iter().map(|&(o, _)| o).collect();
+    shared.sort_unstable();
+    shared.dedup();
+    let mut also = vec![false; shared.len()];
+    for (_, object) in records
+        .iter()
+        .zip(objects)
+        .filter(|(r, _)| saved.binary_search(&r.id).is_err())
+    {
+        if let Ok(at) = shared.binary_search(object) {
+            also[at] = true;
+        }
     }
     drop(saved);
+    let mut alone = vec![0usize; names.len()];
+    named.sort_unstable();
+    named.dedup();
+    for (object, i) in named {
+        if shared.binary_search(&object).is_ok_and(|at| !also[at]) {
+            alone[i as usize] += 1;
+        }
+    }
+    drop((shared, also));
     // (a request's id twice: its last record's ask, as a map would keep)
     of_id.reverse();
     of_id.sort_by_key(|&(id, _)| id);
@@ -231,17 +274,41 @@ pub fn asks_of(records: &[Record], findings: &[Observation]) -> Asks {
             .map(|(i, n)| {
                 let i = i as usize;
                 uses[i] -= 1;
-                let a = if uses[i] == 0 {
+                let asked = if uses[i] == 0 {
                     std::mem::take(&mut texts[i])
                 } else {
                     texts[i].clone()
                 };
-                (a, n, if all[i] == 0 { n } else { all[i] })
+                Ask {
+                    asked,
+                    saved: n,
+                    all: if all[i] == 0 { n } else { all[i] },
+                    alone: alone[i].min(n),
+                }
             })
             .collect();
         out.insert(o.identity.clone(), asks);
     }
     out
+}
+
+/// The objects the fixed and less of `findings` (of run `a`, against `b`)
+/// did away with ([`Ask::alone`]): of each ask, at most as many as `b`
+/// asks it less often. Each ask once, though two findings name it.
+pub fn freed(findings: &[FindingChange], a: &Run, b: &Run) -> usize {
+    let mut by_ask: HashMap<&str, usize> = HashMap::new();
+    for ask in findings
+        .iter()
+        .filter(|f| matches!(f.state, State::Fixed | State::Less))
+        .filter_map(|f| a.asks.get(&f.identity))
+        .flatten()
+    {
+        let now = b.counts.get(&ask.asked).copied().unwrap_or(0);
+        let n = ask.all.saturating_sub(now).min(ask.alone);
+        let at = by_ask.entry(&ask.asked).or_default();
+        *at = (*at).max(n);
+    }
+    by_ask.values().sum()
 }
 
 /// How many of `records` asked each of `wanted`.
@@ -325,9 +392,9 @@ fn saved_requests(o: &Observation, a: &Run, b: &Run) -> Option<usize> {
     }
     Some(a.asks.get(&o.identity).map_or(0, |asks| {
         asks.iter()
-            .map(|(asked, saved, all)| {
-                let now = b.counts.get(asked).copied().unwrap_or(0);
-                all.saturating_sub(now).min(*saved)
+            .map(|ask| {
+                let now = b.counts.get(&ask.asked).copied().unwrap_or(0);
+                ask.all.saturating_sub(now).min(ask.saved)
             })
             .sum()
     }))
@@ -352,27 +419,52 @@ fn by_counts(was: usize, now: usize) -> State {
     }
 }
 
-/// The finding at any threshold of `run` that is `o` (of the other run,
-/// `id` its identity): by its identity; else, a run with no finding to
-/// name it after, by what it is about as it was (`b/t00/`); else by what it
-/// is about made stable, when `o` was named so and one alone reads so.
-fn trace_of<'a>(run: &'a Run, id: &str, o: &Observation) -> Option<&'a Observation> {
-    use crate::profile::{identity, literal_identity};
-    if let Some(t) = run.traces.get(id) {
-        return Some(t);
+/// A run's findings at any threshold, looked up as a finding of the other
+/// run is ([`Traces::of_finding`]): each made into what it is about once a
+/// run, not once a finding.
+struct Traces<'a> {
+    run: &'a Run,
+    /// By what each is about as it was (the first of two).
+    literal: HashMap<String, &'a Observation>,
+    /// By what each is about made stable: none where two read so.
+    stable: HashMap<String, Option<&'a Observation>>,
+}
+
+impl<'a> Traces<'a> {
+    fn of(run: &'a Run) -> Self {
+        use crate::profile::{identity, literal_identity};
+        let (mut literal, mut stable) = (HashMap::new(), HashMap::new());
+        for t in run.traces.values() {
+            literal.entry(literal_identity(t)).or_insert(t);
+            stable
+                .entry(identity(t))
+                .and_modify(|one: &mut Option<&Observation>| *one = None)
+                .or_insert(Some(t));
+        }
+        Traces {
+            run,
+            literal,
+            stable,
+        }
     }
-    let literal = literal_identity(o);
-    if let Some(t) = run.traces.values().find(|t| literal_identity(t) == literal) {
-        return Some(t);
-    }
-    let stable = identity(o);
-    if stable != id {
-        return None;
-    }
-    let mut alike = run.traces.values().filter(|t| identity(t) == stable);
-    match (alike.next(), alike.next()) {
-        (Some(t), None) => Some(t),
-        _ => None,
+
+    /// The trace that is `o` (of the other run, `id` its identity): by its
+    /// identity; else, a run with no finding to name it after, by what it
+    /// is about as it was (`b/t00/`); else by what it is about made stable,
+    /// when `o` was named so and one alone reads so.
+    fn of_finding(&self, id: &str, o: &Observation) -> Option<&'a Observation> {
+        use crate::profile::{identity, literal_identity};
+        if let Some(t) = self.run.traces.get(id) {
+            return Some(t);
+        }
+        if let Some(t) = self.literal.get(&literal_identity(o)) {
+            return Some(t);
+        }
+        let stable = identity(o);
+        if stable != id {
+            return None;
+        }
+        self.stable.get(&stable).copied().flatten()
     }
 }
 
@@ -393,6 +485,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             .collect()
     };
     let (ia, ib) = (named(&a.observations), named(&b.observations));
+    let (in_a, in_b) = (Traces::of(a), Traces::of(b));
     let change = |id: &str, state: State, now: &Observation, was: &Observation| FindingChange {
         identity: id.to_string(),
         state,
@@ -412,7 +505,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         let left = ib
             .get(id)
             .map(|&j| &b.observations[j])
-            .or_else(|| trace_of(b, id, o));
+            .or_else(|| in_b.of_finding(id, o));
         // requests one after another, or throttled: their count moves with
         // the timing, so within a fifth either way it is as much
         if let Some(was) = varying_count(o)
@@ -467,7 +560,7 @@ pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
         let now = &b.observations[j];
         // under its threshold before and over it now: by its counts, as
         // any other (6 then 6 is as much, not back)
-        let c = match trace_of(a, id, now) {
+        let c = match in_a.of_finding(id, now) {
             Some(t) => change(id, by_counts(count_of(t), count_of(now)), now, t),
             None => {
                 let mut c = change(id, State::New, now, now);

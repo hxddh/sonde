@@ -1503,7 +1503,7 @@
         },
         "atOnce": {
           "type": "object",
-          "description": "Its requests one after another (`obs.serial`), counted: sent `concurrency` at once, they save `savesMs` on their own.",
+          "description": "Its requests one after another (`obs.serial`), counted: `requests`, those its other findings leave; sent `concurrency` at once, all of them save `savesMs` on their own.",
           "properties": {
             "requests": {
               "type": "integer"

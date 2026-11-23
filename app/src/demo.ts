@@ -1,13 +1,14 @@
 // The demo, from the first minute: one press runs a small export job on the
 // built-in demo store (sonde plays it in-process: nothing to install, on any
-// system) and opens its run on its first finding — what was found, the line
+// system), its run open as it goes, then on its first finding — what was found, the line
 // of code that sent it, the fix. "Apply and run again" changes the job's
 // code as the fix says and runs it again: the run opens saying the finding
 // is fixed, with what it saved measured beside what was predicted.
 
 import { batch } from "nsh";
 import { api } from "./native";
-import { findingOnOpen, go, openRun, paneOnOpen, report, runsChanged, startDemo } from "./store";
+import { busy, launch, running } from "./run";
+import { findingOnOpen, go, openRun, paneOnOpen, report, startDemo } from "./store";
 import type { RunView } from "./types";
 
 /** The command the demo's runs ran (sonde_core::tour::COMMAND). */
@@ -18,32 +19,25 @@ export function isDemoJob(h: RunView["header"] | null | undefined): boolean {
   return !!h && h.endpoint === "demo" && (h.command ?? "").trim() === DEMO_COMMAND;
 }
 
-let playing = false;
-
-/** Plays the demo's job as its file stands, and opens its run on its first finding. Whether it ran. */
+/** Plays the demo's job as its file stands: its run opens as it starts, as any program's does, and once it has
+ * ended on its first finding. Whether it ran. */
 async function play(cwd: string, command: string): Promise<boolean> {
-  if (playing) return false;
-  playing = true;
-  try {
-    const r = await api.runs.run(command, cwd, "demo", "allow", 100, 30, () => {});
-    runsChanged();
-    batch(() => {
-      paneOnOpen.set({ path: r.path, pane: "operations" });
-      findingOnOpen.set({ path: r.path, index: 0 });
-      openRun.set(r.path);
-      go("runs");
-    });
-    return true;
-  } catch (e) {
-    report(e);
-    return false;
-  } finally {
-    playing = false;
-  }
+  go("runs");
+  const r = await launch("demo", command, "demo", cwd);
+  if (!r) return false;
+  batch(() => {
+    paneOnOpen.set({ path: r.path, pane: "operations" });
+    findingOnOpen.set({ path: r.path, index: 0 });
+    openRun.set(r.path);
+    go("runs");
+  });
+  return true;
 }
 
 /** The welcome's one press: the demo store started, its job written afresh and run, its run open. */
 export async function runDemo(): Promise<boolean> {
+  // one thing at work at a time: its job is not written afresh under another
+  if (running()) return (busy(), false);
   if (!(await startDemo())) return false;
   try {
     const job = api.runs.demoJob();
@@ -56,6 +50,7 @@ export async function runDemo(): Promise<boolean> {
 
 /** The demo's finding applied to its job's code, and the job run again (in the folder its run ran in). */
 export async function applyDemoFix(cwd: string | null | undefined): Promise<boolean> {
+  if (running()) return (busy(), false);
   try {
     if (!(await startDemo())) return false;
     // (the folder the run ran in: the job's own, written first where the run does not say)

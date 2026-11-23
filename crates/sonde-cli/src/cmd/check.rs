@@ -86,7 +86,7 @@ pub enum Format {
 }
 
 /// A run as `check` reads it: its figures, profile, findings and header,
-/// and the run as `compare` holds it when it is compared.
+/// and the run as `show --since` holds it when it is compared.
 type Checked = (
     sonde_analysis::program::RunPoint,
     sonde_analysis::profile::Profile,
@@ -527,8 +527,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     {
         fetched = Some(fetch_baseline(u).await?);
     }
-    // against a baseline its findings are said as `run` and `compare` say
-    // them: at any threshold too (less, not fixed)
+    // against a baseline its findings are said as `run` and `show --since`
+    // say them: at any threshold too (less, not fixed)
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<Checked> {
@@ -831,6 +831,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         if let Some(code) = failed {
             doc["programExit"] = serde_json::json!(code);
         }
+        output::rounded(&mut doc, "");
         output::print_json(&doc);
         return Ok(if passed { 0 } else { 1 });
     }

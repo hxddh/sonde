@@ -371,7 +371,8 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     }
   };
   return (
-    <Modal open={props.open} onClose={props.onClose} testID="replay-dialog" describe={t("replay.hint")}>
+    // one way out: while the replay runs nothing closes it (it cleans up after itself), and its end is seen here
+    <Modal open={props.open} onClose={() => !busy() && props.onClose()} testID="replay-dialog" describe={t("replay.hint")}>
       <Title>{t("replay.title")}</Title>
       <Muted class="text-body">{t("replay.hint")}</Muted>
       <Choice label={t("common.endpoint")} value={target()} placeholder={t("replay.choose")} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} testID="replay-endpoint" />
@@ -411,7 +412,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         }
       >
         <Actions>
-          <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} testID="replay-cancel" />
+          <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} disabled={busy()} tip={busy() ? t("replay.toItsEnd") : undefined} testID="replay-cancel" />
           <Button variant="primary" label={t("replay.run")} onPress={run} loading={busy()} disabled={!plan()} testID="replay-run" />
         </Actions>
       </If>

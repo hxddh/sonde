@@ -120,17 +120,7 @@ for k in en:
 
 # Keys gone since the last release, each named in the changelog or here with why it is no loss. Emptied at each
 # release (a release's changelog says what went); a key here is one whose words still reach the reader.
-GONE: dict[str, str] = {
-    "runs.search": "the sidebar's search field went: the palette (⌘K) finds a run (30.0)",
-    "runs.noMatch": "the sidebar's search field went: the palette (⌘K) finds a run (30.0)",
-    "compare.took": "Compare's tiles went: the over-time chart's sentence says how long each run took (compare.figures)",
-    "compare.overTimeText": "reworded: the over-time chart's sentence is compare.figures, the requests and the time each run took",
-    "compare.sameBoth": "Compare's tiles went: a figure the same in both runs is said once in its sentence",
-    "phrase.fix.savedUnpredicted": "a fix says its requests and its prediction (phrase.fix.savedRequests)",
-    "phrase.fix.noise": "the run's noise is said on the since line, once",
-    "phrase.fix.lostUnpredicted": "a fix says its requests and its prediction (phrase.fix.savedRequests)",
-    "phrase.fix.lost": "a fix says its requests and its prediction (phrase.fix.savedRequests)",
-}
+GONE: dict[str, str] = {}
 
 
 def git(*args):

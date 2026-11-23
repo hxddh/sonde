@@ -475,11 +475,12 @@ pub struct Chain {
     /// The time spent waiting on the requests themselves (the gaps between
     /// them are the program's own work, which running them at once keeps).
     pub waiting_ms: f64,
-    /// Those of `ids` that need one before them (a read of a key one wrote, a
-    /// write of a key one read, a listing of where one wrote): they stay one
-    /// after another, the others go at once around them.
+    /// How many of `ids` each waits for, one after another (0: none; a
+    /// read of a key one wrote, a write of a key one read, a listing of
+    /// where one wrote waits for that one, one more than it): those of a
+    /// level go at once, a level after the one before ([`at_once_ms`]).
     #[serde(skip)]
-    pub waits: Vec<u64>,
+    pub levels: Vec<u32>,
 }
 
 /// The most places in the program's code a profile keeps ([`Profile::callers`]).
@@ -493,21 +494,31 @@ pub const CHAIN_MIN: usize = 10;
 /// time): why 10 ms is D-277.
 const CHAIN_GAP_US: i64 = 10_000;
 
-/// What the requests of a chain touched: whether the next one depends on
-/// one of them (a read or a write of a key one of them wrote, a write of a
-/// key one read, a listing of a prefix one wrote under, a write under a
-/// prefix one listed). Requests that depend on each other cannot be sent at
-/// once without changing what the program does; the others of the chain can,
-/// around them (a manifest read and written back each time round a loop
-/// holds back its own requests, not the loop's other reads).
+/// What the requests of a chain touched, and the level each is at
+/// ([`Chain::levels`]): whether the next one depends on one of them (a read
+/// or a write of a key one of them wrote, a write of a key one read, a
+/// listing of a prefix one wrote under, a write under a prefix one listed),
+/// and so waits for it. Requests that depend on each other cannot be sent
+/// at once without changing what the program does; those that depend on
+/// the same one can, after it (a listing then uploads under it: the
+/// listing, then the uploads at once), and the others of the chain around
+/// them (a manifest read and written back each time round a loop holds back
+/// its own requests, not the loop's other reads).
 #[derive(Default)]
 struct Depends<'a> {
-    keys: std::collections::HashMap<(&'a str, &'a str), bool>,
-    written: std::collections::BTreeSet<(&'a str, &'a str)>,
-    listed: std::collections::BTreeSet<(&'a str, &'a str)>,
+    /// Each key's levels: of its last write, of its last request.
+    keys: std::collections::HashMap<(&'a str, &'a str), (Option<u32>, u32)>,
+    written: std::collections::BTreeMap<(&'a str, &'a str), u32>,
+    listed: std::collections::HashMap<(&'a str, &'a str), u32>,
+    /// The highest level of a write, as a listing past [`Depends::SCAN`]
+    /// keys under its prefix waits for.
+    wrote: Option<u32>,
 }
 
 impl<'a> Depends<'a> {
+    /// The most keys under a prefix a listing's level is looked up in.
+    const SCAN: usize = 1024;
+
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
         r.kind.starts_with("ListObjects").then(|| {
             let prefix = r
@@ -519,42 +530,77 @@ impl<'a> Depends<'a> {
         })
     }
 
-    fn on(&self, r: &'a Record) -> bool {
-        let write = !is_read(r);
+    /// The level of the request `r` waits for, the highest: none when it
+    /// waits for none.
+    fn on(&self, r: &'a Record) -> Option<u32> {
         if let Some((b, prefix)) = Self::listing(r) {
-            // the first key written at or after the prefix: under it, or none is
-            return self
+            // the keys written under the prefix
+            let mut under = self
                 .written
                 .range((b, prefix)..)
-                .next()
-                .is_some_and(|(wb, k)| *wb == b && k.starts_with(prefix));
+                .take_while(|((wb, k), _)| *wb == b && k.starts_with(prefix));
+            let first: Vec<u32> = under.by_ref().take(Self::SCAN).map(|(_, l)| *l).collect();
+            return match under.next() {
+                Some(_) => self.wrote,
+                None => first.into_iter().max(),
+            };
         }
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
-            return false;
+            return None;
         };
-        let touched = self.keys.get(&(b, k)).is_some_and(|w| *w || write);
+        let write = !is_read(r);
+        let key = self
+            .keys
+            .get(&(b, k))
+            .and_then(|&(w, any)| if write { Some(any) } else { w });
         // each of the key's prefixes, as a listing names it
-        let under_listed = write
-            && !self.listed.is_empty()
-            && (0..=k.len())
-                .filter(|&i| k.is_char_boundary(i))
-                .any(|i| self.listed.contains(&(b, &k[..i])));
-        touched || under_listed
+        let listed = (write && !self.listed.is_empty())
+            .then(|| {
+                (0..=k.len())
+                    .filter(|&i| k.is_char_boundary(i))
+                    .filter_map(|i| self.listed.get(&(b, &k[..i])).copied())
+                    .max()
+            })
+            .flatten();
+        key.max(listed)
     }
 
-    fn add(&mut self, r: &'a Record) {
+    /// Adds `r`, and says its level.
+    fn add(&mut self, r: &'a Record) -> u32 {
+        let level = self.on(r).map_or(0, |l| l + 1);
         if let Some(listed) = Self::listing(r) {
-            self.listed.insert(listed);
-            return;
+            let at = self.listed.entry(listed).or_default();
+            *at = (*at).max(level);
+            return level;
         }
         if let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) {
             let write = !is_read(r);
-            *self.keys.entry((b, k)).or_default() |= write;
+            let at = self.keys.entry((b, k)).or_insert((None, 0));
+            at.1 = at.1.max(level);
             if write {
-                self.written.insert((b, k));
+                at.0 = Some(level);
+                self.written.insert((b, k), level);
+                self.wrote = self.wrote.max(Some(level));
             }
         }
+        level
     }
+}
+
+/// What requests take sent at once, each level after the one before
+/// ([`Chain::levels`]): of each level, the waves of [`CHAIN_CONCURRENCY`],
+/// each as long as its longest. `of` is each request's level and time.
+pub fn at_once_ms(mut of: Vec<(u32, f64)>) -> f64 {
+    of.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+    of.chunk_by(|a, b| a.0 == b.0)
+        .map(|level| {
+            level
+                .iter()
+                .step_by(CHAIN_CONCURRENCY)
+                .map(|(_, ms)| ms)
+                .sum::<f64>()
+        })
+        .sum()
 }
 
 /// The chains of `records`: see [`Chain`].
@@ -567,38 +613,29 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
     let ms = |us: i64| (us - t0) as f64 / 1000.0;
     let mut out: Vec<Chain> = Vec::new();
     let mut cur: Vec<&Record> = Vec::new();
-    let mut waits: Vec<u64> = Vec::new();
+    let mut levels: Vec<u32> = Vec::new();
     let mut end = i64::MIN;
-    let close = |cur: &mut Vec<&Record>, waits: &mut Vec<u64>, out: &mut Vec<Chain>| {
+    let close = |cur: &mut Vec<&Record>, levels: &mut Vec<u32>, out: &mut Vec<Chain>| {
         if cur.len() >= CHAIN_MIN {
             let (a, b) = (
                 start_us(cur[0]),
                 cur.iter().map(|r| end_us(r)).max().unwrap_or(0),
             );
-            let lat = |r: &&Record| end_us(r) - start_us(r);
-            let held: std::collections::HashSet<u64> = waits.iter().copied().collect();
-            // the same requests at once: those that need one before them one
-            // after another, the waves of the longest of the others beside
-            let mut free: Vec<i64> = cur
-                .iter()
-                .filter(|r| !held.contains(&r.id))
-                .map(lat)
-                .collect();
-            free.sort_unstable_by(|x, y| y.cmp(x));
-            let kept: i64 = cur.iter().filter(|r| held.contains(&r.id)).map(lat).sum();
-            let at_once: i64 = kept + free.iter().step_by(CHAIN_CONCURRENCY).sum::<i64>();
+            let lat = |r: &&Record| (end_us(r) - start_us(r)) as f64 / 1000.0;
+            // the same requests at once: each level after the one before
+            let at_once = at_once_ms(levels.iter().copied().zip(cur.iter().map(lat)).collect());
             out.push(Chain {
                 start_ms: ms(a),
                 end_ms: ms(b),
                 requests: cur.len(),
                 ids: cur.iter().map(|r| r.id).collect(),
-                at_once_ms: at_once as f64 / 1000.0,
-                waiting_ms: cur.iter().map(lat).sum::<i64>() as f64 / 1000.0,
-                waits: std::mem::take(waits),
+                at_once_ms: at_once,
+                waiting_ms: cur.iter().map(lat).sum::<f64>(),
+                levels: std::mem::take(levels),
             });
         }
         cur.clear();
-        waits.clear();
+        levels.clear();
     };
     let mut deps = Depends::default();
     for r in sorted {
@@ -606,7 +643,7 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
         if !cur.is_empty() && (s < end || s - end > CHAIN_GAP_US) {
             // an overlap (requests at once already) or the program's own pause
             let overlapped = s < end;
-            close(&mut cur, &mut waits, &mut out);
+            close(&mut cur, &mut levels, &mut out);
             if overlapped {
                 end = end.max(end_us(r));
                 continue;
@@ -620,15 +657,12 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
             deps = Depends::default();
         }
         // it needs what one before it did (reads what it wrote, lists where
-        // it wrote): it stays after that one, the chain goes on
-        if deps.on(r) {
-            waits.push(r.id);
-        }
-        deps.add(r);
+        // it wrote): it goes after that one
+        levels.push(deps.add(r));
         cur.push(r);
         end = end_us(r);
     }
-    close(&mut cur, &mut waits, &mut out);
+    close(&mut cur, &mut levels, &mut out);
     out.sort_by(|a, b| {
         (b.end_ms - b.start_ms - b.at_once_ms).total_cmp(&(a.end_ms - a.start_ms - a.at_once_ms))
     });
@@ -1776,9 +1810,10 @@ pub struct RunChange {
     /// The objects each run asked of (each key, each prefix listed, once):
     /// what its workload is judged by ([`workload_changed`]).
     pub objects: (usize, usize),
-    /// The writes the first run's findings fixed or less named as saved
-    /// (small files written as fewer, deletes one at a time): objects a
-    /// fix does away with, not work left undone.
+    /// The objects the first run's findings fixed or less did away with
+    /// ([`crate::fixloop::freed`]: small files written as fewer, small
+    /// reads packed into a shard, prefixes listed as one listing), not
+    /// work left undone.
     #[serde(skip)]
     pub freed: usize,
     pub wall_ms: (f64, f64),
@@ -1843,7 +1878,7 @@ pub struct RunChange {
 /// A workload that changed between two runs that asked of `(a, b)`
 /// objects ([`RunChange::objects`]), said `objects 120 → 402, 3.4×`: grown
 /// by half or more, or shrunk by a third or more below what a's findings
-/// fixed or less leave (`saved`, the writes they named as saved:
+/// fixed or less leave (`saved`, the objects they did away with:
 /// 120 small files written as 3 is a fix, not less work), by ten objects at
 /// least either way. Objects, not requests: the same files read in fewer
 /// requests is a fix whether or not a finding said so. None when it did
@@ -2020,14 +2055,96 @@ pub fn by_rules(id: &str) -> String {
     format!("{kind}|{}", about.join("|"))
 }
 
+/// Whether what a finding is about holds what changes between runs
+/// ([`stable`] changes it): then another of the run's could read the same.
+pub fn varies(o: &Observation) -> bool {
+    identity_as(o, true) != identity_as(o, false)
+}
+
+/// The objects of `records` (a key, a listing's prefix, or a folder as
+/// deep as what the finding is about) that read the same as one of
+/// `findings` once what changes between runs is taken out ([`stable`]),
+/// and are not it: each as `(identity, literal identity)` of a finding of
+/// that kind about it. One pass, each name cut where it first differs from
+/// what a finding is about made stable.
+pub fn alike(findings: &[Observation], records: &[Record]) -> Vec<(String, String)> {
+    // each finding about one thing that varies: its kind, what it is
+    // about as it was, and that made stable, by part
+    let wanted: Vec<(String, String, Vec<String>)> = findings
+        .iter()
+        .filter(|o| varies(o))
+        .filter_map(|o| {
+            let literal = identity_as(o, true);
+            let (kind, about) = literal.split_once('|')?;
+            (!about.contains('|')).then(|| {
+                let parts = stable(about).split('/').map(String::from).collect();
+                (kind.to_string(), about.to_string(), parts)
+            })
+        })
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut name = String::new();
+    for r in records {
+        name.clear();
+        name.push_str(r.bucket.as_deref().unwrap_or(""));
+        name.push('/');
+        match r.key.as_deref() {
+            Some(k) => name.push_str(k),
+            None => name.push_str(
+                r.query()
+                    .iter()
+                    .find(|(k, _)| k == "prefix")
+                    .map_or("", |(_, v)| v.as_ref()),
+            ),
+        }
+        for (kind, about, parts) in &wanted {
+            // as deep as what the finding is about: a folder of the name
+            let cut = if about.ends_with('/') {
+                match name.match_indices('/').nth(parts.len() - 2) {
+                    Some((i, _)) => &name[..=i],
+                    None => continue,
+                }
+            } else {
+                name.as_str()
+            };
+            if cut == about {
+                continue;
+            }
+            let mut theirs = cut.split('/');
+            let same = parts.iter().all(|p| {
+                theirs.next().is_some_and(|t| {
+                    if p.contains('{') {
+                        stable(t) == *p
+                    } else {
+                        t == p
+                    }
+                })
+            }) && theirs.next().is_none();
+            if same {
+                found.insert((
+                    format!("{kind}|{}", parts.join("/")),
+                    format!("{kind}|{cut}"),
+                ));
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
 /// Names each of a run's findings ([`Observation::identity`]) by what it is
-/// about made [`stable`]; but where two of them read the same so, each keeps
-/// as they were the parts of what it is about that tell them apart, the
-/// rest made stable: `t00/` and `t01/` listed again and again are two
-/// findings (`runs/run-{n}/t00/`, whatever the run's own folder), not one.
-/// Two that read the same even so are told apart by rank (`#2`). A run's
-/// findings are named so once, where they are made, and never again.
-pub fn name_findings(findings: &mut [Observation]) {
+/// about made [`stable`]; but where two of them read the same so, or one
+/// and one of `among` (the run's other objects read alike, [`alike`]: as
+/// `(identity, literal identity)`), each keeps as they were the parts of
+/// what it is about that tell them apart, the rest made stable: `t00/` and
+/// `t01/` listed again and again are two findings (`runs/run-{n}/t00/`,
+/// whatever the run's own folder), not one, though `t01/` is listed under
+/// its threshold. Two that read the same even so are told apart by rank
+/// (`#2`). A run's findings are named so once, where they are made, and
+/// never again.
+pub fn name_findings(findings: &mut [Observation], among: &[(String, String)]) {
     use std::collections::HashSet;
     let mut by: HashMap<String, HashSet<String>> = HashMap::new();
     for o in findings.iter() {
@@ -2035,8 +2152,13 @@ pub fn name_findings(findings: &mut [Observation]) {
             .or_default()
             .insert(identity_as(o, true));
     }
+    for (id, literal) in among {
+        if let Some(g) = by.get_mut(id) {
+            g.insert(literal.clone());
+        }
+    }
     // of each group read alike, the parts all its members share: once, not
-    // once a member (a run of a million has tens of thousands of traces)
+    // once a member
     let shared: HashMap<&str, Option<Vec<bool>>> = by
         .iter()
         .filter(|(_, g)| g.len() > 1)
@@ -2395,7 +2517,7 @@ impl Run {
             .asks
             .values()
             .flatten()
-            .map(|(a, _, _)| a.as_str())
+            .map(|ask| ask.asked.as_str())
             .collect();
         self.counts = crate::fixloop::count(records, &wanted);
         self.measured = true;
@@ -2438,20 +2560,7 @@ impl Run {
         // tenth of an outage's memory at its peak)
         let mut objects: Vec<u64> = Vec::with_capacity(records.len());
         for r in records {
-            // (a listing by its prefix: a key it is not)
-            let prefix = match r.key.as_deref() {
-                Some(_) => "",
-                None => r
-                    .query()
-                    .iter()
-                    .find(|(k, _)| k == "prefix")
-                    .map_or("", |(_, v)| v.as_ref()),
-            };
-            objects.push({
-                use std::hash::{BuildHasher, BuildHasherDefault};
-                BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                    .hash_one((r.bucket.as_deref().unwrap_or(""), r.key.as_deref(), prefix))
-            });
+            objects.push(object_of(r));
             // the folder named in a buffer: a string is kept once per folder
             name.clear();
             let b = r.bucket.as_deref().unwrap_or("");
@@ -2477,7 +2586,7 @@ impl Run {
         let mut traces = traces;
         name_traces(&mut traces, &observations);
         let asks = if asked {
-            crate::fixloop::asks_of(records, &observations)
+            crate::fixloop::asks_of(records, &observations, &objects)
         } else {
             crate::fixloop::Asks::new()
         };
@@ -2535,6 +2644,25 @@ impl Run {
     }
 }
 
+/// A request's object, as a hash of its name: its bucket and key, a
+/// listing's bucket and prefix (a key it is not).
+pub fn object_of(r: &Record) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    let prefix = match r.key.as_deref() {
+        Some(_) => "",
+        None => r
+            .query()
+            .iter()
+            .find(|(k, _)| k == "prefix")
+            .map_or("", |(_, v)| v.as_ref()),
+    };
+    BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one((
+        r.bucket.as_deref().unwrap_or(""),
+        r.key.as_deref(),
+        prefix,
+    ))
+}
+
 pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     let keys: BTreeSet<(String, bool)> = a
         .profile
@@ -2574,16 +2702,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     });
     let findings = crate::fixloop::changes(a, b);
     use crate::fixloop::{State, said};
-    // the writes the fixed findings did away with (`PutObject b/k?`), each
-    // an object
-    let freed = findings
-        .iter()
-        .filter(|f| matches!(f.state, State::Fixed | State::Less))
-        .filter_map(|f| a.asks.get(&f.identity))
-        .flatten()
-        .filter(|(asked, _, _)| !["Get", "Head", "List"].iter().any(|r| asked.starts_with(r)))
-        .map(|(_, n, _)| n)
-        .sum();
+    let freed = crate::fixloop::freed(&findings, a, b);
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
@@ -2749,27 +2868,44 @@ mod tests {
             expected: None,
         };
         let mut two = vec![listed("b/t00/"), listed("b/t01/")];
-        name_findings(&mut two);
+        name_findings(&mut two, &[]);
         assert_eq!(two[0].identity, "obs.listed|b/t00/");
         assert_eq!(two[1].identity, "obs.listed|b/t01/");
         // what tells them apart is kept, a run's own folder is not
         let mut runs = vec![listed("b/runs/run-17/t00/"), listed("b/runs/run-17/t01/")];
-        name_findings(&mut runs);
+        name_findings(&mut runs, &[]);
         assert_eq!(runs[0].identity, "obs.listed|b/runs/run-{n}/t00/");
         assert_eq!(runs[1].identity, "obs.listed|b/runs/run-{n}/t01/");
-        // one over its threshold, the other under it: the finding is named
-        // once, as it is made, and its trace takes its name
-        let mut alone = vec![listed("b/t00/")];
-        name_findings(&mut alone);
-        assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
+        // one over its threshold, the other only listed: told apart among
+        // the run's objects, whatever the other's count
+        let list = |id: u64, prefix: &str| {
+            let mut r = rec(id, 0, "ListObjectsV2", 200, 1.0);
+            r.bucket = Some("b".into());
+            r.lists_mut().query = vec![("prefix".into(), prefix.to_string().into())];
+            r
+        };
+        let mut one = vec![listed("b/t00/")];
+        let others = alike(&one, &[list(1, "t00/"), list(2, "t01/"), list(3, "x/")]);
+        assert_eq!(
+            others,
+            [("obs.listed|b/t{n}/".into(), "obs.listed|b/t01/".into())]
+        );
+        name_findings(&mut one, &others);
+        assert_eq!(one[0].identity, "obs.listed|b/t00/");
         let mut traces = vec![listed("b/t00/"), listed("b/t01/")];
-        name_findings(&mut traces);
-        name_traces(&mut traces, &alone);
-        assert_eq!(traces[0].identity, "obs.listed|b/t{n}/");
+        name_findings(&mut traces, &[]);
+        name_traces(&mut traces, &one);
+        assert_eq!(traces[0].identity, "obs.listed|b/t00/");
         assert_eq!(traces[1].identity, "obs.listed|b/t01/");
+        // alone in the run, what changes between runs is taken out
+        let mut alone = vec![listed("b/t00/")];
+        let none = alike(&alone, &[list(1, "t00/")]);
+        assert!(none.is_empty());
+        name_findings(&mut alone, &none);
+        assert_eq!(alone[0].identity, "obs.listed|b/t{n}/");
         // the same key twice is told apart by rank
         let mut same = vec![listed("b/t00/"), listed("b/t00/")];
-        name_findings(&mut same);
+        name_findings(&mut same, &[]);
         assert_eq!(same[1].identity, "obs.listed|b/t{n}/#2");
     }
 
@@ -3489,7 +3625,7 @@ mod injected {
         assert_eq!(chains(&reads).iter().map(|c| c.requests).sum::<usize>(), 12);
         // each key written and then read back: the read needs its write, so
         // it stays after it (sent at once it would read another thing); the
-        // writes go at once
+        // writes go at once, then the reads
         let back: Vec<Record> = (0..12u64)
             .flat_map(|i| {
                 let k = format!("k{i}");
@@ -3501,9 +3637,9 @@ mod injected {
             .collect();
         let c = chains(&back);
         assert_eq!(c.len(), 1, "{c:?}");
-        assert_eq!(c[0].waits, (1..=12).map(|i| 2 * i).collect::<Vec<u64>>());
-        // the reads one after another (24 ms), the twelve writes in two waves (4 ms)
-        assert!((c[0].at_once_ms - 28.0).abs() < 1e-9, "{c:?}");
+        assert_eq!(c[0].levels, [0, 1].repeat(12));
+        // the twelve writes in two waves (4 ms), then the reads in two (4 ms)
+        assert!((c[0].at_once_ms - 8.0).abs() < 1e-9, "{c:?}");
         // a listing of where the program wrote needs those writes too
         let mut listed: Vec<Record> = (1..=11)
             .map(|i| at(i, "PutObject", &format!("out/{i}")))
@@ -3521,7 +3657,8 @@ mod injected {
         l.lists_mut().query = vec![("prefix".into(), "out/".into())];
         listed.push(l);
         let c = chains(&listed);
-        assert_eq!((c[0].requests, c[0].waits.clone()), (12, vec![12]));
+        assert_eq!(c[0].requests, 12);
+        assert_eq!(c[0].levels, [vec![0; 11], vec![1]].concat());
     }
 }
 

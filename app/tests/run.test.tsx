@@ -89,21 +89,38 @@ test("a program that sends sonde nothing: how each SDK is pointed at it", async 
   expect(app.shows("id:run-no-requests")).toBe(true);
 });
 
-test("record without a program: a local endpoint to point an application at", async () => {
+test("record without a program is a run like any other: the newest, live, at work until its Stop, then kept", async () => {
   const app = await demo();
-  // what it may do: the command bar's ⋯, said at the field's start once it is not the usual
+  // the command bar's ⋯ is where it runs, not what it may do (each run's project says that)
   await app.press("id:run-options");
-  await app.chooseMenuItem("Block deletes");
+  expect((app.menu() ?? []).map((m) => m.label)).not.toContain("Block deletes");
+  await app.closeMenu();
   await app.press("id:record");
   await app.waitFor("id:record-form");
   await app.press("id:record-start");
+  // the newest run, open as it goes: where a program's terminal would stand, what to point an application at
+  await app.waitFor("id:run-pane", { timeout: 10000 });
   await app.waitFor("id:recording", { timeout: 10000 });
+  expect(app.shows("id:run-0 >> label:Live")).toBe(true);
   expect(app.shows("text:/Recording on http:\\/\\/127\\.0\\.0\\.1:/")).toBe(true);
   expect(app.shows("text:/export AWS_ENDPOINT_URL=http/")).toBe(true);
   // a secret made for this recording, not a shared one
   expect(app.shows("text:/AWS_SECRET_ACCESS_KEY=[0-9a-f]{64}/")).toBe(true);
-  await app.press("id:record-stop");
-  await app.waitFor("id:record");
+  // at work, as a program is: the toolbar's pill, and one thing at a time
+  expect(app.shows("id:running-pill")).toBe(true);
+  await app.press("id:nav-runs");
+  await app.waitFor("id:run-command");
+  await app.type("id:run-command", "true");
+  await runCommand(app);
+  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
+  // its Stop is the run's own: the run stays, kept and no longer live
+  await app.press("id:running-pill");
+  await app.waitFor("id:run-stop");
+  await app.press("id:run-stop");
+  await app.waitFor("id:running-pill", { state: "gone", timeout: 10000 });
+  await app.waitUntil(() => !app.shows("id:run-0 >> label:Live"), { timeout: 5000 });
+  expect(app.shows("id:run-pane")).toBe(true);
+  expect(app.shows("id:recording")).toBe(false);
 });
 
 test("an example run reads as operations, each opening on its requests", async () => {
@@ -135,7 +152,7 @@ test("an example run reads as operations, each opening on its requests", async (
   const example = api.runs.list().find((s) => (s.command ?? "").includes("gen-slatedb"))!;
   await app.openWithUrl(`sonde://run/${encodeURIComponent(example.path.split(/[\\/]/).pop()!)}?range=0-200`);
   await app.waitFor("id:time-pane", { timeout: 10000 });
-  await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
+  await app.waitFor("text:/ · in \\+.* – \\+200\u00a0ms$/", { timeout: 5000 });
   await app.press("id:run-pane-mode-operations");
   await app.waitFor("id:operations");
   await app.waitFor("text:/^\\+.* – \\+.* · \\d+ of 34 operations$/", { timeout: 5000 });
@@ -159,6 +176,8 @@ test("a run as a timeline, replayed from the app, and the answers compared", asy
   // and, said before it runs, the probe of what it relies on (a write on a condition)
   expect(app.shows("text:/^Then 1 probe of what it relies on/")).toBe(true);
   await app.press("id:replay-run");
+  // one way out: while it runs, its Cancel cancels nothing, so it is dimmed (a replay this small may be over already)
+  expect(!app.shows("id:replay-cancel") || !app.enabled("id:replay-cancel")).toBe(true);
   await app.waitFor("id:compare", { timeout: 60000 });
   await app.waitFor("text:2 requests compared: 2 the same");
   // what it relies on, and how that store answered; each store's request cost
@@ -233,7 +252,7 @@ test("a run's time: where it went, and two runs before and after", async () => {
   expect(app.shows("text:/^median \\d/")).toBe(true);
   expect(app.shows("text:8 at once")).toBe(true);
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
-  expect(app.shows("label:/^Requests: 172, in 467 ms$/")).toBe(true);
+  expect(app.shows("label:/^Requests: 172, in 467\u00a0ms$/")).toBe(true);
   // what found nothing is no failure, and is said beside them
   expect(app.shows("label:/^Errors: 0%, 67% not found/")).toBe(true);
   // no tiles: no chevron, no line over the run in the header
@@ -583,7 +602,8 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   expect(app.shows("id:operations")).toBe(false);
   // the Time pane's table, one component: its columns, the cost's unit once in its title
   expect(app.shows("text:Kind of request")).toBe(true);
-  expect(app.shows("text:/^Cost \\(USD/")).toBe(true);
+  // (once the pane has its width: narrower, a table drops its last columns first)
+  await app.waitFor("text:/^Cost \\(USD/", { timeout: 5000 });
   // a kind pressed is its operations: select, inspect, act
   await app.press("id:split-table >> text:PutObject");
   await app.waitFor("id:operations");
@@ -757,3 +777,79 @@ test("History in Chinese: the check's new warnings and where the runs went past 
     await language(app, "en");
   }
 }, 120000);
+
+test("a trial is at work as a program is: the pill, one thing at a time, and Stop in the palette", async () => {
+  const app = await demo();
+  // a program that takes a while: its trial takes longer
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; sleep 3");
+  await runCommand(app);
+  await runView(app);
+  // (ended: its header settles on Run again)
+  await app.waitFor("id:run-again", { timeout: 10000 });
+  await app.wait(500);
+  await runAction(app, "Try under faults…");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
+  await app.press("id:trial-start");
+  await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
+  // the toolbar says something is at work, and the run cannot be run again meanwhile (said, not refused in English)
+  await app.waitFor("id:running-pill", { timeout: 5000 });
+  await app.press("id:run-again");
+  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
+  expect(app.shows("text:/stop it first/")).toBe(false);
+  // stopped from the palette, as a program is
+  await app.keyboard.press("mod+k");
+  await app.waitFor("id:palette-command");
+  await app.type("id:palette-command", "stop");
+  await app.press("id:palette-dialog >> text:Stop");
+  await app.waitFor("id:running-pill", { state: "gone", timeout: 15000 });
+}, 60000);
+
+test("a run that ends while another is shown says so in a toast; the one shown says it itself", async () => {
+  const app = await demo();
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null";
+  // another run to look at meanwhile
+  await importRun(app, "looked-at.sonde", runText(5, "python looked_at.py", "2026-01-05T09:00:00Z"));
+  await place(app, "run");
+  await app.type("id:run-command", `sleep 2; ${get}`);
+  await runCommand(app);
+  await app.waitFor("id:run-stop", { timeout: 10000 });
+  // another run, looked at while this one goes: its end is told
+  await app.press("id:run-1");
+  await app.waitFor("id:run-stop", { state: "gone", timeout: 5000 });
+  await app.waitFor("text:/exited with 0$/", { timeout: 20000 });
+});
+
+test("a refused start keeps the run before as it was, and a refusal for something at work is said in the app's words", async () => {
+  const app = await demo();
+  const { lastRun, start } = await import("../src/run");
+  const { errorTitle } = await import("../src/store");
+  const before = { exit: 0, path: "/nowhere/before.sonde", command: "true", killed: false, endpoint: "demo" };
+  lastRun.set(before);
+  // an endpoint sonde does not know: the start is refused, and nothing it said before is unsaid
+  start("true", "no-such-endpoint");
+  await app.wait(1500);
+  expect(lastRun()).toEqual(before);
+  // what the bridge says while something is at work
+  expect(errorTitle({ kind: "busy", message: "a program is running: stop it first" })).toBe("A program is running: stop it to run another");
+  lastRun.set(null);
+});
+
+test("closing the window while a program runs asks first (Windows, Linux)", async () => {
+  const app = await open("../App.tsx", { ...desktop, platform: "linux" });
+  await place(app, "endpoints");
+  await openDemo(app);
+  await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
+  await place(app, "run");
+  await app.type("id:run-command", "sleep 30");
+  await runCommand(app);
+  await app.waitFor("id:run-stop", { timeout: 10000 });
+  const asked: string[] = [];
+  app.onDialog((d) => (asked.push(d.title ?? ""), "Cancel"));
+  await app.window("main").pressClose();
+  await app.waitUntil(() => asked.length > 0, { timeout: 3000 });
+  expect(asked[0]).toBe("Quit while sleep is at work?");
+  // kept: the program goes on
+  expect(app.shows("id:run-stop")).toBe(true);
+  await app.press("id:run-stop");
+  await app.waitFor("id:run-stop", { state: "gone", timeout: 10000 });
+});

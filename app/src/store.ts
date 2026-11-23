@@ -52,6 +52,8 @@ export const activityTab = signal<ActivityTab>("jobs");
 export const area = () => areaOf(section());
 /** The run the Runs place shows (set by the palette, a notification, a link, …). */
 export const openRun = signal<string | null>(null);
+/** The run the main window's Runs place has on screen, while it is there: one that ends there needs no toast. */
+export const shownRun = signal<string | null>(null);
 /** A command of what is on screen (a run's Try under faults…, a Buckets section's Scan again): its place shows
  * it (a button, or behind ⋯), the palette lists it while it is shown, and its shortcut runs it. `run` is given
  * the button a menu would open under, where there is one. */
@@ -151,14 +153,18 @@ export function refreshSettings() {
   });
 }
 
+/** What went wrong, in a line: what sonde says, but that one thing is at work already in the app's own words. */
+export const errorTitle = (err: SondeError): string => (err.kind === "busy" ? t("run.busy") : err.message);
+
 /** Shows `e` as an error toast: what went wrong, then the store's own word for it (its code and
  * status) and the request id to quote; returns it. */
 export function report(e: unknown): SondeError {
   const err = asError(e);
-  if (err.kind !== "cancelled") {
+  if (err.kind === "busy") toast({ id: "error", kind: "warning", title: errorTitle(err) });
+  else if (err.kind !== "cancelled") {
     const code = [err.code, err.status ? `${err.status}` : null].filter(Boolean).join(" ");
     const said = [code && !err.message.includes(err.code ?? code) ? code : null, err.requestId ? `${t("common.requestId")}: ${err.requestId}` : null].filter(Boolean).join(" · ");
-    toast({ id: "error", kind: "error", title: err.message, description: said || undefined });
+    toast({ id: "error", kind: "error", title: errorTitle(err), description: said || undefined });
   }
   return err;
 }

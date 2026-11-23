@@ -689,8 +689,8 @@ pub fn rank_by_saving(findings: &mut [Observation], r: &Reckoning) {
     });
 }
 
-/// Time saved as time of the run: `≈1.9 s of 6.1 s (31%)`; none under a
-/// millisecond.
+/// Time saved as time of the run: `≈1.9 s of 6.1 s (31%)`, `(<1%)` under
+/// half a percent; none under a millisecond.
 fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
     (ms >= 0.5 && wall_ms > 0.0).then(|| {
         crate::phrase::p(
@@ -698,12 +698,14 @@ fn time_saved(ms: f64, wall_ms: f64) -> Option<crate::phrase::Phrase> {
             &[
                 ("time", sonde_fmt::duration(ms)),
                 ("wall", sonde_fmt::duration(wall_ms)),
-                (
-                    "pct",
-                    ((ms * 100.0 / wall_ms).round() as usize)
-                        .clamp(1, 100)
-                        .to_string(),
-                ),
+                ("pct", {
+                    let pct = ms * 100.0 / wall_ms;
+                    if pct < 0.5 {
+                        "<1".to_string()
+                    } else {
+                        (pct.round() as usize).min(100).to_string()
+                    }
+                }),
             ],
         )
     })
@@ -910,8 +912,20 @@ pub fn diagnose(
             };
             let mut ids: Vec<&str> = members.iter().map(|o| o.identity.as_str()).collect();
             ids.sort_unstable();
-            // its requests one after another: joined, or its headline
+            // its requests one after another: joined, or its headline; of
+            // them, those the diagnosis's other findings leave
             let chained = serial.or((key(members[0]) == "obs.serial").then_some(g[0]));
+            let left = chained.map_or(0, |s| {
+                let gone: HashSet<u64> = members
+                    .iter()
+                    .flat_map(|o| o.saved_ids.iter().copied())
+                    .collect();
+                findings[s]
+                    .timed_ids
+                    .iter()
+                    .filter(|id| !gone.contains(id))
+                    .count()
+            });
             let mut d = Diagnosis {
                 id: diagnosis_id(&ids),
                 findings: Vec::new(),
@@ -925,16 +939,16 @@ pub fn diagnose(
                 saving_text: String::new(),
                 rest: None,
                 at_once: chained.map(|s| AtOnce {
-                    requests: findings[s].impact,
+                    requests: left,
                     concurrency: crate::profile::CHAIN_CONCURRENCY,
                     saves_ms: findings[s].saves_ms,
                 }),
             };
-            d.rest = serial.map(|s| {
+            d.rest = serial.map(|_| {
                 crate::phrase::p(
                     "obs.serial.rest",
                     &[
-                        ("n", findings[s].impact.to_string()),
+                        ("n", left.to_string()),
                         ("k", crate::profile::CHAIN_CONCURRENCY.to_string()),
                     ],
                 )
@@ -1302,6 +1316,14 @@ mod tests {
     use crate::episode::{episodes, observations};
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
+
+    #[test]
+    fn a_saving_under_half_a_percent_of_the_run_is_under_one_percent() {
+        let pct = |ms: f64| time_saved(ms, 10_000.0).unwrap().args["pct"].to_string();
+        assert_eq!(pct(4.0), "<1");
+        assert_eq!(pct(50.0), "1");
+        assert_eq!(pct(10_000.0), "100");
+    }
 
     #[test]
     fn the_fix_shown_is_the_detected_sdks_and_a_setting_for_any() {

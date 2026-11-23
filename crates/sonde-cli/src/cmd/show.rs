@@ -315,10 +315,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 crate::output::Stdout,
             ));
             let mut w = sonde_analysis::share::JsonOut::new(out, true);
-            // each part lean ([`lean`]) and rounded ([`rounded`])
+            // each part lean ([`lean`]) and rounded ([`crate::output::rounded`])
             let field = |w: &mut sonde_analysis::share::JsonOut<_>, key: &str, mut v: Value| {
                 lean(&mut v);
-                rounded(&mut v, key);
+                crate::output::rounded(&mut v, key);
                 w.field(key, &v)
             };
             w.begin_object()?;
@@ -526,27 +526,6 @@ fn lean(v: &mut serde_json::Value) {
             m.values_mut().for_each(lean);
         }
         serde_json::Value::Array(a) => a.iter_mut().for_each(lean),
-        _ => {}
-    }
-}
-
-/// `v`'s fractions rounded: a time (its key ends `Ms`, or is `ms`) to a
-/// tenth of a millisecond, any other figure to 6 significant digits.
-fn rounded(v: &mut serde_json::Value, key: &str) {
-    match v {
-        serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| rounded(x, k)),
-        serde_json::Value::Array(a) => a.iter_mut().for_each(|x| rounded(x, key)),
-        serde_json::Value::Number(n) if n.is_f64() => {
-            let f = n.as_f64().unwrap_or_default();
-            let r = if key.ends_with("Ms") || key == "ms" {
-                (f * 10.0).round() / 10.0
-            } else {
-                format!("{f:.5e}").parse().unwrap_or(f)
-            };
-            if let Some(r) = serde_json::Number::from_f64(r) {
-                *n = r;
-            }
-        }
         _ => {}
     }
 }

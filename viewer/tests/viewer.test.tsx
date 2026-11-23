@@ -8,7 +8,7 @@ test("a shared run reads as in the app: operations and a request", async () => {
   await app.waitFor("id:viewer");
   // the run's figures as the app shows them: one line, each figure's detail where the pointer rests
   expect(app.shows("id:run-summary")).toBe(true);
-  expect(app.shows("label:/^Requests: 49, in 171 ms$/")).toBe(true);
+  expect(app.shows("label:/^Requests: 49, in 171\u00a0ms$/")).toBe(true);
   await app.press("text:/^commit 2/");
   await app.waitFor("id:operation-detail");
   // the note most of its writes share: in the operation's inspector, not under the table
@@ -27,7 +27,7 @@ test("a shared page has the app's Time pane: its charts, titles and sentences", 
   await app.waitFor("id:time-pane");
   await app.waitFor("id:chart-timeline");
   expect(app.shows("text:When were requests sent?")).toBe(true);
-  expect(app.shows("text:/^49 requests, the most at \\+\\d+ ms: \\d+ in [\\d.]+ ms$/")).toBe(true);
+  expect(app.shows("text:/^49 requests, the most at \\+\\d+\u00a0ms: \\d+ in [\\d.]+\u00a0ms$/")).toBe(true);
   // the board builds a chart as it comes into view
   for (let i = 0; i < 20 && !app.shows("id:latency-heat-chart"); i++) await app.scroll("id:time-pane", 300);
   await app.waitFor("id:latency-heat-chart");

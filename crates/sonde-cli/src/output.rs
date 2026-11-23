@@ -169,6 +169,28 @@ pub fn kv(rows: &[(String, String)]) -> String {
         .join("\n")
 }
 
+/// `v`'s fractions rounded, as `show` and `check` write them: a time (its
+/// key ends `Ms`, or is `ms`) to a tenth of a millisecond, any other figure
+/// to 6 significant digits.
+pub fn rounded(v: &mut serde_json::Value, key: &str) {
+    match v {
+        serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| rounded(x, k)),
+        serde_json::Value::Array(a) => a.iter_mut().for_each(|x| rounded(x, key)),
+        serde_json::Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap_or_default();
+            let r = if key.ends_with("Ms") || key == "ms" {
+                (f * 10.0).round() / 10.0
+            } else {
+                format!("{f:.5e}").parse().unwrap_or(f)
+            };
+            if let Some(r) = serde_json::Number::from_f64(r) {
+                *n = r;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// JSON as every command writes it: pretty, and what serde_json leaves raw
 /// in a string that a terminal would act on (DEL, C1, the marks that turn
 /// text's direction) as `\uXXXX`. The same text is then valid JSON and

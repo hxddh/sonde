@@ -1,7 +1,7 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "30.0.0",
+  "version": "31.0.0",
   "build": 29,
   "nsh": ">=0.6, <0.7",
   "icon": {
@@ -35,9 +35,6 @@
       "control": "0 1px 2px rgb(0 0 0 / 0.10)",
       "popup": "0 0 0 0.5px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.10), 0 1px 3px rgb(0 0 0 / 0.06)",
       "modal": "0 0 0 0.5px rgb(0 0 0 / 0.05), 0 16px 48px rgb(0 0 0 / 0.20), 0 2px 8px rgb(0 0 0 / 0.08)"
-    },
-    "fontFamily": {
-      "sc": "system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', 'Noto Sans SC', 'WenQuanYi Micro Hei'"
     }
   },
   "capabilities": {

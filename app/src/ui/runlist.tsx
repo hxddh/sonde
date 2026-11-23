@@ -46,6 +46,25 @@ export function tellApart(args: string[]): string[] {
   return args.map((a) => `… ${a.slice(common.length)}`);
 }
 
+/** How each run's row tells it from the others of its program: its arguments (`tellApart`), and whether it is a
+ * `twin`, the same command started in the same minute as another (its time is then said to the second, which the
+ * minute alone does not tell apart; the same command an hour or a day later reads apart by its minute). */
+export function toldApart(runs: { path: string; created: string; name: string; args: string }[]): Map<string, { args: string; twin: boolean }> {
+  const by = new Map<string, typeof runs>();
+  for (const r of runs) by.set(r.name, [...(by.get(r.name) ?? []), r]);
+  // a minute of the clock (every time zone's offset is whole minutes: the reader's minute too)
+  const minute = (iso: string) => Math.floor(new Date(iso).getTime() / 60000);
+  const out = new Map<string, { args: string; twin: boolean }>();
+  for (const group of by.values()) {
+    const shown = tellApart(group.map((x) => x.args));
+    const times = new Map<string, number>();
+    const at = (x: (typeof runs)[number]) => `${minute(x.created)} ${x.args}`;
+    for (const x of group) times.set(at(x), (times.get(at(x)) ?? 0) + 1);
+    group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: (times.get(at(x)) ?? 0) > 1 }));
+  }
+  return out;
+}
+
 /** What sent a run's requests, before where they went: its clients, the dominant first ("Lance, boto3"); "" for
  * none known. */
 const clientsOf = (s: RunInfo) => (s.clients ?? []).slice(0, 2).join(", ");
@@ -86,25 +105,11 @@ export function RunList(props: {
     if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
     return c === p ? "" : c;
   };
-  // runs of one program are told apart: by the argument that differs (said even where the command is the same to
-  // the letter, so three `curl`s read as what each fetched), and where it is the same, by the second they started
-  // (worked out once per list, each command read once: rows ask for it as they draw)
-  const told = computed(() => {
-    const by = new Map<string, { s: RunInfo; args: string }[]>();
-    for (const s of props.runs) {
-      const n = name(s);
-      by.set(n, [...(by.get(n) ?? []), { s, args: args(s) }]);
-    }
-    const out = new Map<string, { args: string; twin: boolean }>();
-    for (const group of by.values()) {
-      const shown = tellApart(group.map((x) => x.args));
-      const times = new Map<string, number>();
-      for (const x of group) times.set(x.args, (times.get(x.args) ?? 0) + 1);
-      group.forEach((x, i) => out.set(x.s.path, { args: shown[i], twin: (times.get(x.args) ?? 0) > 1 }));
-    }
-    return out;
-  });
-  // the days whose rows say seconds: every row of a day where one needs them (a command run twice in a minute),
+  // runs of one program are told apart by the argument that differs (said even where the command is the same to
+  // the letter, so three `curl`s read as what each fetched); worked out once per list, each command read once: rows
+  // ask for it as they draw
+  const told = computed(() => toldApart(props.runs.map((s) => ({ path: s.path, created: s.created, name: name(s), args: args(s) }))));
+  // the days whose rows say seconds: every row of a day where one needs them (a command run twice in one minute),
   // so a day's times read in one column, alike
   const toSecond = computed(() => new Set(props.runs.filter((s) => told().get(s.path)?.twin).map((s) => dayLabel(s.created))));
   // a run chosen from elsewhere (the palette, a file opened, a run just ended) and not wholly in view is brought
@@ -156,7 +161,7 @@ export function RunList(props: {
         <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
         {/* what tells it from its neighbours: its arguments (the same command again: its time too, to the second) */}
         <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
-        {/* the same command run again: its time to the second, and so every time of its day */}
+        {/* the same command run again in the same minute: its time to the second, and so every time of its day */}
         <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{toSecond().has(dayLabel(x().s.created)) ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>
       <View class="flex-row items-center gap-2">

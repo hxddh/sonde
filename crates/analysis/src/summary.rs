@@ -397,7 +397,7 @@ pub const COUNTED_VERSION: u32 = 4;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+10");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+11");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a run's counts: when the run is removed or replaced.
@@ -1071,7 +1071,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0x54e2_5313_20ce_c589;
+        const FIGURES: u64 = 0xf35e_05db_f9a7_ce3c;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

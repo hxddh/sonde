@@ -9,7 +9,7 @@ import { announce, batch, resource, signal, Text, View } from "nsh";
 import { asError, api } from "../native";
 import { duration } from "../format";
 import { t } from "../i18n";
-import { running } from "../run";
+import { running, stop } from "../run";
 import type { Policy } from "./runparts";
 import { report, runsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, type TrialStep, trialSteps } from "../trials";
@@ -28,17 +28,19 @@ export const trying = () => !!liveTrial() && liveTrial()!.ended === null;
 export const trialNow = signal(0);
 let clock: ReturnType<typeof setInterval> | undefined;
 
-/** Tries `path`'s program under `scenarios` (each as asked: `slowdown:3`), the program limited by `policy`:
- * its verdicts fill the run's History as they come; ended, they are kept there. */
-export function startTrial(path: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy) {
-  if (trying() || !scenarios.length) return;
+/** Tries `path`'s program (`command`) under `scenarios` (each as asked: `slowdown:3`), the program limited by
+ * `policy`: its verdicts fill the run's History as they come; ended, they are kept there. At work as a program is
+ * (one at a time, the toolbar's pill, Stop in the palette). */
+export function startTrial(path: string, command: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy) {
+  if (running() || !scenarios.length) return;
   const started = Date.now();
-  batch(() => (liveTrial.set({ path, steps: trialSteps(scenarios), started, ended: null }), trialNow.set(started)));
+  batch(() => (running.set({ kind: "trial", command, path }), liveTrial.set({ path, steps: trialSteps(scenarios), started, ended: null }), trialNow.set(started)));
   clearInterval(clock);
   clock = setInterval(() => trialNow.set(Date.now()), 1000);
   const end = () => {
     clearInterval(clock);
     clock = undefined;
+    running.set(null);
   };
   api.runs
     .trial(path, asked, policy, 100, 30, (e) => {
@@ -65,13 +67,7 @@ export function startTrial(path: string, scenarios: { name: string; about: strin
 }
 
 /** Stops the trial: it ends the program, and the trial keeps nothing. */
-export function stopTrial() {
-  try {
-    api.runs.kill();
-  } catch (e) {
-    report(e);
-  }
-}
+export const stopTrial = stop;
 
 /** What the program may do while it is tried: the same three limits a run has. */
 const LIMITS = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
@@ -120,8 +116,9 @@ export function TrialDialog(props: {
   const limit = signal<Policy>("no-delete");
   const start = () => {
     const list = chosen();
-    if (!list.length || trying() || running()) return;
-    startTrial(props.path, list, list.map(asked), limit());
+    const p = the();
+    if (!p || !list.length || running()) return;
+    startTrial(props.path, p.command, list, list.map(asked), limit());
     props.onClose();
     props.onStarted?.();
   };
@@ -181,7 +178,7 @@ export function TrialDialog(props: {
             <If when={p().sharesPlace}>
               <Notice testID="trial-shares" tone="warn" text={t("trial.sharesPlace")} />
             </If>
-            <If when={!!running() || trying()}>
+            <If when={!!running()}>
               <Notice tone="info" text={t("trial.busy")} />
             </If>
           </ModalBody>
@@ -191,7 +188,7 @@ export function TrialDialog(props: {
         {/* refused, the footer's primary is Close */}
         <Button variant={refused() ? "primary" : "ghost"} label={refused() ? t("common.close") : t("common.cancel")} onPress={props.onClose} testID="trial-close" />
         <If when={the()}>
-          <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running() || trying()} onPress={start} testID="trial-start" />
+          <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running()} onPress={start} testID="trial-start" />
         </If>
       </Actions>
     </Modal>

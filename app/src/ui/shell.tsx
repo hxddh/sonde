@@ -9,17 +9,21 @@ import { date } from "../format";
 import { t } from "../i18n";
 import { areaLabel, vendorName } from "../labels";
 import { api } from "../native";
-import { running } from "../run";
+import { running, workName } from "../run";
 import { type Area, area, shellWidth, endpoint, endpoints, go, newRun, openRun, openRunFile, settings, runsTick, sideList, useEndpoint } from "../store";
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { programOf, scrubCommand } from "./runview";
+import { scrubCommand } from "./runview";
 import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen, runningJobs } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
 
 const mac = platform.os === "macos";
+/** The shell's shape on macOS and Linux (a Mac app's, libadwaita's split view): the sidebar the window's height, its
+ * top strip holding its toggle (on macOS beside the window's buttons), the toolbar over the place only. Windows' toolbar
+ * runs across the window over both. */
+export const tallSidebar = mac || platform.os === "linux";
 
 const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
@@ -81,7 +85,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
         { label: t("run.new"), shortcut: "mod+n", onSelect: newRun },
         { label: t("runs.openFile"), shortcut: "mod+o", onSelect: () => void openRunFile() },
         { label: t("runs.openRecent"), submenu: recentMenu() },
-        { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
+        { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(!paletteOpen()) },
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: platform.os === "windows" ? t("menu.exit") : t("menu.quit") } as const]),
       ],
     },
@@ -158,11 +162,11 @@ function RunningPill() {
             if (r().path) openRun.set(r().path);
             go("runs");
           }}
-          tooltip={<Tip text={scrubCommand(r().command)} />}
+          tooltip={<Tip text={scrubCommand(r().command) || workName(r())} />}
           class={`h-7 ${WIDTH.pill} flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
           <View class={`${DOT} ${TONE.live.dot} motion-safe:animate-pulse`} />
-          <Text class="text-small text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
+          <Text class="text-small text-primary line-clamp-1">{workName(r())}</Text>
         </BaseButton>
       )}
     </If>
@@ -191,11 +195,19 @@ function SearchButton() {
 /** The title bar's height: the system's, where it says. */
 const titleBarHeight = () => (isAvailable ? titleBar().height || 44 : 44);
 
+/** The sidebar's toggle: it always toggles, and it is a command, not a state (no pressed look while the sidebar
+ * shows, as the platforms' own toggles have none). */
+function SidebarToggle() {
+  return <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} testID="toggle-sidebar" />;
+}
+
 /** The window's title bar, drawn by the app: drags the window; the system's controls keep their place. */
 export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element }) {
   let menuButton: ViewRef | undefined;
-  // (on macOS the window's buttons stand in the sidebar while it shows: the toolbar, over the place, starts clear)
-  const left = () => (isAvailable && !(mac && sidebarOpen()) ? titleBar().left : 0);
+  // (the sidebar's own strip holds its toggle, and on macOS the window's buttons, while it shows: the toolbar, over the
+  // place, starts clear)
+  const inSidebar = () => tallSidebar && sidebarOpen();
+  const left = () => (isAvailable && !inSidebar() ? titleBar().left : 0);
   return (
     <View
       testID="toolbar"
@@ -203,7 +215,9 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       class="flex-row items-center gap-2 border-b border-border bg-toolbar"
       style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: left() + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
     >
-      <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
+      <If when={!inSidebar()}>
+        <SidebarToggle />
+      </If>
       <View class="min-w-0 flex-1" />
       {/* one stop of Tab, the arrows between its commands */}
       <ToolbarGroup accessibilityLabel={t("toolbar.label")} class="flex-row items-center gap-2">
@@ -217,7 +231,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       <If when={!mac}>
         <IconButton
           testID="app-menu"
-          icon="ellipsis"
+          icon={platform.os === "linux" ? "menu" : "ellipsis"}
           label={t("menu.menu")}
           ref={(r) => (menuButton = r)}
           onPress={() => void popupMenu(appMenus(props.open).map((m) => ({ label: m.label, submenu: m.submenu })), menuButton)}
@@ -259,10 +273,14 @@ export const windowMaterial = () => material && (settings()?.theme ?? "system") 
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} ${mac ? "" : "pt-3"}`}>
-        {/* macOS: the window's height, the title bar's room at its top holding the window's buttons (it drags the
-            window, as the toolbar does) */}
-        {mac ? <View desktop={{ windowDrag: true }} style={{ height: titleBarHeight(), flexShrink: 0 }} /> : null}
+      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} ${tallSidebar ? "" : "pt-3"}`}>
+        {/* the window's height (macOS, Linux): the title bar's room at its top holds the sidebar's toggle, on macOS
+            after the window's buttons (it drags the window, as the toolbar does) */}
+        {tallSidebar ? (
+          <View testID="sidebar-strip" desktop={{ windowDrag: true }} class="flex-row items-center" style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: (isAvailable ? titleBar().left : 0) + 10 }}>
+            <SidebarToggle />
+          </View>
+        ) : null}
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
           <Place area="runs" open={props.open} />

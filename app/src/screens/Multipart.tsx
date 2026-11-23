@@ -12,7 +12,7 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, offerCommands, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
 import { sectionLabel } from "../labels";
-import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
+import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, Path, ROW, rowHeight, sortRows, Stat, TABLE, ToolBar, TYPE, COLUMN, TEXT } from "../ui/kit";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
 import { here, remember } from "../ui/overview";
@@ -36,7 +36,6 @@ export function Multipart() {
   // why the first scan gave nothing: said in place, with Try again
   const failure = signal<string | null>(null);
   const plan = signal<Plan | null>(null);
-  const days_ = signal<number | null>(7);
   // the oldest first; a press on a title sorts by its column's values, not their text
   const uploadSort = signal<DataTableSort | null>({ key: "age", direction: "descending" });
   // the uploads' table measures itself: the key takes what the figures leave
@@ -85,7 +84,8 @@ export function Multipart() {
     const r = report_();
     if (!r) return;
     try {
-      plan.set(await api.planLifecycle(r.endpoint, r.bucket, r.prefix, days_() ?? 7));
+      // the age the scan calls old: what Abort takes once, the rule takes for good
+      plan.set(await api.planLifecycle(r.endpoint, r.bucket, r.prefix, r.thresholdDays));
     } catch (e) {
       report(e);
     }
@@ -144,8 +144,6 @@ export function Multipart() {
                   </View>
                   <If when={r().lifecycle.status !== "covered"}>
                     <View class="flex-1" />
-                    <Text class={TEXT.note}>{t("mpu.days")}</Text>
-                    <NumberField bare class={WIDTH.number} label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
                     {/* the fix: a rule that aborts what is left, the section's one primary */}
                     <Button variant="primary" label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </If>

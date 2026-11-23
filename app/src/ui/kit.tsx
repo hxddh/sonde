@@ -32,10 +32,13 @@ export function keyLabel(shortcut: string): string {
 const cjk = () => lang() === "zh";
 const captionSize = () => (cjk() ? "text-caption-cjk" : "text-caption");
 
-/** A window's face, on its root: in Chinese on Linux, the interface's face with a Simplified Chinese face after it,
+/** A window's face, on its root: in Chinese on Linux, a Latin face, the interface's, then a Simplified Chinese face,
  * so Chinese is set in SC, never in the Japanese or Korean face fontconfig lists first (whose "（内置）" and "，"
- * stood apart from their neighbours). Elsewhere the system's own (macOS and Windows choose SC for zh). */
-export const windowFace = (): string => (platform.os === "linux" && cjk() ? "font-sc" : "");
+ * stood apart from their neighbours), and a "·" between words is the Latin one (the CJK face's is full-width, its
+ * gaps a column wide). Elsewhere the system's own (macOS and Windows choose SC for zh). */
+export const windowFace = (): string => (platform.os === "linux" && cjk() ? `font-[family-name:${SC_FACE.replace(/ /g, "_")}]` : "");
+/** That face's families: a Latin face, the interface's, then the Simplified Chinese faces Linux has. */
+const SC_FACE = "'Noto Sans', 'DejaVu Sans', system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', 'Noto Sans SC', 'WenQuanYi Micro Hei'";
 
 /** The type scale, in points: the `text-caption` … `text-title` classes
  * (nsh.json's `tailwind.fontSize`, each with its line: 11/16, 12/18, 13/20,
@@ -368,7 +371,7 @@ export const COLUMN = {
   name: 380,
   /** the store matrix: what is compared, the recorded figure, a store's */
   matrixWhat: 190,
-  matrixRecorded: 90,
+  matrixRecorded: 108,
   matrixRun: 100,
   /** an operation's title: before measuring, and the least it keeps */
   title: 340,
@@ -408,8 +411,6 @@ export const PANE = {
  * once (lint-kit fails a `w-N` and an arbitrary `[…]` size anywhere else):
  * fields by what they hold, columns of a hand-set row by what stands in them. */
 export const WIDTH = {
-  /** a number: a count of days */
-  number: "w-28",
   /** a folder, a filter, a snapshot among snapshots */
   long: "w-64",
   /** a status and its code */
@@ -537,22 +538,19 @@ export function Tip(props: { text: string; shortcut?: string }) {
       endingClass="opacity-0"
     >
       <Text class={`min-w-0 shrink ${TEXT.small} text-popover-foreground`}>{props.text}</Text>
-      <If when={props.shortcut}>{(k) => <Text class={`${KEYS} ${TEXT.meta}`}>{keyLabel(k())}</Text>}</If>
+      <If when={props.shortcut}>{(k) => <Text class={TEXT.meta}>{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
 }
 
-/** A shortcut's face: macOS's symbols (⌘K) in monospace, the words of Windows and Linux (Ctrl+K) in the interface's,
- * as their menus write them. */
-const KEYS = platform.os === "macos" ? "font-mono" : "";
-
-/** A shortcut, as the platform writes it (⌘K, Ctrl+K). */
+/** A shortcut, as the platform writes it (⌘K, Ctrl+K), in the interface's face as the platform's menus set it. */
 export function Kbd(props: { keys: string; class?: string }) {
-  return <Text class={`${KEYS} ${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
+  return <Text class={`${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
 }
 
 /** A turning ring: what a `loading` button shows in its icon's place. Still
- * under reduced motion (the button says it is busy all the same). */
+ * under reduced motion. (A screen reader hears the button unavailable while
+ * it is, not "busy": Native Shell 0.6.1's Button has no busy state.) */
 function Spinner(props: { tint: Tint }) {
   return <View class={`size-3.5 shrink-0 rounded-full border-2 ${SPINNER[props.tint] ?? SPINNER.foreground} motion-safe:animate-spin`} />;
 }
@@ -675,7 +673,7 @@ export function Heading(props: { children: JSX.Element; count?: number; quiet?: 
  * a run ended, a counter, a status. In `tone`'s color where it says an outcome. */
 export function Strong(props: { children: JSX.Element; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} class={`text-body font-bold ${props.class ?? "text-foreground"}`}>
+    <Text testID={props.testID} class={`text-body font-bold text-foreground ${props.class ?? ""}`}>
       {props.children}
     </Text>
   );
@@ -806,7 +804,7 @@ export function Path(props: { path: string; max?: number; class?: string; testID
   const text = () => props.path.replace(/\s{2,}/g, " ");
   return (
     // cut where it runs out of room (Native Shell's middle ellipsis)
-    <Text testID={props.testID} accessibilityLabel={props.whole ?? props.path} class={`font-mono ${TEXT.captionSize} line-clamp-1 ${props.class ?? "text-foreground"}`} style={{ textOverflow: "ellipsis-middle" }}>
+    <Text testID={props.testID} accessibilityLabel={props.whole ?? props.path} class={`font-mono ${TEXT.captionSize} line-clamp-1 text-foreground ${props.class ?? ""}`} style={{ textOverflow: "ellipsis-middle" }}>
       {text()}
     </Text>
   );
@@ -871,12 +869,15 @@ export function Await(props: { loading: boolean; error?: unknown; retry?: () => 
 }
 
 /** The foot of a dialog or a form: Cancel (quiet) then what it commits, at
- * the end, in that order everywhere; what is beside them (a note) at the start. */
+ * the end (on Windows the commit first, as its own dialogs have it); what is
+ * beside them (a note) at the start. */
 export function Actions(props: { children: JSX.Element; note?: JSX.Element; class?: string }) {
+  // (on the screen and to Tab alike)
+  const buttons = props.children;
   return (
     <View class={`flex-row items-center gap-2 ${props.class ?? ""}`}>
       <View class="min-w-0 flex-1">{props.note}</View>
-      {props.children}
+      {platform.os === "windows" && Array.isArray(buttons) ? [...buttons].reverse() : buttons}
     </View>
   );
 }
@@ -1669,6 +1670,10 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
   });
 }
 
+/** What a fitted column adds to its widest text: its cell's inset either side (TABLE's `px-2`); a cell drawn its own
+ * way (a dot before a status), as much again. */
+const FIT_PADDING = 16;
+
 /** Rows of text as a table: Native Shell's DataTable (virtual, so every row,
  * sortable by a press on a title: by number where a cell reads as one), each
  * column as wide as what it holds. `max` is how many rows show before it
@@ -1684,30 +1689,29 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
 export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string; /** inside a card or a chart: no box of its own, hairlines between its rows only */ bare?: boolean }) {
   const sort = signal<DataTableSort | null>(null);
   const width = signal(0);
-  // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike);
-  // a table with a column that fills keeps its own widths, which add up to its place
-  let table: DataTableRef | undefined;
+  // each column as wide as Native Shell measures what it holds once the rows are in (CJK, mono and proportional
+  // alike, in the face it draws), the one that fills given the room the others leave; a column the table has no
+  // room for keeps the width it was last measured at
+  const fitted = signal<number[]>([]);
+  const table = signal<DataTableRef | null>(null);
   effect(() => {
     props.rows;
-    if (!table || props.fill !== undefined) return;
-    const t = table;
-    setTimeout(() => props.columns.forEach((_, c) => void t.fitColumn(`c${c}`).catch(() => {})), 0);
+    const t = table();
+    if (!t) return;
+    const fill = props.fill;
+    const was = untracked(fitted);
+    setTimeout(() => void Promise.all(props.columns.map((_, c) => (c === fill ? Promise.resolve(0) : t.fitColumn(`c${c}`).then(Math.ceil).catch(() => was[c] ?? 0)))).then((ws) => fitted.set(ws)), 0);
   });
-  // a character's width, about: CJK is twice a Latin letter
-  const wide = (s: string) => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) > 0x2e7f ? 2 : 1), 0);
-  const per = () => (props.mono ? 7.4 : 6.6);
   const columns = () => {
-    const own = props.columns.map((title, c) => {
-      // a title has its sort mark beside it; a cell its inset
-      const longest = Math.max(wide(title) * per() + 44, ...props.rows.slice(0, 400).map((r) => wide(r[c] ?? "") * per() + 24));
-      return Math.round(Math.min(360, Math.max(56, longest)));
-    });
-    // the ranked columns that fit beside the rest, the one that fills keeping its own width
-    const from = props.ranked === undefined ? props.columns.length : props.ranked;
+    // the one that fills claims its least beside the ranked ones; a column not yet measured, a title's least
+    const own = props.columns.map((_, c) => (c === props.fill ? COLUMN.keyLeast : fitted()[c] || COLUMN.titleLeast));
+    // the ranked columns that fit beside the rest, the one that fills keeping its least (all of them until measured:
+    // a column is measured where it shows)
+    const from = props.ranked === undefined || !fitted().length ? props.columns.length : props.ranked;
     const kept = new Set(fitColumns(width(), own.reduce((n, w, c) => (c < from ? n + w : n), 2), 0, own.slice(from).map((w, k) => ({ key: `${from + k}`, width: w }))));
     const shown = props.columns.map((_, c) => c).filter((c) => c < from || kept.has(`${c}`));
     const rest = shown.reduce((n, c) => (c === props.fill ? n : n + own[c]), 0);
-    return shown.map((c) => ({ key: `c${c}`, title: props.columns[c], width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined }));
+    return shown.map((c) => ({ key: `c${c}`, title: props.columns[c], width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined, fitPadding: FIT_PADDING + (props.cell ? FIT_PADDING : 0) }));
   };
   // the rows by their place in `rows`, in the order the sort says
   const order = () => sortRows(props.rows.map((_, i) => i), sort(), (i, key) => sortValue(props.rows[i][Number(key.slice(1))] ?? ""));
@@ -1719,20 +1723,23 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
     const column = Number(c.key.slice(1));
     const own = props.cell?.({ column, text: c.text, cells: sorted()[c.row] ?? [] });
     const end = props.end?.includes(column);
-    const body = own ?? <Text class={`${TEXT.small} line-clamp-1 ${end ? "tabular-nums" : ""} ${props.mono ? "font-mono" : ""}`}>{c.text}</Text>;
+    // (figures even by the font feature, except on Linux, where GTK measures the feature narrower than it draws and a
+    // fitted column would cut its figures: FINDINGS 15)
+    const body = own ?? <Text class={`${TEXT.small} line-clamp-1 ${end && platform.os !== "linux" ? "tabular-nums" : ""} ${props.mono ? "font-mono" : ""}`}>{c.text}</Text>;
     // figures line up at their cell's end, under their titles
     return end ? <View class="flex-1 items-end justify-center">{body}</View> : body;
   };
   return (
     <DataTable
-      ref={(r) => (table = r)}
+      ref={(r) => table.set(r)}
       testID={props.testID}
       columns={columns()}
       data={data()}
       sort={sort()}
       onSortChange={({ sort: next }) => sort.set(next)}
       fontSize={TYPE.small}
-      fontFamily={props.mono ? token("font-mono") : undefined}
+      // (the face its cells are drawn in, which its fitting measures: in Chinese on Linux, the window's)
+      fontFamily={props.mono ? token("font-mono") : windowFace() ? SC_FACE : undefined}
       rowHeight={rowHeight(ROW.dense)}
       classes={props.bare ? BARE_TABLE : TABLE}
       renderCell={custom() ? cell : undefined}

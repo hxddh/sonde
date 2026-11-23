@@ -1,7 +1,7 @@
 // Endpoints: add, edit, import from AWS profiles, test connectivity. (Whether a program works on one is asked
 // from its run: Compare › On another store…)
 
-import { batch, effect, signal, Text, untracked, View } from "nsh";
+import { batch, effect, platform, signal, Text, untracked, View } from "nsh";
 import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
@@ -24,6 +24,8 @@ type Draft = {
   buckets: string;
 };
 
+/** Where a CA file is, as the system writes a path. */
+const CA_EXAMPLE = platform.os === "windows" ? "C:\\certs\\ca.pem" : "/etc/ssl/my-ca.pem";
 const blank = (): Draft => ({ id: "", name: "", url: "", region: "us-east-1", pathStyle: false, caFile: "", vendor: "other", credentials: "default", profile: "", buckets: "" });
 
 const fromView = (e: EndpointView): Draft => ({ id: e.id, name: e.name, url: e.url, region: e.region, pathStyle: e.pathStyle, caFile: e.caFile ?? "", vendor: e.vendor, credentials: "keep", profile: "", buckets: e.buckets.join(", ") });
@@ -137,7 +139,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
       </View>
       {/* the two rarely needed, side by side: the form's foot stays in a short window */}
       <View class={GRID}>
-        <Field class={CELL} label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder="/etc/ssl/my-ca.pem" mono />
+        <Field class={CELL} label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder={CA_EXAMPLE} mono />
         <Field class={CELL} label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} onSubmit={save} placeholder="logs, backups" mono />
       </View>
       <Actions note={<Muted class="text-small">{t("endpoints.cred.note")}</Muted>}>

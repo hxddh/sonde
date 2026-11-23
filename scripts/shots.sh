@@ -42,8 +42,8 @@ case "$(uname -s)" in
     echo "windows at most ${SONDE_SHOT_MAX:-as large as asked}" ;;
   MINGW* | MSYS* | CYGWIN*)
     target=windows
-    # the window must fit the screen's working area too: a window asked larger than it is fitted to the screen and
-    # kept there (restoreBounds), and the next variant's 900×560 never took (23.0's "min" pictures were 1028×779)
+    # the window must fit the screen's working area too: a window asked larger than it is fitted to the screen
+    # (each variant then sets its own size: tests/shots.test.tsx)
     if [ -z "${SONDE_SHOT_MAX:-}" ]; then
       res="$(powershell.exe -NoProfile -Command 'Add-Type -AssemblyName System.Windows.Forms; $a = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; "$($a.Width)x$($a.Height)"' 2>/dev/null | tr -d '\r')"
       w="${res%x*}"; h="${res#*x}"

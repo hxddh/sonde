@@ -809,7 +809,7 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 }
 
 /// The run a command is about when none is named: one rule for `show`,
-/// `compare`, `share` and `check`. The newest run of the project's program
+/// `share` and `check`. The newest run of the project's program
 /// (`[program] name` in sonde.toml), else of the program recorded in this
 /// folder (the run's `cwd`); else none, said (another folder's run is
 /// another program's). Only runs (`run`, `proxy`): a replay, an import and a trial are

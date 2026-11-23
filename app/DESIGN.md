@@ -32,20 +32,25 @@ the next action; counts and chips support it, they do not replace it.
   under its name ("This run", "Objects", an object's name) with their shortcuts, and the shortcuts are bound while it
   shows. A dialog is for a short decision only.
 - **One door each.** A thing is reached one way per surface: recent runs from Runs' sidebar list and the palette's
-  "Recent runs"; the demo from the welcome and the palette, the example from the palette; a new run from ⌘N (File ›
+  "Recent runs"; the demo from the welcome and the palette's endpoints, the example from the palette; a new run from ⌘N (File ›
   New Run, the palette) or the sidebar's Runs pressed in Runs, and the command bar is Runs with no run chosen; Activity from the View menu, ⌘⇧A and the palette (the toolbar shows it only while sonde is at work);
   Buckets' sections from their row (and `⌥⌘1`–`⌥⌘4`, not while typing; a finding whose fix is one of them leads to
   the same section).
 - **No control that does nothing.** A press with something missing says what (Run with no endpoint, Save with no
-  URL: on its field); a control that must stay dimmed says why in its tip. The sidebar's toggle always toggles; a
+  URL: on its field); a control that must stay dimmed says why in its tip. The sidebar's toggle always toggles (a command, never drawn pressed); a
   pane that waits on the sidebar's list offers "Show sidebar".
+- **One thing at work.** A program, the demo's job, a trial and a recording with no program are one busy state
+  (`running`, `run.ts`), one at a time: the toolbar's pill, the sidebar's dot, the Dock's progress, Stop in the
+  palette and the tray follow it; Run, Run again and a trial say why they wait; quitting or closing the window asks
+  first.
 
 ## Platforms
 
 | Target | Form |
 |---|---|
-| macOS | Hidden title bar; the sidebar the window's height, the window's buttons in it, and the app's toolbar over the place only; the window's sidebar material behind the sidebar (`window.backdrop: "sidebar"`); glass on floating surfaces; Settings' tabs centred |
-| Linux, Windows | The same layout with opaque fills; the menus behind the toolbar's menu button |
+| macOS | Hidden title bar; the sidebar the window's height, its top strip holding the window's buttons and the sidebar's toggle (as Mail's), and the app's toolbar over the place only; the window's sidebar material behind the sidebar (`window.backdrop: "sidebar"`); glass on floating surfaces; Settings' tabs centred |
+| Linux | macOS's shape (libadwaita's split view) with opaque fills: the sidebar the window's height, its toggle in its top strip, the toolbar over the place; the menus behind the toolbar's menu button (☰) |
+| Windows | The toolbar across the window, the sidebar's toggle at its start; opaque fills, and no system backdrop asked (Mica would never show through them); the menus behind the toolbar's `⋯` |
 | Web (`sonde share`) | The app's run page, read-only: its header, its tabs, the pane — the shape strip and the findings over the operations |
 
 ## Type
@@ -67,10 +72,10 @@ A page writes a **text role**, not its classes: `TEXT.body`, `bodyQuiet`, `note`
 are 12 on the same 16 pt line (`caption-cjk`), which is why `text-caption` is the kit's alone. Parentheses around
 Latin and figures alone are halfwidth in Chinese, "(94%)", not "（94%）", whose own side bearings read as gaps.
 
-The interface is the platform's font (in Chinese on Linux, with a Simplified Chinese face after it: `font-sc`), and
+The interface is the platform's font (in Chinese on Linux, a Latin face first, so "·" is not full-width, then a Simplified Chinese face: `windowFace`), and
 monospace the platform's (SF Mono or Menlo, Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys,
-commands, URLs and code; a shortcut too on macOS (⌘K), where Windows and Linux write words in the interface's face
-(Ctrl+K). Times in a column are the interface's face. Figures outside tables use `tabular-nums` so live
+commands, URLs and code. A shortcut is the interface's face (⌘K, Ctrl+K), as the platforms' menus set it, and so
+are times in a column (the program's output: its times sans, its lines mono). Figures outside tables use `tabular-nums` so live
 counters do not jitter, except on Linux, whose faces have even figures of their own and whose GTK measures the feature
 narrower than it draws (FINDINGS 15; a shipped face was dropped for the same reason).
 
@@ -107,7 +112,7 @@ piece wraps one nsh export with the theme's tokens:
 | `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own. A `Field` that is refused says so in one way: `error` (its edge in `fail`, the reason under it, and to a screen reader the field is `invalid` with the reason as its description); `invalid` alone where the reason stands elsewhere; `rest` keeps its text at its start without the focus (the command bar) |
 | `Segmented`, `Options` | `Tabs`, `RadioGroup` | what a place shows (a tab with nothing to show here is `disabled`, dimmed in its place: it does not go); a value of a few (a set of radios: one is checked) |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
-| `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end. A `Modal` that asks or warns gives its sentence as `describe`: a screen reader hears it after the dialog's name |
+| `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end (on Windows the commit first, as its dialogs). A `Modal` that asks or warns gives its sentence as `describe`: a screen reader hears it after the dialog's name |
 | `FocusRest` | `Input` | where the keyboard rests in a window on Linux when no field has it (FINDINGS 22): each window's first element, nothing to see or hear |
 | `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). No third figure. `Tiles` lays tiles in rows of equal count |
 | `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
@@ -476,8 +481,8 @@ A run and its trials are apart: a run's row says nothing of its trials (its Hist
 run that exited as it did. The run header says what found nothing beside what failed
 ("0%", and under it "67% not found"). A dialog that acts is titled and committed by its act and count ("Abort 2
 uploads"), and a section's fix is its primary (Buckets' "Add abort rule…"; aborting by hand is outline); a
-figure's place holds a figure or says there is none ("Not measured"), never a verb. Chinese keeps a figure with
-its unit (`duration`, `bytes`: a space that does not break). A recording is a **run**, in every word a
+figure's place holds a figure or says there is none ("Not measured"), never a verb. A figure keeps its unit
+(`duration`, `bytes`: a space that does not break). A recording is a **run**, in every word a
 reader or a developer sees. One word for the example and one for the demo ("Open
 the example", "Start the demo"). Nouns for places (Runs, Buckets, Activity), verbs for commands. Chinese is
 written, not translated: `桶`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of

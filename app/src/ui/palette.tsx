@@ -2,15 +2,15 @@
 // people come back to — recent runs, endpoints, buckets, what the screen
 // offers — behind one search field. ⌘K (Ctrl+K).
 
-import { computed, resource, setColorScheme, signal, Text, View } from "nsh";
+import { computed, effect, resource, setColorScheme, signal, Text, untracked, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
 import { date } from "../format";
 import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
-import { running, stop } from "../run";
+import { running, stop, stoppable } from "../run";
 import { checkRequested } from "./updates";
-import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, newRun, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
+import { shownCommands, ACTIVITY_TABS, chooseBucket, endpoint, endpoints, go, newRun, openExample, openRun, openRunFile, refreshSettings, SETTINGS_TABS, runsTick, settings, settingsTab, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, SURFACE, Row, TEXT } from "./kit";
@@ -34,8 +34,6 @@ interface Action {
   run: () => void;
 }
 
-const AREA_ICON = { runs: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
-
 /** What is typed in the palette: with a word, every run is searched. */
 const typed = signal("");
 /** Whether a word is typed: the list is rebuilt when that changes, not at every key. */
@@ -43,8 +41,10 @@ const searching = computed(() => typed().trim() !== "");
 
 function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
-  AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
-  if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
+  // the places: Runs; Buckets', Settings' and Activity's by their tabs, below (a row of a place alone would repeat one)
+  list.push({ id: "area:runs", label: areaLabel("runs"), group: t("palette.go"), icon: "list-clock", shortcut: "mod+1", run: () => go("runs") });
+  // what is at work (a program, a trial, a recording)
+  if (stoppable(running())) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
   // what is on screen: a run's commands besides running it again, a Buckets section's, an object's
   shownCommands().forEach((e) =>
     e.list().forEach((c) => {
@@ -74,7 +74,8 @@ function actions(buckets: BucketEntry[]): Action[] {
       },
     }),
   );
-  // where requests go
+  // where requests go; the built-in demo among them before it has started (chosen, it starts)
+  if (!endpoints().some((e) => e.id === "demo")) list.push({ id: "endpoint:demo", label: t("endpoints.demoName"), group: t("palette.endpoints"), icon: "server", keywords: ["demo"], run: () => void startDemo() });
   endpoints().forEach((e) =>
     list.push({
       id: `endpoint:${e.id}`,
@@ -101,15 +102,14 @@ function actions(buckets: BucketEntry[]): Action[] {
     }),
   );
   STORE_TABS.forEach((s, i) => list.push({ id: `store:${s}`, label: `${areaLabel("store")} › ${s === "browse" ? t("nav.objects") : sectionLabel(s)}`, group: t("palette.store"), icon: "database", shortcut: `mod+alt+${i + 1}`, run: () => go(s) }));
-  SETTINGS_TABS.forEach((s) => list.push({ id: `settings:${s}`, label: `${areaLabel("settings")} › ${sectionLabel(s)}`, group: t("palette.settings"), icon: "settings", run: () => go(s) }));
-  ACTIVITY_TABS.forEach((s) => list.push({ id: `activity:${s}`, label: `${areaLabel("activity")} › ${sectionLabel(s)}`, group: t("palette.go"), icon: "activity", run: () => go(s) }));
-  // the example and the demo: their one door after the welcome (found by their English word in any language, as the
-  // CLI's `--demo` names one)
+  // (a tab of Settings by itself: "settings" is also the place, which opens on the tab it had)
+  SETTINGS_TABS.forEach((s) => list.push({ id: `settings:${s}`, label: `${areaLabel("settings")} › ${sectionLabel(s)}`, group: t("palette.settings"), icon: "settings", run: () => (settingsTab.set(s), go(s)) }));
+  ACTIVITY_TABS.forEach((s) => list.push({ id: `activity:${s}`, label: `${areaLabel("activity")} › ${sectionLabel(s)}`, group: areaLabel("activity"), icon: "activity", run: () => go(s) }));
+  // the example: its one door after the welcome (found by its English word in any language)
   list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", keywords: ["example", "slatedb"], run: openExample });
-  if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", keywords: ["demo"], run: () => void startDemo() });
   list.push({ id: "new-run", label: t("run.new"), group: t("palette.actions"), icon: "plus", shortcut: "mod+n", keywords: ["run", "command"], run: newRun });
   list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
-  list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
+  list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), settingsTab.set("settings"), go("settings")) });
   const theme = settings()?.theme ?? "system";
   (["light", "dark", "system"] as const).forEach((m) =>
     list.push({
@@ -165,10 +165,11 @@ function Marked(props: { text: string }) {
 }
 
 export function Palette() {
-  const close = () => {
-    typed.set("");
-    paletteOpen.set(false);
-  };
+  const close = () => paletteOpen.set(false);
+  // however it closes (a choice, Escape, ⌘K, a press outside), it opens again on an empty field
+  effect(() => {
+    if (!paletteOpen()) untracked(() => typed.set(""));
+  });
   // the endpoint's buckets, fetched when the palette opens
   const buckets = resource(
     () => (paletteOpen() ? endpoint() : null),
@@ -207,6 +208,7 @@ export function Palette() {
           a?.run();
         }}
         onCancel={close}
+        query={typed()}
         onQueryChange={({ query }) => typed.set(query)}
         searchPrefix={<Icon name="search" />}
         // a field at the kit's height in a row with a row's padding (12 by 8): no height of its own

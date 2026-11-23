@@ -1,26 +1,44 @@
-// The program sonde runs: one at a time, outliving the screen that started
-// it. Its output is kept (the last 2 MB) so a terminal mounted later shows
-// it from the start; listeners get what arrives after.
+// What sonde has at work: one at a time — a program (from the command bar,
+// a run's Run again), the demo's job, a trial of a run, or a recording with
+// no program — outliving the screen that started it. A program's output is
+// kept (the last 2 MB) so a terminal mounted later shows it from the start;
+// listeners get what arrives after.
 
-import { announce, batch, effect, lifecycle, Notifications, signal, Storage } from "nsh";
-import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
+import { announce, batch, effect, lifecycle, Notifications, signal } from "nsh";
+import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, endpoint, go, notify, openRun, report, runsChanged, wasRead } from "./store";
+import { area, go, notify, openRun, report, runsChanged, shownRun, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/runview";
 import type { Policy } from "./ui/runparts";
 import { toast } from "./ui/toast";
 
+/** What is at work: `program` (the command bar, Run again), `demo` (the demo's job), `trial` (a run tried under
+ * faults: `path` is the run it tries), `record` (Record…: no program, an address to point one at). */
 export interface Running {
+  kind: "program" | "demo" | "trial" | "record";
   command: string;
+  /** its run, once it has begun */
   path: string | null;
-  endpoint: string;
+  /** a recording's address, and what points an application at it */
+  url?: string;
+  exports?: string;
 }
 
-/** The running program, or null. */
+/** What is at work, or null: the one busy state. The toolbar's pill, the sidebar's dot, the Dock's progress,
+ * the palette's and the tray's Stop, Run and Run again, and Updates all read it. */
 export const running = signal<Running | null>(null);
+/** Whether Stop ends what is at work (the demo's job plays to its end in a few seconds). */
+export const stoppable = (r: Running | null) => !!r && r.kind !== "demo";
+/** The run being recorded now (a program's, the demo's, a recording's; a trial's runs are its own). */
+export const recordingPath = () => {
+  const r = running();
+  return r && r.kind !== "trial" ? r.path : null;
+};
+/** What is at work, in a word: its program, or that it records. */
+export const workName = (r: Running) => (r.kind === "record" ? t("run.recordingName") : (programOf(r.command) ?? scrubCommand(r.command)));
 /** How the last run ended. */
 export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user */ deleted?: boolean; endpoint: string }) | null>(null);
 
@@ -34,19 +52,7 @@ export const command = signal("");
 /** When the running program started (ms since the epoch). */
 export const startedAt = signal<number | null>(null);
 
-/** The commands run before, newest first (kept across launches). */
-export const history = signal<string[]>([]);
-const HISTORY_KEY = "run.history";
-void Storage.getItem(HISTORY_KEY)
-  .then((v) => v && history.set(JSON.parse(v)))
-  .catch(() => {});
-function remember(cmd: string) {
-  const next = [cmd, ...history().filter((c) => c !== cmd)].slice(0, 20);
-  history.set(next);
-  void Storage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
-}
-
-// While a program runs, the tray says so: a press brings the window back.
+// While something is at work, the tray says so: a press brings the window back.
 if (isAvailable) {
   effect(() => {
     const r = running();
@@ -55,12 +61,9 @@ if (isAvailable) {
         r
           ? {
               icon: iconSvg("circle-dot"),
-              tooltip: t("run.trayTip", { command: programOf(r.command) ?? "" }),
+              tooltip: t("run.trayTip", { command: workName(r) }),
               onClick: () => Window.get("main")?.show(),
-              menu: [
-                { label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() },
-                { label: t("run.stop"), onSelect: stop },
-              ],
+              menu: [{ label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() }, ...(stoppable(r) ? [{ label: t("run.stop"), onSelect: stop }] : [])],
             }
           : null,
       );
@@ -69,24 +72,7 @@ if (isAvailable) {
     }
   });
 }
-/** The shortcut that starts the last command, or stops the running one, from
- * any app: ⌘⌥R / Ctrl+Alt+R. */
-export const RUN_SHORTCUT = "mod+alt+r";
-if (isAvailable) {
-  void GlobalShortcut.register(RUN_SHORTCUT, () => {
-    if (running()) return stop();
-    const last = history()[0];
-    const ep = endpoint();
-    if (!last || !ep) return notify(t("run.shortcutNothing"), { kind: "warning" });
-    start(last, ep);
-    announce(t("run.shortcutStarted", { command: scrubCommand(last) }));
-  }).catch(() => false);
-}
-
 export const cwd = signal("");
-/** What the program may do to the store: the command bar's choice, allow unless
- * changed (a project's `[record] policy` in sonde.toml narrows it). */
-export const policy = signal<Policy>("allow");
 
 const MAX = 2 * 1024 * 1024;
 let buffer = "";
@@ -138,8 +124,8 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
     const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? scrubCommand(cmd) }) : t("run.toastEnded", { command: programOf(cmd) ?? scrubCommand(cmd), code: String(r.exit ?? "?") });
     // read out to a screen reader wherever the focus is
     announce(`${title}. ${body}`);
-    // in Runs its own view says it; elsewhere a toast does
-    if (area() !== "runs")
+    // its own view says it, while it is the run shown; anywhere else a toast does
+    if (area() !== "runs" || shownRun() !== r.path)
       toast({
         id: "run-ended",
         kind: r.exit === 0 && !warnings ? "success" : "warning",
@@ -185,27 +171,35 @@ export function runAgain(cmd: string, endpoint: string, dir?: string | null) {
 
 /** A run asked for while another program runs: said, with its Stop (one program at a time). */
 export function busy() {
-  notify(t("run.busy"), { kind: "warning", action: t("run.stop"), onAction: stop });
+  notify(t("run.busy"), stoppable(running()) ? { kind: "warning", action: t("run.stop"), onAction: stop } : { kind: "warning" });
 }
 
-/** Runs `cmd` against `endpoint`, its requests recorded; whether it started. */
+/** Runs `cmd` against `endpoint` from the command bar (or a run's Run again), its requests recorded; whether it
+ * started. */
 export function start(cmd: string, endpoint: string): boolean {
-  askToNotify();
   if (running() || !cmd.trim()) return false;
-  buffer = "";
+  void launch("program", cmd, endpoint, cwd() || null);
+  return true;
+}
+
+/** Runs `cmd` (a program, or the demo's job) on `endpoint` in `dir`, recorded: the run is the newest in the list,
+ * open there as it goes. Its result once it has ended; null when it did not start (said). */
+export async function launch(kind: "program" | "demo", cmd: string, endpoint: string, dir: string | null): Promise<RunResult | null> {
+  askToNotify();
+  if (running()) return (busy(), null);
+  // at work from the press: a second press starts nothing
+  running.set({ kind, command: cmd, path: null });
   killed = false;
-  remember(cmd.trim());
-  batch(() => {
-    lastRun.set(null);
-    startedAt.set(Date.now());
-    running.set({ command: cmd, path: null, endpoint });
-  });
-  api.runs
-    .run(cmd, cwd() || null, endpoint, policy(), size.cols, size.rows, (e) => {
+  try {
+    const r = await api.runs.run(cmd, dir, endpoint, "allow", size.cols, size.rows, (e) => {
       if ("started" in e) {
-        running.set({ command: cmd, path: e.started.path, endpoint });
-        // the run is the newest in the list, and opens there as it goes
+        // the run before stays said until this one has begun
+        buffer = "";
         batch(() => {
+          lastRun.set(null);
+          startedAt.set(Date.now());
+          running.set({ kind, command: cmd, path: e.started.path });
+          // the run is the newest in the list, and opens there as it goes
           openRun.set(e.started.path);
           runsChanged();
         });
@@ -221,26 +215,65 @@ export function start(cmd: string, endpoint: string): boolean {
         }
         for (const l of listeners) l(e.data);
       }
-    })
-    .then((r) => {
-      batch(() => {
-        running.set(null);
-        lastRun.set({ ...r, command: cmd, killed, endpoint });
-      });
-      runsChanged();
-      // this run's own: a new run may start before the analysis is back
-      void tellTheUser(r, cmd, killed);
-    })
-    .catch((e) => {
-      running.set(null);
-      report(e);
     });
-  return true;
+    batch(() => {
+      running.set(null);
+      lastRun.set({ ...r, command: cmd, killed, endpoint });
+    });
+    runsChanged();
+    // this run's own: a new run may start before the analysis is back
+    void tellTheUser(r, cmd, killed);
+    return r;
+  } catch (e) {
+    running.set(null);
+    report(e);
+    return null;
+  }
 }
 
-/** Ends the running program (one still starting, as soon as it runs): said "Stopped" only when it was. */
+/** Records with no program (Record…): the recording is the newest run, open there as it goes, saying what to point
+ * an application at; Stop ends it. Whether it began. */
+export async function record(endpoint: string, policy: Policy): Promise<boolean> {
+  if (running()) return (busy(), false);
+  running.set({ kind: "record", command: "", path: null });
+  try {
+    const v = await api.runs.start(endpoint, policy);
+    batch(() => {
+      running.set({ kind: "record", command: "", path: v.path, url: v.url, exports: v.exports });
+      openRun.set(v.path);
+      runsChanged();
+    });
+    return true;
+  } catch (e) {
+    running.set(null);
+    report(e);
+    return false;
+  }
+}
+
+/** Ends what is at work: a program (one still starting, as soon as it runs: said "Stopped" only when it was), a
+ * trial (which keeps nothing), a recording (its run, whole, stays open). */
 export function stop() {
+  const r = running();
+  if (r?.kind === "record") return void endRecording();
   if (api.runs.kill()) killed = true;
+}
+
+let ending = false;
+async function endRecording() {
+  if (ending) return;
+  ending = true;
+  try {
+    // (once the file is whole: what reads it next reads all of it)
+    const path = await api.runs.stop();
+    running.set(null);
+    runsChanged();
+    if (path) openRun.set(path);
+  } catch (e) {
+    report(e);
+  } finally {
+    ending = false;
+  }
 }
 
 /** Text typed into the program's terminal. */

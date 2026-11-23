@@ -349,6 +349,9 @@ fn check_holds_a_run_to_its_programs_baseline() {
     );
     let v: serde_json::Value = serde_json::from_slice(&c.stdout).unwrap();
     assert_eq!(c.status.code(), Some(0), "{v}");
+    // its figures rounded as `show -f json` rounds them (31.0: a cost of
+    // 0.00017760000000000052)
+    rounded_as_show(&v, "");
     assert!(
         v["check"]["verdicts"]
             .as_array()
@@ -367,6 +370,25 @@ fn check_holds_a_run_to_its_programs_baseline() {
     let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
     assert_eq!(runs_json(t.path()).len(), 1);
+}
+
+/// Every fraction in `v` as `show -f json` writes it: a time (`…Ms`, `ms`)
+/// to a tenth of a millisecond, any other figure to 6 significant digits.
+fn rounded_as_show(v: &serde_json::Value, key: &str) {
+    match v {
+        serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| rounded_as_show(x, k)),
+        serde_json::Value::Array(a) => a.iter().for_each(|x| rounded_as_show(x, key)),
+        serde_json::Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap();
+            let r = if key.ends_with("Ms") || key == "ms" {
+                (f * 10.0).round() / 10.0
+            } else {
+                format!("{f:.5e}").parse().unwrap()
+            };
+            assert_eq!(f, r, "{key}: {f}");
+        }
+        _ => {}
+    }
 }
 
 #[test]
@@ -2182,7 +2204,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
         let from = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../analysis/tests/fixtures")
             .join(format!("{r}.sonde"));
-        // recorded where `sonde` runs, so that `compare` alone takes them
+        // recorded where `sonde` runs, so that `show` alone takes them
         let mut text = String::new();
         std::io::Read::read_to_string(
             &mut flate2::read::MultiGzDecoder::new(std::fs::File::open(from).unwrap()),
@@ -2213,8 +2235,8 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     for said in [
         "  time 739 ms: your program's own 250 ms (34%) · S3 round trips 489 ms (91 requests, median 3.3 ms)",
         // sent at once saves more than dropping the HEADs: its own change, first
-        "! 51 requests ran one after another for 450 ms",
-        "    saving: ≈160 ms of 739 ms (22%)",
+        "! 85 requests ran one after another for 587 ms",
+        "    saving: ≈273 ms of 739 ms (37%)",
         "    at etl.py:14 <module> (20 requests)",
         "    fix for boto3:",
         "      with ThreadPoolExecutor(8) as pool:",

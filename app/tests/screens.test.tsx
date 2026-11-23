@@ -46,6 +46,22 @@ test("multipart: scan, lifecycle verdict, the guard confirms a few plainly", asy
   await app.waitFor("id:confirm-dialog", { state: "gone" });
 });
 
+test("a dialog's foot: Cancel then the commit; on Windows the commit first, as its own dialogs", async () => {
+  for (const platform of ["macos", "windows"] as const) {
+    const app = await withDemo("demo", { ...desktop, platform });
+    await place(app, "multipart");
+    await app.press("id:plan-abort");
+    await app.waitFor("id:confirm-dialog");
+    const texts = app.texts();
+    // (the dialog's title says it too: the button is the last)
+    const commit = texts.findLastIndex((x) => /^Abort \d+ uploads?$/.test(x));
+    expect(commit).toBeGreaterThan(-1);
+    if (platform === "windows") expect(texts.lastIndexOf("Cancel")).toBeGreaterThan(commit);
+    else expect(texts.lastIndexOf("Cancel")).toBeLessThan(commit);
+    app.dispose();
+  }
+});
+
 test("versions open from the object: a deleted key's, found by its name", async () => {
   const app = await withDemo("demo");
   // Buckets' sections are the objects, size, incomplete uploads and layouts: versions are an object's
@@ -173,12 +189,15 @@ test("errors are readable: what went wrong, said whole", async () => {
 test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  // what a recorded program may do is the project's (sonde.toml) and the command bar's, not a setting
+  // what a recorded program may do is the project's (sonde.toml), not a setting
   expect(app.shows("id:record-policy")).toBe(false);
   expect(app.shows("id:read-only")).toBe(false);
   expect(app.shows("id:toolbar-lock")).toBe(false);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
+  // one age for what is old: the rule takes what Abort takes, no number of its own beside it
+  expect(app.shows("label:Days")).toBe(false);
+  expect(app.shows("label:Abort uploads older than 7 days…")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   await app.press("id:confirm-run");
@@ -223,7 +242,7 @@ test("sonde:// links keep a stretch of time: a run opens on its Time pane over i
   const held = await api.runs.stretch(example!.path, 0, 200);
   expect(held.summary.requests).toBeGreaterThan(0);
   expect(held.summary.requests).toBeLessThan(172);
-  await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
+  await app.waitFor("text:/ · in \\+.* – \\+200\u00a0ms$/", { timeout: 5000 });
 });
 
 test("language: Chinese strings", async () => {
@@ -468,7 +487,7 @@ test("a run's plan: a diagnosis a line with the time it saves, its other finding
   expect(app.shows("id:observation-1")).toBe(true);
   expect(app.shows("id:observation-2")).toBe(false);
   expect(app.shows("id:observation-saving-0")).toBe(true);
-  expect(app.shows("text:≈680 ms of 1.13 s (60%)")).toBe(true);
+  expect(app.shows("text:≈680\u00a0ms of 1.13\u00a0s (60%)")).toBe(true);
   expect(app.shows("text:50 small objects read one by one")).toBe(false);
   // chosen: its other finding under it, its operations narrowed (the table's chip, the one place), its fix in the inspector
   await app.press("id:observation-0");
