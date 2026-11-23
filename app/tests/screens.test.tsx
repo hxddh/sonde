@@ -173,12 +173,15 @@ test("errors are readable: what went wrong, said whole", async () => {
 test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  // what a recorded program may do is the project's (sonde.toml) and the command bar's, not a setting
+  // what a recorded program may do is the project's (sonde.toml), not a setting
   expect(app.shows("id:record-policy")).toBe(false);
   expect(app.shows("id:read-only")).toBe(false);
   expect(app.shows("id:toolbar-lock")).toBe(false);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
+  // one age for what is old: the rule takes what Abort takes, no number of its own beside it
+  expect(app.shows("label:Days")).toBe(false);
+  expect(app.shows("label:Abort uploads older than 7 days…")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   await app.press("id:confirm-run");

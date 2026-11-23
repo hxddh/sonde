@@ -35,7 +35,6 @@ export function SettingsBody() {
 export function openSettingsWindow() {
   const open = Window.get("settings");
   if (open) {
-    open.show();
     open.focus();
     return;
   }

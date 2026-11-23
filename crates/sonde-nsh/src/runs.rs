@@ -16,16 +16,16 @@ use sonde_analysis::run::{RunFile, RunHeader, RunWriter};
 use sonde_analysis::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
-use crate::state::{err_msg, sonde, to_json};
+use crate::state::{busy, err_msg, sonde, to_json};
 
 struct Recording {
+    /// Begun with no program ([`Runs::start`]): what [`Runs::stop`] ends.
+    bare: bool,
     proxy: Proxy,
     path: PathBuf,
     endpoint: String,
     log: RequestLog,
     writer: Arc<RunWriter>,
-    /// The runtime it began on: where it is finished, from a handler that is in none.
-    runtime: tokio::runtime::Handle,
 }
 
 /// How long a stopping recording waits for the requests in flight (the
@@ -291,8 +291,13 @@ async fn begin(
             STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
-    if RECORDING.lock().is_some() || STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Err(err_msg("a recording is running: stop it first"));
+    // (between a trial's scenarios nothing is recording, but the trial is at work)
+    let trial_at_work = under.is_none() && TRYING.load(std::sync::atomic::Ordering::SeqCst);
+    if trial_at_work
+        || RECORDING.lock().is_some()
+        || STARTING.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err(busy());
     }
     let _starting = Starting;
     let s = sonde();
@@ -323,6 +328,7 @@ async fn begin(
         ),
     };
     let cfg = client.config();
+    let bare = command.is_none();
     let mut header = RunHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
@@ -367,12 +373,12 @@ async fn begin(
         "exports": shell_exports(&set, &unset),
     });
     *RECORDING.lock() = Some(Recording {
+        bare,
         proxy: started,
         path,
         endpoint,
         log,
         writer,
-        runtime: tokio::runtime::Handle::current(),
     });
     Ok(view)
 }
@@ -924,7 +930,7 @@ async fn run_recorded(
     terminal: bool,
 ) -> Result<(Option<i32>, String), String> {
     let Some(launch) = Launch::begin() else {
-        return Err(err_msg("a program is running: stop it first"));
+        return Err(busy());
     };
     let trial = under.as_ref().map(|u| u.scenario.name.clone());
     let dir = crate::run::folder(cwd);
@@ -1438,11 +1444,8 @@ async fn try_under(
     output: &Callback<JsonValue>,
 ) -> Result<JsonValue, String> {
     use std::sync::atomic::Ordering::SeqCst;
-    if RUNNING.lock().is_some() || RECORDING.lock().is_some() {
-        return Err(err_msg("a program is running: stop it first"));
-    }
-    if TRYING.swap(true, SeqCst) {
-        return Err(err_msg("a trial is running: stop it first"));
+    if RUNNING.lock().is_some() || RECORDING.lock().is_some() || TRYING.swap(true, SeqCst) {
+        return Err(busy());
     }
     struct Trying;
     impl Drop for Trying {
@@ -1474,6 +1477,11 @@ async fn try_under(
     // a new trial replaces the last one's verdicts and runs
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean.header).map_err(err_msg)?;
     for scenario in chosen {
+        // stopped between two scenarios: the next does not run
+        if TRIAL_STOPPED.load(SeqCst) {
+            trying.cancel();
+            return Ok(json!({ "path": path, "trials": [], "cancelled": true }));
+        }
         output.post(trial_event(&scenario.name, None));
         let under = Under {
             path: trying.path(&scenario),
@@ -2640,17 +2648,13 @@ impl Runs {
         end_for_quit().await
     }
 
-    /// Stops recording; the run file's path. No longer the recording
-    /// at once; the file is whole and compressed once the requests in flight
-    /// have been answered (five seconds at most), off the calling thread.
-    pub fn stop() -> Option<String> {
-        let r = RECORDING.lock().take()?;
-        let path = r.path.to_string_lossy().into_owned();
-        // a thread of its own on the recording's runtime: a handler is in no
-        // runtime, and off the interface's thread has no reactive one either
-        let runtime = r.runtime.clone();
-        std::thread::spawn(move || runtime.block_on(r.finish()));
-        Some(path)
+    /// Stops the recording begun with no program ([`Runs::start`]; a
+    /// program's ends with it): its run file's path, once the file is whole
+    /// (the requests in flight answered, five seconds at most). None: no
+    /// such recording.
+    pub async fn stop() -> Option<String> {
+        let r = RECORDING.lock().take_if(|r| r.bare)?;
+        background(r.finish()).await.ok().map(|(path, _)| path)
     }
 }
 
@@ -2697,6 +2701,30 @@ mod tests {
                 .is_err()
         );
         RUNNING.lock().take();
+    }
+
+    #[tokio::test]
+    async fn between_a_trials_scenarios_nothing_else_starts_and_the_refusal_is_the_apps_to_say() {
+        use std::sync::atomic::Ordering::SeqCst;
+        // a trial at work, between two scenarios: no program runs and nothing records
+        TRYING.store(true, SeqCst);
+        // (what a program's run begins with, as Run and Record… do)
+        let ran = begin(
+            "nowhere".into(),
+            String::new(),
+            Some("true".into()),
+            None,
+            None,
+        )
+        .await;
+        let recorded = Runs::start("nowhere".into(), String::new()).await;
+        TRYING.store(false, SeqCst);
+        for refused in [ran.err(), recorded.err()] {
+            let e: JsonValue = serde_json::from_str(&refused.expect("refused")).unwrap();
+            assert_eq!(e["kind"], "busy", "{e}");
+        }
+        // a Stop for a recording with no program ends nothing else
+        assert_eq!(Runs::stop().await, None);
     }
 
     #[test]
@@ -3084,12 +3112,12 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(log.list(&reqlog::Filter::default(), 10).is_empty());
         let recording = Recording {
+            bare: true,
             proxy,
             path: path.clone(),
             endpoint: "target".into(),
             log,
             writer,
-            runtime: tokio::runtime::Handle::current(),
         };
         let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);

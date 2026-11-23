@@ -18,7 +18,7 @@ import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { applyDemoFix, isDemoJob } from "../demo";
-import { type PlaceCommand, offerCommands, away, chooseBucket, copy, endpoints, findingOnOpen, go, newRunAsked, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, startDemo, useEndpoint } from "../store";
+import { type PlaceCommand, offerCommands, away, chooseBucket, copy, endpoints, findingOnOpen, go, newRunAsked, openRun, paneOnOpen, openRunFile, reading, report, runsChanged, runsTick, showInSidebar, shownRun, startDemo, useEndpoint } from "../store";
 import type { Diagnosis, LogLine, Observation, RunInfo, RunView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
@@ -26,12 +26,12 @@ import { Await, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, pop
 import { Toaster } from "../ui/toast";
 import { fileName, removeRun, rename, RenameDialog, runName, shareRun } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
-import { linesOf, OperationDetail, OperationsTable, OutputTable, RunHeader, RunList } from "../ui/runparts";
+import { linesOf, OperationDetail, OperationsTable, OutputTable, RecordingNote, RunHeader, RunList } from "../ui/runparts";
 import { Diagnoses, diagnosesOf, findingMarks, FixDetail, headOf, operationsText, runMeta, storeFixOf } from "../ui/runview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/runview";
 import { HistoryPane, scenarioLabel } from "../ui/history";
-import { TrialDialog, trialsKept, trying } from "../ui/trial";
+import { TrialDialog, trialsKept } from "../ui/trial";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GROUP_BY, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
@@ -39,7 +39,7 @@ import type { SignalId } from "../signals";
 import { RunShape, SHAPE_STRIP, TICK_ROOM, faultMoments, began } from "../ui/plots";
 import { RecordDetail } from "../ui/request";
 import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
-import { busy, lastRun, running, runAgain, stop } from "../run";
+import { busy, lastRun, recordingPath, running, runAgain, stop, stoppable } from "../run";
 import { NewRun, NoRequests, ProgramTerminal } from "./Run";
 
 type Pane = "operations" | "output" | "time" | "runs";
@@ -89,7 +89,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const read = analysis(() => props.path, () => `${props.tick()}:${trialsKept()}`);
   const view = read.view;
   // the run against its program's run before: its findings' states, what was fixed
-  const since = sinceLastOf(() => props.path, () => running()?.path === props.path);
+  const since = sinceLastOf(() => props.path, () => recordingPath() === props.path);
   // a trial's run: the clean run it is judged against, for the Time pane to draw it over
   const clean = analysis(() => view()?.trial?.clean ?? null);
   // the program's budget, for the Time pane's lines: read once per run shown
@@ -102,7 +102,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     async () => {
       const path = untracked(() => props.path);
       // (read while the program still ran: more may come)
-      const ran = untracked(() => running()?.path === path);
+      const ran = untracked(() => recordingPath() === path);
       try {
         return { path, ran, lines: await api.runs.logLines(path) };
       } catch {
@@ -116,8 +116,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   };
   // whether it has any (a boolean: what is drawn does not follow every line that arrives)
   const hasOutput = computed(() => lines().length > 0);
-  // the program running now, recorded as this run: its terminal stands where its output will
-  const live = () => running()?.path === props.path;
+  // recorded now (a program, the demo's job, Record…): its terminal (or what to point an application at) stands
+  // where its output will
+  const live = () => recordingPath() === props.path;
   // a run opens on its operations; a program running now on its Output, its terminal
   const pane = signal<Pane>(untracked(live) ? "output" : "operations");
   // a run with no output (a program that ended having printed nothing) has no Output to stay on: once its lines are
@@ -135,9 +136,11 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   effect(() => {
     const o = findingOnOpen();
     const v = view();
-    // (once the run is read: a run with no finding there opens on all its operations)
-    if (o && v && o.path === props.path) untracked(() => batch(() => (o.index < diagnosesOf(v).length && filter.set(o.index), findingOnOpen.set(null))));
+    // (once the run is read with it: read while it was still recorded it may have none yet)
+    if (o && v && o.path === props.path && o.index < diagnosesOf(v).length) untracked(() => batch(() => (filter.set(o.index), findingOnOpen.set(null))));
   });
+  // (a run with no finding there opens on all its operations: what it asked goes with its pane)
+  cleanup(() => untracked(findingOnOpen)?.path === props.path && findingOnOpen.set(null));
   /** The diagnosis chosen, while the run has it. */
   const diagnosis = () => {
     const v = view();
@@ -372,7 +375,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     const tryable = ranCommand(view()?.header.command) && !view()?.trial;
     return [
       // the same command under faults is asked first what will run (a trial is no run of its own)
-      ...(tryable ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running() || trying(), run: () => tryingFaults.set(true) }] : []),
+      ...(tryable ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running(), run: () => tryingFaults.set(true) }] : []),
       ...(isAvailable ? [{ id: "compare-open", label: t("compare.open"), icon: "git-compare-arrows" as const, run: (anchor?: ViewRef) => compareMenu(anchor) }] : []),
       // the same requests on another store: will it work there? (one level, in ⋯ and the palette)
       { id: "run-another", label: t("compare.another"), icon: "repeat-2" as const, disabled: !!running(), run: () => replaying.set(true) },
@@ -444,10 +447,13 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} groupMenu={groupMenu} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
-  // the program's output: its terminal while it runs, its lines once it has ended
+  // the program's output: its terminal while it runs (a recording with no program: what to point one at), its lines
+  // once it has ended
   const output = () => (
     <If when={live()} else={<OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />}>
-      <ProgramTerminal />
+      <If when={running()?.kind === "record" ? running() : null} else={<ProgramTerminal />}>
+        {(r) => <RecordingNote url={r().url ?? ""} exports={r().exports ?? ""} />}
+      </If>
     </If>
   );
 
@@ -556,7 +562,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const actions = () => (
     <View class="flex-row items-center gap-2">
       {/* the program running now: Stop, its one primary */}
-      <If when={live()}>
+      <If when={live() && stoppable(running())}>
         <Button small variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
       </If>
       {/* the program again, after a change: its new run opens, saying what changed since this one */}
@@ -745,7 +751,6 @@ const windowId = (path: string) => `run-${fileName(path)}`;
 function openRunWindow(path: string) {
   const open = Window.get(windowId(path));
   if (open) {
-    open.show();
     open.focus();
     return;
   }
@@ -866,7 +871,7 @@ export function Runs() {
     if (!p) return;
     untracked(() => {
       runs.set(api.runs.list());
-      if (p === running()?.path) passing = p;
+      if (p === recordingPath()) passing = p;
       selected.set(p);
       openRun.set(null);
     });
@@ -962,11 +967,14 @@ export function Runs() {
   // (a trial's run is in no list: it stays while the run it is a trial of names it)
   effect(() => {
     const p = selected();
-    if (p && p !== running()?.path && !runs().some((s) => s.path === p || s.trials?.some((x) => x.run === p))) untracked(() => selected.set(null));
+    if (p && p !== recordingPath() && !runs().some((s) => s.path === p || s.trials?.some((x) => x.run === p))) untracked(() => selected.set(null));
   });
 
   // the runs are the sidebar's list while this place shows
   cleanup(showInSidebar("runs", list));
+  // the run on screen: one that ends here needs no toast
+  effect(() => shownRun.set(selected()));
+  cleanup(() => shownRun.set(null));
 
   return (
     <View class="flex-1" testID="screen-runs">

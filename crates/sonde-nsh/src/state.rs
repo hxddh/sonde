@@ -46,6 +46,13 @@ pub fn err_msg(m: impl std::fmt::Display) -> String {
     json!({ "sonde": true, "kind": "config", "message": m.to_string() }).to_string()
 }
 
+/// One program at a time (a program, a trial, a recording): the app says it
+/// in its own words, by this kind.
+pub fn busy() -> String {
+    json!({ "sonde": true, "kind": "busy", "message": "a program is running: stop it first" })
+        .to_string()
+}
+
 pub fn to_json<T: Serialize>(v: T) -> Value {
     serde_json::to_value(v).unwrap_or(Value::Null)
 }

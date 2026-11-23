@@ -408,8 +408,6 @@ export const PANE = {
  * once (lint-kit fails a `w-N` and an arbitrary `[…]` size anywhere else):
  * fields by what they hold, columns of a hand-set row by what stands in them. */
 export const WIDTH = {
-  /** a number: a count of days */
-  number: "w-28",
   /** a folder, a filter, a snapshot among snapshots */
   long: "w-64",
   /** a status and its code */

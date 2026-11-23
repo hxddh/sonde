@@ -94,7 +94,8 @@ export const api = {
     copy: (path: string, id: number, kind: "cli" | "curl") => Runs.copy(path, id, kind) as string | null,
     start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Runs.start(endpoint, policy)) as T.RecordingView,
     current: () => Runs.current() as T.RecordingView | null,
-    stop: () => Runs.stop() as string | null,
+    /** Stops the recording begun with no program: its run's path once the file is whole. */
+    stop: async () => (await Runs.stop()) as string | null,
     example: () => Runs.example() as string,
     /** The budget the run's program has in its project's sonde.toml, for the charts' lines; null without one. */
     budget: (path: string) => Runs.budget(path) as T.ProjectBudget | null,

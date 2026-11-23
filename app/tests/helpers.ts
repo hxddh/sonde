@@ -100,8 +100,10 @@ export async function openDemo(app: App) {
   if (await app.waitFor("id:endpoint-demo >> text:In use", { timeout: 500 }).then(() => true, () => false)) return;
   await app.press("id:palette");
   await app.waitFor("id:palette-command");
-  await app.type("id:palette-command", "demo");
-  if (await app.waitFor("id:palette-dialog >> text:Start the demo", { timeout: 2000 }).then(() => true, () => false)) await app.press("id:palette-dialog >> text:Start the demo");
+  // the demo is among the endpoints, before it has started too: chosen, it starts (found by its own name: "demo"
+  // finds every run on it too)
+  await app.type("id:palette-command", "built-in");
+  if (await app.waitFor("id:palette-dialog >> text:Demo (built-in)", { timeout: 2000 }).then(() => true, () => false)) await app.press("id:palette-dialog >> text:Demo (built-in)");
   await app.wait(300);
   if (app.shows("id:palette-command")) await app.keyboard.press("escape");
 }

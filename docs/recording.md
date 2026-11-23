@@ -13,8 +13,8 @@ sonde run --listen                          # a standing endpoint (127.0.0.1:900
 The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credentials as for every command
 ([credentials](credentials.md)).
 
-**In the app**, Runs' command bar (⌘N, or Runs pressed again) does the same: a command, an endpoint (the folder and
-the policy behind its `⋯`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows); its run is the
+**In the app**, Runs' command bar (⌘N, or Runs pressed again) does the same: a command, an endpoint (the folder
+behind its `⋯`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows); its run is the
 newest in the list, on its Output tab, its terminal beside its operations; Stop ends it, a notification says how. Output is kept in the run with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
 highlights its lines and back. Output is kept as printed: do not print secrets. With a folder chosen and the field
@@ -151,7 +151,7 @@ on, the store keeps the old version; without it, use `read-only` to keep what is
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy` in `sonde.toml`;
 `allow`, or `no-delete` for `--trial` (sonde's own faults could push a program down a path it would
-not take). In the app, `[record] policy` may narrow the command bar's choice, never widen it.
+not take). The app's Run and Run again take the same (`allow`, or the project's); a trial and Record… (no program) ask.
 
 A request sonde refuses is said with its reason, a line each: a policy's names the flag that lifts it; S3 Express
 and a path that names no bucket are no policy's.

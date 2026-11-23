@@ -32,13 +32,17 @@ the next action; counts and chips support it, they do not replace it.
   under its name ("This run", "Objects", an object's name) with their shortcuts, and the shortcuts are bound while it
   shows. A dialog is for a short decision only.
 - **One door each.** A thing is reached one way per surface: recent runs from Runs' sidebar list and the palette's
-  "Recent runs"; the demo from the welcome and the palette, the example from the palette; a new run from ⌘N (File ›
+  "Recent runs"; the demo from the welcome and the palette's endpoints, the example from the palette; a new run from ⌘N (File ›
   New Run, the palette) or the sidebar's Runs pressed in Runs, and the command bar is Runs with no run chosen; Activity from the View menu, ⌘⇧A and the palette (the toolbar shows it only while sonde is at work);
   Buckets' sections from their row (and `⌥⌘1`–`⌥⌘4`, not while typing; a finding whose fix is one of them leads to
   the same section).
 - **No control that does nothing.** A press with something missing says what (Run with no endpoint, Save with no
   URL: on its field); a control that must stay dimmed says why in its tip. The sidebar's toggle always toggles; a
   pane that waits on the sidebar's list offers "Show sidebar".
+- **One thing at work.** A program, the demo's job, a trial and a recording with no program are one busy state
+  (`running`, `run.ts`), one at a time: the toolbar's pill, the sidebar's dot, the Dock's progress, Stop in the
+  palette and the tray follow it; Run, Run again and a trial say why they wait; quitting or closing the window asks
+  first.
 
 ## Platforms
 
