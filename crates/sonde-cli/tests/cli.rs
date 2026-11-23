@@ -349,6 +349,9 @@ fn check_holds_a_run_to_its_programs_baseline() {
     );
     let v: serde_json::Value = serde_json::from_slice(&c.stdout).unwrap();
     assert_eq!(c.status.code(), Some(0), "{v}");
+    // its figures rounded as `show -f json` rounds them (31.0: a cost of
+    // 0.00017760000000000052)
+    rounded_as_show(&v, "");
     assert!(
         v["check"]["verdicts"]
             .as_array()
@@ -367,6 +370,25 @@ fn check_holds_a_run_to_its_programs_baseline() {
     let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
     assert_eq!(runs_json(t.path()).len(), 1);
+}
+
+/// Every fraction in `v` as `show -f json` writes it: a time (`…Ms`, `ms`)
+/// to a tenth of a millisecond, any other figure to 6 significant digits.
+fn rounded_as_show(v: &serde_json::Value, key: &str) {
+    match v {
+        serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| rounded_as_show(x, k)),
+        serde_json::Value::Array(a) => a.iter().for_each(|x| rounded_as_show(x, key)),
+        serde_json::Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap();
+            let r = if key.ends_with("Ms") || key == "ms" {
+                (f * 10.0).round() / 10.0
+            } else {
+                format!("{f:.5e}").parse().unwrap()
+            };
+            assert_eq!(f, r, "{key}: {f}");
+        }
+        _ => {}
+    }
 }
 
 #[test]
