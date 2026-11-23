@@ -1776,9 +1776,10 @@ pub struct RunChange {
     /// The objects each run asked of (each key, each prefix listed, once):
     /// what its workload is judged by ([`workload_changed`]).
     pub objects: (usize, usize),
-    /// The writes the first run's findings fixed or less named as saved
-    /// (small files written as fewer, deletes one at a time): objects a
-    /// fix does away with, not work left undone.
+    /// The objects the first run's findings fixed or less did away with
+    /// ([`crate::fixloop::freed`]: small files written as fewer, small
+    /// reads packed into a shard, prefixes listed as one listing), not
+    /// work left undone.
     #[serde(skip)]
     pub freed: usize,
     pub wall_ms: (f64, f64),
@@ -1843,7 +1844,7 @@ pub struct RunChange {
 /// A workload that changed between two runs that asked of `(a, b)`
 /// objects ([`RunChange::objects`]), said `objects 120 → 402, 3.4×`: grown
 /// by half or more, or shrunk by a third or more below what a's findings
-/// fixed or less leave (`saved`, the writes they named as saved:
+/// fixed or less leave (`saved`, the objects they did away with:
 /// 120 small files written as 3 is a fix, not less work), by ten objects at
 /// least either way. Objects, not requests: the same files read in fewer
 /// requests is a fix whether or not a finding said so. None when it did
@@ -2395,7 +2396,7 @@ impl Run {
             .asks
             .values()
             .flatten()
-            .map(|(a, _, _)| a.as_str())
+            .map(|ask| ask.asked.as_str())
             .collect();
         self.counts = crate::fixloop::count(records, &wanted);
         self.measured = true;
@@ -2438,20 +2439,7 @@ impl Run {
         // tenth of an outage's memory at its peak)
         let mut objects: Vec<u64> = Vec::with_capacity(records.len());
         for r in records {
-            // (a listing by its prefix: a key it is not)
-            let prefix = match r.key.as_deref() {
-                Some(_) => "",
-                None => r
-                    .query()
-                    .iter()
-                    .find(|(k, _)| k == "prefix")
-                    .map_or("", |(_, v)| v.as_ref()),
-            };
-            objects.push({
-                use std::hash::{BuildHasher, BuildHasherDefault};
-                BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                    .hash_one((r.bucket.as_deref().unwrap_or(""), r.key.as_deref(), prefix))
-            });
+            objects.push(object_of(r));
             // the folder named in a buffer: a string is kept once per folder
             name.clear();
             let b = r.bucket.as_deref().unwrap_or("");
@@ -2477,7 +2465,7 @@ impl Run {
         let mut traces = traces;
         name_traces(&mut traces, &observations);
         let asks = if asked {
-            crate::fixloop::asks_of(records, &observations)
+            crate::fixloop::asks_of(records, &observations, &objects)
         } else {
             crate::fixloop::Asks::new()
         };
@@ -2535,6 +2523,25 @@ impl Run {
     }
 }
 
+/// A request's object, as a hash of its name: its bucket and key, a
+/// listing's bucket and prefix (a key it is not).
+pub fn object_of(r: &Record) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    let prefix = match r.key.as_deref() {
+        Some(_) => "",
+        None => r
+            .query()
+            .iter()
+            .find(|(k, _)| k == "prefix")
+            .map_or("", |(_, v)| v.as_ref()),
+    };
+    BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one((
+        r.bucket.as_deref().unwrap_or(""),
+        r.key.as_deref(),
+        prefix,
+    ))
+}
+
 pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     let keys: BTreeSet<(String, bool)> = a
         .profile
@@ -2574,16 +2581,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
     });
     let findings = crate::fixloop::changes(a, b);
     use crate::fixloop::{State, said};
-    // the writes the fixed findings did away with (`PutObject b/k?`), each
-    // an object
-    let freed = findings
-        .iter()
-        .filter(|f| matches!(f.state, State::Fixed | State::Less))
-        .filter_map(|f| a.asks.get(&f.identity))
-        .flatten()
-        .filter(|(asked, _, _)| !["Get", "Head", "List"].iter().any(|r| asked.starts_with(r)))
-        .map(|(_, n, _)| n)
-        .sum();
+    let freed = crate::fixloop::freed(&findings, a, b);
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths

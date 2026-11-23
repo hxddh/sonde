@@ -1246,3 +1246,48 @@ fn runs_alike_but_for_their_timing_have_a_noise_band() {
         fixloop::findings_of(Some("x"), &run_of(&hot(13)).observations)
     );
 }
+
+/// 31.0's eval: 600 small reads packed into one shard, and 60 prefixes
+/// listed one by one read as one listing, read "the workload shrank": the
+/// objects a fixed finding named that the later run no longer asks of are
+/// the fix's, whatever the operation, and its saving is counted.
+#[test]
+fn objects_a_fix_reads_or_lists_no_more_are_no_smaller_workload() {
+    let sized = |id: u64, key: &str, bytes: u64| {
+        let mut r = get(id, key);
+        r.response_bytes = Some(bytes).into();
+        r
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let samples: Vec<Record> = (0..600)
+        .map(|i| sized(i + 1, &format!("img/{i:04}.jpg"), 10_000))
+        .collect();
+    ran(dir.path(), 1, &samples, Some(0));
+    let packed = ran(
+        dir.path(),
+        2,
+        &[sized(1, "shards/0.tar", 6_000_000)],
+        Some(0),
+    );
+    let c = packed.change.as_ref().unwrap();
+    assert!(c.workload_changed.is_none(), "{c:#?}");
+    let f = packed
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.smallreads"))
+        .unwrap();
+    assert_eq!((f.state, f.saved_requests), (State::Fixed, Some(599)));
+
+    let dir = tempfile::tempdir().unwrap();
+    let crawl: Vec<Record> = (0..60).map(|i| list(i + 1, &format!("t/p={i}/"))).collect();
+    ran(dir.path(), 1, &crawl, Some(0));
+    let once = ran(dir.path(), 2, &[list(1, "t/")], Some(0));
+    let c = once.change.as_ref().unwrap();
+    assert!(c.workload_changed.is_none(), "{c:#?}");
+    let f = once
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.crawl"))
+        .unwrap();
+    assert_eq!((f.state, f.saved_requests), (State::Fixed, Some(59)));
+}
