@@ -174,7 +174,7 @@ requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript,
 | `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (of an import, said as not known whether) | a conditional write |
 | `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
 | `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for reads or writes | adaptive retries; keys spread over prefixes |
-| `obs.serial` | requests one after another that 8 at once would finish 100 ms sooner, all that could go at once whatever another finding says of them; not a key asked again while not there, a conditional write, nor one reading, writing or listing what one before it wrote (those stay in order, the others go at once around them) | at once, as the operation they are |
+| `obs.serial` | requests one after another that 8 at once would finish 100 ms sooner, all that could go at once whatever another finding says of them; not a key asked again while not there, a conditional write, nor one alone after what it needs (one reading, writing or listing what one before it wrote waits for that one only: those that need it go at once after it, the others around them) | at once, as the operation they are |
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
 | `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |

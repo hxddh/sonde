@@ -2935,18 +2935,26 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // those that could go at once, whatever another finding says of them
     // (sent at once is a change of its own, weighed on its own). Not a
     // key asked again while not there, a poll; not a conditional write, which
-    // waits for what it is conditional on; not one that needs one before it
+    // waits for what it is conditional on. One that needs one before it
+    // goes after that one, at once with the others that need it
     {
-        use crate::profile::{CHAIN_CONCURRENCY, CHAIN_MIN, chains};
+        use crate::profile::{CHAIN_CONCURRENCY, CHAIN_MIN, at_once_ms, chains};
         let lat = |r: &Record| (r.latency_us().max(0) as f64) / 1000.0;
         let (mut serial, mut wall, mut fast, mut waiting) = (0usize, 0.0, 0.0, 0.0);
         let mut chained: Vec<u64> = Vec::new();
         for c in chains(records) {
             let mut asked: std::collections::HashSet<(&str, &str)> = Default::default();
-            let waits: std::collections::HashSet<u64> = c.waits.iter().copied().collect();
             let mut dropped = 0.0;
-            let mut kept: Vec<&Record> = Vec::new();
-            for r in c.ids.iter().filter_map(|id| by_id.get(id)) {
+            let mut kept: Vec<(u32, &Record)> = Vec::new();
+            for (&level, r) in c
+                .levels
+                .iter()
+                .zip(&c.ids)
+                .filter_map(|(l, id)| {
+                    let r: &Record = by_id.get(id)?;
+                    Some((l, r))
+                })
+            {
                 let place = (
                     r.bucket.as_deref().unwrap_or(""),
                     r.key.as_deref().unwrap_or(""),
@@ -2954,25 +2962,38 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 let poll = r.status == Some(404) && !asked.insert(place);
                 let conditional = is_write(r)
                     && (header(r, "if-none-match").is_some() || header(r, "if-match").is_some());
-                if poll || conditional || waits.contains(&r.id) {
+                if poll || conditional {
                     dropped += lat(r);
                 } else {
                     asked.insert(place);
-                    kept.push(r);
+                    kept.push((level, r));
                 }
             }
+            // one alone at its level waits for the one before and has none
+            // to go at once with (a manifest read after it was written)
+            let mut at_level: std::collections::HashMap<u32, usize> = Default::default();
+            for &(l, _) in &kept {
+                *at_level.entry(l).or_default() += 1;
+            }
+            kept.retain(|&(l, r)| {
+                let alone = at_level[&l] == 1;
+                if alone {
+                    dropped += lat(r);
+                }
+                !alone
+            });
             if kept.len() < CHAIN_MIN {
                 continue;
             }
-            // the same requests at once: the waves of the longest ones
-            let mut ms: Vec<f64> = kept.iter().map(|r| lat(r)).collect();
-            ms.sort_by(|a, b| b.total_cmp(a));
+            // the same requests at once: each level after the one it needs,
+            // in waves of the longest ones
+            let ms: Vec<(u32, f64)> = kept.iter().map(|&(l, r)| (l, lat(r))).collect();
             serial += kept.len();
             wall += (c.end_ms - c.start_ms - dropped).max(0.0);
-            fast += ms.iter().step_by(CHAIN_CONCURRENCY).sum::<f64>();
             // only the waiting goes: the program's own work between requests stays
-            waiting += ms.iter().sum::<f64>();
-            chained.extend(kept.iter().map(|r| r.id));
+            waiting += ms.iter().map(|(_, ms)| ms).sum::<f64>();
+            fast += at_once_ms(ms);
+            chained.extend(kept.iter().map(|(_, r)| r.id));
         }
         let saved = (waiting - fast).max(0.0);
         if serial > 0 && (saved >= 100.0 || (any && saved > 0.0)) {

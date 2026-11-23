@@ -533,16 +533,21 @@ fn findings_of_one_root_cause_are_one_diagnosis_saving_what_all_at_once_saves() 
     let first = &a.diagnoses[0];
     let mut members = kinds(first);
     members.sort_unstable();
-    // and the writes one after another (the reads back wait for them), last
     assert_eq!(
         members,
-        ["obs.headget", "obs.serial", "obs.small", "obs.smallreads"],
+        ["obs.headget", "obs.small", "obs.smallreads"],
         "{:#?}",
         a.diagnoses
     );
-    assert_eq!(first.serial, first.findings.last().copied());
+    // the writes, then the reads back (each after its write), sent at once
+    // save more than writing fewer objects alone: a change of its own (31.0)
+    assert!(
+        a.diagnoses.iter().any(|d| kinds(d) == ["obs.serial"]),
+        "{:#?}",
+        a.diagnoses
+    );
     // the members keep their identities; the id is made of them
-    assert_eq!(first.identities.len(), 4);
+    assert_eq!(first.identities.len(), 3);
     assert!(first.id.starts_with("dx-"));
     // one saving, of them all at once: never more than the waiting, never their sum
     let sum: f64 = first
@@ -646,4 +651,62 @@ fn a_run_says_where_its_time_went() {
             .time
             .is_none()
     );
+}
+
+/// 31.0's eval: one listing of the bucket before 100 uploads one after
+/// another held every upload after it, each after the one before, and the
+/// finding was gone. A request that needs one before it waits for that one
+/// alone: those that need it go at once among themselves, one wave after.
+#[test]
+fn requests_that_need_one_before_them_go_at_once_after_it() {
+    let lat = 50.0;
+    let serial_ms = |recs: &[Record]| {
+        findings(recs)
+            .iter()
+            .find(|o| key(o) == "obs.serial")
+            .map(|o| o.saves_ms)
+    };
+    let uploads = |from: u64| -> Vec<Record> {
+        (0..100u64)
+            .map(|i| {
+                let mut r = rec(i + from, (i + from) as i64 * 51, "PutObject", None, 200, lat);
+                r.key = Some(format!("out/{i}.bin").into());
+                r
+            })
+            .collect()
+    };
+    // alone: 100 × 50 ms, 13 waves of 8 at once
+    assert_eq!(serial_ms(&uploads(1)), Some(4350.0));
+    // after a listing of the bucket: the listing, then the same waves
+    let mut listed = vec![rec(0, 0, "ListObjectsV2", None, 200, lat)];
+    listed.extend(uploads(1));
+    assert_eq!(serial_ms(&listed), Some(4350.0));
+    // each key written and read back: the writes at once, then the reads
+    let back: Vec<Record> = (0..50u64)
+        .flat_map(|i| {
+            let k = format!("out/{i}.bin");
+            [
+                rec(2 * i + 1, (2 * i) as i64 * 51, "PutObject", Some(&k), 200, lat),
+                rec(2 * i + 2, (2 * i + 1) as i64 * 51, "GetObject", Some(&k), 200, lat),
+            ]
+        })
+        .collect();
+    // 100 × 50 ms waited, 2 × 7 waves at once
+    assert_eq!(serial_ms(&back), Some(5000.0 - 700.0));
+    // a manifest read and written back each time round a loop holds back
+    // its own requests, one after another, not the loop's other reads
+    let mut kv = Vec::new();
+    for i in 0..20u64 {
+        for (op, k) in [
+            ("GetObject", "manifest".to_string()),
+            ("GetObject", format!("data/{i}")),
+            ("PutObject", "manifest".to_string()),
+        ] {
+            let id = kv.len() as u64 + 1;
+            kv.push(rec(id, id as i64 * 51, op, Some(&k), 200, lat));
+        }
+    }
+    // 60 waited; the 20 reads and the first manifest read in 3 waves, the
+    // 39 manifest requests after it one after another
+    assert_eq!(serial_ms(&kv), Some(3000.0 - 150.0 - 39.0 * 50.0));
 }
