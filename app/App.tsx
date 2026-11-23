@@ -62,7 +62,7 @@ function Shell() {
   });
   // Windows and Linux: closing the window while something is at work asks first, as quitting does (macOS
   // brings the close to the quit request)
-  if (!mac)
+  if (platform.os !== "macos")
     try {
       win.set({ closeOnPress: false });
       win.on("closePress", () => {
