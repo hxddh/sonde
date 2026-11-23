@@ -134,6 +134,10 @@ for path, where, rel in files:
         if WEIGHT.search(line) and "lint-kit fails" not in near and "`font-" not in line:
             say(where, n, "weight", "a third weight: regular and bold (the kit's EMPHASIS) only")
         if rel in OWN:
+            # a caller's classes (a width, a flex) are added to a kit component's own, never put in place of its
+            # colour: 30.0's dark titles were near-black (Strong given `min-w-0 flex-1`)
+            if re.search(r'props\.class \?\? "[^"]*\btext-', line):
+                say(where, n, "class", "a caller's classes in place of the kit's colour: its colour, then `props.class` (later wins)")
             # the kit's own controls may stand off the scale where a comment says why
             if re.search(SPACE, line) and "off-scale:" not in near:
                 say(where, n, "spacing", "spacing off the scale in the kit without an `off-scale:` comment saying why")
@@ -190,5 +194,5 @@ for name, body in re.findall(r"export function (\w+)\([^)]*\): string \{(.*?)\n\
         say("app/src/format.ts", fmt[: fmt.index(f"export function {name}(")].count("\n") + 1, "duration", f"{name}() writes a duration: only duration() does")
 
 charts = subprocess.run([sys.executable, str(Path(__file__).with_name("lint-charts.py"))])
-print(f"kit: {len(files)} files against {len(RULES) + len(UI_RULES) + 2} rules; weights regular and bold; {len(BREAK_KEYS)} thresholds (BREAK); sizes by name (SIZES, WIDTH, SURFACE, COLUMN, PANE; App.tsx included); nsh/base in pages: structure only: {'failed' if failed else 'ok'}")
+print(f"kit: {len(files)} files against {len(RULES) + len(UI_RULES) + 3} rules; weights regular and bold; {len(BREAK_KEYS)} thresholds (BREAK); sizes by name (SIZES, WIDTH, SURFACE, COLUMN, PANE; App.tsx included); nsh/base in pages: structure only: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed or charts.returncode else 0)

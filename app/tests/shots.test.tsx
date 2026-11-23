@@ -82,6 +82,9 @@ for (const v of variants) {
     // the variant's appearance and language from its launch, as a person whose system is dark or Chinese first sees
     // sonde: its first screen (Welcome) is shot in them (the settings keep "system" and "auto")
     const app: App = await open("../App.tsx", { width, height, colorScheme: v.theme ?? "light", locale: v.lang ? "zh-CN" : "en-US" });
+    // at the variant's size: Windows' development host opens the window at nsh.json's defaultSize once the app has
+    // loaded, after the size asked here (30.0's Windows "min" pictures were the wide ones, 1280×820 fitted to the screen)
+    await app.setViewport(width, height);
     // the pointer rested where nothing shows a tip (the toolbar's middle), so the last press's button is no longer
     // under it: no tooltip in the picture (where a dialog covers the toolbar, it stays where it was)
     const rest = () => app.hover("id:toolbar").catch(() => {});

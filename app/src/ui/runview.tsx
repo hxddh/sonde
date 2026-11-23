@@ -590,7 +590,7 @@ export function operationsText(view: RunView, rows: EpisodeRow[]): string {
  * by its place, so only columns at the end may go. */
 export type OpColumn = "status" | "title" | "duration" | "requests" | "time" | "bar" | "format" | "notes";
 export const OP_NAME = 240;
-const OP_WIDTH: Record<Exclude<OpColumn, "title" | "bar" | "notes">, number> = { status: 26, duration: 96, requests: 92, time: 120, format: 86 };
+const OP_WIDTH: Record<Exclude<OpColumn, "title" | "bar" | "notes">, number> = { status: 26, duration: 96, requests: 92, time: 128, format: 86 };
 const OP_RANKED = ["requests", "time", "bar", "format", "notes"] as const;
 /** Which columns a table `width` wide shows (0: not measured yet, all that are
  * wanted), and the room the operation's name has. */
@@ -832,6 +832,8 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       fontFamily={token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}
       classes={tableClasses}
+      // its lines in mono, as the program wrote them; their times in the interface's face, as every time is
+      renderCell={(c) => <Text class={`${c.key === "time" ? TEXT.time : `font-mono ${TEXT.small}`} line-clamp-1`}>{c.text}</Text>}
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? SELECTED : ""))}
       rowSelectable
       onRowPress={({ row }) => props.onSelect(row)}

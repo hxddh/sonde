@@ -16,10 +16,8 @@ import { Activity, activityAnchor, activityOpen, runningJobs, watchJobs } from "
 import { BREAK, confirmAlert, FocusRest, PANE, Recoverable, SidePanel, SPLIT_HANDLE, TEXT, Title, windowFace } from "./src/ui/kit";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette } from "./src/ui/palette";
-import { appMenus, Sidebar, sidebarOpen, Toolbar, windowMaterial } from "./src/ui/shell";
+import { appMenus, Sidebar, sidebarOpen, tallSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
-
-const mac = platform.os === "macos";
 
 /** The app's name, as it was built (nsh.json's `name`). */
 const APP = appInfo().name ?? "";
@@ -54,6 +52,9 @@ const open = (a: Area) => go(a);
 function Shell() {
   // a program or a job at work shows on the Dock's icon and the taskbar button
   const win = currentWindow();
+  // the window's material (nsh.json's `backdrop`) shows through macOS's sidebar only: on Windows, whose fills are
+  // opaque, the system draws none (Mica under them would never be seen)
+  if (platform.os === "windows") win.set({ backdrop: "none" });
   watchJobs();
   effect(() => {
     const busy = running() !== null || runningJobs() > 0;
@@ -105,16 +106,16 @@ function Shell() {
       onFileDragLeave={() => dragging.set(null)}
     >
       <FocusRest />
-      {/* the toolbar across the window; on macOS over the place only, the sidebar running the window's height with
-          the window's buttons in it, as a Mac app's does */}
-      {mac ? null : <Toolbar open={open} />}
+      {/* the toolbar across the window (Windows); on macOS and Linux over the place only, the sidebar running the
+          window's height with its toggle (and on macOS the window's buttons) in it */}
+      {tallSidebar ? null : <Toolbar open={open} />}
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
         <ResizablePanel fixed visible={sidebarOpen()} size={shellWidth() < BREAK.toolbar ? Math.min(sidebarWidth.size(), PANE.sidebarNarrow) : sidebarWidth.size()} minSize={PANE.sidebarLeast} maxSize={PANE.sidebarMost} onResize={sidebarWidth.onResize}>
           <Sidebar open={open} />
         </ResizablePanel>
         <ResizablePanel minSize={PANE.mainLeast} class="min-w-0 bg-background">
-          {mac ? <Toolbar open={open} /> : null}
+          {tallSidebar ? <Toolbar open={open} /> : null}
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           <Each of={[view()]} key={(x) => x}>
             {(x) => <Recoverable>{screen(x().split("|")[0] as Area, x().split("|")[1] === "true")}</Recoverable>}

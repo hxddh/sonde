@@ -152,12 +152,16 @@ for path in files:
                 if said and need > w:
                     say(f"{rel}:{n}", f"[title] {key or said}: “{said}” ({lang}) needs {need:.0f} pt of {w} pt")
             # what fills the column, where a formatter writes it
-            expr = re.search(rf"\b{re.escape(key)}: ([^\n]*?)(?:, \w+: |\s*\}}\)|$)", "\n".join(l for l in lines if re.search(rf"\b{re.escape(key)}: ", l) and "title:" not in l)) if key else None
-            kind = kind_of(expr.group(1)) if expr else None
+            # (the first expression a formatter writes, of every `key: …` in the file: a comment's "time: " is none)
+            near = "\n".join(l for l in lines if re.search(rf"\b{re.escape(key)}: ", l) and "title:" not in l) if key else ""
+            kind = next((k for e in re.finditer(rf"\b{re.escape(key)}: ([^\n]*?)(?:, \w+: |\s*\}}\)|$)", near, re.M) if (k := kind_of(e.group(1)))), None)
             if kind:
                 for lang in locales:
                     widest = WIDEST[kind][lang]
-                    need = text_width(widest, TYPE["caption"] if kind == "clock" else points, mono or kind == "clock") + PAD
+                    # at the table's size, in its face: a mono table's time drawn by its own cell is the interface's
+                    # (30.0 measured times at the caption's size and cut macOS's "12:08:00.612 PM" in SF Mono)
+                    own_cell = re.search(rf'\.key === "{re.escape(key)}"', src)
+                    need = text_width(widest, points, mono and not (kind == "clock" and own_cell)) + PAD
                     checked["cells"] += 1
                     if need > w:
                         say(f"{rel}:{n}", f"[cell] {key}: a {kind} as wide as “{widest}” ({lang}) needs {need:.0f} pt of {w} pt")

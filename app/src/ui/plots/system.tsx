@@ -428,7 +428,7 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
  * own under the sentence), how to read it (`how`: the title opens it, in a popover); the plot, its `legend` at the
  * plot's left edge (`gutter` for a chart of rows), and `empty` said in the plot's room when there is nothing to
  * draw. */
-export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** a board's chart (the Time pane): its fill without the card's edge, the board's sections parting the charts */ flat?: boolean }) {
+export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; /** a tile's figure, straight under its title: a row of them keeps its figures on one line, whatever their sentences */ figure?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** a board's chart (the Time pane): its fill without the card's edge, the board's sections parting the charts */ flat?: boolean }) {
   return (
     <Card testID={props.testID} class={`group ${props.flat ? "border-transparent" : ""} ${props.class ?? ""}`}>
       <View class="gap-1">
@@ -442,6 +442,9 @@ export function Chart(props: { title: string; text?: string; how?: string; actio
             </View>
           </If>
         </View>
+        <If when={props.figure}>
+          <View class="flex-row items-center">{props.figure}</View>
+        </If>
         {/* the answer, in a line where the title opens the whole of it; whole where it does not (a trend card's) */}
         <If when={props.text}>
           <Text testID="chart-text" accessibilityLabel={props.text} class={`tabular-nums ${TEXT.note} ${props.how ? "line-clamp-1" : ""}`}>{props.text}</Text>

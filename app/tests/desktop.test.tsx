@@ -345,7 +345,7 @@ test("prefixes are named by what tells them apart: the shared start once, the en
 test("a trial reads as figures (the faults and retries, the wait, the load), and what went wrong is said once, by its reasons", async () => {
   const { trialText, trialReasons } = await import("../src/ui/history");
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0 };
-  expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
+  expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe(nb("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests"));
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
   // why: its finding's phrases in the reader's language (two make one sentence); none, nothing is said
   const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2 };
@@ -356,10 +356,10 @@ test("a trial reads as figures (the faults and retries, the wait, the load), and
   expect(text.match(/never sent again/g)?.length).toBe(1);
   // too few waits to tell jitter from step: neither is said
   const { jitter: _, ...unsaid } = base;
-  expect(trialText({ ...unsaid, standing: "survived", faults: 2, retried: 2, backoffMs: [100, 150, 200], requests: 64 })).toBe("2 faults, all retried · after 100 ms to 200 ms");
+  expect(trialText({ ...unsaid, standing: "survived", faults: 2, retried: 2, backoffMs: [100, 150, 200], requests: 64 })).toBe(nb("2 faults, all retried · after 100 ms to 200 ms"));
   // faults no retry was owed for, writes the store made unheard, requests held back and what that did to the run's time
   expect(trialText({ ...unsaid, standing: "degraded", faults: 3, retried: 1, notRetryable: 2, lostWrites: 1, delayed: 40, wallMs: 4200, cleanWallMs: 900, requests: 64 })).toBe(
-    "3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms)",
+    nb("3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms)"),
   );
 });
 
@@ -493,6 +493,19 @@ test("runs of one command are told apart by the argument that differs", async ()
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
 });
 
+test("the sidebar says a run's seconds only where the same command started twice in one minute", async () => {
+  const { toldApart } = await import("../src/ui/runlist");
+  const run = (path: string, created: string, args = "export.py") => ({ path, created, name: "python", args });
+  // the same command an hour apart, and on another day: their minutes tell them apart
+  const apart = toldApart([run("a", "2026-11-07T09:12:05Z"), run("b", "2026-11-07T10:12:05Z"), run("c", "2026-11-06T09:12:05Z")]);
+  expect([...apart.values()].some((x) => x.twin)).toBe(false);
+  // twice in one minute: those two say their seconds; another command in that minute does not
+  const twice = toldApart([run("a", "2026-11-07T09:12:05Z"), run("b", "2026-11-07T09:12:48Z"), run("c", "2026-11-07T09:12:30Z", "load.py")]);
+  expect(twice.get("a")?.twin).toBe(true);
+  expect(twice.get("b")?.twin).toBe(true);
+  expect(twice.get("c")?.twin).toBe(false);
+});
+
 test("a live table follows its end until the reader goes up, and again once they are back", async () => {
   const { followsEnd } = await import("../src/ui/runview");
   // the first rows arrive: it opens at its end
@@ -519,9 +532,12 @@ test("a refused save names the field it is about, so the field says why", async 
 });
 
 // the table the terminal is tested against too (crates/fmt/cases.json):
-// the same size and length of time, the same figure, here in the app's words
+// the same size and length of time, the same figure, here in the app's words, where a figure and its unit never
+// part at a line's end (a space that does not break, in every language: "346 ms" read as "346" and "ms" on macOS)
+const nb = (text: string) => text.replace(/(\d) (?=(?:ms|s|min|h|B|KiB|MiB|GiB|TiB|PiB)\b)/g, "$1\u00a0");
 test("one way to write a figure, in the app and in the terminal", async () => {
   const { bytes, duration } = await import("../src/format");
+  expect(duration(346)).toBe("346\u00a0ms");
   const sizes: [number, string][] = [
     [0, "0 B"],
     [1, "1 B"],
@@ -550,7 +566,7 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [1125899906842624, "1.0 PiB"],
     [1152921504606847000, "1,024 PiB"],
   ];
-  for (const [n, text] of sizes) expect(bytes(n)).toBe(text);
+  for (const [n, text] of sizes) expect(bytes(n)).toBe(nb(text));
   const times: [number, string][] = [
     [0, "0 ms"],
     [0.04, "0.0 ms"],
@@ -583,13 +599,23 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [-4, "−4.0 ms"],
     [-185000, "−3 min 05 s"],
   ];
-  for (const [ms, text] of times) expect(duration(ms)).toBe(text);
+  for (const [ms, text] of times) expect(duration(ms)).toBe(nb(text));
 });
 
 test("an operation of two hundred thousand requests says its span (no spread of every row into one call)", async () => {
   const { spanMs } = await import("../src/ui/runview");
   const rows = Array.from({ length: 200000 }, (_, i) => ({ time: new Date(Date.UTC(2026, 10, 7) + i).toISOString(), latencyMs: 5 }));
   expect(spanMs(rows)).toBe(199999 + 5);
+});
+
+test("a program's runs over time: the axis's two ends read apart (their seconds, where they are of one minute)", async () => {
+  const { when } = await import("../src/ui/plots/runs");
+  const { clock, day, hm } = await import("../src/format");
+  const [a, b, c, d] = ["2026-11-07T09:12:05", "2026-11-07T09:12:48", "2026-11-07T14:05:00", "2026-11-06T14:05:00"];
+  expect(when(a, b)).toBe(clock(a, "s"));
+  expect(when(a, b)).not.toBe(when(b, a));
+  expect(when(a, c)).toBe(hm(a));
+  expect(when(c, d)).toBe(day(c));
 });
 
 test("runs listed together are told apart by their time of day, and by their date once they are of other days", async () => {
@@ -606,18 +632,18 @@ test("a figure and a count beside it use the region's marks alike (English in Ge
   // (the marks as the engine's Intl writes the region's: a headless engine without locale data writes en-US's)
   const { group: g, decimal: d } = separators();
   expect(count(12345)).toBe(`12${g}345`);
-  expect(duration(2350)).toBe(`2${d}35 s`);
-  expect(bytes(1536)).toBe(`1${d}5 KiB`);
+  expect(duration(2350)).toBe(`2${d}35\u00a0s`);
+  expect(bytes(1536)).toBe(`1${d}5\u00a0KiB`);
   expect(money(1234.5, "EUR")).toBe(`1${g}234${d}50 EUR`);
   expect(rate(4.25)).toBe(`4${d}3`);
 });
 
 test("one function writes a duration, and a scenario has words", async () => {
   const format = await import("../src/format");
-  expect(format.duration(0.42)).toBe("0.4 ms");
-  expect(format.duration(840)).toBe("840 ms");
-  expect(format.duration(2350)).toBe("2.35 s");
-  expect(format.duration(185000)).toBe("3 min 05 s");
+  expect(format.duration(0.42)).toBe(nb("0.4 ms"));
+  expect(format.duration(840)).toBe(nb("840 ms"));
+  expect(format.duration(2350)).toBe(nb("2.35 s"));
+  expect(format.duration(185000)).toBe(nb("3 min 05 s"));
   // the older names are gone
   expect("ms" in format).toBe(false);
   expect(format.factor(1.5)).toBe("1.5");
@@ -685,25 +711,25 @@ test("a run reads as four signals and in flight; what a log without times cannot
   const tiles = signalTiles(s);
   expect(tiles.map((x) => x.id)).toEqual(["rate", "errors", "latency", "bytes", "inFlight"]);
   expect(tiles[0].value).toBe("20/s");
-  expect(tiles[0].detail).toBe("40 requests in 2.00 s");
+  expect(tiles[0].detail).toBe(nb("40 requests in 2.00 s"));
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
   expect(tiles[1].tone).toBe("fail");
   // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
   const clientOnly = signalTiles({ ...s, errors: { ...s.errors, counts: { ...s.errors.counts, client: s.errors.count, server: 0 } } });
   expect(clientOnly[1].tone).toBe("client");
-  expect(tiles[2].value).toBe("2.0 ms");
-  expect(tiles[2].detail).toBe("p95 6.0 ms · p99 9.0 ms");
-  expect(tiles[3].value).toBe("19.5 KiB/s");
-  expect(tiles[3].detail).toBe("↑ 19.5 KiB/s ↓ 0 B/s");
+  expect(tiles[2].value).toBe(nb("2.0 ms"));
+  expect(tiles[2].detail).toBe(nb("p95 6.0 ms · p99 9.0 ms"));
+  expect(tiles[3].value).toBe(nb("19.5 KiB/s"));
+  expect(tiles[3].detail).toBe(nb("↑ 19.5 KiB/s ↓ 0 B/s"));
   expect(tiles[4].value).toBe("4");
   // a CloudTrail file has no times: no rate, no latency, no pace of bytes, and nothing drawn over time
   const untimed = signalTiles(signalsOf(bins, 2000, 39936, 0, false));
   expect(untimed[0].value).toBe("Not timed");
   expect(untimed[0].detail).toBe("40 requests");
   expect(untimed[2].value).toBe("Not timed");
-  expect(untimed[3].value).toBe("39.0 KiB");
-  expect(untimed[3].detail).toBe("↑ 39.0 KiB ↓ 0 B");
+  expect(untimed[3].value).toBe(nb("39.0 KiB"));
+  expect(untimed[3].detail).toBe(nb("↑ 39.0 KiB ↓ 0 B"));
   expect(untimed[4].value).toBe("Not timed");
   expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
   // a run of a moment says totals, not rates, and draws no line: 9 requests in a third of a second
@@ -713,12 +739,12 @@ test("a run reads as four signals and in flight; what a log without times cannot
   const short = signalTiles(moment);
   expect(short[0].label).toBe("Requests");
   expect(short[0].value).toBe("9 requests");
-  expect(short[0].detail).toBe("in 334 ms");
+  expect(short[0].detail).toBe(nb("in 334 ms"));
   expect(short[1].value).toBe("2 of 9");
   // a percentile of nine requests is one of them: said
-  expect(short[2].detail).toBe("p95 6.0 ms · of only 9");
-  expect(short[3].value).toBe("3.0 MiB");
-  expect(short[3].detail).toBe("↑ 0 B ↓ 3.0 MiB");
+  expect(short[2].detail).toBe(nb("p95 6.0 ms · of only 9"));
+  expect(short[3].value).toBe(nb("3.0 MiB"));
+  expect(short[3].detail).toBe(nb("↑ 0 B ↓ 3.0 MiB"));
   expect(short[4].detail).toBe("of 9 requests");
   expect(short.every((x) => x.series.length === 0)).toBe(true);
   // Rust's own flag (under a second) says totals too, and draws no line, however many requests it holds
@@ -733,8 +759,8 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(own).toEqual([{ kind: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
   // sizes by their bounds; a prefix by the nearer of its two limits
   expect(sizeLabel(0)).toBe("empty");
-  expect(sizeLabel(1024)).toBe("≤ 1.0 KiB");
-  expect(sizeRange(1024)).toBe("512 B – 1.0 KiB");
+  expect(sizeLabel(1024)).toBe(nb("≤ 1.0 KiB"));
+  expect(sizeRange(1024)).toBe(nb("512 B – 1.0 KiB"));
   expect(sizeRange(0)).toBe("empty");
   expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
 });
@@ -820,6 +846,22 @@ test("what looks pressable answers a press: a chart without the pointer, its how
   await app.waitUntil(() => !app.shows("id:sidebar"), { timeout: 2000 });
   await app.press("id:toggle-sidebar");
   await app.waitFor("id:sidebar", { timeout: 2000 });
+});
+
+test("the sidebar's toggle: in the sidebar's own strip on macOS and Linux, at the toolbar's start on Windows; never drawn pressed", async () => {
+  for (const platform of ["macos", "linux", "windows"] as const) {
+    const app = await open("../App.tsx", { ...desktop, platform });
+    await app.waitFor("id:sidebar");
+    expect(app.shows("id:sidebar-strip >> id:toggle-sidebar")).toBe(platform !== "windows");
+    expect(app.shows("id:toolbar >> id:toggle-sidebar")).toBe(platform === "windows");
+    // a command, not a state: no fill while the sidebar shows
+    expect(app.viewStyle("id:toggle-sidebar")?.backgroundColor ?? null).toBe(null);
+    // hidden, the toolbar has it back
+    await app.keyboard.press("mod+b");
+    await app.waitFor("id:sidebar", { state: "gone" });
+    expect(app.shows("id:toolbar >> id:toggle-sidebar")).toBe(true);
+    app.dispose();
+  }
 });
 
 test("an endpoint's commands are behind its ⋯, in full at rest: test, edit, remove", async () => {
