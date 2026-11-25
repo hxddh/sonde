@@ -106,8 +106,8 @@ export const runsTick = signal(0);
 export const runsChanged = () => runsTick.set(runsTick() + 1);
 /** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */
 export const endpointsMode = signal<"list" | "add" | "import">("list");
-/** The main window's width, as its shell measures it (windowSize() follows
- * whichever window has the focus). */
+/** The main window's width, as its shell measures it (windowSize() is the app's first window's, wherever it is
+ * read: a dialog in another window measures its own). */
 export const shellWidth = signal(1280);
 /** The window's height, as its shell is laid out: what a surface over it may take. */
 export const shellHeight = signal(820);

@@ -90,15 +90,8 @@ Every size, count and duration in text comes from `sonde-fmt`, tested with the a
   (`kit.tsx`), toasts, toolbar and sidebar (`shell.tsx`), palette, and the run views shared with the
   viewer (`runview.tsx`, `record.tsx`, `profile.tsx`). Pages compose these and never style base components.
   Standards: `app/DESIGN.md`.
-- **Two forms**: `App.tsx` branches on `platform.idiom === "terminal"`.
-
-  | Window | Terminal |
-  |---|---|
-  | sidebar with Run, Runs, Buckets | a navigation stack with every place |
-  | Settings, a run in their own windows (`Window.open`) | the F10 menu bar, keyboard shortcuts |
-  | Activity, bucket details in sheets (`setOverlay` in `store.ts`) | |
-  | command palette, Canvas charts | tables and sentences |
-
-  The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
+- **Windows**: the main window (sidebar, places, palette; Activity and a bucket's details in sheets, `setOverlay` in
+  `store.ts`), and Settings and a run in windows of their own (`Window.open`). Closing the main window quits, on every
+  platform, asking first while sonde is at work (`App.tsx`); the others go with it.
 - **Bucket overview** (`ui/overview.tsx`): starts the cheap scans when a bucket or prefix opens and keeps results per
   endpoint, bucket and prefix, reused by the sheets it opens.

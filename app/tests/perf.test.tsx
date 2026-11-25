@@ -3,8 +3,8 @@
 //   nsh test tests/perf.test.tsx --trace
 // The numbers are recorded in docs/dev/performance.md.
 
-import { expect, open, test } from "nsh/test";
-import { openDemo, desktop, place } from "./helpers";
+import { expect, test } from "nsh/test";
+import { openDemo, desktop, place, open } from "./helpers";
 
 test("100 000 rows: load and scroll", async () => {
   const app = await open("../App.tsx", { ...desktop, width: 960, height: 640 });

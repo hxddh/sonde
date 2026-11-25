@@ -1,7 +1,8 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at `v0.6.1` (`2f51d86`): all still stand (`32f1635` narrowed the GTK
-focus one, below). sonde works around them in its own code (FINDINGS 18, 19, 22, 23) and does not patch Native Shell.
+Drafts for `longbridge/nsh`, last checked at `v0.7.0` (`3f8ecd8`): those below still stand (the GTK focus one seen
+again in the Linux tour; the macOS backdrop one waits on CI's macOS pictures), and the last four are new. sonde works
+around them in its own code (FINDINGS 18, 19, 22, 23) and does not patch Native Shell.
 
 ## A theme font token keeps only the first family of its list
 
@@ -127,3 +128,37 @@ focus one, below). sonde works around them in its own code (FINDINGS 18, 19, 22,
 - **sonde today**: an invisible read-only first field (`FocusRest`) per window, Linux only.
 - **At `32f1635`**: a removed view takes the focus with it (#2092), as pages and dialogs did; the triggers above
   are not removals, so `FocusRest` stays.
+
+## `open`'s `width` and `height` do not size an app's implicit first window (`nsh test`)
+
+- **What** (0.7.0): `open("App.tsx", { width: 900, height: 560 })` of an app whose root is a plain view (the implicit
+  `"main"` window) lays it out at nsh.json's `window.defaultSize`, not 900 × 560; `app.setViewport(900, 560)` after
+  it does size it.
+- **Expected**: `open`'s viewport is the first window's size, as before Window Model v2 and as the docs say ("The
+  window opens at the viewport's size").
+- **sonde today**: its tests open through a helper that calls `setViewport` after `open` (`app/tests/helpers.ts`).
+
+## `nsh test --jobs` does not help an app with Rust code
+
+- **What**: `--jobs N` runs test files in parallel, but an app with a Rust crate runs on a headless runner (a host),
+  and `nsh-cli/src/test.rs` takes one file at a time whenever there is a host: sonde's files run one after another
+  whatever `--jobs` says.
+- **Expected**: a host per job for apps with Rust too, or the docs saying `--jobs` is for TSX-only apps.
+
+## No way to ask whether a translation exists
+
+- **What**: `t(key)` is the only lookup; since #3137 a development build warns of every key no language has. An app
+  that tries an optional key (a count's `.one` form, a phrase another layer may have words for) cannot ask first.
+- **Expected**: `hasTranslation(key, locale?)` (or `t(key, { fallback: null })`).
+- **sonde today**: it reads its own `locales/en.json`'s keys into a set and asks that first (`app/src/i18n.ts`).
+
+## On Windows and Linux the application menu's shortcuts reach no window
+
+- **What** (0.7.0, GTK; the Win32 code reads the same way): `Menu.setApplicationMenu` items' `shortcut`s do nothing
+  in an app window: the menu is installed on the hidden host's surface, and a key pressed in a window looks only at
+  that window's own (`nsh-platform-linux/src/chrome.rs` `menu_shortcut`, `nsh-platform-windows/src/chrome.rs`
+  `shortcut`). Headless, they still work. sonde's tour under `--target linux` stopped at ⌘K.
+- **Expected**: menu accelerators are application-level, as `docs/dev/window-model.md` says ("menu accelerators are
+  application-level").
+- **sonde today**: on Windows and Linux it binds its menus' shortcuts itself (`keymap.bind(…, { scope: "app" })`
+  in `App.tsx`).

@@ -2,7 +2,7 @@
   "name": "sonde-viewer",
   "id": "dev.sonde.viewer",
   "version": "31.0.0",
-  "nsh": ">=0.6, <0.7",
+  "nsh": ">=0.7, <0.8",
   "theme": "../app/theme.json",
   "tailwind": {
     "fontSize": {

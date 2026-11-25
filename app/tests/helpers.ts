@@ -1,8 +1,16 @@
 // Shared steps: go to a place, open the app on the demo endpoint.
 
-import { type App, open } from "nsh/test";
+import { type App, open as openEntry } from "nsh/test";
 
 export const desktop = { platform: "macos" as const, width: 1280, height: 860 };
+
+/** Opens the app at the size `options` say. (Native Shell 0.7.0's `open` leaves an app's implicit first window at
+ * nsh.json's size, whatever `width` and `height` say: [nsh-issues](../../docs/dev/nsh-issues.md).) */
+export async function open(entry: string, options: Parameters<typeof openEntry>[1] = desktop): Promise<App> {
+  const app = await openEntry(entry, options);
+  if (options?.width && options.height) await app.setViewport(options.width, options.height);
+  return app;
+}
 
 const STORE = ["browse", "capacity", "multipart", "layouts"];
 const SETTINGS = ["settings", "endpoints"];

@@ -4,7 +4,7 @@
 
 import { computed, ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Select, Toolbar as ToolbarGroup } from "nsh/base";
-import { isAvailable, type MenuItem, titleBar } from "nsh/desktop";
+import type { MenuItem } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
 import { areaLabel, vendorName } from "../labels";
@@ -14,7 +14,7 @@ import { type Area, area, shellWidth, endpoint, endpoints, go, newRun, openRun, 
 import type { RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { scrubCommand } from "./runview";
-import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Tip, TONE, WIDTH, SURFACE, TEXT } from "./kit";
+import { BREAK, Button, CONTROL, DOT, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Tip, TitleRow, TONE, WIDTH, SURFACE, TEXT } from "./kit";
 import { ActivityButton, activityOpen, runningJobs } from "./activity";
 import { runName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -89,9 +89,10 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: platform.os === "windows" ? t("menu.exit") : t("menu.quit") } as const]),
       ],
     },
-    { label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
-    // (the system's own Window menu: macOS's; elsewhere the window's title bar has these)
+    // (Edit, full screen and the Window menu: macOS's menu bar; elsewhere a field's own menu edits, and the window's
+    // title bar has the rest)
+    ...(mac ? [{ label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] as MenuItem[] }] : []),
+    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, ...(mac ? [{ role: "toggleFullScreen" } as const] : [])] },
     ...(mac ? [{ label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] as MenuItem[] }] : []),
   ];
 }
@@ -192,29 +193,20 @@ function SearchButton() {
   );
 }
 
-/** The title bar's height: the system's, where it says. */
-const titleBarHeight = () => (isAvailable ? titleBar().height || 44 : 44);
-
 /** The sidebar's toggle: it always toggles, and it is a command, not a state (no pressed look while the sidebar
  * shows, as the platforms' own toggles have none). */
 function SidebarToggle() {
   return <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} testID="toggle-sidebar" />;
 }
 
-/** The window's title bar, drawn by the app: drags the window; the system's controls keep their place. */
+/** The window's title bar, drawn by the app (Native Shell's `TitleBar`): drags the window, and steps aside of the
+ * system's controls where it meets them. */
 export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element }) {
   let menuButton: ViewRef | undefined;
-  // (the sidebar's own strip holds its toggle, and on macOS the window's buttons, while it shows: the toolbar, over the
-  // place, starts clear)
+  // (the sidebar's own strip holds its toggle, and on macOS the window's buttons, while it shows)
   const inSidebar = () => tallSidebar && sidebarOpen();
-  const left = () => (isAvailable && !inSidebar() ? titleBar().left : 0);
   return (
-    <View
-      testID="toolbar"
-      desktop={{ windowDrag: true }}
-      class="flex-row items-center gap-2 border-b border-border bg-toolbar"
-      style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: left() + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
-    >
+    <TitleRow testID="toolbar" class="border-b border-border bg-toolbar">
       <If when={!inSidebar()}>
         <SidebarToggle />
       </If>
@@ -238,7 +230,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
         />
       </If>
       </ToolbarGroup>
-    </View>
+    </TitleRow>
   );
 }
 
@@ -277,9 +269,9 @@ export function Sidebar(props: { open: (a: Area) => void }) {
         {/* the window's height (macOS, Linux): the title bar's room at its top holds the sidebar's toggle, on macOS
             after the window's buttons (it drags the window, as the toolbar does) */}
         {tallSidebar ? (
-          <View testID="sidebar-strip" desktop={{ windowDrag: true }} class="flex-row items-center" style={{ height: titleBarHeight(), flexShrink: 0, paddingLeft: (isAvailable ? titleBar().left : 0) + 10 }}>
+          <TitleRow testID="sidebar-strip">
             <SidebarToggle />
-          </View>
+          </TitleRow>
         ) : null}
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
