@@ -9,7 +9,7 @@ import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/
 import type { MenuItem as MenuItemSpec } from "nsh/desktop";
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, said as saidArg, say } from "../phrases";
 import { Chart, timed, Waterfall } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
@@ -154,7 +154,7 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     if (!x) return "";
     const account = x.phrases.find((p) => p.key === "time.account");
     const rest = x.phrases.filter((p) => p !== account && !ASIDE.includes(p.key));
-    return account ? t("run.time", account.args ?? {}) + say(rest, "") : capital(say(x.phrases, x.text));
+    return account ? t("run.time", Object.fromEntries(Object.entries(account.args ?? {}).map(([k, v]) => [k, saidArg(k, v)]))) + say(rest, "") : capital(say(x.phrases, x.text));
   };
   const aside = () =>
     (props.view.time?.phrases ?? [])
@@ -260,11 +260,11 @@ const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : s.startsWith("object_store") ? "rust" : null;
 };
 
-/** "Expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
+/** "Copy as expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
 function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => void }) {
   return (
     <If when={props.onExpect && props.o.identity}>
-      <Button small variant="ghost" icon="check" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
+      <Button small variant="ghost" icon="copy" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
     </If>
   );
 }

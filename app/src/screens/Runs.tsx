@@ -570,8 +570,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       <If when={!live() && ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
-          // one primary a screen: a diagnosis's Apply, while it shows, is
-          variant={applying() ? "outline" : "primary"}
+          // one primary a screen: a diagnosis's Apply, while it shows, is; while anything is at work (a trial of this
+          // run), its Stop is
+          variant={applying() || running() ? "outline" : "primary"}
           icon="play"
           label={t("runs.runAgain")}
           onPress={async () => {

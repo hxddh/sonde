@@ -8,14 +8,14 @@ import { forgetRun } from "../run";
 import { copy, notify, report, runsChanged } from "../store";
 import type { RunInfo } from "../types";
 import { Actions, Button, Field, Modal, Title, confirmAlert } from "./kit";
+import { runName } from "./runlist";
 import { programOf } from "./runview";
 import { toast } from "./toast";
 
 /** A path's last part, with either separator (Windows' too). */
 export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 
-/** What a run is called: the user's title, else its program, else its endpoint. */
-export const runName = (s: Pick<RunInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
+export { runName } from "./runlist";
 
 /** The run being renamed, while the dialog is open, and the window that
  * asked (a run's own window, by its path; null: the main window). */

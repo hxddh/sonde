@@ -10,7 +10,7 @@ import type { CorePhrase, EpisodeRow, Observation, Phrase } from "./types";
 
 /** An argument as said: its counts grouped as the app's own words group theirs ([`grouped`](./i18n.ts)), a figure
  * kept with its unit as the app's own figures are ("346 ms" never parted at a line's end: [`UNIT_GAP`](./format.ts)). */
-const said = (k: string, v: string) => `${grouped(k, v)}`.replace(/(\d) (?=(?:ms|s|min|h|B|KiB|MiB|GiB|TiB|PiB)(?![\w]))/g, `$1${UNIT_GAP}`);
+export const said = (k: string, v: string) => `${grouped(k, v)}`.replace(/(\d) (?=(?:ms|s|min|h|B|KiB|MiB|GiB|TiB|PiB)(?![\w]))/g, `$1${UNIT_GAP}`);
 
 /** `text` said from the locale's `<family>.<key>` words, each phrase filled with its arguments in one pass (an
  * argument's own `%{n}` is not read as a placeholder); `fallback` where a phrase has no words. */

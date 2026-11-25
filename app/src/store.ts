@@ -154,7 +154,7 @@ export function refreshSettings() {
 }
 
 /** What went wrong, in a line: what sonde says, but that one thing is at work already in the app's own words. */
-export const errorTitle = (err: SondeError): string => (err.kind === "busy" ? t("run.busy") : err.message);
+export const errorTitle = (err: SondeError): string => (err.kind === "busy" ? t("run.busyAny") : err.message);
 
 /** Shows `e` as an error toast: what went wrong, then the store's own word for it (its code and
  * status) and the request id to quote; returns it. */

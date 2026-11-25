@@ -5,7 +5,7 @@
 
 import { computed, type ContextMenuEvent, effect, type JSX, List, type ListRef, Text, untracked, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
-import { programOf, scrubCommand } from "../command";
+import { DEMO_COMMAND, programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
 import type { RunInfo } from "../types";
@@ -29,10 +29,10 @@ function dayLabel(iso: string): string {
 
 /** Arguments of one program's runs, each cut so that what tells it from the
  * others shows first: where they all begin alike past a few characters, that
- * beginning is said once as `…` and each starts at what differs, from the
- * edge of its word or of its path's part (`… --table orders`, `… users.csv`),
- * so a column that cuts at its end cuts what they share, never what differs.
- * Alone, or already different at their start, they stay whole. */
+ * beginning is left out and each starts at what differs, from the edge of its
+ * word or of its path's part (`--table orders`, `users.csv`), so a column that
+ * cuts at its end cuts only there, never what differs. Alone, or already
+ * different at their start, they stay whole. */
 export function tellApart(args: string[]): string[] {
   const distinct = [...new Set(args)];
   if (distinct.length < 2) return args;
@@ -43,7 +43,7 @@ export function tellApart(args: string[]): string[] {
   common = common.slice(0, edge + 1);
   // a short beginning is worth keeping whole
   if (common.trim().length < 12) return args;
-  return args.map((a) => `… ${a.slice(common.length)}`);
+  return args.map((a) => a.slice(common.length));
 }
 
 /** How each run's row tells it from the others of its program: its arguments (`tellApart`), and whether it is a
@@ -63,6 +63,28 @@ export function toldApart(runs: { path: string; created: string; name: string; a
     group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: (times.get(at(x)) ?? 0) > 1 }));
   }
   return out;
+}
+
+/** A run's name in a list: its title, else its program (the demo's job: the Demo), else its endpoint. */
+export const runName = (s: Pick<RunInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
+
+/** The rest of a run's command after its program, scrubbed; the whole of it when the program is not its first word
+ * (`cd etl && python load.py`); nothing for a title or the demo's job. */
+function argsOf(s: RunInfo): string {
+  const p = programOf(s.command);
+  if (s.title || !s.command || !p || p.endsWith("…") || s.command.trim() === DEMO_COMMAND) return "";
+  const c = scrubCommand(s.command);
+  const [first, ...rest] = c.split(" ");
+  if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
+  return c === p ? "" : c;
+}
+
+/** Each run's name, and what tells it from the others of its name (`toldApart`): the sidebar's rows and the
+ * palette's say the same. */
+export function runsTold(runs: RunInfo[]): Map<string, { name: string; args: string; twin: boolean }> {
+  const named = runs.map((s) => ({ path: s.path, created: s.created, name: runName(s), args: argsOf(s) }));
+  const told = toldApart(named);
+  return new Map(named.map((r) => [r.path, { name: r.name, ...told.get(r.path)! }]));
 }
 
 /** What sent a run's requests, before where they went: its clients, the dominant first ("Lance, boto3"); "" for
@@ -94,21 +116,10 @@ export function RunList(props: {
   };
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
-  const name = (s: RunInfo) => s.title || programOf(s.command) || s.endpoint;
-  // the rest of the command after its program, scrubbed; the whole of it when
-  // the program is not its first word (`cd etl && python load.py`)
-  const args = (s: RunInfo) => {
-    const p = programOf(s.command);
-    if (s.title || !s.command || !p || p.endsWith("…")) return "";
-    const c = scrubCommand(s.command);
-    const [first, ...rest] = c.split(" ");
-    if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
-    return c === p ? "" : c;
-  };
   // runs of one program are told apart by the argument that differs (said even where the command is the same to
   // the letter, so three `curl`s read as what each fetched); worked out once per list, each command read once: rows
   // ask for it as they draw
-  const told = computed(() => toldApart(props.runs.map((s) => ({ path: s.path, created: s.created, name: name(s), args: args(s) }))));
+  const told = computed(() => runsTold(props.runs));
   // the days whose rows say seconds: every row of a day where one needs them (a command run twice in one minute),
   // so a day's times read in one column, alike
   const toSecond = computed(() => new Set(props.runs.filter((s) => told().get(s.path)?.twin).map((s) => dayLabel(s.created))));
@@ -158,9 +169,9 @@ export function RunList(props: {
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{told().get(x().s.path)?.name ?? runName(x().s)}</Text>
         {/* what tells it from its neighbours: its arguments (the same command again: its time too, to the second) */}
-        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args}</Text>
         {/* the same command run again in the same minute: its time to the second, and so every time of its day */}
         <Text testID={told().get(x().s.path)?.twin ? "run-time" : undefined} class={`shrink-0 tabular-nums ${TEXT.meta}`}>{toSecond().has(dayLabel(x().s.created)) ? clock(x().s.created, "s") : hm(x().s.created)}</Text>
       </View>

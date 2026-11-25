@@ -61,7 +61,7 @@ test("a program that runs a while is read as it goes: its terminal beside its op
   await app.press("id:nav-runs");
   await app.waitFor("id:run-command");
   await app.press("id:run-start");
-  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
+  await app.waitFor("text:/^for i in .* is at work: stop it first$/", { timeout: 3000 });
   await app.press("id:run-0");
   // ended: Run again in Stop's place; it printed nothing, so it has no Output to stay on: its operations, with the strip
   await app.waitFor("id:run-stop", { state: "gone", timeout: 30000 });
@@ -112,7 +112,9 @@ test("record without a program is a run like any other: the newest, live, at wor
   await app.waitFor("id:run-command");
   await app.type("id:run-command", "true");
   await runCommand(app);
-  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
+  // named as everywhere: in a word, not capitalised mid-sentence
+  await app.waitFor("text:Recording is at work: stop it first", { timeout: 3000 });
+  expect(app.shows("id:running-pill >> text:recording")).toBe(true);
   // its Stop is the run's own: the run stays, kept and no longer live
   await app.press("id:running-pill");
   await app.waitFor("id:run-stop");
@@ -787,15 +789,20 @@ test("a trial is at work as a program is: the pill, one thing at a time, and Sto
   // (ended: its header settles on Run again)
   await app.waitFor("id:run-again", { timeout: 10000 });
   await app.wait(500);
+  // (Run again, the run's one primary while nothing is at work)
+  const primary = app.viewStyle("id:run-again")?.backgroundColor ?? null;
+  expect(primary).not.toBe(null);
   await runAction(app, "Try under faults…");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   await app.press("id:trial-start");
   await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
   // the toolbar says something is at work, and the run cannot be run again meanwhile (said, not refused in English)
   await app.waitFor("id:running-pill", { timeout: 5000 });
+  // one primary while it runs (its Stop): Run again is no longer one
+  expect(app.viewStyle("id:run-again")?.backgroundColor ?? null).not.toBe(primary);
   await app.press("id:run-again");
-  await app.waitFor("text:A program is running: stop it to run another", { timeout: 3000 });
-  expect(app.shows("text:/stop it first/")).toBe(false);
+  await app.waitFor("text:curl is at work: stop it first", { timeout: 3000 });
+  expect(app.shows("text:/^something is at work/")).toBe(false);
   // stopped from the palette, as a program is
   await app.keyboard.press("mod+k");
   await app.waitFor("id:palette-command");
@@ -830,7 +837,7 @@ test("a refused start keeps the run before as it was, and a refusal for somethin
   await app.wait(1500);
   expect(lastRun()).toEqual(before);
   // what the bridge says while something is at work
-  expect(errorTitle({ kind: "busy", message: "a program is running: stop it first" })).toBe("A program is running: stop it to run another");
+  expect(errorTitle({ kind: "busy", message: "something is at work: stop it first" })).toBe("Something is at work: stop it first");
   lastRun.set(null);
 });
 
@@ -852,4 +859,51 @@ test("closing the window while a program runs asks first (Windows, Linux)", asyn
   expect(app.shows("id:run-stop")).toBe(true);
   await app.press("id:run-stop");
   await app.waitFor("id:run-stop", { state: "gone", timeout: 10000 });
+});
+
+test("what is at work has one name, and quitting says what it does to it", async () => {
+  await open("../App.tsx", desktop);
+  const { busyWords, quitWords, workName } = await import("../src/run");
+  const program = { kind: "program" as const, command: "python etl.py", path: null };
+  const demoJob = { kind: "demo" as const, command: "sonde demo-job export.py", path: null };
+  const trial = { kind: "trial" as const, command: "python etl.py", path: "/runs/a.sonde" };
+  const recording = { kind: "record" as const, command: "", path: null };
+  expect(workName(demoJob)).toBe("Demo");
+  expect(workName(recording)).toBe("recording");
+  expect(busyWords(program)).toBe("python is at work: stop it first");
+  expect(busyWords(recording)).toBe("Recording is at work: stop it first");
+  expect(quitWords(recording, "macos").title).toBe("Quit while recording is at work?");
+  expect(quitWords(demoJob, "linux").title).toBe("Quit while Demo is at work?");
+  // a trial cut short keeps nothing; a program's run is kept
+  expect(quitWords(trial, "macos").text).toBe("It is stopped first; a trial cut short keeps nothing.");
+  expect(quitWords(program, "macos").text).toBe("It is stopped first, and what it recorded is kept as a run.");
+  // Windows says Exit, as its menu does
+  expect(quitWords(program, "windows")).toEqual({ title: "Exit while python is at work?", text: "It is stopped first, and what it recorded is kept as a run.", commit: "Exit" });
+  expect(quitWords(program, "macos").commit).toBe("Quit");
+});
+
+test("the Record… form has one primary: the command bar's Run", async () => {
+  const app = await demo();
+  const primary = app.viewStyle("id:run-start")?.backgroundColor ?? null;
+  expect(primary).not.toBe(null);
+  await app.press("id:record");
+  await app.waitFor("id:record-form");
+  expect(app.viewStyle("id:record-start")?.backgroundColor ?? null).not.toBe(primary);
+});
+
+test("the palette's recent runs of one program are told apart as the sidebar tells them", async () => {
+  const app = await demo();
+  const get = (what: string) => `python load.py --source s3://warehouse/exports/daily --table ${what}`;
+  await importRun(app, "orders.sonde", runText(5, get("orders"), "2026-01-05T09:00:00Z"));
+  await importRun(app, "users.sonde", runText(5, get("users"), "2026-01-05T10:00:00Z"));
+  await app.keyboard.press("mod+k");
+  await app.waitFor("id:palette-command");
+  // (found by their command: older than the newest few)
+  await app.type("id:palette-command", "warehouse");
+  await app.waitFor("id:palette-dialog >> text:Recent runs");
+  // by what differs (from it alone where every python run shares the beginning); the sidebar's row says the same
+  expect(app.shows("id:palette-dialog >> text:/^python (load\\.py .*)?orders$/")).toBe(true);
+  expect(app.shows("id:palette-dialog >> text:/^python (load\\.py .*)?users$/")).toBe(true);
+  await app.keyboard.press("escape");
+  expect(app.shows("id:run-list >> text:/users$/")).toBe(true);
 });
