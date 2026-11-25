@@ -197,8 +197,9 @@ fn the_demo_records_a_run_that_every_command_reads() {
         last.starts_with("  ✓ fixed") && last.contains(" fewer requests (predicted "),
         "{out}"
     );
-    // and the time the fix saved is about what was predicted (31.0 played
-    // the job on fixed beats: 300 ms saved where 63 were predicted)
+    // and the waiting the fix saved is about what was predicted (31.0 played
+    // the job on fixed beats: 300 ms saved where 63 were predicted); the
+    // waiting, not the wall time: the program's own time moves with the runner
     let ms = |t: &str| -> f64 {
         let (n, unit) = t.trim().split_once(' ').unwrap();
         let n: f64 = n.parse().unwrap();
@@ -215,9 +216,10 @@ fn the_demo_records_a_run_that_every_command_reads() {
         .trim_end_matches(" less)"));
     let since = out
         .lines()
-        .find(|l| l.starts_with("since the run before"))
+        .skip_while(|l| !l.starts_with("since the run before"))
+        .nth(1)
         .unwrap();
-    let times = since.split("time ").nth(1).unwrap();
+    let times = since.split("waiting ").nth(1).unwrap();
     let (was, now) = times.split_once(" → ").unwrap();
     let saved = ms(was) - ms(now.split(" (").next().unwrap());
     assert!(
