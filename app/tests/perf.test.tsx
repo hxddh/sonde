@@ -12,7 +12,8 @@ test("100 000 rows: load and scroll", async () => {
   await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
-  // the large one, from the sidebar's buckets
+  // the large one, from the sidebar's buckets once they are listed
+  await app.waitFor("id:bucket-demo-large", { timeout: 10000 });
   await app.press("id:bucket-demo-large");
   await app.waitFor("text:1 item", { timeout: 10000 });
   await app.keyboard.press("mod+shift+f");
