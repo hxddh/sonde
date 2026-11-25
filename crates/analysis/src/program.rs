@@ -283,8 +283,8 @@ pub fn program_name(command: &str) -> Option<String> {
 /// run files are named by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
-        "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv", "poetry",
-        "npx", "dotnet",
+        "python", "python3", "py", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv",
+        "poetry", "npx", "dotnet",
     ];
     const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash"];
     let program = program_name(command)?;
@@ -292,7 +292,16 @@ pub fn short_name(command: &str) -> Option<String> {
         let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
         name.split('.').next().unwrap_or(name).to_string()
     };
-    let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    // a Windows program by its file's name: `python.exe`, `npx.cmd`
+    let bare = [".exe", ".cmd", ".bat"]
+        .iter()
+        .find_map(|x| {
+            let at = program.len().checked_sub(x.len())?;
+            (program.is_char_boundary(at) && program[at..].eq_ignore_ascii_case(x))
+                .then(|| &program[..at])
+        })
+        .unwrap_or(&program);
+    let base = bare.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
     // the words after the program's own, to the end of its part
     let words: Vec<String> = shell_words(command).iter().map(|w| unquote(w)).collect();
     let after: Vec<&str> = words
@@ -318,10 +327,7 @@ pub fn short_name(command: &str) -> Option<String> {
         return safe_name(last.split([':', '@']).next().unwrap_or(last));
     }
     let mut name = stem(&program);
-    if INTERPRETERS.contains(&base)
-        || INTERPRETERS.contains(&program.as_str())
-        || SHELLS.contains(&base)
-    {
+    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&bare) || SHELLS.contains(&base) {
         // what it runs: a module (-m), the first word after it that is a
         // file, not an option; code given inline (-c, -e) has no name of its own
         let mut it = after.iter();
@@ -846,6 +852,23 @@ pub fn loose(
             })
         })
         .collect()
+}
+
+/// Gives each of `loose` gone from the run (no text of its own) the text
+/// its program keeps it with (`kept`, [`crate::fixloop::Program::findings`]):
+/// as it last read.
+pub fn kept_texts(
+    loose: &mut [Gated],
+    kept: &std::collections::BTreeMap<String, crate::fixloop::Tracked>,
+) {
+    for g in loose.iter_mut().filter(|g| g.text.is_empty()) {
+        let by = kept
+            .get(&g.identity)
+            .or_else(|| kept.get(&crate::profile::by_rules(&g.identity)));
+        if let Some(t) = by {
+            g.text = t.text.clone();
+        }
+    }
 }
 
 /// The known findings that are gone or fewer ([`loose`]), in a line:
@@ -1798,6 +1821,23 @@ mod tests {
                 "2 known findings are gone or fewer: tighten [check.findings] (remove \"obs.hot|b/hot\", remove \"obs.rmw|b\")"
             )
         );
+        // a finding gone reads as its program kept it (32.0's eval: `""`)
+        let mut gone = gone;
+        let mut kept = std::collections::BTreeMap::new();
+        kept.insert(
+            "obs.hot|b/hot".to_string(),
+            crate::fixloop::Tracked {
+                kind: "obs.hot".into(),
+                text: "b/hot was read 12 times".into(),
+                state: crate::fixloop::State::Fixed,
+                since: "run-2.sonde".into(),
+                predicted: Default::default(),
+                saved_requests: None,
+            },
+        );
+        kept_texts(&mut gone, &kept);
+        assert_eq!(gone[0].text, "b/hot was read 12 times");
+        assert_eq!(gone[1].text, "");
         assert!(loose(&ob, &known(&[("obs.hot|b/hot", 11)])).is_empty());
         // a throttling of 110 known at 100: within a fifth, as much
         let throttled = |n: usize| {
@@ -2200,6 +2240,14 @@ mod tests {
             ("podman run -v a:b rclone/rclone ls", "rclone"),
             ("python3 -m pytest tests/", "pytest"),
             ("python3 -c 'import boto3; s3.get_object()'", "python3"),
+            // Windows: an interpreter by its file's name, and the launcher
+            (r"C:\Python312\python.exe etl.py --day 2", "etl"),
+            ("python3.exe etl.py", "etl"),
+            ("py -3 etl.py", "etl"),
+            ("py etl.py", "etl"),
+            ("node.exe dist\\sync.mjs", "sync"),
+            ("npx.cmd tsx sync.ts", "sync"),
+            ("bash.exe -c 'aws s3 ls'", "aws"),
         ] {
             assert_eq!(key(command).as_deref(), Some(program), "{command}");
         }

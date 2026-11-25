@@ -174,7 +174,7 @@ requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript,
 | `obs.rmw` | a key read and written back with no `If-Match`, 3 times or more (of an import, said as not known whether) | a conditional write |
 | `obs.polled` | a key asked for 5 times or more while not there (404), saving 1% against backing off from a second to a minute | back off, a waiter, an event |
 | `obs.throttled` | requests throttled (503, 429), with how many were in flight (a warning when one gave up after its retries or a tenth were throttled); or a prefix near S3's rate for reads or writes | adaptive retries; keys spread over prefixes |
-| `obs.serial` | requests one after another that 8 at once would finish 100 ms sooner, all that could go at once whatever another finding says of them; not a key asked again while not there, a conditional write, nor one alone after what it needs (one reading, writing or listing what one before it wrote waits for that one only: those that need it go at once after it, the others around them) | at once, as the operation they are |
+| `obs.serial` | requests one after another that 8 at once would finish 100 ms sooner, all that could go at once whatever another finding says of them; not a key asked again while not there, a conditional write, nor one alone after what it needs (one reading, writing or listing what one before it wrote waits for that one only: those that need it go at once after it, the others around them; a listing's next page waits for the page before, an upload's parts for its start and its end for them, a copy's source is read) | at once, as the operation they are (listings, an upload's parts) |
 | `obs.unfinished` | multipart uploads never completed or aborted | a lifecycle rule |
 | `obs.orphans` | a table's files written with no commit after them | the table's cleanup |
 | `obs.rename`, `obs.markers` | Hadoop s3a: commits by rename, directory markers deleted | the magic committer; keep markers |
@@ -208,7 +208,9 @@ never what changes from run to run in a key: the value of a `name=value` folder 
 `{date}` (with a time `{time}`), a word of 6 or more hex letters and digits or a long mixed id `{id}`, every other run
 of digits `{n}`. So `in/year=2026/month=11/day=13/hour=10/conf.json` is `obs.hot|b/in/year={v}/month={v}/day={v}/hour={v}/conf.json`,
 `part-00000-<uuid>-c000.snappy.parquet` is `part-{n}-{uuid}-c{n}.snappy.parquet`, `job-3fa2b1c9` is `job-{id}`.
-Two findings of one run that read the same so (`t00/` and `t01/` listed again and again) keep their keys as they are.
+Two findings of one run that read the same so (`t00/` and `t01/` listed again and again, at any threshold) keep their
+keys as they are; a one-off sibling (yesterday's `_SUCCESS` looked at once) tells nothing apart. A finding keeps the name
+its program knows it by while it is there (`t00/`, its sibling gone since).
 HEAD-then-GET is about the folder its objects are in. A read written back, deletes one at a time and small writes are
 about their bucket (`obs.rmw|data`): one finding a run, whatever key or folder its text names as its counts move.
 
@@ -230,7 +232,7 @@ a small one are open, `6 → 6`:
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (objects 120 → 402, 3.4×)`, `workloadChanged`), or shrank by a third or more (`the workload shrank`), judged by the objects asked of (each key, each prefix listed), less the writes the earlier run's findings fixed or less did away with (small files written as fewer): a fix that read all 400 files, not 30, or 30 files, not 400, is not counted; the same files read in fewer requests, or written as fewer files, is.
+A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (objects 120 → 402, 3.4×)`, `workloadChanged`), or shrank by a third or more (`the workload shrank`), judged by the objects asked of (each key, each prefix listed), less the objects the earlier run's findings fixed did away with (small files written as fewer, small reads packed into a shard; not a finding still there, less): a fix that read all 400 files, not 30, or 30 files, not 400, is not counted; the same files read in fewer requests, or written as fewer files, is.
 
 **Time and noise**: the run's wall time is said once, on the `since` line (`time 4.51 s → 3.64 s (-19%)`), never as a
 finding's saving. A program's runs vary: when its runs before this one alike in command and findings (no fix between

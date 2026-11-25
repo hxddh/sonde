@@ -6,6 +6,7 @@
 //! Times are wall-clock: a kind's time is the union of its requests'
 //! intervals (ten requests at once for 50 ms are 50 ms of waiting, not 500).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use reqlog::Record;
@@ -497,22 +498,26 @@ const CHAIN_GAP_US: i64 = 10_000;
 /// What the requests of a chain touched, and the level each is at
 /// ([`Chain::levels`]): whether the next one depends on one of them (a read
 /// or a write of a key one of them wrote, a write of a key one read, a
-/// listing of a prefix one wrote under, a write under a prefix one listed),
-/// and so waits for it. Requests that depend on each other cannot be sent
-/// at once without changing what the program does; those that depend on
-/// the same one can, after it (a listing then uploads under it: the
-/// listing, then the uploads at once), and the others of the chain around
-/// them (a manifest read and written back each time round a loop holds back
-/// its own requests, not the loop's other reads).
+/// listing of a prefix one wrote under, a write under a prefix one listed,
+/// a listing's next page, an upload's parts and its end), and so waits for
+/// it. Requests that depend on each other cannot be sent at once without
+/// changing what the program does; those that depend on the same one can,
+/// after it (a listing then uploads under it: the listing, then the uploads
+/// at once; an upload's parts, after it began), and the others of the chain
+/// around them (a manifest read and written back each time round a loop
+/// holds back its own requests, not the loop's other reads).
 #[derive(Default)]
 struct Depends<'a> {
-    /// Each key's levels: of its last write, of its last request.
-    keys: std::collections::HashMap<(&'a str, &'a str), (Option<u32>, u32)>,
+    /// Each key's levels: of its last write, of its last request (a copy's
+    /// source by its name decoded).
+    keys: std::collections::HashMap<(&'a str, Cow<'a, str>), (Option<u32>, u32)>,
     written: std::collections::BTreeMap<(&'a str, &'a str), u32>,
     listed: std::collections::HashMap<(&'a str, &'a str), u32>,
     /// The highest level of a write, as a listing past [`Depends::SCAN`]
     /// keys under its prefix waits for.
     wrote: Option<u32>,
+    /// Each upload in parts, by its id: the level its parts are at.
+    parts: std::collections::HashMap<&'a str, u32>,
 }
 
 impl<'a> Depends<'a> {
@@ -521,37 +526,75 @@ impl<'a> Depends<'a> {
 
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
         r.kind.starts_with("ListObjects").then(|| {
-            let prefix = r
-                .query()
-                .iter()
-                .find(|(k, _)| k == "prefix")
-                .map_or("", |(_, v)| v.as_str());
+            let prefix = crate::episode::query(r, "prefix").unwrap_or("");
             (r.bucket.as_deref().unwrap_or(""), prefix)
         })
+    }
+
+    /// Whether a listing is a page after the first: it carries where the
+    /// page before ended (V2's token or start-after, ListObjects' marker).
+    fn next_page(r: &Record) -> bool {
+        ["continuation-token", "marker", "start-after"]
+            .iter()
+            .any(|q| crate::episode::query(r, q).is_some_and(|v| !v.is_empty()))
+    }
+
+    /// The upload a part is of: its id.
+    fn part(r: &'a Record) -> Option<&'a str> {
+        r.kind
+            .starts_with("UploadPart")
+            .then(|| crate::episode::query(r, "uploadId"))
+            .flatten()
+    }
+
+    /// The key a copy reads (`x-amz-copy-source`), decoded.
+    fn source(r: &'a Record) -> Option<(&'a str, Cow<'a, str>)> {
+        if r.kind != "CopyObject" && r.kind != "UploadPartCopy" {
+            return None;
+        }
+        let v = r
+            .request_headers()
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("x-amz-copy-source"))?;
+        let path = v.value.as_str().split('?').next()?.trim_start_matches('/');
+        let (b, k) = path.split_once('/')?;
+        Some((
+            b,
+            percent_encoding::percent_decode_str(k).decode_utf8_lossy(),
+        ))
     }
 
     /// The level of the request `r` waits for, the highest: none when it
     /// waits for none.
     fn on(&self, r: &'a Record) -> Option<u32> {
         if let Some((b, prefix)) = Self::listing(r) {
+            // the page before, of a listing that goes on
+            let before = Self::next_page(r)
+                .then(|| self.listed.get(&(b, prefix)).copied())
+                .flatten();
             // the keys written under the prefix
             let mut under = self
                 .written
                 .range((b, prefix)..)
                 .take_while(|((wb, k), _)| *wb == b && k.starts_with(prefix));
             let first: Vec<u32> = under.by_ref().take(Self::SCAN).map(|(_, l)| *l).collect();
-            return match under.next() {
+            let written = match under.next() {
                 Some(_) => self.wrote,
                 None => first.into_iter().max(),
             };
+            return written.max(before);
         }
+        // the copy's source, as it was last written
+        let source = Self::source(r)
+            .and_then(|(b, k)| self.keys.get(&(b, k)))
+            .and_then(|&(w, _)| w);
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
-            return None;
+            return source;
         };
         let write = !is_read(r);
         let key = self
             .keys
-            .get(&(b, k))
+            .get(&(b, Cow::Borrowed(k)))
             .and_then(|&(w, any)| if write { Some(any) } else { w });
         // each of the key's prefixes, as a listing names it
         let listed = (write && !self.listed.is_empty())
@@ -562,20 +605,33 @@ impl<'a> Depends<'a> {
                     .max()
             })
             .flatten();
-        key.max(listed)
+        key.max(listed).max(source)
     }
 
     /// Adds `r`, and says its level.
     fn add(&mut self, r: &'a Record) -> u32 {
-        let level = self.on(r).map_or(0, |l| l + 1);
+        // the parts of an upload all at the level of its first
+        let part = Self::part(r);
+        let level = match part.and_then(|id| self.parts.get(id)) {
+            Some(&l) => l,
+            None => self.on(r).map_or(0, |l| l + 1),
+        };
+        if let Some(id) = part {
+            self.parts.insert(id, level);
+        }
         if let Some(listed) = Self::listing(r) {
             let at = self.listed.entry(listed).or_default();
             *at = (*at).max(level);
             return level;
         }
+        // a copy reads its source: its delete (a move) waits for it
+        if let Some(source) = Self::source(r) {
+            let at = self.keys.entry(source).or_insert((None, 0));
+            at.1 = at.1.max(level);
+        }
         if let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) {
             let write = !is_read(r);
-            let at = self.keys.entry((b, k)).or_insert((None, 0));
+            let at = self.keys.entry((b, Cow::Borrowed(k))).or_insert((None, 0));
             at.1 = at.1.max(level);
             if write {
                 at.0 = Some(level);
@@ -1810,7 +1866,7 @@ pub struct RunChange {
     /// The objects each run asked of (each key, each prefix listed, once):
     /// what its workload is judged by ([`workload_changed`]).
     pub objects: (usize, usize),
-    /// The objects the first run's findings fixed or less did away with
+    /// The objects the first run's findings fixed did away with
     /// ([`crate::fixloop::freed`]: small files written as fewer, small
     /// reads packed into a shard, prefixes listed as one listing), not
     /// work left undone.
@@ -2061,74 +2117,131 @@ pub fn varies(o: &Observation) -> bool {
     identity_as(o, true) != identity_as(o, false)
 }
 
-/// The objects of `records` (a key, a listing's prefix, or a folder as
-/// deep as what the finding is about) that read the same as one of
-/// `findings` once what changes between runs is taken out ([`stable`]),
-/// and are not it: each as `(identity, literal identity)` of a finding of
-/// that kind about it. One pass, each name cut where it first differs from
-/// what a finding is about made stable.
+/// The kinds of finding a run may have several of, each about one object
+/// (a key read again and again, a key polled, a prefix listed again and
+/// again, a prefix near its rate), with the fewest requests of an object
+/// that make it a finding of the kind at any threshold
+/// ([`crate::episode::traces`]): what such a finding is told apart from.
+const ONE_OF_SEVERAL: &[(&str, usize)] = &[
+    ("obs.hot", 2),
+    ("obs.polled", 2),
+    ("obs.listed", 2),
+    ("obs.throttled", 1),
+];
+
+/// The object `r` is to a finding of `kind` ([`ONE_OF_SEVERAL`]), as its
+/// bucket and the rest of its name: the key it reads (`obs.hot`) or does
+/// not find (`obs.polled`), the prefix it lists from its first page
+/// (`obs.listed`), the prefix it is at (`obs.throttled`). None when it is
+/// no request of the kind.
+fn object_for<'r>(kind: &str, r: &'r Record) -> Option<(&'r str, &'r str)> {
+    let b = r.bucket.as_deref();
+    match kind {
+        "obs.hot" if is_read(r) => Some((b?, r.key.as_deref()?)),
+        "obs.polled" if is_miss(r) => Some((b?, r.key.as_deref()?)),
+        "obs.listed"
+            if r.kind.starts_with("ListObjects")
+                && !r.is_error()
+                && crate::episode::query(r, "continuation-token").is_none()
+                && crate::episode::query(r, "marker").is_none_or(str::is_empty) =>
+        {
+            Some((
+                b.unwrap_or(""),
+                crate::episode::query(r, "prefix").unwrap_or(""),
+            ))
+        }
+        "obs.throttled" => Some(prefix_parts(r)).filter(|(b, _)| !b.is_empty()),
+        _ => None,
+    }
+}
+
+/// The objects of `records` that read the same as what one of `findings`
+/// is about once what changes between runs is taken out ([`stable`]), and
+/// are not it, each of them a finding of its kind at any threshold (`t/01/`
+/// listed twice, never `t/01/` listed once, a key written, yesterday's
+/// `_SUCCESS` looked at once): each as `(identity, literal identity)` of a
+/// finding of that kind about it. One pass over the records, of the kinds
+/// that have several findings a run ([`ONE_OF_SEVERAL`]), each object
+/// matched part by part with what is the same in every run, and made
+/// stable once.
 pub fn alike(findings: &[Observation], records: &[Record]) -> Vec<(String, String)> {
-    // each finding about one thing that varies: its kind, what it is
-    // about as it was, and that made stable, by part
-    let wanted: Vec<(String, String, Vec<String>)> = findings
-        .iter()
-        .filter(|o| varies(o))
-        .filter_map(|o| {
-            let literal = identity_as(o, true);
-            let (kind, about) = literal.split_once('|')?;
-            (!about.contains('|')).then(|| {
-                let parts = stable(about).split('/').map(String::from).collect();
-                (kind.to_string(), about.to_string(), parts)
-            })
-        })
-        .collect();
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    // the findings about one thing that varies, by their kind and what they
+    // are about made stable (by part): the least that makes a trace of the
+    // kind, and what each is about as it was
+    let mut wanted: Vec<(&str, usize, Vec<String>, Vec<String>)> = Vec::new();
+    for o in findings.iter().filter(|o| varies(o)) {
+        let literal = identity_as(o, true);
+        let Some((kind, about)) = literal.split_once('|') else {
+            continue;
+        };
+        let Some(&(kind, least)) = ONE_OF_SEVERAL.iter().find(|(k, _)| *k == kind) else {
+            continue;
+        };
+        if about.contains('|') {
+            continue;
+        }
+        let parts: Vec<String> = stable(about).split('/').map(String::from).collect();
+        match wanted.iter_mut().find(|w| w.0 == kind && w.2 == parts) {
+            Some(w) => w.3.push(about.to_string()),
+            None => wanted.push((kind, least, parts, vec![about.to_string()])),
+        }
+    }
     if wanted.is_empty() {
         return Vec::new();
     }
-    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut name = String::new();
-    for r in records {
-        name.clear();
-        name.push_str(r.bucket.as_deref().unwrap_or(""));
-        name.push('/');
-        match r.key.as_deref() {
-            Some(k) => name.push_str(k),
-            None => name.push_str(
-                r.query()
-                    .iter()
-                    .find(|(k, _)| k == "prefix")
-                    .map_or("", |(_, v)| v.as_ref()),
-            ),
-        }
-        for (kind, about, parts) in &wanted {
-            // as deep as what the finding is about: a folder of the name
-            let cut = if about.ends_with('/') {
-                match name.match_indices('/').nth(parts.len() - 2) {
-                    Some((i, _)) => &name[..=i],
-                    None => continue,
-                }
-            } else {
-                name.as_str()
-            };
-            if cut == about {
+    let kinds: BTreeSet<&str> = wanted.iter().map(|w| w.0).collect();
+    // whether `(b, rest)` is cut as `parts` are, with their parts that
+    // never change the same
+    let fits = |parts: &[String], (b, rest): (&str, &str)| {
+        let mut theirs = std::iter::once(b).chain(rest.split('/'));
+        parts.iter().all(|p| {
+            theirs
+                .next()
+                .is_some_and(|t| p.contains('{') || t == p.as_str())
+        }) && theirs.next().is_none()
+    };
+    let hash = |o: (&str, &str)| {
+        BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(o)
+    };
+    // (which of `wanted`, its object as a hash, which record): sixteen
+    // bytes an object that fits, sorted and counted, no name written
+    let mut near: Vec<(u32, u64, u32)> = Vec::new();
+    for (i, r) in records.iter().enumerate() {
+        for &kind in &kinds {
+            let Some(object) = object_for(kind, r) else {
                 continue;
+            };
+            for (w, (k, _, parts, _)) in wanted.iter().enumerate() {
+                if *k == kind && fits(parts, object) {
+                    near.push((w as u32, hash(object), i as u32));
+                }
             }
-            let mut theirs = cut.split('/');
-            let same = parts.iter().all(|p| {
-                theirs.next().is_some_and(|t| {
-                    if p.contains('{') {
-                        stable(t) == *p
-                    } else {
-                        t == p
-                    }
-                })
-            }) && theirs.next().is_none();
-            if same {
-                found.insert((
-                    format!("{kind}|{}", parts.join("/")),
-                    format!("{kind}|{cut}"),
-                ));
-            }
+        }
+    }
+    near.sort_unstable();
+    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
+    for same in near.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+        let (kind, least, parts, abouts) = &wanted[same[0].0 as usize];
+        if same.len() < *least {
+            continue;
+        }
+        let Some((b, rest)) = object_for(kind, &records[same[0].2 as usize]) else {
+            continue;
+        };
+        let theirs = format!("{b}/{rest}");
+        if abouts.contains(&theirs) {
+            continue;
+        }
+        let alike = parts
+            .iter()
+            .zip(theirs.split('/'))
+            .all(|(p, t)| !p.contains('{') || stable(t) == *p);
+        if alike {
+            found.insert((
+                format!("{kind}|{}", parts.join("/")),
+                format!("{kind}|{theirs}"),
+            ));
         }
     }
     found.into_iter().collect()
@@ -2209,6 +2322,53 @@ fn told_apart(literal: &str, shared: Option<&[bool]>) -> String {
         .map(|(p, &same)| if same { stable(p) } else { p.to_string() })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// The findings of `b` that `a` named otherwise, by what each is about as
+/// it was (a finding's literal identity, [`literal_identity`]), each as
+/// `(b's name, a's name)`: `a`'s name for it, where neither run has a
+/// finding of the other's name.
+pub fn names_after(a: &Run, b: &Run) -> Vec<(String, String)> {
+    let named = |r: &Run| -> std::collections::HashSet<String> {
+        r.observations.iter().map(|o| o.identity.clone()).collect()
+    };
+    let (in_a, in_b) = (named(a), named(b));
+    let mut by_literal: HashMap<String, &str> = HashMap::new();
+    for o in a
+        .observations
+        .iter()
+        .filter(|o| !in_b.contains(&o.identity))
+    {
+        by_literal
+            .entry(literal_identity(o))
+            .or_insert(o.identity.as_str());
+    }
+    b.observations
+        .iter()
+        .filter(|o| !o.identity.is_empty() && !in_a.contains(&o.identity))
+        .filter_map(|o| {
+            let was = by_literal.remove(&literal_identity(o))?;
+            Some((o.identity.clone(), was.to_string()))
+        })
+        .collect()
+}
+
+/// Whether the identity `id` (a finding's, as a program keeps it) names
+/// the finding whose literal identity is `literal`: of one kind, each part
+/// of what it is about as the finding's, or that made [`stable`].
+fn names(id: &str, literal: &str) -> bool {
+    let (Some((kind, about)), Some((k, theirs))) = (id.split_once('|'), literal.split_once('|'))
+    else {
+        return false;
+    };
+    let mut parts = about.split('/');
+    kind == k
+        && theirs.split('/').all(|t| {
+            parts
+                .next()
+                .is_some_and(|p| p == t || (p.contains('{') && stable(t) == p))
+        })
+        && parts.next().is_none()
 }
 
 /// Names a run's findings at any threshold (`traces`, named among
@@ -2623,6 +2783,61 @@ impl Run {
         }
     }
 
+    /// Gives each of its findings the name the run before (`before`) gave
+    /// it, by what it is about as it was, where the two runs named it
+    /// otherwise: told apart from a sibling in one run (`t/00/`) and not in
+    /// the other (its sibling gone, `t/{n}/`), it is one finding, not one
+    /// fixed and another new ([`names_after`]).
+    pub fn take_names_after(&mut self, before: &Run) {
+        for (from, to) in names_after(before, self) {
+            self.rename(&from, &to);
+        }
+    }
+
+    /// Gives each of its findings the name its program keeps it by
+    /// (`kept`), where it names it otherwise: a name that tells a finding
+    /// apart (`t/00/`, its sibling gone since) names it while it is there,
+    /// as it was or made [`stable`], each name once.
+    pub fn take_kept_names<'k>(&mut self, kept: impl IntoIterator<Item = &'k String>) {
+        let own: std::collections::HashSet<&str> = self
+            .observations
+            .iter()
+            .map(|o| o.identity.as_str())
+            .collect();
+        let mut free: Vec<&String> = kept
+            .into_iter()
+            .filter(|k| !own.contains(k.as_str()) && !k.contains('#'))
+            .collect();
+        let mut renames = Vec::new();
+        for o in &self.observations {
+            if o.identity.is_empty() {
+                continue;
+            }
+            let literal = literal_identity(o);
+            if let Some(at) = free.iter().position(|k| names(k, &literal)) {
+                renames.push((o.identity.clone(), free.remove(at).clone()));
+            }
+        }
+        for (from, to) in renames {
+            self.rename(&from, &to);
+        }
+    }
+
+    /// Its finding `from` named `to`: as a finding, at any threshold, and
+    /// what it would save.
+    fn rename(&mut self, from: &str, to: &str) {
+        for o in self.observations.iter_mut().filter(|o| o.identity == from) {
+            o.identity = to.to_string();
+        }
+        if let Some(mut t) = self.traces.remove(from) {
+            t.identity = to.to_string();
+            self.traces.insert(to.to_string(), t);
+        }
+        if let Some(asks) = self.asks.remove(from) {
+            self.asks.insert(to.to_string(), asks);
+        }
+    }
+
     /// A run of `records` reckoned: where its time went, its operations and
     /// its findings.
     pub fn analysed(
@@ -2885,7 +3100,19 @@ mod tests {
             r
         };
         let mut one = vec![listed("b/t00/")];
-        let others = alike(&one, &[list(1, "t00/"), list(2, "t01/"), list(3, "x/")]);
+        let others = alike(
+            &one,
+            &[
+                list(1, "t00/"),
+                list(2, "t01/"),
+                list(3, "t01/"),
+                list(4, "t02/"),
+                list(5, "x/"),
+                list(6, "x/"),
+            ],
+        );
+        // (`t02/` listed once is no finding at any threshold: not one to
+        // tell `t00/` apart from)
         assert_eq!(
             others,
             [("obs.listed|b/t{n}/".into(), "obs.listed|b/t01/".into())]
@@ -3659,6 +3886,125 @@ mod injected {
         let c = chains(&listed);
         assert_eq!(c[0].requests, 12);
         assert_eq!(c[0].levels, [vec![0; 11], vec![1]].concat());
+    }
+
+    /// 32.0's eval: what a request waits for that its key alone does not
+    /// say. A listing's next page needs the page before (its token: a
+    /// boto3 paginator is no requests one after another); the parts of an
+    /// upload go at once after it began, and it completes after them; a
+    /// copy reads its source, so a move's delete waits for its copy.
+    #[test]
+    fn pages_parts_and_moves_wait_for_what_they_need() {
+        let at = |id: u64, op: &str, method: &str, key: Option<&str>, query: &[(&str, &str)]| {
+            let mut r = Record {
+                id,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 21)
+                    .unwrap(),
+                method: method.into(),
+                kind: op.into(),
+                status: Some(200),
+                latency_ms: 20.0,
+                bucket: Some("b".into()),
+                key: key.map(Into::into),
+                ..Default::default()
+            };
+            r.lists_mut().query = query
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect();
+            r
+        };
+        // twelve pages of one listing, each the token of the one before
+        let pages: Vec<Record> = (1..=12u64)
+            .map(|i| {
+                let token = format!("t{i}");
+                let mut q = vec![("prefix", "in/")];
+                if i > 1 {
+                    q.push(("continuation-token", token.as_str()));
+                }
+                at(i, "ListObjectsV2", "GET", None, &q)
+            })
+            .collect();
+        let c = chains(&pages);
+        assert_eq!(c[0].levels, (0..12).collect::<Vec<u32>>());
+        // and so no finding: none of them could go at once
+        let eps = crate::episode::episodes(&pages);
+        let found = crate::episode::observations(&pages, &eps);
+        assert!(
+            found.iter().all(|o| o.identity != "obs.serial|"),
+            "{found:?}"
+        );
+        // ListObjects' marker, and V2's start-after, alike
+        for page in ["marker", "start-after"] {
+            let rs: Vec<Record> = (1..=12u64)
+                .map(|i| {
+                    let mut q = vec![("prefix", "in/")];
+                    if i > 1 {
+                        q.push((page, "in/k"));
+                    }
+                    at(i, "ListObjects", "GET", None, &q)
+                })
+                .collect();
+            assert_eq!(chains(&rs)[0].levels, (0..12).collect::<Vec<u32>>());
+        }
+        // twenty parts of one upload sent one at a time: at once after it
+        // began, then it completes
+        let mut parts = vec![at(
+            1,
+            "CreateMultipartUpload",
+            "POST",
+            Some("big"),
+            &[("uploads", "")],
+        )];
+        for n in 1..=20u64 {
+            let number = n.to_string();
+            parts.push(at(
+                n + 1,
+                "UploadPart",
+                "PUT",
+                Some("big"),
+                &[("uploadId", "u1"), ("partNumber", number.as_str())],
+            ));
+        }
+        parts.push(at(
+            22,
+            "CompleteMultipartUpload",
+            "POST",
+            Some("big"),
+            &[("uploadId", "u1")],
+        ));
+        let c = chains(&parts);
+        assert_eq!(c[0].levels, [vec![0], vec![1; 20], vec![2]].concat());
+        let eps = crate::episode::episodes(&parts);
+        let found = crate::episode::observations(&parts, &eps);
+        assert!(
+            found.iter().any(|o| o.identity == "obs.serial|"),
+            "{found:?}"
+        );
+        // moves: each a copy, then the delete of its source
+        let mut moves = Vec::new();
+        for i in 0..6u64 {
+            let mut copy = at(
+                2 * i + 1,
+                "CopyObject",
+                "PUT",
+                Some(&format!("to/{i}")),
+                &[],
+            );
+            copy.lists_mut().request_headers.push(reqlog::Header::new(
+                "x-amz-copy-source",
+                format!("/b/from/{i}"),
+            ));
+            moves.push(copy);
+            moves.push(at(
+                2 * i + 2,
+                "DeleteObject",
+                "DELETE",
+                Some(&format!("from/{i}")),
+                &[],
+            ));
+        }
+        assert_eq!(chains(&moves)[0].levels, [0, 1].repeat(6));
     }
 }
 

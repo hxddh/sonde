@@ -292,14 +292,16 @@ pub fn asks_of(records: &[Record], findings: &[Observation], objects: &[u64]) ->
     out
 }
 
-/// The objects the fixed and less of `findings` (of run `a`, against `b`)
-/// did away with ([`Ask::alone`]): of each ask, at most as many as `b`
-/// asks it less often. Each ask once, though two findings name it.
+/// The objects the fixed of `findings` (of run `a`, against `b`) did away
+/// with ([`Ask::alone`]): of each ask, at most as many as `b` asks it less
+/// often. Each ask once, though two findings name it. Not one less: a
+/// finding still there (60 of 600 small objects read) is the workload's
+/// doing as much as a fix's.
 pub fn freed(findings: &[FindingChange], a: &Run, b: &Run) -> usize {
     let mut by_ask: HashMap<&str, usize> = HashMap::new();
     for ask in findings
         .iter()
-        .filter(|f| matches!(f.state, State::Fixed | State::Less))
+        .filter(|f| f.state == State::Fixed)
         .filter_map(|f| a.asks.get(&f.identity))
         .flatten()
     {
@@ -477,11 +479,13 @@ impl<'a> Traces<'a> {
 /// another (a fifth either way), it is open, whatever its timing. Then each
 /// kind of failure ([`crate::profile::error_class`]) whose count moved.
 pub fn changes(a: &Run, b: &Run) -> Vec<FindingChange> {
+    // a finding of `b` that `a` named otherwise is `a`'s
+    let renamed: HashMap<String, String> = crate::profile::names_after(a, b).into_iter().collect();
     let named = |os: &[Observation]| -> BTreeMap<String, usize> {
         os.iter()
             .enumerate()
             .filter(|(_, o)| !o.identity.is_empty())
-            .map(|(i, o)| (o.identity.clone(), i))
+            .map(|(i, o)| (renamed.get(&o.identity).unwrap_or(&o.identity).clone(), i))
             .collect()
     };
     let (ia, ib) = (named(&a.observations), named(&b.observations));
@@ -1166,11 +1170,22 @@ pub fn since_last(
     {
         return None;
     }
+    // each finding by the name the program keeps it by, else by the run
+    // before's: one told apart from a sibling that is gone since is the same
+    let kept: Vec<String> = read(dir)
+        .remove(&key)
+        .map(|p| p.findings.into_keys().collect())
+        .unwrap_or_default();
     let before = previous.as_ref().and_then(|p| {
         let s = crate::run::RunFile::open_lean(p).ok()?;
-        let run = Run::analysed(&s.header, &s.records, &prices(&s.header.endpoint));
+        let mut run = Run::analysed(&s.header, &s.records, &prices(&s.header.endpoint));
+        run.take_kept_names(&kept);
         Some(((s.header.command.clone(), s.header.whole_seconds), run))
     });
+    if let Some((_, a)) = &before {
+        run.take_names_after(a);
+    }
+    run.take_kept_names(&kept);
     let (change, mut findings) = match &before {
         Some(((command, whole_seconds), a)) => {
             run.measure(records, a);

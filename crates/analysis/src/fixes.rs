@@ -326,16 +326,26 @@ fn media(rs: &[&Record]) -> bool {
     rs.iter().filter(is_media).count() * 2 > rs.len()
 }
 
-/// The operation most of `rs` are: `GET`, `PUT`, `HEAD` or `DELETE`.
+/// The operation most of `rs` are: `GET`, `PUT`, `HEAD`, `DELETE`, a
+/// listing (`LIST`) or an upload's parts (`PART`).
 fn operation(rs: &[&Record]) -> &'static str {
-    let mut n = [0usize; 4];
-    const OPS: [&str; 4] = ["GET", "PUT", "HEAD", "DELETE"];
+    const OPS: [&str; 6] = ["GET", "PUT", "HEAD", "DELETE", "LIST", "PART"];
+    let mut n = [0usize; 6];
     for r in rs {
-        if let Some(i) = OPS.iter().position(|o| *o == r.method.as_str()) {
+        let op = if r.kind.starts_with("ListObjects") {
+            "LIST"
+        } else if r.kind == "UploadPart" {
+            "PART"
+        } else {
+            r.method.as_str()
+        };
+        if let Some(i) = OPS.iter().position(|o| *o == op) {
             n[i] += 1;
         }
     }
-    let most = (0..4).max_by_key(|i| (n[*i], 4 - i)).unwrap_or(0);
+    let most = (0..OPS.len())
+        .max_by_key(|i| (n[*i], OPS.len() - i))
+        .unwrap_or(0);
     OPS[most]
 }
 
@@ -489,10 +499,31 @@ fn packed(write: bool, media: bool) -> Vec<Fix> {
 }
 
 /// Requests sent eight at once instead of one after another, as the
-/// operation they are (`GET`, `PUT`, `HEAD`, `DELETE`).
+/// operation they are ([`operation`]): of each key, each prefix listed,
+/// each part of an upload.
 fn at_once(op: &str) -> Vec<Fix> {
+    // what they go over
+    let each = match op {
+        "LIST" => "prefixes",
+        "PART" => "numbers",
+        _ => "keys",
+    };
     // (python, java's async client, go, js, object_store): one request
     let (py, java, go, js, rust) = match op {
+        "LIST" => (
+            "s3.list_objects_v2(Bucket=b, Prefix=k)",
+            "s3Async.listObjectsV2(r -> r.bucket(b).prefix(k))",
+            "_, err := s3c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &k})\n        return err",
+            "ListObjectsV2Command({ Bucket: b, Prefix: k })",
+            "store.list_with_delimiter(Some(&p)).await",
+        ),
+        "PART" => (
+            "s3.upload_part(Bucket=b, Key=key, UploadId=upload_id, PartNumber=k, Body=bodies[k])",
+            "s3Async.uploadPart(r -> r.bucket(b).key(key).uploadId(uploadId).partNumber(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
+            "_, err := s3c.UploadPart(ctx, &s3.UploadPartInput{Bucket: &b, Key: &key, UploadId: &uploadID, PartNumber: aws.Int32(k), Body: bytes.NewReader(bodies[k])})\n        return err",
+            "UploadPartCommand({ Bucket: b, Key: key, UploadId: uploadId, PartNumber: k, Body: bodies[k] })",
+            "",
+        ),
         "PUT" => (
             "s3.put_object(Bucket=b, Key=k, Body=bodies[k])",
             "s3Async.putObject(r -> r.bucket(b).key(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
@@ -523,37 +554,42 @@ fn at_once(op: &str) -> Vec<Fix> {
         ),
     };
     let head = "eight at once instead of one after another";
+    let rust = if op == "PART" {
+        // (object_store writes an upload's parts itself, as many at once as it is let)
+        format!(
+            "// {head} (object_store)\nlet mut w = object_store::WriteMultipart::new(store.put_multipart(&path).await?);\nfor part in bodies {{\n    w.wait_for_capacity(8).await?;\n    w.write(&part);\n}}\nw.finish().await?;"
+        )
+    } else {
+        format!(
+            "// {head} (object_store)\nlet results: Vec<_> = futures::stream::iter(paths).map(|p| async move {{ {rust} }}).buffered(8).try_collect().await?;"
+        )
+    };
     vec![
         owned(
             "python",
             format!(
-                "# {head}\nfrom concurrent.futures import ThreadPoolExecutor\nwith ThreadPoolExecutor(8) as pool:\n    results = list(pool.map(lambda k: {py}, keys))"
+                "# {head}\nfrom concurrent.futures import ThreadPoolExecutor\nwith ThreadPoolExecutor(8) as pool:\n    results = list(pool.map(lambda k: {py}, {each}))"
             ),
         ),
         owned(
             "java",
             format!(
-                "// {head}\nvar all = keys.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
+                "// {head}\nvar all = {each}.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
             ),
         ),
         owned(
             "go",
             format!(
-                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range keys {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nerr := g.Wait()"
+                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range {each} {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nerr := g.Wait()"
             ),
         ),
         owned(
             "js",
             format!(
-                "// {head}\nconst limit = pLimit(8);\nconst results = await Promise.all(keys.map((k) => limit(() => s3.send(new {js}))));"
+                "// {head}\nconst limit = pLimit(8);\nconst results = await Promise.all({each}.map((k) => limit(() => s3.send(new {js}))));"
             ),
         ),
-        owned(
-            "rust",
-            format!(
-                "// {head} (object_store)\nlet results: Vec<_> = futures::stream::iter(paths).map(|p| async move {{ {rust} }}).buffered(8).try_collect().await?;"
-            ),
-        ),
+        owned("rust", rust),
     ]
 }
 
@@ -1380,6 +1416,35 @@ mod tests {
         // eight GETs at once: each body read and closed (Go's connection is
         // kept only so)
         assert!(at_once("GET")[2].code.contains("defer out.Body.Close()"));
+        // listings one after another are listed at once, never read as GETs
+        // (32.0's eval); an upload's parts are sent at once
+        let r = |kind: &str, method: &str| Record {
+            kind: kind.into(),
+            method: method.into(),
+            ..Default::default()
+        };
+        let lists = [r("ListObjectsV2", "GET"), r("ListObjectsV2", "GET")];
+        let fixes = for_finding("obs.serial", &lists.iter().collect::<Vec<_>>());
+        assert!(fixes.iter().all(|f| !f.code.contains("GetObject")
+            && !f.code.contains("get_object")
+            && !f.code.contains("store.get")));
+        assert!(
+            fixes[0]
+                .code
+                .contains("list_objects_v2(Bucket=b, Prefix=k)")
+        );
+        let parts = [
+            r("UploadPart", "PUT"),
+            r("UploadPart", "PUT"),
+            r("CreateMultipartUpload", "POST"),
+        ];
+        let fixes = for_finding("obs.serial", &parts.iter().collect::<Vec<_>>());
+        assert!(
+            fixes[0].code.contains("s3.upload_part("),
+            "{}",
+            fixes[0].code
+        );
+        assert!(fixes.iter().all(|f| !f.code.contains("put_object")));
         // one PUT under the threshold: the CRT's threshold, not its part size
         assert!(code("obs.small.parts", "java").contains("thresholdInBytes"));
     }
