@@ -96,9 +96,20 @@ for (const v of variants) {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
     };
-    // a screen of charts: its data arrives after the figures: shot once it has
+    // a screen of charts: its data arrives after the figures, and a loaded machine may not have drawn its marks yet
+    // (a blank chart in CI's 32.0 pictures): the pointer passed over the board, which draws the window again, then
+    // pictures taken until two in a row are the same
     const charts = async (name: string) => {
       await app.wait(1500);
+      await app.hover("id:time-pane").catch(() => {});
+      await rest();
+      let was = await app.screenshot();
+      for (let n = 0; n < 6; n++) {
+        await app.wait(400);
+        const now = await app.screenshot();
+        if (now.length === was.length && now.every((b, i) => b === was[i])) break;
+        was = now;
+      }
       await shot(name);
     };
     // The title bar's buttons are reached by their shortcuts: on macOS a
