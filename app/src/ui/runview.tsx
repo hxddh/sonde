@@ -9,13 +9,13 @@ import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/
 import type { MenuItem as MenuItemSpec } from "nsh/desktop";
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, said as saidArg, say } from "../phrases";
 import { Chart, timed, Waterfall } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
 import type { Diagnosis, EngineSetting, EpisodeRow, Fix, FindingChange, LogLine, Observation, RecordSummary, RunView } from "../types";
 import { Icon } from "./icon";
-import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Choice, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, Heading, ICON, KeyValue, ListRow, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
+import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Choice, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, FIT_PADDING, Heading, ICON, KeyValue, ListRow, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -154,7 +154,7 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     if (!x) return "";
     const account = x.phrases.find((p) => p.key === "time.account");
     const rest = x.phrases.filter((p) => p !== account && !ASIDE.includes(p.key));
-    return account ? t("run.time", account.args ?? {}) + say(rest, "") : capital(say(x.phrases, x.text));
+    return account ? t("run.time", Object.fromEntries(Object.entries(account.args ?? {}).map(([k, v]) => [k, saidArg(k, v)]))) + say(rest, "") : capital(say(x.phrases, x.text));
   };
   const aside = () =>
     (props.view.time?.phrases ?? [])
@@ -260,11 +260,11 @@ const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : s.startsWith("object_store") ? "rust" : null;
 };
 
-/** "Expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
+/** "Copy as expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
 function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => void }) {
   return (
     <If when={props.onExpect && props.o.identity}>
-      <Button small variant="ghost" icon="check" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
+      <Button small variant="ghost" icon="copy" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
     </If>
   );
 }
@@ -665,7 +665,6 @@ export function OperationsTable(props: {
       { format: formats(), bar: false, notes: true },
       { bar: kept("bar", 150), notes: kept("notes", 320) },
     );
-  const titleWidth = () => (width() > 0 ? layout().title : COLUMN.title);
   const columns = () => {
     const l = layout();
     const column = (key: OpColumn) => {
@@ -673,7 +672,8 @@ export function OperationsTable(props: {
         case "status":
           return { key, title: "", width: l.widths.status, resizable: false, selectable: false };
         case "title":
-          return { key, title: t("column.operation"), width: titleWidth(), minWidth: COLUMN.titleLeast };
+          // the room the others leave, as the table lays them out
+          return { key, title: t("column.operation"), width: COLUMN.titleLeast, minWidth: COLUMN.titleLeast, grow: 1 };
         case "duration":
           return { key, title: t("runs.took"), width: l.widths.duration, align: "end" as const, sortable: true };
         case "requests":
@@ -755,6 +755,11 @@ export function OperationsTable(props: {
         return <Text class={`${TEXT.body} line-clamp-1`}>{c.text}</Text>;
     }
   };
+  // a row pressed, or Enter on it
+  const choose = ({ row }: { row: number }) => {
+    const e = ep(row);
+    if (e) props.onSelect(e.index);
+  };
   const grid = () => (
     <View class="min-h-0 flex-1" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
@@ -787,10 +792,8 @@ export function OperationsTable(props: {
       rowSelectable
       sort={sort()}
       onSortChange={({ sort: next }) => sortBy(next)}
-      onRowPress={({ row }) => {
-        const e = ep(row);
-        if (e) props.onSelect(e.index);
-      }}
+      onRowPress={choose}
+      onRowActivate={choose}
       onContextMenu={props.onContextMenu ? (e) => { const at = e.row === undefined || e.row === null ? undefined : ep(e.row); if (at) props.onContextMenu?.(at.index); } : undefined}
       empty={<Empty compact text={t("common.empty")} />}
     />
@@ -823,7 +826,8 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       accessibilityLabel={t("runs.output")}
       class="min-h-0 flex-1"
       columns={[
-        { key: "time", title: t("column.time"), width: COLUMN.outputTime },
+        // as wide as its times, in the language's words ("上午 2:02:03.456")
+        { key: "time", title: t("column.time"), width: COLUMN.outputTime, autoFit: true, fitPadding: FIT_PADDING },
         { key: "line", title: t("runs.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
       ]}
       renderHeaderCell={titleCells(() => [{}, {}])}
@@ -837,6 +841,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? SELECTED : ""))}
       rowSelectable
       onRowPress={({ row }) => props.onSelect(row)}
+      onRowActivate={({ row }) => props.onSelect(row)}
       empty={<Empty compact text={t("common.empty")} />}
     />
   );

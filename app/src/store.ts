@@ -106,8 +106,8 @@ export const runsTick = signal(0);
 export const runsChanged = () => runsTick.set(runsTick() + 1);
 /** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */
 export const endpointsMode = signal<"list" | "add" | "import">("list");
-/** The main window's width, as its shell measures it (windowSize() follows
- * whichever window has the focus). */
+/** The main window's width, as its shell measures it (windowSize() is the app's first window's, wherever it is
+ * read: a dialog in another window measures its own). */
 export const shellWidth = signal(1280);
 /** The window's height, as its shell is laid out: what a surface over it may take. */
 export const shellHeight = signal(820);
@@ -154,7 +154,7 @@ export function refreshSettings() {
 }
 
 /** What went wrong, in a line: what sonde says, but that one thing is at work already in the app's own words. */
-export const errorTitle = (err: SondeError): string => (err.kind === "busy" ? t("run.busy") : err.message);
+export const errorTitle = (err: SondeError): string => (err.kind === "busy" ? t("run.busyAny") : err.message);
 
 /** Shows `e` as an error toast: what went wrong, then the store's own word for it (its code and
  * status) and the request id to quote; returns it. */

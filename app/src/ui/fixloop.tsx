@@ -49,32 +49,34 @@ function changeLine(s: SinceLast): string | null {
   return parts.join(" · ");
 }
 
+/** The findings of a state, counted, in words ("1 finding smaller", "2 new"). */
+const COUNTED = { fixed: "fix.fixedN", less: "fix.lessN", more: "fix.moreN", new: "fix.newN" } as const;
+
+/** What the findings did since the run before: fixed, less, more, new (open ones say nothing new), each counted
+ * ("1 finding smaller"), but the one named — the one fixed, else the first that is new (several: each in Compare) —
+ * by its state and its words, and a fixed one's measured saving ("fixed: … — 1.2 s less (predicted 1.5 s)"). */
+export function findingsSaid(findings: FindingChange[]): string {
+  const fixed = findings.filter((x) => x.state === "fixed");
+  const one = fixed.length === 1 ? fixed[0] : (findings.find((x) => x.state === "new") ?? null);
+  return (["fixed", "less", "more", "new"] as const)
+    .map((st) => [st, findings.filter((f) => f.state === st)] as const)
+    .filter(([, of]) => of.length > 0)
+    .map(([st, of]) => {
+      if (!one || one.state !== st || of.length > 1) return t(COUNTED[st], { n: of.length });
+      const word = say([{ key: "fix." + st, args: {} }], st);
+      const saved = st === "fixed" ? savedText(one) : null;
+      const finding = say(one.phrases, one.text);
+      return saved ? t("fix.namedSaved", { what: word, finding, saved }) : t("fix.named", { what: word, finding });
+    })
+    .join(" · ");
+}
+
 /** "Since the run before", in one sentence: what the findings did (fixed, less, more, new) and how the
  * figures changed, then a link that opens the two runs side by side (`onCompare`), where each fixed finding
  * says what it saved. Nothing for a program's first run, nor when nothing changed. */
 export function SinceRun(props: { since: SinceLast | null | undefined; onCompare?: () => void }) {
   const s = () => props.since;
-  // the one finding named: the one fixed, else the first that is new (several: each in Compare)
-  const named = (): FindingChange | null => {
-    const f = s()?.findings ?? [];
-    const fixed = f.filter((x) => x.state === "fixed");
-    return fixed.length === 1 ? fixed[0] : (f.find((x) => x.state === "new") ?? null);
-  };
-  // what the findings did: fixed, less, more, new (open ones say nothing new), each counted, but the one named —
-  // its state and its words, and a fixed one's measured saving ("fixed: … — 1.2 s less (predicted 1.5 s)")
-  const tally = () =>
-    (["fixed", "less", "more", "new"] as const)
-      .map((st) => [st, (s()?.findings ?? []).filter((f) => f.state === st)] as const)
-      .filter(([, of]) => of.length > 0)
-      .map(([st, of]) => {
-        const word = say([{ key: "fix." + st, args: {} }], st);
-        const one = named();
-        if (!one || one.state !== st || of.length > 1) return `${count(of.length)} ${word}`;
-        const saved = st === "fixed" ? savedText(one) : null;
-        const finding = say(one.phrases, one.text);
-        return saved ? t("fix.namedSaved", { what: word, finding, saved }) : t("fix.named", { what: word, finding });
-      })
-      .join(" · ");
+  const tally = () => findingsSaid(s()?.findings ?? []);
   const changed = (x: SinceLast) => !!tally() || (!!x.change && (x.change.requests[0] !== x.change.requests[1] || x.change.errors[0] !== x.change.errors[1]));
   const sentence = (x: SinceLast) => [tally(), changeLine(x)].filter(Boolean).join(" · ");
   return (

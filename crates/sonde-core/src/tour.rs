@@ -81,42 +81,34 @@ pub fn caller(job: &str, file: &str, mark: &str) -> String {
     format!("{file}:? <module>")
 }
 
-/// The time between the starts of the job's requests.
-const BEAT: std::time::Duration = std::time::Duration::from_millis(100);
-/// Half the slice (`profile::Timeline::bin_ms`, 20 ms for a run this long) a
-/// request after the first starts past its beat.
-const HALF_SLICE: std::time::Duration = std::time::Duration::from_millis(10);
+/// The job's own step after each answer, before its next request: what
+/// a loop takes. Its time is the requests' and these: a request it no
+/// longer sends saves its own time and a step, what its plan predicts.
+const STEP: std::time::Duration = std::time::Duration::from_millis(1);
+/// The job's pause between its parts (its settings found, its reports
+/// read, its export written): longer than a chain's gap (D-277), so the
+/// parts are not requests one after another.
+const PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Plays `job` (from file `file`) with `app`, each request naming its
 /// line in `caller_header`; `say` is told each request as it is answered,
 /// a line each (`export.py:18 read_reports  HEAD demo/reports/2026-q1.csv → 200`).
-/// `first` is when the recording saw the first request, when the recording
-/// is in this process (the app's): its timeline starts there.
 pub async fn play(
     app: &S3Client,
     job: &str,
     file: &str,
     caller_header: &str,
-    first: impl Fn() -> Option<std::time::Instant>,
     mut say: impl FnMut(String),
 ) {
     let at = |mark: &str| caller(job, file, mark);
-    // each request starts on the job's own beat, not when the one before
-    // answered: the run's timeline is the same picture each time it is played.
-    // The beats count from the first request's start as the recording saw it:
-    // not from when the job sent it, nor from its answer, both a connection
-    // and a first signing away from it, times no two machines take alike.
-    // A recording in another process (`sonde run`) is not asked: the answer,
-    // less the store's wait, is near it
-    let mut start: Option<tokio::time::Instant> = None;
-    let mut beat = 0u32;
-    let mut send = async |r: S3Request, mark: &str| {
-        // (half a slice past the beat: mid-slice in the run's timeline, a
-        // millisecond either side the same slice)
-        if let Some(start) = start {
-            crate::demo::until(start + BEAT * beat + HALF_SLICE).await;
-        }
-        beat += 1;
+    // each request a step after the answer before it, as the job's code
+    // would send it: a request taken out takes its time with it (fixed
+    // beats, 31.0's, kept the time of the requests taken out: three HEADs
+    // saved 300 ms where 63 were predicted)
+    let wait = async |d: std::time::Duration| {
+        crate::demo::until(tokio::time::Instant::now() + d).await;
+    };
+    let send = async |r: S3Request, mark: &str| {
         let place = at(mark);
         let target = r.key.clone().unwrap_or_else(|| {
             let prefix = r.query.iter().find(|(k, _)| k == "prefix");
@@ -130,37 +122,36 @@ pub async fn play(
                 .status
                 .map_or_else(|| "no answer".into(), |s| s.to_string()),
         };
-        if start.is_none() {
-            // the first request is a HEAD (the job's settings)
-            let now = tokio::time::Instant::now();
-            start = Some(first().map_or_else(
-                || now.checked_sub(crate::demo::BRIEF).unwrap_or(now),
-                tokio::time::Instant::from_std,
-            ));
-        }
-        say(format!("{place}  {what} → {status}"));
-        got.ok()
+        wait(STEP).await;
+        (format!("{place}  {what} → {status}"), got.ok())
     };
     let on =
         |op: &str, method: http::Method, k: &str| S3Request::new(op, method).bucket("demo").key(k);
+    let mut sent = async |r: S3Request, mark: &str| {
+        let (line, got) = send(r, mark).await;
+        say(line);
+        got
+    };
     for name in ["sonde-tour.toml", "tour.toml", "tour.yaml", "tour.json"] {
-        send(
+        sent(
             on("HeadObject", http::Method::HEAD, &format!("tour/{name}")),
             "@settings",
         )
         .await;
     }
+    wait(PAUSE).await;
     let fixed = is_fixed(job);
     for q in 1..=3 {
         let k = format!("reports/2026-q{q}.csv");
         if !fixed {
-            send(on("HeadObject", http::Method::HEAD, &k), "@head").await;
+            sent(on("HeadObject", http::Method::HEAD, &k), "@head").await;
         }
-        send(on("GetObject", http::Method::GET, &k), "@get").await;
+        sent(on("GetObject", http::Method::GET, &k), "@get").await;
     }
+    wait(PAUSE).await;
     // the export, under the run's own place
     let place = if fixed { "tour/fixed" } else { "tour/first" };
-    send(
+    sent(
         on(
             "PutObject",
             http::Method::PUT,
@@ -173,7 +164,7 @@ pub async fn play(
     // and lists what it wrote, two keys a page
     let mut token: Option<String> = None;
     for _ in 0..20 {
-        let page = send(
+        let page = sent(
             S3Request::new("ListObjectsV2", http::Method::GET)
                 .bucket("demo")
                 .query("list-type", "2")

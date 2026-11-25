@@ -716,11 +716,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     // (a run is held by its figures and its findings: `check` reads no
     // record of it, nor of its baseline)
-    let c = check(
+    let mut c = check(
         (&run.0, &[][..], &run.1, &run.2),
         base.as_ref().map(|b| (&b.0, &[][..], &b.1, &b.2[..])),
         &budget,
     );
+    // a known finding gone reads as its program kept it
+    if let Some(kept) = program.as_ref().and_then(|p| {
+        sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(&file)).remove(p)
+    }) {
+        sonde_analysis::program::kept_texts(&mut c.loose, &kept.findings);
+    }
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
     use sonde_analysis::program::{run_closing, run_passed};

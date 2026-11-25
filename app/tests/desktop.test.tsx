@@ -1,7 +1,7 @@
 // The desktop form, headless (`platform: "macos"`, a window-sized viewport).
 
-import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, desktop, place } from "./helpers";
+import { expect, test } from "nsh/test";
+import { openDemo, openExample, desktop, place, open } from "./helpers";
 import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in the inspector, and the fix applied says what it saved", async () => {
@@ -27,10 +27,19 @@ test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in th
   expect(app.shows("id:finding-advice")).toBe(false);
   expect(app.shows("id:clear-filter")).toBe(true);
   // the run's sentence is where its time went
-  expect(app.shows("text:/^Time [\\d.]+ m?s: your program's own /")).toBe(true);
+  // (its figures kept with their units: "350 ms" never parted at a line's end)
+  expect(app.shows("text:/^Time [\\d.]+\\u00a0m?s: your program's own /")).toBe(true);
   // the fix applied and the job run again: the finding fixed, the time it saved measured beside the predicted (or
   // within the runs' noise)
   await app.press("id:finding-apply");
+  // gone elsewhere while it plays: its end does not pull the user back
+  await app.waitFor("id:running-pill", { timeout: 10000 });
+  await app.press("id:nav-store");
+  await app.waitFor("id:screen-runs", { state: "gone" });
+  await app.waitFor("id:running-pill", { state: "gone", timeout: 30000 });
+  await app.wait(500);
+  expect(app.shows("id:screen-runs")).toBe(false);
+  await app.press("id:nav-runs");
   await app.waitFor("text:/^Since the run before: fixed: .* — (.* less|.* more|within noise)/", { timeout: 20000 });
   // (no finding left: its operations all shown, none narrowed away, no fix in an inspector)
   expect(app.shows("text:Nothing here yet")).toBe(false);
@@ -233,6 +242,18 @@ test("a command keeps its secrets out and its Windows paths whole; sonde's own r
   expect(ranCommand("  ")).toBe(false);
   expect(commandLine("logs of s3://demo/logs/")).toBe("logs of s3://demo/logs/");
   expect(commandLine("python x.py")).toBe("$ python x.py");
+  // the demo's job is the Demo, wherever a program's name would be
+  expect(programOf("sonde demo-job export.py")).toBe("Demo");
+});
+
+test("since the run before, the findings each state counts read as words", async () => {
+  const { findingsSaid } = await import("../src/ui/fixloop");
+  const f = (state: "fixed" | "less" | "more" | "new", identity: string) => ({ identity, state, level: "warn" as const, text: `finding ${identity}`, phrases: [], predicted: {} as never });
+  expect(findingsSaid([f("less", "a")])).toBe("1 finding smaller");
+  expect(findingsSaid([f("more", "a"), f("more", "b")])).toBe("2 findings larger");
+  expect(findingsSaid([f("fixed", "a"), f("fixed", "b"), f("new", "c"), f("new", "d")])).toBe("2 fixed · 2 new");
+  // the one fixed is named by its words
+  expect(findingsSaid([f("fixed", "a"), f("less", "b")])).toBe("fixed: finding a · 1 finding smaller");
 });
 
 test("a month of a program reads as money, not per 1,000 runs", async () => {
@@ -487,7 +508,7 @@ test("runs of one command are told apart by the argument that differs", async ()
   const { tellApart } = await import("../src/ui/runview");
   const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
   // from what differs, at the edge of its part of the path: a column that cuts at its end cuts what they share
-  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… README.md", "… missing.txt"]);
+  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["README.md", "missing.txt"]);
   // the same to the letter, or different from the start: left whole
   expect(tellApart(["load.py", "load.py"])).toEqual(["load.py", "load.py"]);
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
@@ -888,4 +909,42 @@ test("a narrow pane's inspector is a dialog of its own, named by its title", asy
   await app.press("id:inspector-close");
   await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
   expect(app.shows("role:dialog")).toBe(false);
+});
+
+test("closing the main window quits, on every platform, and its Settings window goes with it", async () => {
+  for (const platform of ["macos", "windows", "linux"] as const) {
+    const app = await open("../App.tsx", { ...desktop, platform });
+    await place(app, "settings");
+    expect(app.windowIds()).toEqual(["main", "settings"]);
+    // nothing at work: no question
+    await app.window("main").pressClose();
+    expect(app.dialogs()).toEqual([]);
+    await app.waitUntil(() => app.quit(), { timeout: 3000 });
+  }
+});
+
+test("the Dock's icon (a later launch) brings the main window forward", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "settings");
+  expect(app.window("main").state()?.focused).toBe(false);
+  await app.reopen();
+  expect(app.window("main").state()?.focused).toBe(true);
+  expect(app.quit()).toBe(false);
+});
+
+test("the quit question is asked once: a second close or Quit while it is open waits for its answer", async () => {
+  const { oneAtATime } = await import("../src/ui/kit");
+  let asked = 0;
+  let answer: (yes: boolean) => void = () => {};
+  const ask = oneAtATime(() => (asked++, new Promise<boolean>((r) => (answer = r))));
+  const first = ask();
+  expect(await ask()).toBe(null);
+  expect(asked).toBe(1);
+  answer(true);
+  expect(await first).toBe(true);
+  // answered: the next press asks again
+  const next = ask();
+  expect(asked).toBe(2);
+  answer(false);
+  expect(await next).toBe(false);
 });

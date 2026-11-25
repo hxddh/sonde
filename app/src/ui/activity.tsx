@@ -8,6 +8,7 @@ import { count, date, duration, since } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api } from "../native";
+import { running } from "../run";
 import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
 import type { AuditEntry, JobInfo } from "../types";
 import { Badge, DOT, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, Row, Segmented, TONE, type Tone, TEXT, Tip } from "./kit";
@@ -16,6 +17,9 @@ export const activityOpen = signal(false);
 
 /** Jobs running now, for the toolbar's badge. */
 export const runningJobs = signal(0);
+/** Whether sonde is at work (a program, a trial, a recording, or a job of its own): the Dock's progress, Updates,
+ * quitting and closing the window all ask this. */
+export const atWork = () => running() !== null || runningJobs() > 0;
 let following = false;
 export function watchJobs() {
   if (following) return;

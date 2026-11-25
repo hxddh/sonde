@@ -3,6 +3,11 @@
 // "replay of …"). No interface here: the app, the shared page and the
 // tests read commands through these.
 
+import { t } from "./i18n";
+
+/** The command the demo's runs ran (sonde_core::tour::COMMAND): named the Demo wherever a program would be. */
+export const DEMO_COMMAND = "sonde demo-job export.py";
+
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
 // steps that set the stage for the program rather than being it
 const STAGE = new Set(["cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec", "printf", "wait", "nohup"]);
@@ -108,9 +113,10 @@ export function scrubCommand(command: string): string {
 /** What a command runs, for lists: its program's name (past the variables
  * it sets, `env` and its options, never one of their values; of a compound
  * command the first that is not a step setting the stage), or the command
- * itself, scrubbed, when it starts with the shell's own words. */
+ * itself, scrubbed, when it starts with the shell's own words; the demo's job is the Demo. */
 export function programOf(command: string | null | undefined): string | null {
   if (!command) return null;
+  if (command.trim() === DEMO_COMMAND) return t("run.demoName");
   const words = shellWords(command);
   let first: string | null = null;
   let part: string[] = [];

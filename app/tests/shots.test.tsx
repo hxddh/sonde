@@ -81,7 +81,9 @@ for (const v of variants) {
     const height = maxH ? Math.min(v.height, maxH) : v.height;
     // the variant's appearance and language from its launch, as a person whose system is dark or Chinese first sees
     // sonde: its first screen (Welcome) is shot in them (the settings keep "system" and "auto")
-    const app: App = await open("../App.tsx", { width, height, colorScheme: v.theme ?? "light", locale: v.lang ? "zh-CN" : "en-US" });
+    // (reduced motion: a chart is drawn whole at once, not caught mid-draw on a loaded machine; the pictures are of
+    // the app at rest either way)
+    const app: App = await open("../App.tsx", { width, height, colorScheme: v.theme ?? "light", locale: v.lang ? "zh-CN" : "en-US", reducedMotion: true });
     // at the variant's size: Windows' development host opens the window at nsh.json's defaultSize once the app has
     // loaded, after the size asked here (30.0's Windows "min" pictures were the wide ones, 1280×820 fitted to the screen)
     await app.setViewport(width, height);
@@ -94,9 +96,20 @@ for (const v of variants) {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
     };
-    // a screen of charts: each draws itself in (420 ms, data that arrives after the figures its own): shot once drawn
+    // a screen of charts: its data arrives after the figures, and a loaded machine may not have drawn its marks yet
+    // (a blank chart in CI's 32.0 pictures): the pointer passed over the board, which draws the window again, then
+    // pictures taken until two in a row are the same
     const charts = async (name: string) => {
       await app.wait(1500);
+      await app.hover("id:time-pane").catch(() => {});
+      await rest();
+      let was = await app.screenshot();
+      for (let n = 0; n < 6; n++) {
+        await app.wait(400);
+        const now = await app.screenshot();
+        if (now.length === was.length && now.every((b, i) => b === was[i])) break;
+        was = now;
+      }
       await shot(name);
     };
     // The title bar's buttons are reached by their shortcuts: on macOS a

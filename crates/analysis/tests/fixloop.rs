@@ -1340,3 +1340,170 @@ fn a_findings_identity_does_not_move_with_a_siblings_count() {
     let kept = &fixloop::read(dir.path())["job"].findings;
     assert_eq!(kept.keys().filter(|k| k.starts_with("obs.hot")).count(), 2);
 }
+
+/// 32.0's eval: a hot key told apart from a one-off sibling of the run
+/// (yesterday's `_SUCCESS` looked at once, the next Iceberg metadata
+/// written once, the previous job's state read once) kept its date or id,
+/// so each day's run read it fixed and new. A finding is told apart only
+/// from the run's findings at any threshold, which a one-off is not.
+#[test]
+fn a_one_off_sibling_does_not_name_a_finding_by_its_date_or_id() {
+    let put = |id: u64, key: &str| Record {
+        method: "PUT".into(),
+        kind: "PutObject".into(),
+        request_bytes: Some(2_000).into(),
+        ..get(id, key)
+    };
+    let day = |d: u64| -> Vec<Record> {
+        let mut rs: Vec<Record> = Vec::new();
+        let add = |rs: &mut Vec<Record>, r: fn(u64, &str) -> Record, key: String| {
+            let id = rs.len() as u64 + 1;
+            rs.push(r(id, &key));
+        };
+        // the day's marker read again and again, yesterday's looked at once
+        add(
+            &mut rs,
+            get,
+            format!("out/dt=2026-11-{:02}/_SUCCESS", d - 1),
+        );
+        for _ in 0..12 {
+            add(&mut rs, get, format!("out/dt=2026-11-{d:02}/_SUCCESS"));
+        }
+        // Iceberg: this version's metadata read again and again, the next written
+        for _ in 0..14 {
+            add(&mut rs, get, format!("tbl/metadata/v{d}.metadata.json"));
+        }
+        let id = rs.len() as u64 + 1;
+        rs.push(put(id, &format!("tbl/metadata/v{}.metadata.json", d + 1)));
+        // the job's state read again and again, the previous job's once
+        add(
+            &mut rs,
+            get,
+            format!("jobs/{}/state.json", 1_794_558_000 + d - 1),
+        );
+        for _ in 0..16 {
+            add(
+                &mut rs,
+                get,
+                format!("jobs/{}/state.json", 1_794_558_000 + d),
+            );
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let first = ran(dir.path(), 1, &day(24), Some(0));
+    let mut ids: Vec<&str> = first
+        .findings
+        .iter()
+        .map(|f| f.identity.as_str())
+        .filter(|i| i.starts_with("obs.hot"))
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        [
+            "obs.hot|b/jobs/{n}/state.json",
+            "obs.hot|b/out/dt={v}/_SUCCESS",
+            "obs.hot|b/tbl/metadata/v{n}.metadata.json",
+        ]
+    );
+    let next = ran(dir.path(), 2, &day(25), Some(0));
+    assert!(
+        next.findings.iter().all(|f| f.state == State::Open),
+        "{:#?}",
+        next.findings
+    );
+    let kept = &fixloop::read(dir.path())["job"].findings;
+    assert_eq!(kept.len(), next.findings.len(), "{kept:#?}");
+}
+
+/// 32.0's eval: two keys read again and again were two findings; with the
+/// second gone the first was named as one alone (`t/{n}/x.json`), and
+/// said open twice, once by each name. The finding the run before named
+/// keeps its name, and the program keeps it once.
+#[test]
+fn a_finding_whose_sibling_is_gone_keeps_its_name() {
+    let reads = |both: bool| -> Vec<Record> {
+        let mut rs: Vec<Record> = Vec::new();
+        for _ in 0..12u64 {
+            rs.push(get(rs.len() as u64 + 1, "t/00/x.json"));
+            if both {
+                rs.push(get(rs.len() as u64 + 1, "t/01/x.json"));
+            }
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &reads(true), Some(0));
+    let hot = |f: &&fixloop::FindingChange| f.identity.starts_with("obs.hot");
+    for minute in 2..=3 {
+        let later = ran(dir.path(), minute, &reads(false), Some(0));
+        let said: Vec<(&str, State)> = later
+            .findings
+            .iter()
+            .filter(hot)
+            .map(|f| (f.identity.as_str(), f.state))
+            .collect();
+        let expected: &[(&str, State)] = if minute == 2 {
+            &[
+                ("obs.hot|b/t/01/x.json", State::Fixed),
+                ("obs.hot|b/t/00/x.json", State::Open),
+            ]
+        } else {
+            &[("obs.hot|b/t/00/x.json", State::Open)]
+        };
+        assert_eq!(said, expected, "{:#?}", later.findings);
+        let kept = &fixloop::read(dir.path())["job"].findings;
+        assert_eq!(
+            kept.keys().filter(|k| k.starts_with("obs.hot")).count(),
+            2,
+            "{kept:#?}"
+        );
+    }
+}
+
+/// 32.0's eval: 600 small reads then 60 of the same keys, and 60 prefixes
+/// listed one by one then 6, with no fix, read "less, saved 540": what a
+/// finding still there did away with is no fix's. Only a finding fixed
+/// (gone at any threshold) frees the objects it named.
+#[test]
+fn a_workload_that_truly_shrank_is_no_fix() {
+    let sized = |id: u64, key: &str| {
+        let mut r = get(id, key);
+        r.response_bytes = Some(10_000).into();
+        r
+    };
+    let samples = |n: u64| -> Vec<Record> {
+        (0..n)
+            .map(|i| sized(i + 1, &format!("img/{i:04}.jpg")))
+            .collect()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &samples(600), Some(0));
+    let fewer = ran(dir.path(), 2, &samples(60), Some(0));
+    let c = fewer.change.as_ref().unwrap();
+    assert_eq!(
+        c.uncounted(false).as_deref(),
+        Some("the workload shrank"),
+        "{c:#?}"
+    );
+    let f = fewer
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.smallreads"))
+        .unwrap();
+    assert_eq!(f.state, State::Less);
+    assert!(f.saved_requests.is_none(), "{f:#?}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let crawl =
+        |n: u64| -> Vec<Record> { (0..n).map(|i| list(i + 1, &format!("t/p={i}/"))).collect() };
+    ran(dir.path(), 1, &crawl(60), Some(0));
+    let fewer = ran(dir.path(), 2, &crawl(6), Some(0));
+    let c = fewer.change.as_ref().unwrap();
+    assert_eq!(
+        c.uncounted(false).as_deref(),
+        Some("the workload shrank"),
+        "{c:#?}"
+    );
+}

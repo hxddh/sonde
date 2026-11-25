@@ -172,7 +172,8 @@ pub fn time_account(
         )),
         _ => {}
     }
-    if injected_ms >= 0.5 {
+    // (a fault answered at once is a fraction of a millisecond: noise, not a share worth a sentence)
+    if injected_ms >= 1.0 && injected_ms >= wall_ms * 0.05 {
         phrases.push(p("time.injected", &[("time", time(injected_ms))]));
     }
     let indicative = header.endpoint == "demo";

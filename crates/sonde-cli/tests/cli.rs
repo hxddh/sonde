@@ -166,6 +166,8 @@ fn help_lists_the_commands_by_what_they_are_for() {
     // a command's own help is clap's, as before
     let run = stdout(&sonde(t.path(), &["run", "--help"]));
     assert!(run.contains("Usage: sonde run"), "{run}");
+    // (no flag named that is gone: `--again` went in 31.0)
+    assert!(!run.contains("--again"), "{run}");
 }
 
 #[test]
@@ -194,6 +196,33 @@ fn the_demo_records_a_run_that_every_command_reads() {
     assert!(
         last.starts_with("  ✓ fixed") && last.contains(" fewer requests (predicted "),
         "{out}"
+    );
+    // and the time the fix saved is about what was predicted (31.0 played
+    // the job on fixed beats: 300 ms saved where 63 were predicted)
+    let ms = |t: &str| -> f64 {
+        let (n, unit) = t.trim().split_once(' ').unwrap();
+        let n: f64 = n.parse().unwrap();
+        if unit.starts_with("ms") {
+            n
+        } else {
+            n * 1000.0
+        }
+    };
+    let predicted = ms(last
+        .split("(predicted ")
+        .nth(1)
+        .unwrap()
+        .trim_end_matches(" less)"));
+    let since = out
+        .lines()
+        .find(|l| l.starts_with("since the run before"))
+        .unwrap();
+    let times = since.split("time ").nth(1).unwrap();
+    let (was, now) = times.split_once(" → ").unwrap();
+    let saved = ms(was) - ms(now.split(" (").next().unwrap());
+    assert!(
+        saved > predicted * 0.5 && saved < predicted * 2.0,
+        "saved {saved} ms, predicted {predicted} ms: {out}"
     );
     // the job it names is there, the line it names holds the HEAD
     let job = std::fs::read_to_string(t.path().join("data/tour/export.py")).unwrap();

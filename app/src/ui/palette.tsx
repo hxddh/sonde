@@ -4,7 +4,7 @@
 
 import { computed, effect, resource, setColorScheme, signal, Text, untracked, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
-import { date } from "../format";
+import { clock, date, day } from "../format";
 import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
@@ -14,7 +14,8 @@ import { shownCommands, ACTIVITY_TABS, chooseBucket, endpoint, endpoints, go, ne
 import type { BucketEntry, RunInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, PALETTE_SCRIM, ROWS, SURFACE, Row, TEXT } from "./kit";
-import { programOf, scrubCommand } from "./runview";
+import { runsTold } from "./runlist";
+import { scrubCommand } from "./runview";
 
 export const paletteOpen = signal(false);
 
@@ -59,21 +60,25 @@ function actions(buckets: BucketEntry[]): Action[] {
   } catch {
     // none yet
   }
-  runs.forEach((s) =>
+  // each told from the others of its program as the sidebar tells it: the argument that differs, and its time to the
+  // second where the same command started twice in one minute
+  const told = runsTold(runs);
+  runs.forEach((s) => {
+    const x = told.get(s.path);
     list.push({
       id: `run:${s.path}`,
-      // by its title, else its program, and when it ran: the command itself is searched, not shown
-      label: s.title || programOf(s.command) || s.name,
+      // by its title, else its program, and what tells it apart; when it ran: the command itself is searched, not shown
+      label: [x?.name ?? s.name, x?.args].filter(Boolean).join(" "),
       group: t("palette.runs"),
       icon: "list-clock",
       keywords: [s.endpoint, s.name, ...(s.command ? [scrubCommand(s.command)] : [])],
-      hint: `${date(s.created)} · ${s.endpoint} · ${t("run.bandRequests", { n: s.requests })}`,
+      hint: `${x?.twin ? `${day(s.created)} ${clock(s.created, "s")}` : date(s.created)} · ${s.endpoint} · ${t("run.bandRequests", { n: s.requests })}`,
       run: () => {
         openRun.set(s.path);
         go("runs");
       },
-    }),
-  );
+    });
+  });
   // where requests go; the built-in demo among them before it has started (chosen, it starts)
   if (!endpoints().some((e) => e.id === "demo")) list.push({ id: "endpoint:demo", label: t("endpoints.demoName"), group: t("palette.endpoints"), icon: "server", keywords: ["demo"], run: () => void startDemo() });
   endpoints().forEach((e) =>

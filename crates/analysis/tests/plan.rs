@@ -205,6 +205,18 @@ fn a_run_s_time_is_said_as_whose_it_was() {
     assert!((t.injected_ms - 5.0 * 230.0).abs() < 1.0, "{t:?}");
     assert!((t.waiting_ms - 15.0 * 30.0).abs() < 1.0, "{t:?}");
     assert!(t.text.contains("held or answered by sonde"), "{}", t.text);
+    // faults answered at once (a throttle sonde says without holding it): no sentence for a fraction of a millisecond
+    for r in job.0.iter_mut().take(5) {
+        r.latency_ms = 0.1;
+    }
+    let mut at = 0;
+    for r in job.0.iter_mut() {
+        r.time = DateTime::from_timestamp_micros(1_700_000_000_000_000 + at).unwrap();
+        at += (r.latency_ms * 1000.0) as i64 + 2_000;
+    }
+    let t = analysed(&job.0).time.unwrap();
+    assert!(t.injected_ms > 0.0 && t.injected_ms < 1.0, "{t:?}");
+    assert!(!t.text.contains("held or answered by sonde"), "{}", t.text);
 }
 
 #[test]

@@ -2,6 +2,62 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [32.0.0] - 2026-11-25
+
+sonde moves to Native Shell 0.7.0: closing its window quits it on every platform, asking first only while something
+is at work. A finding keeps its name across days, listings and uploads are read as they are, and the app names what
+is at work alike everywhere.
+
+### Changed
+
+- Closing sonde's window quits it on every platform, Settings and run windows with it. While a program, a recording
+  or a job is at work it asks first, and only once; the Dock and a second launch bring the window back.
+- What is at work has one name everywhere: the demo is "Demo", a refused start says "<name> is at work: stop it
+  first", quitting during a trial says it keeps nothing, and Windows says Exit. "Expected" is "Copy as expected".
+- One primary button while something is at work: Run again is outlined during a trial, and Record…'s Start is
+  outlined beside Run.
+- The tour's job runs at the pace of its answers, so the time its fix saves matches the prediction.
+- Native Shell 0.7.0: title bars, measured and growing table columns, busy buttons; Enter opens a table's focused
+  row.
+
+### Removed
+
+- Edit and Full Screen from the Windows and Linux ⋯/☰ menu.
+
+### Fixed
+
+- A finding is told apart only from the run's other findings of its kind: yesterday's `_SUCCESS`, the next Iceberg
+  metadata or the previous job's state no longer give it a date or id, and a daily `check` no longer fails on it. It
+  is much faster at a million requests. A finding whose sibling is gone keeps its name, and is listed and kept once.
+- A paginated listing is no longer "requests one after another"; an upload's parts sent one at a time now are; a
+  move's delete waits for its copy. Listings and parts get listing and upload-part code.
+- A workload that truly shrank is said, not counted as a saving.
+- `python.exe`, `npx.cmd` and the `py` launcher are named by the script they run. `check -f json` gives a gone
+  finding its text; `run --help` no longer names `--again`.
+- On Windows and Linux the menus' shortcuts (Ctrl+K, Ctrl+N, Ctrl+B…) reach the window.
+- The run's time sentence never parts a figure from its unit; long operation names are no longer cut on Linux beside
+  Notes; the output's times fit in every language.
+- The demo no longer takes you back to its run when it ends if you went elsewhere. "Since the run before" reads as
+  words ("1 finding smaller", "2 new"). The palette's recent runs are told apart as the sidebar's are, and the
+  sidebar no longer starts an argument with "…".
+
+### 中文
+
+sonde 升级到 Native Shell 0.7.0：关闭窗口即在所有平台退出，只有任务进行时才先询问。发现的名称跨天保持不变，列举与上传按其实际方式解读，应用中对进行中任务的称呼处处一致。
+
+- 变更：关闭 sonde 窗口即在所有平台退出，设置与运行窗口一并关闭；有程序、录制或任务在进行时先询问，且只问一次；程序坞和再次启动会把窗口带回。
+- 变更：进行中的任务处处同名：演示称"演示"；被拒的启动说"<名称> 正在进行：先停止它"；试运行中退出会说明不保留任何内容；Windows 上称"退出"。"预期"改为"复制为预期"。
+- 变更：有任务进行时只有一个主按钮：试运行期间"再次运行"为描边样式，"录制…"的开始与"运行"不再同为主按钮。
+- 变更：导览作业按应答节奏运行，修复节省的时间与预测一致。
+- 变更：升级到 Native Shell 0.7.0：标题栏、按实测并可伸展的表格列、忙碌按钮；回车打开表格中的焦点行。
+- 移除：Windows 与 Linux 的 ⋯/☰ 菜单去掉"编辑"和"全屏"。
+- 修复：发现只与本次运行中同类的其他发现相区分，昨天的 `_SUCCESS`、Iceberg 的下一个元数据或上一个作业的状态不再让它带上日期或 id，每日 `check` 不再因此失败；百万请求时也快得多；兄弟发现消失后，发现保留原名，只列出、只保存一次。
+- 修复：分页列举不再算作"逐个请求"；逐个发送的分片上传会被发现；移动时删除会等待复制；列举和分片给出对应代码。工作量确实变小时会说明，不再计为节省。
+- 修复：`python.exe`、`npx.cmd` 和 `py` 启动器按其运行的脚本命名；`check -f json` 为已消失的发现给出文字；`run --help` 不再提到 `--again`。
+- 修复：Windows 与 Linux 上菜单快捷键（Ctrl+K、Ctrl+N、Ctrl+B…）恢复可用。
+- 修复：耗时句不再把数字与单位拆开；Linux 上显示备注时长操作名不再被截断；输出的时间在各语言下完整显示。
+- 修复：演示结束时，若你已离开它的运行，不再把你带回；"与上一次运行相比"改为完整的话（"1 项发现变小"、"2 项新出现"）；命令面板的最近运行与侧栏一样能区分彼此，侧栏的参数不再以"…"开头。
+
 ## [31.0.0] - 2026-11-23
 
 sonde counts the fixes it recommends, finds requests one after another behind a listing, keeps one identity per finding, knows when anything is at work, and looks at home on macOS, Windows and Linux.

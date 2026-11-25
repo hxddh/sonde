@@ -56,7 +56,8 @@ export function RecordPanel() {
             />
           </View>
           <View class="flex-row gap-2">
-            <Button small variant="primary" icon="radio" label={t("timeline.start")} onPress={start} testID="record-start" />
+            {/* (the command bar's Run above is the place's one primary) */}
+            <Button small variant="outline" icon="radio" label={t("timeline.start")} onPress={start} testID="record-start" />
             <Button small variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} testID="record-cancel" />
           </View>
         </Row>

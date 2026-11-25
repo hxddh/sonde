@@ -94,7 +94,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const clean = analysis(() => view()?.trial?.clean ?? null);
   // the program's budget, for the Time pane's lines: read once per run shown
   const budget = computed(() => budgetOf(props.path));
-  // this pane's own size (windowSize() follows whichever window has the focus)
+  // this pane's own size (in a run's window too, where windowSize() is the main window's)
   const box = signal({ w: 1000, h: 760 });
   // its output, read off the interface's thread (a large run is read whole the first time), again as it grows
   const linesRead = resource(
@@ -570,8 +570,9 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       <If when={!live() && ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
-          // one primary a screen: a diagnosis's Apply, while it shows, is
-          variant={applying() ? "outline" : "primary"}
+          // one primary a screen: a diagnosis's Apply, while it shows, is; while anything is at work (a trial of this
+          // run), its Stop is
+          variant={applying() || running() ? "outline" : "primary"}
           icon="play"
           label={t("runs.runAgain")}
           onPress={async () => {

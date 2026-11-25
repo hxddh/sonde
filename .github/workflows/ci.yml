@@ -57,7 +57,8 @@ jobs:
         run: |
           set -o pipefail
           cd app && nsh build App.tsx 2>&1 | tee build.log
-          ! grep -E "^warn" build.log
+          # (the host's own lack of WebKitGTK is not the app's: this job builds no window)
+          ! grep -E "^warn" build.log | grep -v "WebKitGTK"
 
   msrv:
     # the oldest Rust sonde builds with: Cargo.toml's rust-version, exactly

@@ -34,7 +34,7 @@ pub struct Recording {
     /// rules, bucket policies and versioning, but for what the recording
     /// made (writes go through); `read-only` lets only GET and HEAD through.
     /// Default: `[record] policy` in sonde.toml, else allow, and no-delete
-    /// for --trial and --again.
+    /// for --trial.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// The run's file (default: a new file in the data directory's runs/).

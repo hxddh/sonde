@@ -109,15 +109,7 @@ async fn play(
     )
     .await?;
     let app = client_of(&started.proxy.url(), started.proxy.client_keys())?;
-    sonde_core::tour::play(
-        &app,
-        job,
-        file,
-        sonde_proxy::callers::CALLER_HEADER,
-        || started.proxy.first_request(),
-        |_| {},
-    )
-    .await;
+    sonde_core::tour::play(&app, job, file, sonde_proxy::callers::CALLER_HEADER, |_| {}).await;
     let file = started.path.clone();
     drop(app);
     drop(started);
@@ -154,7 +146,6 @@ pub async fn job(file: &std::path::Path) -> anyhow::Result<i32> {
         &job,
         &name,
         sonde_proxy::callers::CALLER_HEADER,
-        || None,
         |l| println!("{l}"),
     )
     .await;
