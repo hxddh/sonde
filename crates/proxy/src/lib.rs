@@ -506,7 +506,6 @@ impl Proxy {
             task,
             stop,
             open,
-            first,
         })
     }
 
