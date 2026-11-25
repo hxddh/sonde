@@ -1,7 +1,7 @@
 // The desktop form, headless (`platform: "macos"`, a window-sized viewport).
 
-import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, desktop, place } from "./helpers";
+import { expect, test } from "nsh/test";
+import { openDemo, openExample, desktop, place, open } from "./helpers";
 import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo runs, opens on its diagnosis's fix in the inspector, and the fix applied says what it saved", async () => {
@@ -888,4 +888,42 @@ test("a narrow pane's inspector is a dialog of its own, named by its title", asy
   await app.press("id:inspector-close");
   await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
   expect(app.shows("role:dialog")).toBe(false);
+});
+
+test("closing the main window quits, on every platform, and its Settings window goes with it", async () => {
+  for (const platform of ["macos", "windows", "linux"] as const) {
+    const app = await open("../App.tsx", { ...desktop, platform });
+    await place(app, "settings");
+    expect(app.windowIds()).toEqual(["main", "settings"]);
+    // nothing at work: no question
+    await app.window("main").pressClose();
+    expect(app.dialogs()).toEqual([]);
+    await app.waitUntil(() => app.quit(), { timeout: 3000 });
+  }
+});
+
+test("the Dock's icon (a later launch) brings the main window forward", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "settings");
+  expect(app.window("main").state()?.focused).toBe(false);
+  await app.reopen();
+  expect(app.window("main").state()?.focused).toBe(true);
+  expect(app.quit()).toBe(false);
+});
+
+test("the quit question is asked once: a second close or Quit while it is open waits for its answer", async () => {
+  const { oneAtATime } = await import("../src/ui/kit");
+  let asked = 0;
+  let answer: (yes: boolean) => void = () => {};
+  const ask = oneAtATime(() => (asked++, new Promise<boolean>((r) => (answer = r))));
+  const first = ask();
+  expect(await ask()).toBe(null);
+  expect(asked).toBe(1);
+  answer(true);
+  expect(await first).toBe(true);
+  // answered: the next press asks again
+  const next = ask();
+  expect(asked).toBe(2);
+  answer(false);
+  expect(await next).toBe(false);
 });

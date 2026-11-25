@@ -9,7 +9,17 @@ Fixed in Native Shell itself (sonde follows upstream; it does not change Native 
 | # | Area | What it was | Fixed in |
 |---|---|---|---|
 | 3 | Desktop (Linux) | Under X11 (Xvfb with openbox), the GTK runner opened the window at 390×844 — a phone's size — not at `nsh.json`'s `window.defaultSize`; sonde set its bounds itself on a first launch. | Native Shell 744d950 (sonde 15.0.0): Linux and Windows packages carry `nsh.json`'s `window`, and the window has it from its first frame. sonde sets no bounds of its own (that code went in 9.1, when the main window's settings moved to `nsh.json`); re-checked at this commit, nothing is left to remove. |
+| 10 | Desktop | `windowSize()` followed the window with the focus: with a second window (Settings) focused, the main window's layout read the second one's width and folded its sidebar. | Native Shell 0.7.0 (#2923, sonde 32.0): it is the app's first window's, whatever has the focus. The main window's shell still measures itself (`shellWidth`); a dialog in Settings' or a run's window sizes from its own window (`Modal`). |
 | 17 | Testing | `nsh test` of an app with a Rust crate dropped every `sonde://` link (`app.openWithUrl`, `open`'s `urlScheme`): the headless runner's bundle was built without the app's `schemes`. | Native Shell 1662115 (sonde 8.0.0); `screens.test.tsx` opens a bucket's folder by link again. |
+
+## Taken from Native Shell 0.7.0 (sonde 32.0)
+
+| What 0.7.0 added | What sonde does with it |
+|---|---|
+| Window Model v2: `closeOnPress`, `closePress`, `Application.on("reopen")` | Closing the main window quits on every platform, asking first while sonde is at work (one question however often close or Quit is pressed); Settings and run windows go with it. The Dock's icon and a later launch bring the window forward. `setQuitRequestOptions({ mainWindowClose })` and the macOS-only branch are gone. |
+| `TitleBar` (`nsh/base`) | The toolbar and the sidebar's strip (kit's `TitleRow`): they step aside of the window's controls where they meet them, in place of reading `titleBar()` by hand. |
+| DataTable `grow`, `autoFit`, `onRowActivate` | The operation's title and a `SimpleTable`'s filling column take the room the others leave; the output's times fit their words; Enter opens the focused row of the operations, the output, Objects and every `SimpleTable`. |
+| Button `busy` | A loading button is said busy to a screen reader. |
 
 ## Taken from Native Shell 0.5.0 (sonde 16.0)
 

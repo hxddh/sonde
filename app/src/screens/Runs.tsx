@@ -94,7 +94,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const clean = analysis(() => view()?.trial?.clean ?? null);
   // the program's budget, for the Time pane's lines: read once per run shown
   const budget = computed(() => budgetOf(props.path));
-  // this pane's own size (windowSize() follows whichever window has the focus)
+  // this pane's own size (in a run's window too, where windowSize() is the main window's)
   const box = signal({ w: 1000, h: 760 });
   // its output, read off the interface's thread (a large run is read whole the first time), again as it grows
   const linesRead = resource(

@@ -5,6 +5,7 @@
 import { effect, locale, signal } from "nsh";
 import { setLocale, t as translate } from "nsh/i18n";
 import { count } from "./format";
+import en from "../locales/en.json";
 
 /** Every key the app has words for (English has them all). */
 export type Key = keyof typeof import("../locales/en.json");
@@ -26,10 +27,13 @@ effect(() => {
   setLocale(l === "en" || l === "zh" ? l : null);
 });
 
+/** The keys there are words for: English has them all. Asked first, so a key with none (a count's `.one`, a phrase
+ * Rust has no words for) is not asked of Native Shell, which warns of it. */
+const KEYS = new Set(Object.keys(en));
+
 function lookup(key: string, vars: Record<string, string | number> | undefined): string | null {
-  const s = translate(key, vars ? { ...vars, locale: lang() } : { locale: lang() });
-  // a key nothing has words for reads as `<locale>.<key>`
-  return s === `${lang()}.${key}` ? null : s;
+  if (!KEYS.has(key)) return null;
+  return translate(key, vars ? { ...vars, locale: lang() } : { locale: lang() });
 }
 
 /** The words of `key` as written (`%{name}` unfilled), or null where no language has them: a phrase Rust

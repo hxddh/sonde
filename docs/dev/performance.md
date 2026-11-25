@@ -105,17 +105,17 @@ shared 4 vCPU VM (load 3–6, other builds running), the same binaries alternate
 
 ## Headless UI
 
-`nsh test --trace`, debug host, measured at sonde 0.1.0 (then on the terminal host, gone in 29.0; CI's nightly
-`ui-perf` measures the desktop host): Browse › demo-large, flat, load all 100 000
-rows, scroll the table 500 frames down and back.
+`nsh test --trace` (`scripts/ui-tests.sh perf`), debug host: Browse › demo-large, flat, load all 100 000 rows, scroll
+the table 500 frames down and back, in a 960 × 640 window. CI's nightly `ui-perf` runs it.
 
-| Measure | Result |
-| --- | --- |
-| Load 100 000 rows (debug native module) | 3.53 s |
-| 500 scroll frames down / back up | 3.14 s (6.3 ms/frame) / 3.16 s |
-| Commits during the scroll | 210 |
-| Mount items per commit | median 16, p95 17, max 153 (the first frame after *Load all*) |
+| Measure | sonde 0.1.0 (terminal host, gone in 29.0) | 32.0, Native Shell `v0.7.0` (three runs) |
+| --- | --- | --- |
+| Load 100 000 rows (debug native module) | 3.53 s | 0.57–0.61 s |
+| 500 scroll frames down / back up | 3.14 s / 3.16 s | 1.61–1.66 s / 1.53–1.73 s (3.2–3.3 ms/frame) |
+| Commits during the scroll | 210 | |
+| Mount items per commit | median 16, p95 17, max 153 (the first frame after *Load all*) | |
 
+32.0's on a Linux container (4 vCPU Xeon @ 2.30 GHz, 15 GB) with other builds running beside it.
 The DataTable is virtual: JS holds one 400-row window, fetched from Rust's `Listing` by range.
 
 ## Opening the Time pane

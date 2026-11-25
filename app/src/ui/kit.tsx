@@ -1,10 +1,10 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { Animated, cleanup, Clipboard, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, LayoutAnimation, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, untracked, View, windowSize, type InputRef, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, TitleBar, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, separators } from "../format";
-import { isAvailable, Menu, type MenuItem as MenuItemSpec } from "nsh/desktop";
+import { currentWindow, isAvailable, Menu, type MenuItem as MenuItemSpec } from "nsh/desktop";
 import { Icon, type IconName, iconSvg, type Tint } from "./icon";
 
 /** Figures as text, for a screen reader (a chart's table reads row by row, its picture not at all). */
@@ -379,7 +379,7 @@ export const COLUMN = {
   /** the operations' place-in-time bar and notes: the least they keep */
   whenLeast: 80,
   notesLeast: 120,
-  /** the program's output: its clock, and a line as long as lines go */
+  /** the program's output: its clock (until it fits its times), and a line as long as lines go */
   outputTime: 120,
   outputLine: 2000,
 } as const;
@@ -548,9 +548,21 @@ export function Kbd(props: { keys: string; class?: string }) {
   return <Text class={`${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
 }
 
+/** A row of the window's title bar, drawn by the app (Native Shell's `TitleBar`): it drags the window and steps aside of
+ * the system's controls where it meets them; what it holds stands in a row `TITLE_BAR` high. */
+export function TitleRow(props: { children: JSX.Element; class?: string; testID?: string }) {
+  return (
+    <TitleBar testID={props.testID} class={props.class}>
+      {/* off-scale: 10 from the edge, as the system's own title bar buttons stand */}
+      <View class="min-w-0 flex-1 flex-row items-center gap-2 px-2.5" style={{ height: TITLE_BAR }}>
+        {props.children}
+      </View>
+    </TitleBar>
+  );
+}
+
 /** A turning ring: what a `loading` button shows in its icon's place. Still
- * under reduced motion. (A screen reader hears the button unavailable while
- * it is, not "busy": Native Shell 0.6.1's Button has no busy state.) */
+ * under reduced motion. (A screen reader hears the button busy.) */
 function Spinner(props: { tint: Tint }) {
   return <View class={`size-3.5 shrink-0 rounded-full border-2 ${SPINNER[props.tint] ?? SPINNER.foreground} motion-safe:animate-spin`} />;
 }
@@ -588,6 +600,7 @@ export function Button(props: {
       testID={props.testID}
       onPress={props.onPress}
       disabled={props.disabled || props.loading}
+      busy={props.loading}
       // disabled, it says why (its tip) to a screen reader as to the pointer
       accessibilityLabel={props.disabled && props.tip ? `${props.label}, ${props.tip}` : props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
@@ -1038,8 +1051,10 @@ const MODAL_MARGIN = 16;
 const STEADY_LEAST = 480;
 
 export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string; /** one frame for all its states (a plan, its progress, its verdicts): at least `STEADY_LEAST` high (what the window allows), growing with what it holds up to the window, its `ModalBody` scrolling inside, so it does not jump between sizes as it goes */ steady?: boolean }) {
-  // the room under the title bar, with a margin each side: the dialog is centred in it, never over the bar
-  const room = () => Math.max(0, windowSize().height - TITLE_BAR - MODAL_MARGIN * 2);
+  // the room under the title bar, with a margin each side: the dialog is centred in it, never over the bar; its own
+  // window's (in Settings' or a run's window, windowSize() is the main window's)
+  const win = isAvailable ? currentWindow() : null;
+  const room = () => Math.max(0, (win?.state()?.contentBounds.size.height ?? windowSize().height) - TITLE_BAR - MODAL_MARGIN * 2);
   return (
     <Dialog
       open={props.open}
@@ -1672,7 +1687,7 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
 
 /** What a fitted column adds to its widest text: its cell's inset either side (TABLE's `px-2`); a cell drawn its own
  * way (a dot before a status), as much again. */
-const FIT_PADDING = 16;
+export const FIT_PADDING = 16;
 
 /** Rows of text as a table: Native Shell's DataTable (virtual, so every row,
  * sortable by a press on a title: by number where a cell reads as one), each
@@ -1710,14 +1725,19 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
     const from = props.ranked === undefined || !fitted().length ? props.columns.length : props.ranked;
     const kept = new Set(fitColumns(width(), own.reduce((n, w, c) => (c < from ? n + w : n), 2), 0, own.slice(from).map((w, k) => ({ key: `${from + k}`, width: w }))));
     const shown = props.columns.map((_, c) => c).filter((c) => c < from || kept.has(`${c}`));
-    const rest = shown.reduce((n, c) => (c === props.fill ? n : n + own[c]), 0);
-    return shown.map((c) => ({ key: `c${c}`, title: props.columns[c], width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined, fitPadding: FIT_PADDING + (props.cell ? FIT_PADDING : 0) }));
+    // (the one that fills grows from its least into the room the others leave)
+    return shown.map((c) => ({ key: `c${c}`, title: props.columns[c], width: own[c], grow: c === props.fill ? 1 : undefined, sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined, fitPadding: FIT_PADDING + (props.cell ? FIT_PADDING : 0) }));
   };
   // the rows by their place in `rows`, in the order the sort says
   const order = () => sortRows(props.rows.map((_, i) => i), sort(), (i, key) => sortValue(props.rows[i][Number(key.slice(1))] ?? ""));
   const sorted = () => order().map((i) => props.rows[i]);
   const data = () => sorted().map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
+  // a row pressed, or Enter on it: chosen, or let go when it was
+  const choose = ({ row }: { row: number }) => {
+    const i = order()[row];
+    if (i !== undefined) props.onSelect?.(i === props.selected ? null : i);
+  };
   const custom = () => (!!props.cell || !!props.end?.length);
   const cell = (c: { row: number; key: string; text: string }) => {
     const column = Number(c.key.slice(1));
@@ -1747,7 +1767,8 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       accessibilityLabel={props.label}
       rowSelectable={!!props.onSelect}
       rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? SELECTED : "")) : undefined}
-      onRowPress={props.onSelect ? ({ row }) => { const i = order()[row]; if (i !== undefined) props.onSelect!(i === props.selected ? null : i); } : undefined}
+      onRowPress={props.onSelect ? choose : undefined}
+      onRowActivate={props.onSelect ? choose : undefined}
       class={props.bare ? "" : CARD}
       onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}
       style={{ height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}
@@ -1941,6 +1962,20 @@ export function Scrubber(props: { label: string; value: number; min: number; max
 /** A short question before something goes for good, in the system's own
  * alert: Cancel, and the commit in the destructive role. True when it was
  * confirmed. */
+/** `ask`, one at a time: called again while its question is open, it answers null at once (the open one answers). */
+export function oneAtATime<T>(ask: () => Promise<T>): () => Promise<T | null> {
+  let open = false;
+  return async () => {
+    if (open) return null;
+    open = true;
+    try {
+      return await ask();
+    } finally {
+      open = false;
+    }
+  };
+}
+
 export async function confirmAlert(ask: { title: string; text: string; commit: string }): Promise<boolean> {
   const { action } = await AlertDialog.show({
     title: ask.title,

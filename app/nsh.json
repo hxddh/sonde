@@ -3,7 +3,7 @@
   "id": "dev.sonde.app",
   "version": "31.0.0",
   "build": 29,
-  "nsh": ">=0.6, <0.7",
+  "nsh": ">=0.7, <0.8",
   "icon": {
     "macos": "assets/icon-macos.png",
     "windows": "assets/icon-fill.png",

@@ -1,8 +1,8 @@
 // Runs: a program run from its command bar, its run the newest in the list,
 // on its Output: its terminal and then its output lined up beside its operations.
 
-import { expect, open, test } from "nsh/test";
-import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, reach, runCommand, runText, runView, runAction, runMenu } from "./helpers";
+import { expect, test } from "nsh/test";
+import { elsewhereCommand, importRun, language, openDemo, openExample, desktop, place, reach, runCommand, runText, runView, runAction, runMenu, open } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -834,8 +834,8 @@ test("a refused start keeps the run before as it was, and a refusal for somethin
   lastRun.set(null);
 });
 
-test("closing the window while a program runs asks first (Windows, Linux)", async () => {
-  const app = await open("../App.tsx", { ...desktop, platform: "linux" });
+test("closing the window or quitting while a program runs asks first, on macOS too", async () => {
+  const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
   await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
@@ -847,9 +847,12 @@ test("closing the window while a program runs asks first (Windows, Linux)", asyn
   app.onDialog((d) => (asked.push(d.title ?? ""), "Cancel"));
   await app.window("main").pressClose();
   await app.waitUntil(() => asked.length > 0, { timeout: 3000 });
-  expect(asked[0]).toBe("Quit while sleep is at work?");
+  expect(asked).toEqual(["Quit while sleep is at work?"]);
   // kept: the program goes on
+  expect(app.quit()).toBe(false);
   expect(app.shows("id:run-stop")).toBe(true);
-  await app.press("id:run-stop");
-  await app.waitFor("id:run-stop", { state: "gone", timeout: 10000 });
+  // asked again, and answered: the program ends and the app quits
+  app.onDialog(() => "Quit");
+  await app.quitRequest();
+  await app.waitUntil(() => app.quit(), { timeout: 10000 });
 });

@@ -1,7 +1,7 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
-import { expect, open, test } from "nsh/test";
-import { openDemo, openExample, desktop, place, withDemo } from "./helpers";
+import { expect, test } from "nsh/test";
+import { openDemo, openExample, desktop, place, withDemo, open } from "./helpers";
 
 test("a run's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);

@@ -533,6 +533,7 @@ function Objects(props: { /** an object chosen: its inspector, on its versions w
               if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
             }}
             onRowPress={({ row }) => open(row)}
+            onRowActivate={({ row }) => open(row)}
             classes={BARE_TABLE}
             empty={
               // each of its three states in its own words: on its way, failed, or truly nothing

@@ -7,8 +7,7 @@
 import { appInfo, effect, openUrl, signal, untracked } from "nsh";
 import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, installOnQuit, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { lang, t } from "../i18n";
-import { running } from "../run";
-import { runningJobs } from "./activity";
+import { atWork } from "./activity";
 import { report } from "../store";
 import { count } from "../format";
 import { Button, Notice, Section } from "./kit";
@@ -71,8 +70,6 @@ export function Updates() {
       untracked(() => void check());
     }
   });
-  // a recording or a job that a restart would cut off
-  const busy = () => running() !== null || runningJobs() > 0;
   const install = async (u: AppUpdate, when: "quit" | "restart") => {
     if (!u.canInstall) return void openUrl(u.url);
     state.set({ kind: "downloading", update: u, share: 0 });
@@ -107,7 +104,7 @@ export function Updates() {
     const said = [foundWords(found()!)];
     if (s().kind === "downloading") said.push(t("updates.downloading", { pct: count(Math.round((s() as { share: number }).share * 100)) }));
     if (s().kind === "waiting") said.push(t("updates.waiting"));
-    if (offered()?.canInstall && installFirst(busy()) === "quit") said.push(t("updates.busy"));
+    if (offered()?.canInstall && installFirst(atWork()) === "quit") said.push(t("updates.busy"));
     const notes = offered()?.notes;
     if (notes) said.push(notes);
     return said.join("\n");
@@ -122,8 +119,8 @@ export function Updates() {
           {(u) => (
             <If when={u().canInstall} else={<Button small variant="primary" icon="download" label={t("updates.download")} onPress={() => install(u(), "restart")} testID="updates-install" />}>
               {/* both installs; the one that cuts nothing off comes first while a recording or a job runs */}
-              <Button small variant={installFirst(busy()) === "restart" ? "primary" : "outline"} icon="refresh-cw" label={t("updates.install")} onPress={() => install(u(), "restart")} testID="updates-install" />
-              <Button small variant={installFirst(busy()) === "quit" ? "primary" : "outline"} icon="download" label={t("updates.onQuit")} onPress={() => install(u(), "quit")} testID="updates-on-quit" />
+              <Button small variant={installFirst(atWork()) === "restart" ? "primary" : "outline"} icon="refresh-cw" label={t("updates.install")} onPress={() => install(u(), "restart")} testID="updates-install" />
+              <Button small variant={installFirst(atWork()) === "quit" ? "primary" : "outline"} icon="download" label={t("updates.onQuit")} onPress={() => install(u(), "quit")} testID="updates-on-quit" />
             </If>
           )}
         </If>
