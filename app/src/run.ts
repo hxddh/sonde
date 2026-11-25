@@ -4,7 +4,7 @@
 // kept (the last 2 MB) so a terminal mounted later shows it from the start;
 // listeners get what arrives after.
 
-import { announce, batch, effect, lifecycle, Notifications, signal } from "nsh";
+import { announce, batch, effect, lifecycle, Notifications, platform, signal } from "nsh";
 import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
@@ -37,8 +37,28 @@ export const recordingPath = () => {
   const r = running();
   return r && r.kind !== "trial" ? r.path : null;
 };
-/** What is at work, in a word: its program, or that it records. */
+/** What is at work, in a word, as a sentence says it: its program (the demo's job: the Demo), or that it records. */
 export const workName = (r: Running) => (r.kind === "record" ? t("run.recordingName") : (programOf(r.command) ?? scrubCommand(r.command)));
+
+/** That something is at work, by its name ("python is at work: stop it first"). */
+export function busyWords(r: Running | null): string {
+  if (!r) return t("run.busyAny");
+  const s = t("run.busy", { name: workName(r) });
+  // (the app's own word starts the sentence: a capital; a program's name is as it is spelled)
+  return r.kind === "record" ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/** The question before quitting while `r` is at work: its title (Exit on Windows, as its menu says), what quitting
+ * does to it (a trial cut short keeps nothing; a program's, the demo's or a recording's run is kept), and the
+ * button that quits. For the quit and close dialogs. */
+export function quitWords(r: Running, os: string = platform.os): { title: string; text: string; commit: string } {
+  const exit = os === "windows";
+  return {
+    title: t(exit ? "app.exitTitle" : "app.quitTitle", { name: workName(r) }),
+    text: t(r.kind === "trial" ? "app.quitTextTrial" : "app.quitText"),
+    commit: t(exit ? "menu.exit" : "menu.quit"),
+  };
+}
 /** How the last run ended. */
 export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user */ deleted?: boolean; endpoint: string }) | null>(null);
 
@@ -171,7 +191,7 @@ export function runAgain(cmd: string, endpoint: string, dir?: string | null) {
 
 /** A run asked for while another program runs: said, with its Stop (one program at a time). */
 export function busy() {
-  notify(t("run.busy"), stoppable(running()) ? { kind: "warning", action: t("run.stop"), onAction: stop } : { kind: "warning" });
+  notify(busyWords(running()), stoppable(running()) ? { kind: "warning", action: t("run.stop"), onAction: stop } : { kind: "warning" });
 }
 
 /** Runs `cmd` against `endpoint` from the command bar (or a run's Run again), its requests recorded; whether it

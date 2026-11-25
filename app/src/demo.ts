@@ -6,13 +6,11 @@
 // is fixed, with what it saved measured beside what was predicted.
 
 import { batch } from "nsh";
+import { DEMO_COMMAND } from "./command";
 import { api } from "./native";
 import { busy, launch, running } from "./run";
-import { findingOnOpen, go, openRun, paneOnOpen, report, startDemo } from "./store";
+import { findingOnOpen, go, openRun, paneOnOpen, report, shownRun, startDemo } from "./store";
 import type { RunView } from "./types";
-
-/** The command the demo's runs ran (sonde_core::tour::COMMAND). */
-export const DEMO_COMMAND = "sonde demo-job export.py";
 
 /** Whether a run is the demo's job, on the demo store: its finding can be applied. */
 export function isDemoJob(h: RunView["header"] | null | undefined): boolean {
@@ -20,11 +18,12 @@ export function isDemoJob(h: RunView["header"] | null | undefined): boolean {
 }
 
 /** Plays the demo's job as its file stands: its run opens as it starts, as any program's does, and once it has
- * ended on its first finding. Whether it ran. */
+ * ended on its first finding, if it is still the run shown (one the user went to meanwhile stays). Whether it ran. */
 async function play(cwd: string, command: string): Promise<boolean> {
   go("runs");
   const r = await launch("demo", command, "demo", cwd);
   if (!r) return false;
+  if (shownRun() !== r.path) return true;
   batch(() => {
     paneOnOpen.set({ path: r.path, pane: "operations" });
     findingOnOpen.set({ path: r.path, index: 0 });
