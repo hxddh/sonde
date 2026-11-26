@@ -96,6 +96,15 @@ async fn listen(
         eprintln!("warning: sonde takes requests from other machines on {addr}");
     }
     let mut started = start(s, rec, addr, None, allow_remote).await?;
+    // Ctrl-C is sonde's before it says so: the handler is installed at the
+    // future's first poll, and one sent between "Ctrl-C stops" and that poll
+    // would kill sonde with its run unfinished
+    let mut stop = std::pin::pin!(tokio::signal::ctrl_c());
+    let stopped = tokio::select! {
+        biased;
+        r = &mut stop => { r?; true }
+        _ = std::future::ready(()) => false,
+    };
     let (set, unset) = started.proxy.env();
     eprintln!(
         "sonde is listening on {}. Point the application at it:\n",
@@ -109,7 +118,9 @@ async fn listen(
     }
     eprintln!("\nCtrl-C stops.\n");
     let printer = follow(&started.log, false);
-    tokio::signal::ctrl_c().await?;
+    if !stopped {
+        stop.await?;
+    }
     printer.abort();
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
