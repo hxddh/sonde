@@ -309,7 +309,7 @@ fn the_requests_sent_at_once_beside_a_change_are_those_it_leaves() {
 
 /// 33.0: the requests sent at once beside a change were counted after the
 /// change took its own away (40 of 80), their saving before: 40 GETs of 5 ms
-/// were said to save the 3.4 s that sending the 40 slow HEADs at once would.
+/// were said to save the 3.7 s that sending all 80, the 40 slow HEADs with them, at once would.
 #[test]
 fn sending_the_requests_a_change_leaves_at_once_saves_their_part_alone() {
     let mut rs = Vec::new();
