@@ -190,6 +190,10 @@
         "failed": {
           "type": "integer",
           "description": "The exit code of a run that failed: not compared."
+        },
+        "unsaved": {
+          "type": "string",
+          "description": "Why the program's kept findings were not read or written, when so (the runs folder's `.index.jsonl` could not be written): the run is compared all the same."
         }
       },
       "description": "The run against its program's run before it, or against the run `--since` names, as `show` says it under \"since …\": `program`, `previous`, `change` (the figures), `findings` (each with its `state`: fixed, less, more, new, open; a trial's finding against the program's trial before: fixed, new, open); or `failed` (the exit code of a run that failed: not compared), or `empty` (true: the run recorded no request, nothing reached sonde; not compared). Null when nothing was compared (a program's first run: its findings, all new, are the plan), and for a run that is no run of a program with no `--since`."
@@ -762,7 +766,8 @@
           "type": "string"
         },
         "times": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The attempts in a row it failed at each request, when it was asked to press harder than once (`slowdown:3`)."
         },
         "standing": {
           "type": "string",
@@ -776,19 +781,160 @@
           "description": "`refused`: the recording policy refused what the program did under the scenario (and not in its clean run): not judged, never `broke`."
         },
         "exit": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The program's exit code under the scenario."
         },
         "cleanExit": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Its exit code in the clean run."
         },
         "faults": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Requests sonde failed in the store's place (bodies cut and races lost among them)."
         },
         "retried": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Of the faults, the ones the program sent again."
+        },
+        "notRetryable": {
+          "type": "integer",
+          "description": "Of the faults, the ones no retry is owed for: a 404, a 403, a 501, a request the clean run itself never got an answer for, and the races `yielded`. Neither retried nor dropped. Absent when 0."
+        },
+        "readAgain": {
+          "type": "integer",
+          "description": "Failed reads of a key the clean run reads more than once, answered later: a retry or the program's next round, not told apart. Absent when 0."
+        },
+        "droppedReads": {
+          "type": "integer",
+          "description": "Failed reads it never sent again."
+        },
+        "droppedWrites": {
+          "type": "integer",
+          "description": "Failed writes it never sent again."
+        },
+        "lostWrites": {
+          "type": "integer",
+          "description": "Of the dropped writes, the ones the store made all the same: their answer was lost, and the program did not ask again. Absent when 0."
+        },
+        "checked": {
+          "type": "integer",
+          "description": "Writes whose answer was lost, not sent again, and whose key the program then read: it asked the store, which had made them. Neither retried nor dropped. Absent when 0."
+        },
+        "reuploaded": {
+          "type": "integer",
+          "description": "Uploads whose completion the store made, its answer lost, that the program started again from their first part. Absent when 0."
+        },
+        "held": {
+          "type": "integer",
+          "description": "Requests a stall held before their first byte. Absent when 0."
+        },
+        "waited": {
+          "type": "integer",
+          "description": "Of `held`, the ones the program waited out instead of cutting short and sending again. Absent when 0."
+        },
+        "stale": {
+          "type": "integer",
+          "description": "Keys this run wrote that a listing left out. Absent when 0."
+        },
+        "relisted": {
+          "type": "integer",
+          "description": "Of `stale`, the ones a later listing showed. Absent when 0."
+        },
+        "missed": {
+          "type": "integer",
+          "description": "Of `stale`, the ones the program then never read as its clean run did. Absent when 0."
+        },
+        "rewrote": {
+          "type": "integer",
+          "description": "Of `stale`, the ones it wrote again. Absent when 0."
+        },
+        "cut": {
+          "type": "integer",
+          "description": "Downloads whose body sonde cut short. Absent when 0."
+        },
+        "resumed": {
+          "type": "integer",
+          "description": "Of `cut`, the ones made good by a read from the cut on. Absent when 0."
+        },
+        "reread": {
+          "type": "integer",
+          "description": "Of `cut`, the ones made good by a read of the whole again. Absent when 0."
+        },
+        "races": {
+          "type": "integer",
+          "description": "Conditional writes answered 412 though they would have won. Absent when 0."
+        },
+        "readBack": {
+          "type": "integer",
+          "description": "Of `races`, the ones whose write the store had made and which the program read back and did not write again. Absent when 0."
+        },
+        "yielded": {
+          "type": "integer",
+          "description": "Of `races`, creates (`If-None-Match: *`) of a key that is no table's log (a marker, a lock) that the program took as made and did not write over. Among `notRetryable`. Absent when 0."
+        },
+        "fenced": {
+          "type": "boolean",
+          "description": "Present (true) when a SlateDB writer that lost its race stopped and wrote nothing more: fenced, as the format means it. Its exit is not held against it."
         },
         "attempts": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The most attempts at one request: its failures in a row, and the attempt that followed them."
+        },
+        "backoffMs": {
+          "type": "array",
+          "description": "The waits before a retry, in milliseconds: shortest, median, longest. Only waits within one sender; absent when there is none.",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "jitter": {
+          "type": "boolean",
+          "description": "Whether the waits before one attempt number differ enough to be jittered. Absent with fewer than four waits before the same attempt, and of waits too short to tell (`jitterTooShort`)."
+        },
+        "jitterTooShort": {
+          "type": "boolean",
+          "description": "Present (true) when the waits are too short to say whether they are jittered."
+        },
+        "requests": {
+          "type": "integer",
+          "description": "Requests under the scenario."
+        },
+        "cleanRequests": {
+          "type": "integer",
+          "description": "Requests in the clean run."
+        },
+        "delayed": {
+          "type": "integer",
+          "description": "Requests the scenario delayed (and did not fail). Absent when 0."
+        },
+        "wallMs": {
+          "type": "number",
+          "description": "How long the run under the scenario took, in milliseconds: the command's own time when `sonde run` measured it, else from the first request to the last answer."
+        },
+        "cleanWallMs": {
+          "type": "number",
+          "description": "How long the clean run took, in milliseconds."
+        },
+        "leftUploads": {
+          "type": "integer",
+          "description": "Multipart uploads left unfinished, beyond the clean run's."
+        },
+        "wroteTwice": {
+          "type": "integer",
+          "description": "Writes the store made twice: made, their answer lost, made again. Not deletes, nor creates sent with `If-None-Match: *`."
+        },
+        "run": {
+          "type": "string",
+          "description": "The trial's own run: its file's name in the clean run's `trials/` folder."
         },
         "history": {
           "type": "array",

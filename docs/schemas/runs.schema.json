@@ -59,6 +59,10 @@
         "type": "integer",
         "description": "How its program exited (128 + a signal; 143 when sonde was sent SIGTERM); absent when not known (a proxy's, a replay's, an import's)."
       },
+      "unreadable": {
+        "type": "string",
+        "description": "Display text, not stable: why the file does not read as a run (its first line in the middle that is no record, `line 2: …`); `show` refuses it (exit 65). Absent for a run that reads."
+      },
       "elsewhere": {
         "const": true,
         "description": "Written outside the data directory's runs folder (`-o`): listed by its path, never pruned; absent otherwise."
