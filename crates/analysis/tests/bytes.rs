@@ -335,6 +335,49 @@ fn sharding_small_reads_saves_requests_and_keeps_their_bytes() {
     );
 }
 
+/// 33.0: sharding small reads was credited with every moment its requests
+/// were in flight, the time their bodies took to arrive with it. The shards
+/// read the same bytes: only the round trips go (to each first byte).
+#[test]
+fn sharding_small_reads_saves_their_round_trips_not_the_time_their_bytes_moved() {
+    // 600 reads one after another, 10 ms each: 4 ms to the first byte, 6 ms
+    // of body
+    let rs: Vec<Record> = (0..600u64)
+        .map(|i| {
+            let mut r = rec(
+                i + 1,
+                "GetObject",
+                &format!("train/img-{i:05}.jpg"),
+                110_000,
+            );
+            r.latency_ms = 10.0;
+            r.first_byte_ms = Some(4.0).into();
+            r
+        })
+        .collect();
+    let a = sonde_analysis::view::Analysis::of_records(&header(), &rs, &charged());
+    let o = find(&a.observations, "obs.smallreads").expect("small reads");
+    assert_eq!(o.saves_requests, 599);
+    // 599 round trips of 4 ms, not 599 requests of 10 ms (5.99 s)
+    assert_eq!(o.saves_ms, 2396.0);
+    // and the run without them, reckoned again, waits as much less
+    let reckoning = sonde_analysis::fixes::Reckoning::of(&rs, &a.profile, true);
+    let w = sonde_analysis::fixes::what_if(&reckoning, std::slice::from_ref(o)).expect("a what-if");
+    assert_eq!(w.waiting_ms, Some((6000.0, 3604.0)));
+    // a run that does not say when a first byte came: as before, their whole time
+    let untold: Vec<Record> = rs
+        .iter()
+        .cloned()
+        .map(|mut r| {
+            r.first_byte_ms = None.into();
+            r
+        })
+        .collect();
+    let a = sonde_analysis::view::Analysis::of_records(&header(), &untold, &charged());
+    let o = find(&a.observations, "obs.smallreads").expect("small reads");
+    assert_eq!(o.saves_ms, 5990.0);
+}
+
 /// Partition discovery: each partition's folder listed once.
 #[test]
 fn many_prefixes_listed_one_by_one_are_a_crawl() {

@@ -674,11 +674,37 @@ impl<'a> Reckoning<'a> {
             .filter_map(|i| self.waits.get(i))
             .sum()
     }
+
+    /// The part of request `i`'s part of the waiting that goes when the
+    /// request does and its bytes are read still, in another request
+    /// ([`Observation::keeps_bytes`]): its round trip, up to its first byte
+    /// (the connection, the store's own time). The rest moved its body, and
+    /// the bytes still have to travel. All of it when the run does not say
+    /// when the first byte came.
+    fn round_trip(&self, i: usize) -> f64 {
+        let Some(w) = self.waits.get(i) else {
+            return 0.0;
+        };
+        let r = &self.records[i];
+        match r.first_byte_ms.get() {
+            Some(first) if r.latency_ms > 0.0 => w * (first / r.latency_ms).clamp(0.0, 1.0),
+            _ => *w,
+        }
+    }
+
+    /// [`Reckoning::waited`] of requests whose bytes are read still: their
+    /// round trips ([`Reckoning::round_trip`]).
+    fn round_trips<'i>(&self, ids: impl Iterator<Item = &'i u64>) -> f64 {
+        ids.filter_map(|id| self.by_id.place(id))
+            .map(|i| self.round_trip(i))
+            .sum()
+    }
 }
 
 /// Prices what each finding would save ([`Observation::saves_cost`]),
 /// times it (the parts of the waiting of the requests it takes away:
-/// [`crate::profile::waits_ms`]) and orders the findings by it: those that
+/// [`crate::profile::waits_ms`]; of requests whose bytes are read still, in
+/// fewer requests, their round trips alone: [`Reckoning::round_trip`]) and orders the findings by it: those that
 /// save time first, the most first, then money, then requests; the rest as
 /// they were (warnings first, by the requests they bear on). A run whose
 /// times are not known (`timed` false) is ordered by money, then requests.
@@ -707,7 +733,12 @@ pub fn rank_by_saving(findings: &mut [Observation], r: &Reckoning) {
             // a saving of time alone (sent at once) is reckoned where it is found
             if o.saves_requests > 0 && !o.saved_ids.is_empty() && saves_time(o) {
                 let kept: std::collections::HashSet<u64> = o.kept_ids.iter().copied().collect();
-                let ms = r.waited(o.saved_ids.iter().filter(|id| !kept.contains(id)));
+                let gone = o.saved_ids.iter().filter(|id| !kept.contains(id));
+                // its bytes still travel, in fewer requests: the round trips go
+                let ms = match o.keeps_bytes {
+                    true => r.round_trips(gone),
+                    false => r.waited(gone),
+                };
                 o.saves_ms = (ms.min(r.profile.waiting_ms) * 10.0).round() / 10.0;
             }
             if let Some(s) = time_saved(o.saves_ms, r.profile.wall_ms) {
@@ -793,7 +824,9 @@ pub struct Diagnosis {
     pub at_once: Option<AtOnce>,
 }
 
-/// Requests sent at once that went one after another ([`Diagnosis::at_once`]).
+/// Requests sent at once that went one after another ([`Diagnosis::at_once`]):
+/// those the diagnosis's other findings leave, and the time sending them at
+/// once saves (the part of the finding's saving that is theirs).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AtOnce {
@@ -951,16 +984,39 @@ pub fn diagnose(
             // its requests one after another: joined, or its headline; of
             // them, those the diagnosis's other findings leave
             let chained = serial.or((key(members[0]) == "obs.serial").then_some(g[0]));
-            let left = chained.map_or(0, |s| {
-                let gone: HashSet<u64> = members
-                    .iter()
-                    .flat_map(|o| o.saved_ids.iter().copied())
-                    .collect();
-                findings[s]
-                    .timed_ids
-                    .iter()
-                    .filter(|id| !gone.contains(id))
-                    .count()
+            // (a request one of them keeps in place of those it saves is left)
+            let gone: HashSet<u64> = match chained {
+                Some(_) => {
+                    let kept: HashSet<u64> = members
+                        .iter()
+                        .flat_map(|o| o.kept_ids.iter().copied())
+                        .collect();
+                    members
+                        .iter()
+                        .flat_map(|o| o.saved_ids.iter().copied())
+                        .filter(|id| !kept.contains(id))
+                        .collect()
+                }
+                None => HashSet::new(),
+            };
+            let stays = |id: &&u64| !gone.contains(id);
+            let left = chained.map_or(0, |s| findings[s].timed_ids.iter().filter(stays).count());
+            // what sending those left at once saves: the finding's figure
+            // was reckoned with every one of its requests, so the part of
+            // it those left are of its requests' waiting (as [`what_if`]
+            // takes it off), never the whole beside requests that are gone
+            let left_ms = chained.map_or(0.0, |s| {
+                let o = &findings[s];
+                if gone.is_empty() {
+                    return o.saves_ms;
+                }
+                let all = r.waited(o.timed_ids.iter());
+                let rest = r.waited(o.timed_ids.iter().filter(stays));
+                let part = match all > 0.0 {
+                    true => rest / all,
+                    false => left as f64 / o.timed_ids.len().max(1) as f64,
+                };
+                (o.saves_ms * part.clamp(0.0, 1.0) * 10.0).round() / 10.0
             });
             let mut d = Diagnosis {
                 id: diagnosis_id(&ids),
@@ -974,10 +1030,10 @@ pub fn diagnose(
                 saving: Vec::new(),
                 saving_text: String::new(),
                 rest: None,
-                at_once: chained.map(|s| AtOnce {
+                at_once: chained.map(|_| AtOnce {
                     requests: left,
                     concurrency: crate::profile::CHAIN_CONCURRENCY,
-                    saves_ms: findings[s].saves_ms,
+                    saves_ms: left_ms,
                 }),
             };
             d.rest = serial.map(|_| {
@@ -1126,7 +1182,7 @@ fn bytes_only_cost(o: &Observation, prices: &crate::profile::RequestPrices) -> f
 /// the part of its requests no other finding takes away. A finding whose
 /// requests' bytes are read still, in fewer requests
 /// ([`Observation::keeps_bytes`]), takes the requests away and not their
-/// bytes. A finding that does not name its requests is not counted. A run
+/// bytes, nor the time their bytes took to move ([`Reckoning::round_trip`]). A finding that does not name its requests is not counted. A run
 /// whose waiting is not known (`timed` false: an imported log's) says none,
 /// and counts no finding that saves only time.
 pub fn what_if(r: &Reckoning, findings: &[Observation]) -> Option<WhatIf> {
@@ -1196,12 +1252,17 @@ fn what_if_of(r: &Reckoning, findings: &[&Observation], of: usize) -> Option<Wha
             .map(|(r, _)| r)
     };
     // (a poll's requests go, not its time: [`saves_time`])
+    // (and of a request whose bytes are read still, its round trip alone)
     let mut waiting = profile.waiting_ms
         - marks
             .iter()
             .zip(&r.waits)
-            .filter(|(m, _)| gone(**m) && **m & TIMED != 0)
-            .map(|(_, w)| w)
+            .enumerate()
+            .filter(|(_, (m, _))| gone(**m) && **m & TIMED != 0)
+            .map(|(i, (m, w))| match still_read(*m) {
+                true => r.round_trip(i),
+                false => *w,
+            })
             .sum::<f64>();
     let is_gone = |id: &&u64| r.by_id.place(id).is_some_and(|i| gone(marks[i]));
     for o in saving.iter().filter(|o| timed && o.saves_requests == 0) {

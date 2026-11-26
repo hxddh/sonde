@@ -124,21 +124,7 @@ pub fn time_account(
         false => 0.0,
     };
     let waiting_ms = profile.waiting_ms - injected_ms;
-    // the share of each request's time after its first byte
-    let (mut moving, mut all) = (0.0, 0.0);
-    for r in records {
-        if let Some(first) = r.first_byte_ms.get()
-            && r.latency_ms > 0.0
-        {
-            moving += (r.latency_ms - first).max(0.0);
-            all += r.latency_ms;
-        }
-    }
-    let transfer_ms = if all > 0.0 {
-        waiting_ms * moving / all
-    } else {
-        0.0
-    };
+    let transfer_ms = waiting_ms * moving_share(records);
     let most = if own_ms > waiting_ms {
         "program"
     } else if transfer_ms * 2.0 > waiting_ms {
@@ -194,6 +180,31 @@ pub fn time_account(
         text: crate::phrase::en(&phrases),
         phrases,
     })
+}
+
+/// The share of the waiting spent moving bytes (after a request's first
+/// byte), 0 to 1: each request's part of the waiting
+/// ([`crate::profile::waits_ms`]: a moment with eight in flight is an eighth
+/// each's) times the share of its own time after its first byte, over the
+/// parts of the requests whose first byte is known. Never their summed
+/// times: eight bodies moving at once for 720 ms are 720 ms of the run, not
+/// 5.8 s of it. A request a trial's fault held or answered is sonde's, and
+/// not counted.
+fn moving_share(records: &[Record]) -> f64 {
+    let known = |r: &Record| {
+        r.latency_ms > 0.0 && r.rare().injected.is_none() && r.first_byte_ms.get().is_some()
+    };
+    if !records.iter().any(known) {
+        return 0.0;
+    }
+    let waits = crate::profile::waits_ms(records);
+    let (mut moving, mut all) = (0.0, 0.0);
+    for (r, w) in records.iter().zip(&waits).filter(|(r, _)| known(r)) {
+        let first = r.first_byte_ms.get().unwrap_or(r.latency_ms);
+        moving += w * ((r.latency_ms - first).max(0.0) / r.latency_ms).min(1.0);
+        all += w;
+    }
+    if all > 0.0 { moving / all } else { 0.0 }
 }
 
 /// A request the recording's policy refused, as a summary names it.
@@ -772,6 +783,34 @@ mod tests {
         assert_eq!(s.operations[0].max_ms, reqlog::MAX_LATENCY_MS);
         assert_eq!(Some(s.operations[0].p99_ms), sig.latency.p99_ms);
         assert_eq!(s.operations[0].p50_ms, 0.0);
+    }
+
+    /// 33.0: the bytes' share of the waiting was weighed by each request's
+    /// own time added up, so eight bodies moving at once for 720 ms were
+    /// said to move for 1.28 s of a run whose every byte moved within 720 ms.
+    #[test]
+    fn bytes_moving_at_once_are_the_time_they_took_of_the_run() {
+        // eight GETs at once, 800 ms each, their first byte after 80 ms;
+        // then one request alone, 800 ms, all of it to its first byte
+        let mut rs: Vec<Record> = (0..8)
+            .map(|_| {
+                let mut r = rec("GetObject", 200, 800.0, 0);
+                r.first_byte_ms = Some(80.0).into();
+                r
+            })
+            .collect();
+        let mut alone = rec("GetObject", 200, 800.0, 800);
+        alone.first_byte_ms = Some(800.0).into();
+        rs.push(alone);
+        let header = crate::run::RunHeader::new("e", "", "", Some("python3 etl.py".into()));
+        let profile = crate::profile::profile(&rs, &Default::default());
+        let t = time_account(&rs, &summarize(&rs), &profile, &header).expect("a program's run");
+        assert_eq!((t.wall_ms, t.waiting_ms, t.own_ms), (1600.0, 1600.0, 0.0));
+        // each of the eight waited 100 ms of the run, nine tenths of it moving
+        assert!((t.transfer_ms - 720.0).abs() < 1e-6, "{}", t.transfer_ms);
+        assert!(t.transfer_ms <= t.waiting_ms && t.own_ms + t.waiting_ms == t.wall_ms);
+        // the run waited 880 ms for first bytes: not mostly its bytes moving
+        assert_eq!(t.most, "requests");
     }
 
     #[test]

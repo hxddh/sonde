@@ -1552,6 +1552,22 @@ impl Observation {
         self
     }
 
+    /// Names the buckets its objects are in, when they are in several
+    /// (`buckets`, sorted, beside what its words say): what a finding about
+    /// its bucket is about then ([`crate::profile::finding_identity`]), the
+    /// folder they share being none (`/`).
+    fn across<'b>(mut self, buckets: impl IntoIterator<Item = &'b str>) -> Self {
+        let all: std::collections::BTreeSet<&str> =
+            buckets.into_iter().filter(|b| !b.is_empty()).collect();
+        if all.len() > 1
+            && let Some(said) = self.phrases.first_mut()
+        {
+            let names = all.into_iter().collect::<Vec<_>>().join(",");
+            *said = said.clone().with(crate::profile::BUCKETS, names);
+        }
+        self
+    }
+
     /// Weighs a finding: the requests it bears on and those acting on it would
     /// save (out of `total`).
     fn weigh(mut self, impact: usize, saves: usize, total: usize) -> Self {
@@ -2031,6 +2047,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     smalls.sort_unstable_by(|a, b| folder(a).cmp(&folder(b)).then(a.cmp(b)));
     let (mut put_ids, mut put_saved, mut put_bytes) = (Vec::new(), Vec::new(), 0u64);
     let mut written_to: Option<String> = None;
+    let mut put_buckets: Vec<&str> = Vec::new();
     for g in smalls.chunk_by(|a, b| folder(a) == folder(b)) {
         // each key's first write: one key written again and again is no
         // small file, and the finding counts objects, not PUTs
@@ -2050,6 +2067,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         put_bytes += bytes;
         let (b, dir) = folder(&g[0]);
         written_to = Some(common_folder(written_to, &format!("{b}/{dir}")));
+        put_buckets.push(b);
     }
     drop(smalls);
     put_ids.sort_unstable();
@@ -2078,7 +2096,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 of_records(&mut put_ids.iter().copied()),
             )
             .weigh(put_ids.len(), put_saved.len(), total)
-            .saving_of(put_saved),
+            .saving_of(put_saved)
+            .across(put_buckets),
         );
     }
     if parts_found {
@@ -2254,6 +2273,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let (mut again, mut firsts) = (Vec::new(), Vec::new());
         let (mut again_bytes, mut objects) = (0u64, 0usize);
         let mut under: Option<String> = None;
+        let mut again_in: Vec<&str> = Vec::new();
         for object in ranges.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
             let mut read_again = false;
             for range in object.chunk_by(|a, b| a.2 == b.2) {
@@ -2284,6 +2304,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     under,
                     &format!("{}/{}", object[0].0, object[0].1),
                 ));
+                again_in.push(object[0].0);
             }
         }
         let found = if any {
@@ -2312,7 +2333,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             )
             .weigh(n, n, total)
             .saving_of(again)
-            .keeping(firsts);
+            .keeping(firsts)
+            .across(again_in);
             o.saves_bytes = again_bytes;
             out.push(o);
         }
@@ -2396,7 +2418,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     ],
                 ),
                 of_records(&mut whole.iter().copied()),
-            );
+            )
+            .across(whole_objects.iter().map(|(b, _)| *b));
             o.impact = whole.len();
             o.saves_bytes = saved_bytes;
             let s = p(
@@ -2464,7 +2487,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 .weigh(ids.len(), saved.len(), total)
                 .saving_of(saved)
                 // the shards hold every sample: as many bytes are read
-                .keeping_bytes(),
+                .keeping_bytes()
+                .across(small.iter().map(|i| place(i).0)),
             );
         }
     }
@@ -2533,7 +2557,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 )
                 .weigh(ids.len(), saved.len(), total)
                 .saving_of(saved)
-                .keeping(vec![ids[0]]),
+                .keeping(vec![ids[0]])
+                .across(crawled.iter().map(|((b, _), _)| *b)),
             );
         }
     }
@@ -2693,7 +2718,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     of_records(&mut ids.iter().copied()),
                 )
                 .weigh(n, saved.len(), total)
-                .saving_of(saved),
+                .saving_of(saved)
+                .across(by_bucket.keys().copied()),
             );
         }
     }
@@ -2746,6 +2772,12 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         if n >= at(3, 1) {
             cycles.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
             let key = cycles[0].0.clone();
+            // (the key read and written back the most is one bucket's this
+            // run and another's the next: the finding is about all of them)
+            let buckets: BTreeSet<String> = cycles
+                .iter()
+                .filter_map(|c| c.0.split_once('/').map(|(b, _)| b.to_string()))
+                .collect();
             let mut ids: Vec<u64> = cycles.into_iter().flat_map(|c| c.1).collect();
             ids.sort_unstable();
             // a warning: another writer's change is lost, which is wrong, not slow
@@ -2757,7 +2789,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                     ),
                     of_records(&mut ids.iter().copied()),
                 )
-                .weigh(ids.len(), 0, total),
+                .weigh(ids.len(), 0, total)
+                .across(buckets.iter().map(String::as_str)),
             );
         }
     }
@@ -3312,10 +3345,13 @@ fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<O
         if key(o) == "obs.rmw" {
             let said = &o.phrases[0];
             let arg = |n: &str| said.args.get(n).map(|v| v.to_string()).unwrap_or_default();
-            let phrase = p(
+            let mut phrase = p(
                 "obs.rmw.log",
                 &[("key", arg("key")), ("n", arg("n")), ("s", arg("s"))],
             );
+            if let Some(buckets) = said.args.get(crate::profile::BUCKETS) {
+                phrase = phrase.with(crate::profile::BUCKETS, buckets.clone());
+            }
             o.text = phrase.en();
             o.phrases = vec![phrase];
             o.fixes = crate::fixes::rekeyed(std::mem::take(&mut o.fixes), "obs.rmw.log");

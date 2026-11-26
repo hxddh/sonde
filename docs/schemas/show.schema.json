@@ -127,7 +127,7 @@
             "properties": {
               "identity": {
                 "type": "string",
-                "description": "The same finding across runs: its kind and what it is about ([fix loop](../cli.md#the-fix-loop))."
+                "description": "The same finding across runs: its kind and what it is about ([fix loop](../cli.md#the-fix-loop)). One about its bucket with objects in several names each, sorted (`obs.small|data,logs`; before 33.0, `obs.small|/`)."
               },
               "state": {
                 "enum": [
@@ -137,7 +137,7 @@
                   "new",
                   "open"
                 ],
-                "description": "Judged by its count alone (`counts`), never by a share of the run: fixed: gone at any threshold; less and more: still there at any threshold, its count fallen or grown; new: none of it in the run before, at any threshold; open: as much in both."
+                "description": "Judged by its count alone (`counts`), never by a share of the run: fixed: gone at any threshold; less and more: still there at any threshold, its count fallen or grown; new: none of it in the run before, at any threshold; open: as much in both. A count under 100 is exact; from 100, within a hundredth of the count before (rounded down) is as much (33.0: before, exact at any size)."
               },
               "text": {
                 "type": "string",
@@ -442,7 +442,7 @@
         },
         "identity": {
           "type": "string",
-          "description": "The same finding across runs: what `[check] expect` names."
+          "description": "The same finding across runs: what `[check] expect` names. One about its bucket with objects in several names each, sorted (`obs.small|data,logs`; before 33.0, `obs.small|/`, and a read written back the bucket of the key written back the most)."
         },
         "expected": {
           "type": "string",
@@ -481,7 +481,7 @@
         },
         "savesMs": {
           "type": "number",
-          "description": "Time of the run acting on it alone saves, in ms: the run without its requests, its waiting reckoned again (requests one after another: their waiting less the same at once). Absent for a run whose times are not known."
+          "description": "Time of the run acting on it alone saves, in ms: the run without its requests, its waiting reckoned again (requests one after another: their waiting less the same at once). Of requests whose bytes are read still, in fewer requests (`obs.smallreads`), their round trips alone: each one's part of the waiting up to its first byte (33.0: before, the time their bodies took to arrive too). Absent for a run whose times are not known."
         },
         "savesBytes": {
           "type": "integer",
@@ -1310,11 +1310,11 @@
         },
         "noiseMs": {
           "type": "number",
-          "description": "How much the program's wall time varies run to run, in ms: of its runs before the later one alike in command and findings (no fix between them, up to 5), the largest move from one to the next. Absent with fewer than two such runs (no band)."
+          "description": "How much the program's wall time varies run to run, in ms: the band two of its runs differ within 19 times in 20, read from its runs before the later one alike in command and findings (no fix between them, up to 5): 2.77 × their range over the range a sample of that many has (1.19 × the range of five, 1.35 of four, 1.64 of three, 2.46 of two); of two, never under a tenth of their time and 50 ms, of three never under half of that. Absent with fewer than two such runs (no band). (33.0: before, the largest move from one of them to the next.)"
         },
         "withinNoise": {
           "type": "boolean",
-          "description": "Present (true) when the run's wall time moved by less than `noiseMs`: what moved is not told from noise, run it again."
+          "description": "Present (true) when the run's wall time moved by `noiseMs` or less: what moved is not told from noise, run it again."
         },
         "endpoints": {
           "type": "array",
@@ -1427,7 +1427,7 @@
         },
         "transferMs": {
           "type": "number",
-          "description": "Of the waiting, the part spent moving bytes (after the first byte), when the store says when that came; else 0."
+          "description": "Of the waiting, the part spent moving bytes (after the first byte), when the store says when that came; else 0. Each request's part of the waiting (a moment's split among the requests then in flight) by the share of its own time after its first byte: never more than the waiting, nor than the time bytes moved in (33.0: before, weighed by the requests' times added up, which counts bodies moving at once once each)."
         },
         "most": {
           "type": "string",
@@ -1503,7 +1503,7 @@
         },
         "atOnce": {
           "type": "object",
-          "description": "Its requests one after another (`obs.serial`), counted: `requests`, those its other findings leave; sent `concurrency` at once, all of them save `savesMs` on their own.",
+          "description": "Its requests one after another (`obs.serial`), counted: `requests`, those its other findings leave; sent `concurrency` at once, those save `savesMs`: the part of the finding's saving that is theirs, by their part of its requests' waiting (33.0: before, what all of its requests saved, those taken away too).",
           "properties": {
             "requests": {
               "type": "integer"
