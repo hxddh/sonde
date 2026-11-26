@@ -205,6 +205,8 @@ slowdown now`, `· open`, `! new` (in `show`, among `since.findings`); `run` say
 
 **In the app**: *Try under faults…* in a run's `⋯`. The dialog lists the
 scenarios with a box to leave each out, warns without `{trial}`; what the program may do is the dialog's policy; Cancel keeps nothing.
+Of a run sonde did not record here it shows the command whole, with its folder, to read before it starts
+([runs from elsewhere](security.md#runs-from-elsewhere)).
 Verdicts stay on the run's History, a row per scenario; a row opens its trial run (cannot be run again, renamed or
 made a baseline), and what to change is the trial finding's fix, in the inspector.
 Injected requests are marked "Injected by sonde"; the runs list marks runs whose trial broke.

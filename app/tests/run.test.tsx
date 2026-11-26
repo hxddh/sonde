@@ -910,3 +910,91 @@ test("the palette's recent runs of one program are told apart as the sidebar tel
   await app.keyboard.press("escape");
   expect(app.shows("id:run-list >> text:/users$/")).toBe(true);
 });
+
+test("a run opened from a file starts nothing until its command, shown whole, is confirmed: Run again, a trial, and the bridge itself", async () => {
+  const app = await demo();
+  const { api, asError } = await import("../src/native");
+  const { exactText, scrubCommand } = await import("../src/command");
+  // someone else's run, as a picked file: its command sets a variable from a command it runs (a list of secrets
+  // hidden would show `TOKEN=…`), and ends in a character that turns the text's direction
+  const command = 'TOKEN="$(echo payload)" curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -o /dev/null $AWS_ENDPOINT_URL/demo/README.md #‮';
+  const shown = exactText(command);
+  expect(shown.endsWith("#⟨U+202E⟩")).toBe(true);
+  // (a folder that is there: confirmed, the command runs in it)
+  const dir = api.paths().data;
+  await importRun(app, "from-elsewhere.sonde", runText(20, command, "2026-03-01T10:00:00Z").replace('"cwd":"/home/me/job"', `"cwd":${JSON.stringify(dir)}`));
+  const path = api.runs.list().find((r) => r.command === command)!.path;
+  // its copy is in the runs folder, and still not sonde's own: Rust says so, by where it came from
+  expect((await api.runs.view(path)).external).toBe(true);
+  expect(api.runs.trialPlan(path).external).toBe(true);
+  // its title, beside Run again, is the command whole: the value that is a command is not folded away
+  await app.waitFor("id:run-again", { timeout: 10000 });
+  expect(app.texts().some((x) => x.startsWith('$ TOKEN="$(echo payload)" curl '))).toBe(true);
+  expect(app.texts().some((x) => x.includes("TOKEN=…"))).toBe(false);
+  const runs = () => api.runs.list().length;
+  const before = runs();
+  // Run again asks first: the command and the folder exactly as they would run, what would not show written out
+  await app.press("id:run-again");
+  await app.waitFor("id:external-run", { timeout: 5000 });
+  expect(app.shows("id:external-run-why")).toBe(true);
+  expect(app.texts().includes(shown)).toBe(true);
+  expect(app.texts().includes(dir)).toBe(true);
+  expect(app.shows("id:exact-unseen")).toBe(true);
+  // nothing has started, and Cancel starts nothing
+  expect(app.shows("id:running-pill")).toBe(false);
+  await app.press("id:external-run-cancel");
+  await app.waitFor("id:external-run", { state: "gone", timeout: 5000 });
+  await app.wait(500);
+  expect(app.shows("id:running-pill")).toBe(false);
+  expect(runs()).toBe(before);
+  // the bridge itself refuses, whatever the interface does: with no yes, with a yes to the command as a list shows
+  // it, with a yes to the command in another folder; the refusal says what to ask about
+  const refused = async (confirmed: { command: string; cwd: string | null } | null) => {
+    try {
+      await api.runs.runAgain(path, 100, 30, confirmed, () => {});
+      return null;
+    } catch (e) {
+      return asError(e);
+    }
+  };
+  const no = await refused(null);
+  expect(no?.kind).toBe("confirm");
+  expect(no?.command).toBe(command);
+  expect(no?.cwd).toBe(dir);
+  expect((await refused({ command: scrubCommand(command), cwd: dir }))?.kind).toBe("confirm");
+  expect((await refused({ command, cwd: "/" }))?.kind).toBe("confirm");
+  expect((await refused({ command, cwd: null }))?.kind).toBe("confirm");
+  // and so does a trial of it
+  const trial = await api.runs.trial(path, [], "no-delete", 100, 30, null, () => {}).then(
+    () => null,
+    (e) => asError(e),
+  );
+  expect(trial?.kind).toBe("confirm");
+  expect(trial?.command).toBe(command);
+  expect(runs()).toBe(before);
+  // the trial's dialog says whose command it is and shows it whole, with its folder, over its Start
+  await runAction(app, "Try under faults…");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
+  expect(app.shows("id:trial-external")).toBe(true);
+  expect(app.texts().includes(shown)).toBe(true);
+  expect(app.texts().includes(dir)).toBe(true);
+  await app.press("id:trial-close");
+  await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
+  expect(runs()).toBe(before);
+  // confirmed, it runs: the newest run, recorded here, which runs again unasked
+  await app.press("id:run-again");
+  await app.waitFor("id:external-run", { timeout: 5000 });
+  await app.press("id:external-run-start");
+  await app.waitFor("id:external-run", { state: "gone", timeout: 5000 });
+  await app.waitUntil(() => runs() === before + 1, { timeout: 30000 });
+  await runView(app);
+  const newest = api.runs.list().find((r) => r.command === command && r.path !== path)!.path;
+  expect((await api.runs.view(newest)).external ?? false).toBe(false);
+  expect(api.runs.trialPlan(newest).external).toBe(false);
+  await app.waitFor("id:run-again", { timeout: 10000 });
+  await app.press("id:run-again");
+  await app.wait(500);
+  expect(app.shows("id:external-run")).toBe(false);
+  await app.waitUntil(() => runs() === before + 2, { timeout: 30000 });
+  await runView(app);
+}, 120000);

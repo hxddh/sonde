@@ -1585,7 +1585,7 @@
         },
         "code": {
           "type": "string",
-          "description": "The line of code itself, when the file is there to read."
+          "description": "The line of code itself, when its file is program source inside the folder the program ran in (`run.cwd`) and there to read."
         }
       },
       "required": [

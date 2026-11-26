@@ -50,6 +50,16 @@ export interface SondeError {
   status?: number | null;
   requestId?: string | null;
   recordId?: number | null;
+  /** `kind: "confirm"`: the command and the folder a run from elsewhere would run, to ask the user about. */
+  command?: string;
+  cwd?: string | null;
+}
+
+/** The user's yes to a command from a run sonde did not record here: exactly the command and the folder they were
+ * shown. `Runs.runAgain` and `Runs.trial` start nothing of such a run without it. */
+export interface Confirmed {
+  command: string;
+  cwd: string | null;
 }
 
 export interface ConnectivityReport {
@@ -957,6 +967,8 @@ export interface TrialPlan {
   /** The command names no `{trial}`: the runs write where the clean run wrote. */
   sharesPlace: boolean;
   cleanExit: number;
+  /** The run was not recorded here (opened from a file or a link): its command is confirmed before it runs. */
+  external: boolean;
 }
 
 /** A trial as the app hears it run. */
@@ -979,6 +991,10 @@ export interface RunView {
   injected?: number[];
   /** The SDK that sent most of its requests, from their user agents ("boto3 1.34"). */
   sdk?: string | null;
+  /** The run was not recorded by this sonde into its runs folder (a file opened, dropped or linked to, a run written
+   * elsewhere): its command is someone else's, shown whole and confirmed before Run again or a trial runs it.
+   * Decided in Rust from where the file is, never from what it says. */
+  external?: boolean;
   path: string;
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null; /** a trial's run: the scenario its requests met */ scenario?: string | null };
   summary: RunSummary;

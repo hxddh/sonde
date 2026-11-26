@@ -595,7 +595,9 @@ fn finding_json(o: &sonde_analysis::episode::Observation, cwd: Option<&Path>) ->
 }
 
 /// A finding's callers, each with its line of code read from the folder the
-/// program ran in (`cwd`), when the file is there.
+/// program ran in (`cwd`), when the file is program source inside it: the
+/// run names both, and may be someone else's
+/// ([`sonde_analysis::code::line`]).
 fn callers_json(
     o: &sonde_analysis::episode::Observation,
     cwd: Option<&Path>,
@@ -606,7 +608,7 @@ fn callers_json(
             let mut c = serde_json::to_value(caller).unwrap_or_default();
             if let (Some(file), Some(line), Some(m)) =
                 (caller.file.as_deref(), caller.line, c.as_object_mut())
-                && let Some(code) = code_line(cwd, file, line)
+                && let Some(code) = sonde_analysis::code::line(cwd, file, line)
             {
                 m.insert("code".into(), code.into());
             }
@@ -663,28 +665,6 @@ fn since_json(
         }
     }
     v
-}
-
-/// Line `line` of `file` (relative to `cwd`, where the program ran), trimmed
-/// and cut to 200 characters; none when the file is not there to read.
-fn code_line(cwd: Option<&Path>, file: &str, line: u32) -> Option<String> {
-    use std::io::BufRead;
-    let path = Path::new(file);
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd?.join(path)
-    };
-    let f = std::fs::File::open(path).ok()?;
-    if !f.metadata().ok()?.is_file() {
-        return None;
-    }
-    let text = std::io::BufReader::new(f)
-        .lines()
-        .nth(line.checked_sub(1)? as usize)?
-        .ok()?;
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.chars().take(200).collect())
 }
 
 /// The command that records the program again, to see a fix work: as it

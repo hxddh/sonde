@@ -120,6 +120,11 @@ export const api = {
     openPage: (path: string) => Runs.openPage(path) as Promise<void>,
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Runs.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
+    /** A run's command again, in its folder, on its endpoint: read from the run's file in Rust. A run from elsewhere
+     * (`RunView.external`) is refused (`kind: "confirm"`, with the command and folder to ask about) unless
+     * `confirmed` is exactly those. */
+    runAgain: (path: string, cols: number, rows: number, confirmed: T.Confirmed | null, onEvent: (e: T.RunEvent) => void) =>
+      Runs.runAgain(path, cols, rows, confirmed, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
     input: (data: string) => Runs.input(data),
     resize: (cols: number, rows: number) => Runs.resize(cols, rows),
     kill: () => Runs.kill(),
@@ -127,9 +132,9 @@ export const api = {
     quit: async () => (await Runs.quit()) as { program: boolean; trial: boolean; run: string | null },
     /** What trying a run's program under faults would run, said before it runs; throws with why there is no trial. */
     trialPlan: (path: string) => Runs.trialPlan(path) as T.TrialPlan,
-    /** The run's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
-    trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
-      Runs.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
+    /** The run's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). A run from elsewhere wants `confirmed`, as `runAgain`. */
+    trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, confirmed: T.Confirmed | null, onEvent: (e: T.TrialEvent) => void) =>
+      Runs.trial(path, scenarios, policy, cols, rows, confirmed, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
     /** Its output as timed lines. Off the interface's thread (a run not yet read is read whole). */
     logLines: async (path: string) => (await Runs.logLines(path)) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Runs.replayPlan(path, endpoint),
