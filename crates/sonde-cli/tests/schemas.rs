@@ -756,6 +756,39 @@ async fn every_json_output_is_as_its_schema_says() {
         );
         holds("show", &shown);
     }
+    // a run that says how it was recorded: a store given by its URL, path-style, a CA, TLS, a policy
+    {
+        let custom = b.path("custom.sonde");
+        let mut header = sonde_analysis::run::RunHeader::new(
+            "adhoc",
+            "https://store.test:9000",
+            "us-east-1",
+            Some("true".into()),
+        );
+        header.path_style = true;
+        header.ca_file = Some("/etc/ssl/store.pem".into());
+        header.tls = true;
+        header.policy = Some("no-delete".into());
+        sonde_analysis::run::RunWriter::create(&custom, &header)
+            .unwrap()
+            .flush()
+            .unwrap();
+        let c = custom.to_str().unwrap();
+        let shown = b.json(&["show", c, "-f", "json"], 0).await;
+        for (field, value) in [
+            ("pathStyle", Value::Bool(true)),
+            ("caFile", Value::String("/etc/ssl/store.pem".into())),
+            ("tls", Value::Bool(true)),
+            ("policy", Value::String("no-delete".into())),
+        ] {
+            assert_eq!(shown["run"][field], value, "{}", shown["run"]);
+        }
+        holds("show", &shown);
+        holds(
+            "show-by",
+            &b.json(&["show", c, "--by", "kind", "-f", "json"], 0).await,
+        );
+    }
     // reading a run
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
     holds(

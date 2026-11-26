@@ -597,6 +597,22 @@
         "wholeSeconds": {
           "type": "boolean",
           "description": "Request times are to the second (an imported log)."
+        },
+        "pathStyle": {
+          "type": "boolean",
+          "description": "The store was given by its URL (`--url`) and addressed path-style (`--path-style`). Absent otherwise (33.0)."
+        },
+        "caFile": {
+          "type": "string",
+          "description": "The CA file a store given by its URL was trusted by (`--ca-file`): its path, never its content. Absent otherwise (33.0)."
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "The program was served TLS (`--tls`). Absent otherwise (33.0)."
+        },
+        "policy": {
+          "type": "string",
+          "description": "What the recorded program was allowed to do: `allow`, `no-delete` or `read-only`. Absent in a run written before 33.0, and in one no program was recorded for (an import, a replay)."
         }
       },
       "required": [
