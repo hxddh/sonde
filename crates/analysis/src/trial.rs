@@ -1165,54 +1165,31 @@ pub fn judge(
             }
         }
     }
-    // what the lost commits wrote and nothing removed: the objects that
-    // stand after the writes made without a condition, beyond the clean
-    // run's. Objects, not requests: a key uploaded twice is one object, and
-    // a key removed twice was removed once.
-    let left = |records: &[Record]| -> i64 {
-        let mut in_time: Vec<&Record> = records
-            .iter()
-            .filter(|r| done(r) && condition_of(r).is_none())
-            .collect();
-        in_time.sort_by_key(|r| (r.time, r.id));
-        let mut stands: BTreeSet<(Option<&str>, String)> = BTreeSet::new();
-        // deletes of what the run never wrote (it stood before the run)
-        let mut gone: BTreeSet<(Option<&str>, String)> = BTreeSet::new();
-        for r in in_time {
-            let bucket = r.bucket.as_deref();
-            let mut remove = |key: String| {
-                if !stands.remove(&(bucket, key.clone())) {
-                    gone.insert((bucket, key));
-                }
-            };
-            match r.kind.as_str() {
-                "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
-                    stands.insert((bucket, r.key.as_deref().unwrap_or_default().to_string()));
-                }
-                "DeleteObject" => remove(r.key.as_deref().unwrap_or_default().to_string()),
-                "DeleteObjects" => {
-                    let body = r.rare().request_body.as_deref().unwrap_or("");
-                    let mut keys: BTreeSet<String> = reqlog::deleted_objects(body)
-                        .into_iter()
-                        .map(|(k, _)| k)
-                        .collect();
-                    if keys.is_empty() {
-                        keys.insert(String::new());
-                    }
-                    for key in keys {
-                        remove(key);
-                    }
-                }
-                _ => {}
-            }
-        }
-        stands.len() as i64 - gone.len() as i64
-    };
+    // What each run leaves in the store ([`crate::left`]): each key followed
+    // to its last change, read without the run's own name and without what
+    // changes from run to run.
+    let names = [name, CLEAN];
+    // after a lost race, objects more than the clean run leaves, commits
+    // apart (a commit made twice is `doubled`): what the lost commit wrote
     let orphans = if races > 0 {
-        (left(run) - left(clean)).max(0) as usize
+        let plain = |rs: &[Record]| {
+            crate::left::left(
+                rs.iter().filter(|r| done(r) && condition_of(r).is_none()),
+                &names,
+            )
+        };
+        plain(run).against(&plain(clean)).map_or(0, |d| d.extra)
     } else {
         0
     };
+    // an output the clean run leaves that this run wrote none of, whatever
+    // its requests say: a program that went on without writing it
+    // (a write sonde answered 412 in the store's place is in no store by
+    // sonde's doing: what the program made of it is the races' to judge)
+    let absent = crate::left::left_where(run, &names, |r| crate::left::made(r) || lost_race(r))
+        .against(&crate::left::left(clean, &names))
+        .filter(|d| d.absent > 0)
+        .map(|d| (d.absent, d.an_absent.unwrap_or_default()));
 
     let mut all: Vec<f64> = waits.iter().map(|(_, w)| *w).collect();
     all.sort_by(|a, b| a.total_cmp(b));
@@ -1464,6 +1441,18 @@ pub fn judge(
         standing.raise(Standing::Broke);
         why.push(said("trial.why.doubled", doubled));
     }
+    if let Some((n, key)) = &absent
+        && standing != Standing::Broke
+        && exit == clean_exit
+    {
+        // said only where nothing else did: an exit unlike the clean run's,
+        // or a write dropped, already says why
+        standing.raise(Standing::Broke);
+        let mut args = n_of(*n);
+        args.push(("was", if *n == 1 { "was" } else { "were" }.to_string()));
+        args.push(("key", key.clone()));
+        why.push(vec![Said::new("trial.why.absent", &args)]);
+    }
     if stale > 0 && unused == stale && faults == 0 && standing == Standing::Survived {
         // a listing nothing after it turned on: no reading of it to judge
         standing = Standing::Untested;
@@ -1540,6 +1529,7 @@ pub fn judge(
         "trial.why.waited" => at_wait,
         "trial.why.rewrote" | "trial.why.missed" => at_stale,
         "trial.why.lost" | "trial.why.writes" => at_write,
+        "trial.why.absent" => at_write.or(at_read),
         "trial.why.taken" | "trial.why.holes" => at_cut,
         "trial.why.orphans"
         | "trial.why.blind"
@@ -2788,12 +2778,65 @@ mod tests {
             "1 write failed and was never sent again, and the program exited 0"
         );
 
+        let clean = vec![rec(1, 0, "GET", "GetObject", "a", 200)];
         let run = vec![fault(rec(1, 0, "GET", "GetObject", "a", 503), "slowdown")];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Degraded);
         assert_eq!(
             t.reasons()[0],
             "gave up on 1 failed read without sending it again"
+        );
+    }
+
+    /// What the requests cannot say: every request answered, the exit the
+    /// clean run's, and an output the clean run leaves never written.
+    #[test]
+    fn an_output_the_clean_run_leaves_and_this_run_never_wrote_is_broke() {
+        let clean = vec![
+            get(1, 0, "in/a", 200),
+            put(2, 10, "out/part-1.json", 200),
+            put(3, 20, "out/_SUCCESS", 200),
+        ];
+        // the read failed, the program caught it, skipped its output and
+        // exited 0: by its requests, a read given up (degraded)
+        let run = vec![fault(get(1, 0, "in/a", 503), "slowdown")];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Broke, "{}", t.line());
+        let why = t.reasons().join(" | ");
+        assert!(
+            why.contains("2 objects the clean run leaves were never written (b/out/_SUCCESS)"),
+            "{why}"
+        );
+        // one part fewer of several, its kind still written: not said (a
+        // writer that flushes by the clock leaves more or fewer)
+        let clean = vec![
+            put(1, 0, "wal/1.sst", 200),
+            put(2, 10, "wal/2.sst", 200),
+            get(3, 20, "x", 200),
+        ];
+        let run = vec![
+            put(1, 0, "wal/1.sst", 200),
+            fault(get(3, 20, "x", 503), "slowdown"),
+            get(4, 300, "x", 200),
+        ];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        // written under the run's own name, and again after a fault: there
+        let clean = vec![put(1, 0, "t-clean/out", 200)];
+        let run = vec![
+            fault(put(1, 0, "t-slowdown/out", 503), "slowdown"),
+            put(2, 300, "t-slowdown/out", 200),
+        ];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        // an exit unlike the clean run's already says why: not said twice
+        let run = vec![fault(get(1, 0, "in/a", 503), "slowdown")];
+        let clean = vec![get(1, 0, "in/a", 200), put(2, 10, "out/a", 200)];
+        let t = judge(&slowdown(), &clean, 0, &run, 1);
+        assert!(
+            !t.reasons().join(" ").contains("never written"),
+            "{:?}",
+            t.reasons()
         );
     }
 

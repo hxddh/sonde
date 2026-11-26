@@ -1235,6 +1235,7 @@
  "phrase.trial.why.unrun.exit": ", and the program exited %{exit}",
  "phrase.trial.why.overwrote": "%{n} lost race%{s} answered by writing the key without a condition: the other writer's commit would be gone",
  "phrase.trial.why.doubled": "%{n} commit%{s} more in the table's log than the clean run makes: what a lost commit wrote was committed twice",
+ "phrase.trial.why.absent": "%{n} object%{s} the clean run leaves %{was} never written (%{key}): the program went on without %{it} and ended as its clean run does",
  "phrase.trial.why.waited": "waited out %{n} stall%{s} of %{time} before the first byte: no timeout cut %{it} short",
  "phrase.trial.why.reuploaded": "%{n} upload%{s} made again from %{its} first part though the store had completed %{it}: every part sent twice",
  "phrase.trial.why.rewrote": "%{n} key%{s} a listing left out written again: the program took %{it} for missing",
