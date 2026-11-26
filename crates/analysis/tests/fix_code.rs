@@ -984,6 +984,14 @@ print("ran", ran, "of", len(fixes), "on boto3", boto3.__version__, "; not run:",
 sys.exit(1 if bad else 0)
 "#;
 
+/// Whether this boto3 knows the newest parameter a fix sends (a write
+/// only over what was read): read from the model it validates with.
+const PY_BOTO3_KNOWS: &str = r#"
+import sys, botocore.session
+put = botocore.session.get_session().get_service_model("s3").operation_model("PutObject")
+sys.exit(0 if "IfMatch" in put.input_shape.members else 1)
+"#;
+
 #[test]
 fn every_boto3_fix_runs_on_boto3_itself() {
     let check = "boto3 fixes run on boto3";
@@ -992,6 +1000,15 @@ fn every_boto3_fix_runs_on_boto3_itself() {
     }
     if !ran(Command::new("python3").args(["-c", "import boto3"])).ok {
         return skipped(check, "no boto3 for python3 (pip install boto3)");
+    }
+    // a boto3 from before conditional writes (a system package years old)
+    // does not know the fixes' parameters: it is not the SDK they are for,
+    // asked of its own model, not of a version number
+    if !ran(Command::new("python3").args(["-c", PY_BOTO3_KNOWS])).ok {
+        return skipped(
+            check,
+            "this python3's boto3 is older than the fixes' API (its PutObject has no IfMatch): pip install -U boto3",
+        );
     }
     let all: Vec<(String, String)> = of(&["python"])
         .into_iter()
