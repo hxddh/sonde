@@ -158,14 +158,15 @@ Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names)
 money a month), the line that sent it and the fix. The time a finding saves is its requests' part of the waiting: each
 moment with requests in flight split evenly among them (alone, a request's own time; one of eight at once, an eighth); a poll saves none, its loop waiting as long.
 The findings' fix: the [engine's setting](#engine-settings) when an engine sent its
-requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript, Rust's object_store):
+requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript, Rust's object_store and AWS SDK;
+each checked as code against its SDK, [tools/fix-check](../tools/fix-check/README.md)):
 
 | Kind | Found when | Fix |
 |---|---|---|
-| `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read |
+| `obs.hot` | a key read 10 times or more between its writes, each stretch answered the same (found, whole, one ETag), saving 1% of the run's requests or cost | keep what was read: for the run, or until the program's own write when it writes the key after reading it (the fix then drops its copy on each write) |
 | `obs.listed` | a prefix listed (and answered) 5 times or more with nothing written under it between | list once |
 | `obs.crawl` | 20 prefixes or more each listed fewer than 5 times (partition discovery, a tree walked folder by folder), saving 1% of the run's requests or cost (one finding of the run, `obs.crawl|`) | a manifest, or the table format's metadata |
-| `obs.rangeagain` | the same byte range of an object read 10 times or more past its first read with nothing written to it between (a Parquet footer read by each query), saving 1% of the run's requests or cost (one finding of the run) | keep each range once read |
+| `obs.rangeagain` | the same byte range of an object read 10 times or more past its first read with nothing written to it between (a Parquet footer read by each query), saving 1% of the run's requests or cost (one finding of the run) | keep each range once read (until the program's own write of the object, as `obs.hot`) |
 | `obs.wholeread` | objects of 1 MiB or more read whole that the run also reads by range (evidence it uses parts), what they read past their ranges 16 MiB or more and a tenth of the run's bytes out; saves bytes, and egress when charged (one finding of the run) | read the ranges used |
 | `obs.smallreads` | 500 objects or more under 1 MiB each read whole one GET each, a fifth of the run's requests; the saving is the GETs left once they are shards of 64 MiB, not their bytes, which the shards still read (one finding of the run) | pack into larger files: JSONL for records, tar for media |
 | `obs.headget` | HEAD then GET of the same object, 3 times or more | GET alone |

@@ -1,0 +1,18 @@
+# The crates the Rust fixes sonde prints are compiled against
+# (crates/analysis/tests/fix_code.rs). Not a member of sonde's workspace: none of
+# these is a dependency of sonde.
+[package]
+name = "sonde-fix-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
+object_store = "0.13"
+bytes = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "macros"] }

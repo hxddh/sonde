@@ -13,8 +13,8 @@ use crate::profile::Profile;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Fix {
-    /// `python`, `java`, `go`, `js`, `rust` (object_store), or `config` for
-    /// a store's or an engine's setting.
+    /// `python`, `java`, `go`, `js`, `rust` (object_store), `rust-aws` (the
+    /// AWS SDK for Rust), or `config` for a store's or an engine's setting.
     pub sdk: &'static str,
     /// The change, its first line a comment that says it.
     pub code: Cow<'static, str>,
@@ -45,7 +45,7 @@ pub fn rekeyed(old: Vec<Fix>, key: &str) -> Vec<Fix> {
 }
 
 /// The SDK's own setting that turns its retries on, by language (`python`,
-/// `java`, `go`, `js`): what a trial advises when a failed request was not
+/// `java`, `go`, `js`, `rust-aws`): what a trial advises when a failed request was not
 /// sent again. Retries and nothing else: no pool, no adaptive mode.
 pub fn retries_on(sdk: &str) -> Option<&'static str> {
     Some(match sdk {
@@ -57,6 +57,9 @@ pub fn retries_on(sdk: &str) -> Option<&'static str> {
         }
         "go" => "config.LoadDefaultConfig(ctx, config.WithRetryMaxAttempts(5))",
         "js" => "new S3Client({ maxAttempts: 5 })",
+        RUST_AWS => {
+            "aws_config::defaults(BehaviorVersion::latest()).retry_config(RetryConfig::standard().with_max_attempts(5)).load().await"
+        }
         _ => return None,
     })
 }
@@ -64,8 +67,8 @@ pub fn retries_on(sdk: &str) -> Option<&'static str> {
 /// The changes that act on a finding, by its phrase key.
 pub fn for_key(key: &str) -> Vec<Fix> {
     match key {
-        "obs.hot" => cached(false),
-        "obs.rangeagain" => cached(true),
+        "obs.hot" => cached(false, false),
+        "obs.rangeagain" => cached(true, false),
         "obs.small" => packed(true, false),
         "obs.smallreads" => packed(false, true),
         "obs.serial" => at_once("GET"),
@@ -80,7 +83,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nsize := aws.ToInt64(out.ContentLength)",
+                "// GET alone: its response carries what HEAD would\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nif err != nil {\n    return err\n}\ndefer out.Body.Close()\nsize := aws.ToInt64(out.ContentLength)",
             ),
             f(
                 "js",
@@ -89,6 +92,12 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "rust",
                 "// GET alone: its result carries what HEAD would (object_store)\nlet obj = store.get(&path).await?;\nlet (size, etag) = (obj.meta.size, obj.meta.e_tag.clone());",
+            ),
+            f(
+                RUST_AWS,
+                r##"// GET alone: its response carries what HEAD would
+let obj = s3.get_object().bucket(b).key(k).send().await?;
+let (size, etag) = (obj.content_length(), obj.e_tag().map(str::to_owned));"##,
             ),
         ],
         "obs.rename" => vec![f(
@@ -106,7 +115,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "java",
-                "// list the prefix once; look keys up in the result\nSet<String> keys = s3.listObjectsV2Paginator(r -> r.bucket(b).prefix(p)).contents().stream().map(S3Object::key).collect(toSet());",
+                "// list the prefix once; look keys up in the result\nSet<String> keys = s3.listObjectsV2Paginator(r -> r.bucket(b).prefix(p)).contents().stream().map(S3Object::key).collect(Collectors.toSet());",
             ),
             f(
                 "go",
@@ -119,6 +128,15 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "rust",
                 "// list the prefix once; look keys up in the result (object_store)\nlet keys: HashSet<Path> = store.list(Some(&prefix)).map_ok(|m| m.location).try_collect().await?;",
+            ),
+            f(
+                RUST_AWS,
+                r##"// list the prefix once; look keys up in the result
+let mut keys = HashSet::new();
+let mut pages = s3.list_objects_v2().bucket(b).prefix(p).into_paginator().send();
+while let Some(page) = pages.next().await {
+    keys.extend(page?.contents().iter().filter_map(|o| o.key().map(str::to_owned)));
+}"##,
             ),
         ],
         "obs.deletes" => vec![
@@ -142,6 +160,17 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "rust",
                 "// up to 1,000 keys a request: object_store's S3 sends delete_stream as DeleteObjects\nlet paths = futures::stream::iter(paths.into_iter().map(Ok)).boxed();\nstore.delete_stream(paths).try_collect::<Vec<_>>().await?;",
             ),
+            f(
+                RUST_AWS,
+                r##"// up to 1,000 keys a request; a key not deleted is in errors(), not an Err
+for chunk in keys.chunks(1000) {
+    let ids = chunk.iter().map(|k| ObjectIdentifier::builder().key(k).build()).collect::<Result<Vec<_>, _>>()?;
+    let out = s3.delete_objects().bucket(b).delete(Delete::builder().set_objects(Some(ids)).quiet(true).build()?).send().await?;
+    if let Some(e) = out.errors().first() {
+        return Err(format!("{} not deleted, the first {:?}: {:?}", out.errors().len(), e.key(), e.message()).into());
+    }
+}"##,
+            ),
         ],
         "obs.rmw" | "obs.rmw.log" => vec![
             f(
@@ -154,11 +183,19 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// write back only over what was read: another writer's change fails it (412), not lost\nobj, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n_, err = s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: changed(obj.Body), IfMatch: obj.ETag})",
+                "// write back only over what was read: another writer's change fails it (412), not lost\nobj, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\nif err != nil {\n    return err\n}\ndefer obj.Body.Close()\n_, err = s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: changed(obj.Body), IfMatch: obj.ETag})",
             ),
             f(
                 "js",
                 "// write back only over what was read: another writer's change fails it (412), not lost\nconst obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nawait s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body: changed(await obj.Body.transformToString()), IfMatch: obj.ETag }));",
+            ),
+            f(
+                RUST_AWS,
+                r##"// write back only over what was read: another writer's change fails it (412), not lost
+let obj = s3.get_object().bucket(b).key(k).send().await?;
+let etag = obj.e_tag().map(str::to_owned);
+let body = changed(obj.body.collect().await?.into_bytes());
+s3.put_object().bucket(b).key(k).body(body.into()).set_if_match(etag).send().await?; // on 412, read again"##,
             ),
         ],
         "obs.polled" => vec![
@@ -177,6 +214,11 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "js",
                 "// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time\nawait waitUntilObjectExists({ client: s3, maxWaitTime: 600 }, { Bucket: b, Key: k });",
+            ),
+            f(
+                RUST_AWS,
+                r##"// a waiter backs off between tries (5 s, growing to 2 min) for 10 min at most: fewer requests, not less time
+s3.wait_until_object_exists().bucket(b).key(k).wait(Duration::from_secs(600)).await?;"##,
             ),
         ],
         "obs.small.parts" => vec![
@@ -208,11 +250,16 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             ),
             f(
                 "go",
-                "// adaptive retries back off on 503 SlowDown\ncfg, _ := config.LoadDefaultConfig(ctx, config.WithRetryMode(aws.RetryModeAdaptive))",
+                "// adaptive retries back off on 503 SlowDown\ncfg, err := config.LoadDefaultConfig(ctx, config.WithRetryMode(aws.RetryModeAdaptive))",
             ),
             f(
                 "js",
                 "// adaptive retries back off on 503 SlowDown\nnew S3Client({ retryMode: \"adaptive\", maxAttempts: 10 })",
+            ),
+            f(
+                RUST_AWS,
+                r##"// adaptive retries back off on 503 SlowDown
+let config = aws_config::defaults(BehaviorVersion::latest()).retry_config(RetryConfig::adaptive().with_max_attempts(10)).load().await;"##,
             ),
         ],
         "obs.prefixrate.reads" | "obs.prefixrate.writes" => vec![
@@ -231,6 +278,11 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             f(
                 "js",
                 "// spread keys over prefixes: a hash before the name (every reader names keys so)\nconst key = `${createHash(\"md5\").update(name).digest(\"hex\").slice(0, 2)}/${name}`;",
+            ),
+            f(
+                RUST_AWS,
+                r##"// spread keys over prefixes: a hash before the name (every reader names keys so)
+let key = format!("{:02x}/{name}", name.bytes().fold(0u8, |h, c| h.wrapping_mul(31).wrapping_add(c)));"##,
             ),
         ],
         "obs.unfinished" => vec![f(
@@ -262,12 +314,21 @@ byte[] part = s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(\"bytes=\" + sta
             f(
                 "go",
                 "// read the ranges used, not the whole object
-out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: aws.String(fmt.Sprintf(\"bytes=%d-%d\", start, end))})",
+out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: aws.String(fmt.Sprintf(\"bytes=%d-%d\", start, end))})
+if err != nil {
+    return err
+}
+defer out.Body.Close()",
             ),
             f(
                 "js",
                 "// read the ranges used, not the whole object
 const part = await s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range: `bytes=${start}-${end}` }));",
+            ),
+            f(
+                RUST_AWS,
+                r##"// read the ranges used, not the whole object
+let part = s3.get_object().bucket(b).key(k).range(format!("bytes={start}-{end}")).send().await?;"##,
             ),
         ],
         "obs.crawl" => vec![
@@ -285,12 +346,21 @@ String manifest = s3.getObjectAsBytes(r -> r.bucket(b).key(prefix + \"_manifest.
             f(
                 "go",
                 "// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
-out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(prefix + \"_manifest.json\")})",
+out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(prefix + \"_manifest.json\")})
+if err != nil {
+    return err
+}
+defer out.Body.Close()",
             ),
             f(
                 "js",
                 "// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
 const manifest = JSON.parse(await (await s3.send(new GetObjectCommand({ Bucket: b, Key: `${prefix}_manifest.json` }))).Body.transformToString());",
+            ),
+            f(
+                RUST_AWS,
+                r##"// one manifest names the files: read it, not every prefix (or the table's metadata: Iceberg, Delta)
+let manifest = s3.get_object().bucket(b).key(format!("{prefix}_manifest.json")).send().await?.body.collect().await?.into_bytes();"##,
             ),
         ],
         _ => Vec::new(),
@@ -299,9 +369,13 @@ const manifest = JSON.parse(await (await s3.send(new GetObjectCommand({ Bucket: 
 
 /// The changes that act on a finding, from its requests (`rs`): small
 /// objects packed as what they are (records as JSONL, media as tar shards),
-/// requests sent at once by the operation they are. [`for_key`] for the rest.
-pub fn for_finding(key: &str, rs: &[&Record]) -> Vec<Fix> {
+/// requests sent at once by the operation they are, what is read again kept
+/// until the program writes it when it does between its reads (`rewritten`).
+/// [`for_key`] for the rest.
+pub fn for_finding(key: &str, rs: &[&Record], rewritten: bool) -> Vec<Fix> {
     match key {
+        "obs.hot" => cached(false, rewritten),
+        "obs.rangeagain" => cached(true, rewritten),
         "obs.small" => packed(true, media(rs)),
         "obs.smallreads" => packed(false, media(rs)),
         "obs.serial" => at_once(operation(rs)),
@@ -329,7 +403,6 @@ fn media(rs: &[&Record]) -> bool {
 /// The operation most of `rs` are: `GET`, `PUT`, `HEAD`, `DELETE`, a
 /// listing (`LIST`) or an upload's parts (`PART`).
 fn operation(rs: &[&Record]) -> &'static str {
-    const OPS: [&str; 6] = ["GET", "PUT", "HEAD", "DELETE", "LIST", "PART"];
     let mut n = [0usize; 6];
     for r in rs {
         let op = if r.kind.starts_with("ListObjects") {
@@ -357,55 +430,210 @@ fn owned(sdk: &'static str, code: String) -> Fix {
     }
 }
 
-/// Read once and kept for the run: a key (`range` false) or a range of one.
-fn cached(range: bool) -> Vec<Fix> {
-    let (what, py, java, go, js) = if range {
+/// Read once and kept: a key (`range` false) or a range of one. For the
+/// run, when the program only reads it; when it also writes it between its
+/// reads (`rewritten`), until it writes it: the copy is dropped on each
+/// write, as the finding counts it (each stretch between writes read once).
+/// A copy kept past the program's own write would answer what it replaced.
+fn cached(range: bool, rewritten: bool) -> Vec<Fix> {
+    let what = match (range, rewritten) {
+        (false, false) => "read it once, keep it for the run",
+        (true, false) => "read each range once and keep it (a Parquet footer, an index)",
+        (false, true) => {
+            "read it once and keep it until the program writes it: its copy is dropped on each write"
+        }
+        (true, true) => {
+            "read each range once and keep it until the program writes the object: its ranges are dropped on each write"
+        }
+    };
+    // python: a function kept by its arguments while nothing writes; a
+    // dictionary the write empties of the key when something does
+    let py = match (range, rewritten) {
+        (false, false) => {
+            "from functools import lru_cache\n@lru_cache(maxsize=1024)\ndef read(key):\n    return s3.get_object(Bucket=b, Key=key)[\"Body\"].read()"
+        }
+        (true, false) => {
+            "from functools import lru_cache\n@lru_cache(maxsize=1024)\ndef read_range(key, start, end):\n    return s3.get_object(Bucket=b, Key=key, Range=f\"bytes={start}-{end}\")[\"Body\"].read()"
+        }
+        (false, true) => {
+            r##"kept = {}
+def read(key):
+    if key not in kept:
+        kept[key] = s3.get_object(Bucket=b, Key=key)["Body"].read()
+    return kept[key]
+def write(key, body):
+    s3.put_object(Bucket=b, Key=key, Body=body)
+    kept.pop(key, None)  # after a delete or a copy onto it too"##
+        }
+        (true, true) => {
+            r##"kept = {}
+def read_range(key, start, end):
+    if (key, start, end) not in kept:
+        kept[key, start, end] = s3.get_object(Bucket=b, Key=key, Range=f"bytes={start}-{end}")["Body"].read()
+    return kept[key, start, end]
+def write(key, body):
+    s3.put_object(Bucket=b, Key=key, Body=body)
+    for at in [at for at in kept if at[0] == key]:  # after a delete or a copy onto it too
+        del kept[at]"##
+        }
+    };
+    // (java, go, js, the AWS SDK for Rust): the read, and the write that
+    // drops what was kept of the key
+    let (java, go, js, rust) = if range {
         (
-            "each range once and keep it (a Parquet footer, an index)",
-            "def read_range(key, start, end):\n    return s3.get_object(Bucket=b, Key=key, Range=f\"bytes={start}-{end}\")[\"Body\"].read()",
-            "byte[] read(String k, String range) { return cache.computeIfAbsent(k + range, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(k).range(range)).asByteArray()); }",
-            "k + rng",
-            "const read = (k, Range) => cache.get(k + Range) ?? cache.set(k + Range, fetchRange(k, Range)).get(k + Range);",
+            r##"Map<String, byte[]> cache = new ConcurrentHashMap<>();
+byte[] read(String key, String range) {
+    return cache.computeIfAbsent(key + "\n" + range, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(key).range(range)).asByteArray());
+}"##,
+            r##"var cache sync.Map // of the package: kept from one call to the next
+
+func readRange(ctx context.Context, k, rng string) ([]byte, error) {
+    if v, ok := cache.Load(k + "\n" + rng); ok {
+        return v.([]byte), nil
+    }
+    out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k, Range: &rng})
+    if err != nil {
+        return nil, err
+    }
+    defer out.Body.Close()
+    body, err := io.ReadAll(out.Body)
+    if err != nil {
+        return nil, err
+    }
+    cache.Store(k+"\n"+rng, body)
+    return body, nil
+}"##,
+            r##"const cache = new Map();
+async function readRange(k, Range) {
+  const at = `${k}\n${Range}`;
+  if (!cache.has(at)) {
+    const obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range }));
+    cache.set(at, await obj.Body.transformToByteArray());
+  }
+  return cache.get(at);
+}"##,
+            r##"async fn read_range(s3: &Client, cache: &mut HashMap<(String, String), Bytes>, b: &str, k: &str, range: &str) -> Result<Bytes, Box<dyn Error + Send + Sync>> {
+    let at = (k.to_owned(), range.to_owned());
+    if let Some(body) = cache.get(&at) {
+        return Ok(body.clone());
+    }
+    let body = s3.get_object().bucket(b).key(k).range(range).send().await?.body.collect().await?.into_bytes();
+    cache.insert(at, body.clone());
+    Ok(body)
+}"##,
         )
     } else {
         (
-            "it once, keep it for the run",
-            "def read(key):\n    return s3.get_object(Bucket=b, Key=key)[\"Body\"].read()",
-            "byte[] read(String key) { return cache.computeIfAbsent(key, k -> s3.getObjectAsBytes(r -> r.bucket(b).key(k)).asByteArray()); }",
-            "k",
-            "const read = (k) => cache.get(k) ?? cache.set(k, fetchObject(k)).get(k);",
+            r##"Map<String, byte[]> cache = new ConcurrentHashMap<>();
+byte[] read(String key) {
+    return cache.computeIfAbsent(key, x -> s3.getObjectAsBytes(r -> r.bucket(b).key(key)).asByteArray());
+}"##,
+            r##"var cache sync.Map // of the package: kept from one call to the next
+
+func read(ctx context.Context, k string) ([]byte, error) {
+    if v, ok := cache.Load(k); ok {
+        return v.([]byte), nil
+    }
+    out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})
+    if err != nil {
+        return nil, err
+    }
+    defer out.Body.Close()
+    body, err := io.ReadAll(out.Body)
+    if err != nil {
+        return nil, err
+    }
+    cache.Store(k, body)
+    return body, nil
+}"##,
+            r##"const cache = new Map();
+async function read(k) {
+  if (!cache.has(k)) {
+    const obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));
+    cache.set(k, await obj.Body.transformToByteArray());
+  }
+  return cache.get(k);
+}"##,
+            r##"async fn read(s3: &Client, cache: &mut HashMap<String, Bytes>, b: &str, k: &str) -> Result<Bytes, Box<dyn Error + Send + Sync>> {
+    if let Some(body) = cache.get(k) {
+        return Ok(body.clone());
+    }
+    let body = s3.get_object().bucket(b).key(k).send().await?.body.collect().await?.into_bytes();
+    cache.insert(k.to_owned(), body.clone());
+    Ok(body)
+}"##,
         )
     };
+    let (java_w, go_w, js_w, rust_w) = match (rewritten, range) {
+        (false, _) => ("", "", "", ""),
+        (true, false) => (
+            r##"
+void write(String key, byte[] body) {
+    s3.putObject(r -> r.bucket(b).key(key), RequestBody.fromBytes(body));
+    cache.remove(key); // after a delete or a copy onto it too
+}"##,
+            r##"
+
+func write(ctx context.Context, k string, body []byte) error {
+    _, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(body)})
+    cache.Delete(k) // after a delete or a copy onto it too
+    return err
+}"##,
+            r##"
+async function write(k, Body) {
+  await s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body }));
+  cache.delete(k); // after a delete or a copy onto it too
+}"##,
+            r##"
+async fn write(s3: &Client, cache: &mut HashMap<String, Bytes>, b: &str, k: &str, body: Bytes) -> Result<(), Box<dyn Error + Send + Sync>> {
+    s3.put_object().bucket(b).key(k).body(body.into()).send().await?;
+    cache.remove(k); // after a delete or a copy onto it too
+    Ok(())
+}"##,
+        ),
+        (true, true) => (
+            r##"
+void write(String key, byte[] body) {
+    s3.putObject(r -> r.bucket(b).key(key), RequestBody.fromBytes(body));
+    cache.keySet().removeIf(at -> at.startsWith(key + "\n")); // after a delete or a copy onto it too
+}"##,
+            r##"
+
+func write(ctx context.Context, k string, body []byte) error {
+    _, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(body)})
+    cache.Range(func(at, _ any) bool { // after a delete or a copy onto it too
+        if strings.HasPrefix(at.(string), k+"\n") {
+            cache.Delete(at)
+        }
+        return true
+    })
+    return err
+}"##,
+            r##"
+async function write(k, Body) {
+  await s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body }));
+  for (const at of [...cache.keys()]) if (at.startsWith(`${k}\n`)) cache.delete(at); // after a delete or a copy onto it too
+}"##,
+            r##"
+async fn write(s3: &Client, cache: &mut HashMap<(String, String), Bytes>, b: &str, k: &str, body: Bytes) -> Result<(), Box<dyn Error + Send + Sync>> {
+    s3.put_object().bucket(b).key(k).body(body.into()).send().await?;
+    cache.retain(|at, _| at.0 != k); // after a delete or a copy onto it too
+    Ok(())
+}"##,
+        ),
+    };
     vec![
-        owned(
-            "python",
-            format!(
-                "# read {what}\nfrom functools import lru_cache\n@lru_cache(maxsize=1024)\n{py}"
-            ),
-        ),
-        owned(
-            "java",
-            format!(
-                "// read {what}\nMap<String, byte[]> cache = new ConcurrentHashMap<>();\n{java}"
-            ),
-        ),
-        owned(
-            "go",
-            format!(
-                "// read {what}\nvar cache sync.Map\nif v, ok := cache.Load({go}); ok {{ return v.([]byte), nil }}"
-            ),
-        ),
-        owned(
-            "js",
-            format!("// read {what}\nconst cache = new Map();\n{js}"),
-        ),
+        owned("python", format!("# {what}\n{py}")),
+        owned("java", format!("// {what}\n{java}{java_w}")),
+        owned("go", format!("// {what}\n{go}{go_w}")),
+        owned("js", format!("// {what}\n{js}{js_w}")),
+        owned(RUST_AWS, format!("// {what}\n{rust}{rust_w}")),
     ]
 }
 
 /// Small objects packed many to one: written so (`write`), or read so; as
 /// lines of records (JSONL; Parquet for columns), or as tar shards for media.
 fn packed(write: bool, media: bool) -> Vec<Fix> {
-    let ext = if media { "tar" } else { "jsonl" };
     let head = match (write, media) {
         (true, false) => {
             "many records in one object (JSONL, or Parquet for columns), not one object each"
@@ -414,155 +642,173 @@ fn packed(write: bool, media: bool) -> Vec<Fix> {
         (false, false) => "read a batch of records at a time (JSONL), not one object each",
         (false, true) => "read a tar shard of files at a time, not one object each",
     };
-    // (python, java, go, js): how a batch is made, or read
-    let (py, java, go, js) = match (write, media) {
+    // (python, java, go, js, the AWS SDK for Rust): the whole of each, its
+    // key's extension filled in below
+    let (py, java, go, js, rust): (&str, &str, &str, &str, &str) = match (write, media) {
         (true, false) => (
-            "body = \"\\n\".join(json.dumps(e) for e in batch).encode()",
-            "String body = batch.stream().map(Object::toString).collect(Collectors.joining(\"\\n\"));",
-            "body := bytes.Join(batch, []byte(\"\\n\"))",
-            "const Body = batch.map((e) => JSON.stringify(e)).join(\"\\n\");",
+            r##"import json
+body = "\n".join(json.dumps(e) for e in batch).encode()
+s3.put_object(Bucket=b, Key=f"{prefix}{batch_id}.jsonl", Body=body)"##,
+            r##"String body = batch.stream().map(Object::toString).collect(Collectors.joining("\n"));
+s3.putObject(r -> r.bucket(b).key(prefix + batchId + ".jsonl"), RequestBody.fromString(body));"##,
+            r##"body := bytes.Join(batch, []byte("\n"))
+_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + ".jsonl"), Body: bytes.NewReader(body)})"##,
+            r##"const Body = batch.map((e) => JSON.stringify(e)).join("\n");
+await s3.send(new PutObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.jsonl`, Body }));"##,
+            r##"let body = batch.join("\n");
+s3.put_object().bucket(b).key(format!("{prefix}{batch_id}.jsonl")).body(body.into_bytes().into()).send().await?;"##,
         ),
         (true, true) => (
-            "body = io.BytesIO()\nwith tarfile.open(fileobj=body, mode=\"w\") as tar:\n    for name, path in batch: tar.add(path, arcname=name)\nbody = body.getvalue()",
-            "byte[] body = tarOf(batch); // TarArchiveOutputStream over a ByteArrayOutputStream",
-            "var body bytes.Buffer\ntw := tar.NewWriter(&body) // a header and the bytes of each file, then tw.Close()",
-            "const Body = tarOf(batch); // tar-stream: one entry a file",
-        ),
-        (false, false) => (
-            "records = [json.loads(line) for line in body.iter_lines()]",
-            "List<String> records = new String(body.readAllBytes()).lines().toList();",
-            "sc := bufio.NewScanner(out.Body) // a record a line",
-            "const records = (await Body.transformToString()).split(\"\\n\").map(JSON.parse);",
-        ),
-        (false, true) => (
-            "tar = tarfile.open(fileobj=body, mode=\"r|\")  # each member a file",
-            "TarArchiveInputStream tar = new TarArchiveInputStream(body); // each entry a file",
-            "tr := tar.NewReader(out.Body) // each entry a file",
-            "const entries = untar(Body); // tar-stream: each entry a file",
-        ),
-    };
-    if write {
-        vec![
-            owned(
-                "python",
-                format!(
-                    "# {head}\n{py}\ns3.put_object(Bucket=b, Key=f\"{{prefix}}{{batch_id}}.{ext}\", Body=body)"
-                ),
-            ),
-            owned(
-                "java",
-                format!(
-                    "// {head}\n{java}\ns3.putObject(r -> r.bucket(b).key(prefix + batchId + \".{ext}\"), RequestBody.fromBytes(body));"
-                ),
-            ),
-            owned(
-                "go",
-                format!(
-                    "// {head}\n{go}\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{{Bucket: &b, Key: aws.String(prefix + batchID + \".{ext}\"), Body: bytes.NewReader(body)}})"
-                ),
-            ),
-            owned(
-                "js",
-                format!(
-                    "// {head}\n{js}\nawait s3.send(new PutObjectCommand({{ Bucket: b, Key: `${{prefix}}${{batchId}}.{ext}`, Body }}));"
-                ),
-            ),
-        ]
-    } else {
-        vec![
-            owned(
-                "python",
-                format!(
-                    "# {head}\nbody = s3.get_object(Bucket=b, Key=f\"{{prefix}}{{batch_id}}.{ext}\")[\"Body\"]\n{py}"
-                ),
-            ),
-            owned(
-                "java",
-                format!(
-                    "// {head}\nResponseInputStream<GetObjectResponse> body = s3.getObject(r -> r.bucket(b).key(prefix + batchId + \".{ext}\"));\n{java}"
-                ),
-            ),
-            owned(
-                "go",
-                format!(
-                    "// {head}\nout, err := s3c.GetObject(ctx, &s3.GetObjectInput{{Bucket: &b, Key: aws.String(prefix + batchID + \".{ext}\")}})\n{go}"
-                ),
-            ),
-            owned(
-                "js",
-                format!(
-                    "// {head}\nconst {{ Body }} = await s3.send(new GetObjectCommand({{ Bucket: b, Key: `${{prefix}}${{batchId}}.{ext}` }}));\n{js}"
-                ),
-            ),
-        ]
+            r##"import io, tarfile
+body = io.BytesIO()
+with tarfile.open(fileobj=body, mode="w") as tar:
+    for name, path in files:
+        tar.add(path, arcname=name)
+s3.put_object(Bucket=b, Key=f"{prefix}{batch_id}.tar", Body=body.getvalue())"##,
+            r##"byte[] body = tarOf(files); // TarArchiveOutputStream over a ByteArrayOutputStream
+s3.putObject(r -> r.bucket(b).key(prefix + batchId + ".tar"), RequestBody.fromBytes(body));"##,
+            r##"var body bytes.Buffer
+tw := tar.NewWriter(&body)
+for name, data := range files { // a header and the bytes of each file
+    if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))}); err != nil {
+        return err
+    }
+    if _, err := tw.Write(data); err != nil {
+        return err
     }
 }
+if err := tw.Close(); err != nil {
+    return err
+}
+_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + ".tar"), Body: bytes.NewReader(body.Bytes())})"##,
+            r##"const Body = tarOf(files); // tar-stream: one entry a file
+await s3.send(new PutObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.tar`, Body }));"##,
+            "",
+        ),
+        (false, false) => (
+            r##"import json
+body = s3.get_object(Bucket=b, Key=f"{prefix}{batch_id}.jsonl")["Body"]
+records = [json.loads(line) for line in body.iter_lines() if line]"##,
+            r##"ResponseInputStream<GetObjectResponse> body = s3.getObject(r -> r.bucket(b).key(prefix + batchId + ".jsonl"));
+List<String> records = new String(body.readAllBytes(), StandardCharsets.UTF_8).lines().filter(line -> !line.isEmpty()).toList();"##,
+            r##"out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + ".jsonl")})
+if err != nil {
+    return err
+}
+defer out.Body.Close()
+var records [][]byte
+sc := bufio.NewScanner(out.Body) // a record a line (one over 64 KiB: sc.Buffer first)
+for sc.Scan() {
+    if len(sc.Bytes()) > 0 {
+        records = append(records, bytes.Clone(sc.Bytes()))
+    }
+}
+if err := sc.Err(); err != nil {
+    return err
+}"##,
+            r##"const { Body } = await s3.send(new GetObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.jsonl` }));
+const records = (await Body.transformToString()).split("\n").filter(Boolean).map((line) => JSON.parse(line));"##,
+            r##"let body = s3.get_object().bucket(b).key(format!("{prefix}{batch_id}.jsonl")).send().await?.body.collect().await?.into_bytes();
+let records: Vec<&[u8]> = body.split(|c| *c == b'\n').filter(|line| !line.is_empty()).collect();"##,
+        ),
+        (false, true) => (
+            r##"import tarfile
+body = s3.get_object(Bucket=b, Key=f"{prefix}{batch_id}.tar")["Body"]
+tar = tarfile.open(fileobj=body, mode="r|")  # each member a file"##,
+            r##"ResponseInputStream<GetObjectResponse> body = s3.getObject(r -> r.bucket(b).key(prefix + batchId + ".tar"));
+TarArchiveInputStream tar = new TarArchiveInputStream(body); // each entry a file"##,
+            r##"out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: aws.String(prefix + batchID + ".tar")})
+if err != nil {
+    return err
+}
+defer out.Body.Close()
+tr := tar.NewReader(out.Body) // each entry a file"##,
+            r##"const { Body } = await s3.send(new GetObjectCommand({ Bucket: b, Key: `${prefix}${batchId}.tar` }));
+const entries = untar(Body); // tar-stream: each entry a file"##,
+            "",
+        ),
+    };
+    [
+        ("python", "#", py),
+        ("java", "//", java),
+        ("go", "//", go),
+        ("js", "//", js),
+        (RUST_AWS, "//", rust),
+    ]
+    .into_iter()
+    .filter(|(_, _, code)| !code.is_empty())
+    .map(|(sdk, comment, code)| owned(sdk, format!("{comment} {head}\n{code}")))
+    .collect()
+}
+
+/// The operations requests one after another are sent at once as
+/// ([`operation`], [`at_once`]).
+const OPS: [&str; 6] = ["GET", "PUT", "HEAD", "DELETE", "LIST", "PART"];
 
 /// Requests sent eight at once instead of one after another, as the
-/// operation they are ([`operation`]): of each key, each prefix listed,
-/// each part of an upload.
+/// operation they are ([`operation`]): of each key, each prefix listed (every
+/// page of it), each part of an upload (numbered from 1, its ETag kept with
+/// its number for the completion, in order).
 fn at_once(op: &str) -> Vec<Fix> {
+    let head = "eight at once instead of one after another";
+    if op == "PART" {
+        return parts_at_once(head);
+    }
     // what they go over
-    let each = match op {
-        "LIST" => "prefixes",
-        "PART" => "numbers",
-        _ => "keys",
-    };
-    // (python, java's async client, go, js, object_store): one request
-    let (py, java, go, js, rust) = match op {
+    let each = if op == "LIST" { "prefixes" } else { "keys" };
+    // (python, java's async client, go, js, object_store, the AWS SDK for
+    // Rust): one request
+    let (py, java, go, js, rust, aws) = match op {
         "LIST" => (
-            "s3.list_objects_v2(Bucket=b, Prefix=k)",
-            "s3Async.listObjectsV2(r -> r.bucket(b).prefix(k))",
-            "_, err := s3c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &k})\n        return err",
-            "ListObjectsV2Command({ Bucket: b, Prefix: k })",
+            "[o for page in s3.get_paginator(\"list_objects_v2\").paginate(Bucket=b, Prefix=k) for o in page.get(\"Contents\", [])]",
+            "s3Async.listObjectsV2Paginator(r -> r.bucket(b).prefix(k)).contents().subscribe(found::add)",
+            "for p := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{Bucket: &b, Prefix: &k}); p.HasMorePages(); {\n            page, err := p.NextPage(gctx)\n            if err != nil {\n                return err\n            }\n            mu.Lock()\n            found = append(found, page.Contents...)\n            mu.Unlock()\n        }\n        return nil",
+            "async () => {\n  const found = [];\n  for await (const page of paginateListObjectsV2({ client: s3 }, { Bucket: b, Prefix: k })) found.push(...(page.Contents ?? []));\n  return found;\n}",
             "store.list_with_delimiter(Some(&p)).await",
-        ),
-        "PART" => (
-            "s3.upload_part(Bucket=b, Key=key, UploadId=upload_id, PartNumber=k, Body=bodies[k])",
-            "s3Async.uploadPart(r -> r.bucket(b).key(key).uploadId(uploadId).partNumber(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
-            "_, err := s3c.UploadPart(ctx, &s3.UploadPartInput{Bucket: &b, Key: &key, UploadId: &uploadID, PartNumber: aws.Int32(k), Body: bytes.NewReader(bodies[k])})\n        return err",
-            "UploadPartCommand({ Bucket: b, Key: key, UploadId: uploadId, PartNumber: k, Body: bodies[k] })",
-            "",
+            "s3.list_objects_v2().bucket(b).prefix(k).into_paginator().send().try_collect()",
         ),
         "PUT" => (
             "s3.put_object(Bucket=b, Key=k, Body=bodies[k])",
             "s3Async.putObject(r -> r.bucket(b).key(k), AsyncRequestBody.fromBytes(bodies.get(k)))",
-            "_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})\n        return err",
-            "PutObjectCommand({ Bucket: b, Key: k, Body: bodies[k] })",
-            "store.put(&p, payloads[&p].clone()).await",
+            "_, err := s3c.PutObject(gctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: bytes.NewReader(bodies[k])})\n        return err",
+            "() => s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body: bodies[k] }))",
+            "store.put(&p, payloads[&p].clone().into()).await",
+            "s3.put_object().bucket(b).body(bodies[&k].clone().into()).key(k).send()",
         ),
         "HEAD" => (
             "s3.head_object(Bucket=b, Key=k)",
             "s3Async.headObject(r -> r.bucket(b).key(k))",
-            "_, err := s3c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})\n        return err",
-            "HeadObjectCommand({ Bucket: b, Key: k })",
+            "_, err := s3c.HeadObject(gctx, &s3.HeadObjectInput{Bucket: &b, Key: &k})\n        return err",
+            "() => s3.send(new HeadObjectCommand({ Bucket: b, Key: k }))",
             "store.head(&p).await",
+            "s3.head_object().bucket(b).key(k).send()",
         ),
         "DELETE" => (
             "s3.delete_object(Bucket=b, Key=k)",
             "s3Async.deleteObject(r -> r.bucket(b).key(k))",
-            "_, err := s3c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})\n        return err",
-            "DeleteObjectCommand({ Bucket: b, Key: k })",
+            "_, err := s3c.DeleteObject(gctx, &s3.DeleteObjectInput{Bucket: &b, Key: &k})\n        return err",
+            "() => s3.send(new DeleteObjectCommand({ Bucket: b, Key: k }))",
             "store.delete(&p).await",
+            "s3.delete_object().bucket(b).key(k).send()",
         ),
         _ => (
             "s3.get_object(Bucket=b, Key=k)[\"Body\"].read()",
             "s3Async.getObject(r -> r.bucket(b).key(k), AsyncResponseTransformer.toBytes())",
-            "out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n        if err != nil { return err }\n        defer out.Body.Close()\n        _, err = io.ReadAll(out.Body)\n        return err",
-            "GetObjectCommand({ Bucket: b, Key: k })",
+            "out, err := s3c.GetObject(gctx, &s3.GetObjectInput{Bucket: &b, Key: &k})\n        if err != nil {\n            return err\n        }\n        defer out.Body.Close()\n        _, err = io.ReadAll(out.Body)\n        return err",
+            // (a body not read keeps its connection: each is read here)
+            "async () => (await s3.send(new GetObjectCommand({ Bucket: b, Key: k }))).Body.transformToByteArray()",
             "store.get(&p).await?.bytes().await",
+            "async move { Ok::<_, Box<dyn Error + Send + Sync>>(s3.get_object().bucket(b).key(k).send().await?.body.collect().await?.into_bytes()) }",
         ),
     };
-    let head = "eight at once instead of one after another";
-    let rust = if op == "PART" {
-        // (object_store writes an upload's parts itself, as many at once as it is let)
-        format!(
-            "// {head} (object_store)\nlet mut w = object_store::WriteMultipart::new(store.put_multipart(&path).await?);\nfor part in bodies {{\n    w.wait_for_capacity(8).await?;\n    w.write(&part);\n}}\nw.finish().await?;"
+    // what a listing's pages are gathered in, declared before the requests
+    let (java_found, go_found) = if op == "LIST" {
+        (
+            "Queue<S3Object> found = new ConcurrentLinkedQueue<>();\n",
+            "var mu sync.Mutex\nvar found []types.Object\n",
         )
     } else {
-        format!(
-            "// {head} (object_store)\nlet results: Vec<_> = futures::stream::iter(paths).map(|p| async move {{ {rust} }}).buffered(8).try_collect().await?;"
-        )
+        ("", "")
     };
     vec![
         owned(
@@ -574,24 +820,135 @@ fn at_once(op: &str) -> Vec<Fix> {
         owned(
             "java",
             format!(
-                "// {head}\nvar all = {each}.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
+                "// at once instead of one after another (as many as the async client's maxConcurrency)\n{java_found}var all = {each}.stream().map(k -> {java}).toList();\nCompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();"
             ),
         ),
         owned(
             "go",
             format!(
-                "// {head}\ng, ctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range {each} {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nerr := g.Wait()"
+                "// {head} (Go 1.22+: k is each turn's own)\n{go_found}g, gctx := errgroup.WithContext(ctx)\ng.SetLimit(8)\nfor _, k := range {each} {{\n    g.Go(func() error {{\n        {go}\n    }})\n}}\nif err := g.Wait(); err != nil {{\n    return err\n}}"
             ),
         ),
         owned(
             "js",
             format!(
-                "// {head}\nconst limit = pLimit(8);\nconst results = await Promise.all({each}.map((k) => limit(() => s3.send(new {js}))));"
+                "// {head} (pLimit: npm's p-limit)\nconst limit = pLimit(8);\nconst results = await Promise.all({each}.map((k) => limit({js})));"
             ),
         ),
-        owned("rust", rust),
+        owned(
+            "rust",
+            format!(
+                "// {head} (object_store)\nlet store = &store;\nlet results: Vec<_> = futures::stream::iter(paths).map(|p| async move {{ {rust} }}).buffered(8).try_collect().await?;"
+            ),
+        ),
+        owned(
+            RUST_AWS,
+            format!(
+                "// {head}\nlet results: Vec<_> = futures::stream::iter({each}).map(|k| {aws}).buffered(8).try_collect().await?;"
+            ),
+        ),
     ]
 }
+
+/// An upload's parts sent eight at once ([`at_once`]): each numbered from 1
+/// (S3's part numbers; the chunks from 0), and each one's ETag kept with its
+/// number, in the parts' order, for the completion, which names them all.
+fn parts_at_once(head: &str) -> Vec<Fix> {
+    let with = "each part's ETag kept with its number, in order, for the completion";
+    vec![
+        owned(
+            "python",
+            format!(
+                r##"# {head}; {with}
+from concurrent.futures import ThreadPoolExecutor
+def upload(n):  # part numbers start at 1
+    out = s3.upload_part(Bucket=b, Key=key, UploadId=upload_id, PartNumber=n, Body=chunks[n - 1])
+    return {{"PartNumber": n, "ETag": out["ETag"]}}
+with ThreadPoolExecutor(8) as pool:
+    parts = list(pool.map(upload, range(1, len(chunks) + 1)))
+s3.complete_multipart_upload(Bucket=b, Key=key, UploadId=upload_id, MultipartUpload={{"Parts": parts}})"##
+            ),
+        ),
+        owned(
+            "java",
+            format!(
+                r##"// at once instead of one after another (as many as the async client's maxConcurrency); {with}
+List<CompletableFuture<CompletedPart>> all = new ArrayList<>();
+for (int i = 0; i < chunks.size(); i++) {{
+    int n = i + 1; // part numbers start at 1
+    all.add(s3Async.uploadPart(r -> r.bucket(b).key(key).uploadId(uploadId).partNumber(n), AsyncRequestBody.fromBytes(chunks.get(n - 1)))
+        .thenApply(out -> CompletedPart.builder().partNumber(n).eTag(out.eTag()).build()));
+}}
+List<CompletedPart> parts = all.stream().map(CompletableFuture::join).toList();
+s3Async.completeMultipartUpload(r -> r.bucket(b).key(key).uploadId(uploadId).multipartUpload(m -> m.parts(parts))).join();"##
+            ),
+        ),
+        owned(
+            "go",
+            format!(
+                r##"// {head}; {with} (Go 1.22+: i is each turn's own)
+parts := make([]types.CompletedPart, len(chunks))
+g, gctx := errgroup.WithContext(ctx)
+g.SetLimit(8)
+for i, chunk := range chunks {{
+    g.Go(func() error {{
+        n := int32(i + 1) // part numbers start at 1
+        out, err := s3c.UploadPart(gctx, &s3.UploadPartInput{{Bucket: &b, Key: &key, UploadId: &uploadID, PartNumber: &n, Body: bytes.NewReader(chunk)}})
+        if err != nil {{
+            return err
+        }}
+        parts[i] = types.CompletedPart{{ETag: out.ETag, PartNumber: &n}}
+        return nil
+    }})
+}}
+if err := g.Wait(); err != nil {{
+    return err
+}}
+_, err := s3c.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{{Bucket: &b, Key: &key, UploadId: &uploadID, MultipartUpload: &types.CompletedMultipartUpload{{Parts: parts}}}})"##
+            ),
+        ),
+        owned(
+            "js",
+            format!(
+                r##"// {head} (pLimit: npm's p-limit); {with}
+const limit = pLimit(8);
+const parts = await Promise.all(chunks.map((Body, i) => limit(async () => {{
+  const PartNumber = i + 1; // part numbers start at 1
+  const {{ ETag }} = await s3.send(new UploadPartCommand({{ Bucket: b, Key: key, UploadId: uploadId, PartNumber, Body }}));
+  return {{ PartNumber, ETag }};
+}})));
+await s3.send(new CompleteMultipartUploadCommand({{ Bucket: b, Key: key, UploadId: uploadId, MultipartUpload: {{ Parts: parts }} }}));"##
+            ),
+        ),
+        // (object_store numbers an upload's parts and completes it itself)
+        owned(
+            "rust",
+            format!(
+                "// {head} (object_store)\nlet mut w = object_store::WriteMultipart::new(store.put_multipart(&path).await?);\nfor chunk in chunks {{\n    w.wait_for_capacity(8).await?;\n    w.write(&chunk);\n}}\nw.finish().await?;"
+            ),
+        ),
+        owned(
+            RUST_AWS,
+            format!(
+                r##"// {head}; {with}
+let parts: Vec<CompletedPart> = futures::stream::iter(chunks.into_iter().enumerate())
+    .map(|(i, chunk)| async move {{
+        let n = i as i32 + 1; // part numbers start at 1
+        let out = s3.upload_part().bucket(b).key(key).upload_id(upload_id).part_number(n).body(chunk.into()).send().await?;
+        Ok::<_, aws_sdk_s3::Error>(CompletedPart::builder().part_number(n).set_e_tag(out.e_tag).build())
+    }})
+    .buffered(8)
+    .try_collect()
+    .await?;
+s3.complete_multipart_upload().bucket(b).key(key).upload_id(upload_id).multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build()).send().await?;"##
+            ),
+        ),
+    ]
+}
+
+/// The AWS SDK for Rust (`aws-sdk-s3`), as [`Fix::sdk`] names it: `rust` is
+/// object_store, another API.
+pub const RUST_AWS: &str = "rust-aws";
 
 /// The language of an SDK as [`sonde_proxy::callers::sdk`] names it (`boto3
 /// 1.44`): what picks the fix shown for it. None for the AWS CLI: botocore
@@ -604,8 +961,63 @@ pub fn language(sdk: &str) -> Option<&'static str> {
         "aws-sdk-go" | "aws-sdk-go-v2" => "go",
         "aws-sdk-js" => "js",
         "object_store" => "rust",
+        "aws-sdk-rust" => RUST_AWS,
         _ => return None,
     })
+}
+
+/// One piece of fix code sonde can print, named: what a test of the code
+/// itself goes over ([`catalogue`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snippet {
+    /// The finding's key, with what varies it in brackets, and the SDK:
+    /// `obs.serial[PART]/go`, `obs.hot[rewritten]/python`.
+    pub id: String,
+    pub fix: Fix,
+}
+
+/// Every piece of fix code this module and a trial's advice can print, for
+/// every finding and every SDK: each phrase's fixes ([`for_key`]), in each
+/// form its requests give them ([`for_finding`]: what is packed, the
+/// operation sent at once, a key the program writes too), and each advice
+/// of a trial ([`crate::trial::advice_fixes`]). Made from the phrases
+/// themselves, so a fix added to any of them is in it. An engine's setting
+/// ([`crate::engines`]) is made from the run's own requests and is not.
+pub fn catalogue() -> Vec<Snippet> {
+    let mut out = Vec::new();
+    let mut add = |name: String, fixes: Vec<Fix>| {
+        out.extend(fixes.into_iter().map(|fix| Snippet {
+            id: format!("{name}/{}", fix.sdk),
+            fix,
+        }));
+    };
+    let mut keys: Vec<&str> = sonde_fmt::words::phrase_keys().collect();
+    keys.sort_unstable();
+    for key in keys {
+        match key {
+            "obs.hot" | "obs.rangeagain" => {
+                add(key.into(), cached(key == "obs.rangeagain", false));
+                add(
+                    format!("{key}[rewritten]"),
+                    cached(key == "obs.rangeagain", true),
+                );
+            }
+            "obs.small" | "obs.smallreads" => {
+                add(format!("{key}[records]"), packed(key == "obs.small", false));
+                add(format!("{key}[media]"), packed(key == "obs.small", true));
+            }
+            "obs.serial" => {
+                for op in OPS {
+                    add(format!("{key}[{op}]"), at_once(op));
+                }
+            }
+            _ if key.starts_with("trial.advice.") => {
+                add(key.into(), crate::trial::advice_fixes(key))
+            }
+            _ => add(key.into(), for_key(key)),
+        }
+    }
+    out
 }
 
 /// Of a finding's fixes, the one for the SDK that sent its requests: an
@@ -1372,6 +1784,30 @@ mod tests {
         // object_store, Rust's: its own calls (an engine on top of it, SlateDB
         // or Lance, gets the engine's setting instead: tests/engines.rs)
         assert_eq!(pick(Some("object_store 0.14")), Some("rust"));
+        // the AWS SDK for Rust is another API than object_store: its own
+        // code, never object_store's (32.0 showed it none)
+        assert_eq!(pick(Some("aws-sdk-rust 1.3")), Some(RUST_AWS));
+        let shown = for_sdk(&head, Some("aws-sdk-rust 1.3")).unwrap();
+        assert!(shown.code.contains("s3.get_object().bucket(b).key(k)"));
+        assert!(!shown.code.contains("store."));
+        assert!(
+            retries_on(language("aws-sdk-rust 1.3").unwrap())
+                .is_some_and(|s| s.contains("RetryConfig::standard()"))
+        );
+        // every finding with code for the four SDKs has it for Rust's too
+        for s in catalogue().iter().filter(|s| s.fix.sdk == "go") {
+            let rust = s.id.replace("/go", "/rust-aws");
+            let none = [
+                "obs.small[media]",
+                "obs.smallreads[media]",
+                "obs.small.parts",
+            ];
+            assert_eq!(
+                catalogue().iter().any(|x| x.id == rust),
+                !none.iter().any(|k| s.id.starts_with(k)),
+                "{rust}"
+            );
+        }
         // an SDK with no fix in its language, or none detected: none shown
         assert_eq!(pick(Some("aws-sdk-cpp 1.11")), None);
         assert_eq!(pick(None), None);
@@ -1416,6 +1852,7 @@ mod tests {
         // eight GETs at once: each body read and closed (Go's connection is
         // kept only so)
         assert!(at_once("GET")[2].code.contains("defer out.Body.Close()"));
+        assert!(at_once("GET")[3].code.contains("transformToByteArray"));
         // listings one after another are listed at once, never read as GETs
         // (32.0's eval); an upload's parts are sent at once
         let r = |kind: &str, method: &str| Record {
@@ -1424,21 +1861,17 @@ mod tests {
             ..Default::default()
         };
         let lists = [r("ListObjectsV2", "GET"), r("ListObjectsV2", "GET")];
-        let fixes = for_finding("obs.serial", &lists.iter().collect::<Vec<_>>());
+        let fixes = for_finding("obs.serial", &lists.iter().collect::<Vec<_>>(), false);
         assert!(fixes.iter().all(|f| !f.code.contains("GetObject")
             && !f.code.contains("get_object")
             && !f.code.contains("store.get")));
-        assert!(
-            fixes[0]
-                .code
-                .contains("list_objects_v2(Bucket=b, Prefix=k)")
-        );
+        assert!(fixes[0].code.contains("paginate(Bucket=b, Prefix=k)"));
         let parts = [
             r("UploadPart", "PUT"),
             r("UploadPart", "PUT"),
             r("CreateMultipartUpload", "POST"),
         ];
-        let fixes = for_finding("obs.serial", &parts.iter().collect::<Vec<_>>());
+        let fixes = for_finding("obs.serial", &parts.iter().collect::<Vec<_>>(), false);
         assert!(
             fixes[0].code.contains("s3.upload_part("),
             "{}",
