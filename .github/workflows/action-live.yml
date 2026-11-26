@@ -64,7 +64,7 @@ jobs:
         run: |
           # (a run by hand, on any branch, takes the schedule's on main too)
           GITHUB_EVENT_NAME=schedule GITHUB_REF_NAME=main GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
-          base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/baseline.out")
+          base=$(bash action/read-output.sh baseline "$RUNNER_TEMP/baseline.out")
           case "$base" in "" | auto) echo "::error::no baseline: no scheduled run of this workflow on main kept sonde-live"; exit 1 ;; esac
           echo "BASELINE=$base" >> "$GITHUB_ENV"
       - name: A pull request with no run kept, checked against its merge-base recorded in the job
@@ -79,7 +79,7 @@ jobs:
           mkdir -p "$mb"
           GITHUB_OUTPUT="$out" RUNNER_TEMP="$mb" GITHUB_BASE_REF=main SONDE_ARTIFACT=sonde-never-kept \
             SONDE_RUN="aws s3 ls s3://demo" SONDE_RUN_ARGS=--demo bash action/sonde-action.sh baseline
-          base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/merge-base.out")
+          base=$(bash action/read-output.sh baseline "$RUNNER_TEMP/merge-base.out")
           [ "$base" = "$RUNNER_TEMP/mb/sonde/merge-base-run/merge-base.sonde" ] || { echo "::error::no merge-base recorded (baseline: $base)"; exit 1; }
           # the same code twice: within it (a demo run's waiting is never held)
           sonde check "$RUN" --baseline "$base" -f markdown >"$RUNNER_TEMP/merge-base.md" || { cat "$RUNNER_TEMP/merge-base.md"; exit 1; }
@@ -102,7 +102,7 @@ jobs:
             issue="${url##*/}"
           fi
           GITHUB_OUTPUT="$RUNNER_TEMP/comment.out" SONDE_BASELINE="$BASELINE" SONDE_PR="$issue" bash action/sonde-action.sh comment
-          url=$(sed -n 's/^url=//p' "$RUNNER_TEMP/comment.out")
+          url=$(bash action/read-output.sh url "$RUNNER_TEMP/comment.out")
           [ -n "$url" ] || { echo "::error::no comment written on #$issue"; exit 1; }
           body=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/${url##*-}" --jq .body)
           head -n 1 <<<"$body" | grep -qx '<!-- sonde: sonde-live -->'
