@@ -197,11 +197,12 @@ jobs:
         run: |
           pip install -r .github/requirements.txt
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
-          shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh
+          shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh scripts/check-stripped*.sh
           actionlint
       - run: bash action/test.sh
       - run: bash scripts/release-wait.test.sh
       - run: bash scripts/changelog-section.test.sh
+      - run: bash scripts/check-stripped.test.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: debug, save-if: false }

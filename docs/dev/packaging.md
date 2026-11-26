@@ -14,6 +14,11 @@
 | `SHA256SUMS` | `release.yml` | Every artifact's SHA-256; each also ships as `<artifact>.sha256`. |
 | Build provenance | `release.yml` (`actions/attest-build-provenance`) | Sigstore attestation of each archive, `.dmg`, `.nshpkg`, `latest.json`; `gh attestation verify <file> --repo hxddh/sonde`. |
 
+The terminal binary is stripped by `Cargo.toml`'s release profile. The app is built in Native Shell's own workspace
+(`app/.nsh/rust`), which that profile does not reach: `build.yml` sets `CARGO_PROFILE_RELEASE_STRIP=symbols` for
+`nsh package`, and `scripts/check-stripped.sh` fails the Linux package that still holds a symbol table or debug
+sections.
+
 ## What the package declares
 
 From `app/nsh.json`, written into each platform's package by `nsh package`:

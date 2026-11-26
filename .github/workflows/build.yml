@@ -225,8 +225,15 @@ jobs:
       # the app's Share writes the run as the viewer's web page
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
+      # Native Shell builds the app in a workspace of its own (app/.nsh/rust),
+      # which Cargo.toml's profile does not reach: stripped as the terminal
+      # binary is, through cargo's environment
       - name: Package the app
+        env: { CARGO_PROFILE_RELEASE_STRIP: symbols }
         run: cd app && nsh package App.tsx --target ${{ matrix.target }}
+      - name: The packaged app carries no symbol table or debug sections
+        if: runner.os == 'Linux'
+        run: bash scripts/check-stripped.sh app/.nsh/out/sonde
       - name: Sign the app (skipped without the signing secrets)
         if: runner.os == 'Windows'
         uses: ./.github/actions/sign-windows
@@ -272,6 +279,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the .app
+        env: { CARGO_PROFILE_RELEASE_STRIP: symbols }
         run: nsh package app/App.tsx --target macos --out dist
       - name: Sign with Developer ID, inside out (skipped without the certificate)
         env:
