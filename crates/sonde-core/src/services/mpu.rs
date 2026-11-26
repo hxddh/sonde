@@ -365,31 +365,73 @@ pub async fn scan_inner(
     })
 }
 
+/// An upload as a plan lists it.
+fn abort_item(u: &UploadRow) -> PlanItem {
+    PlanItem::new(
+        u.key.clone(),
+        Some(u.upload_id.clone()),
+        Some(u.bytes),
+        ph!(
+            "plan.item.upload",
+            parts = u.parts,
+            s = if u.parts == 1 { "" } else { "s" },
+            // its day: the time of day says nothing of what is aborted
+            started = u
+                .initiated
+                .as_deref()
+                .map(|t| t.get(..10).unwrap_or(t))
+                .unwrap_or_default()
+        ),
+    )
+}
+
 /// A dry run of aborting the given uploads.
 pub fn plan_abort(s: &Sonde, endpoint: &str, bucket: &str, uploads: &[UploadRow]) -> Plan {
-    let items = uploads
-        .iter()
-        .map(|u| {
-            PlanItem::new(
-                u.key.clone(),
-                Some(u.upload_id.clone()),
-                Some(u.bytes),
-                ph!(
-                    "plan.item.upload",
-                    parts = u.parts,
-                    s = if u.parts == 1 { "" } else { "s" },
-                    // its day: the time of day says nothing of what is aborted
-                    started = u
-                        .initiated
-                        .as_deref()
-                        .map(|t| t.get(..10).unwrap_or(t))
-                        .unwrap_or_default()
-                ),
-            )
-        })
-        .collect();
+    let items = uploads.iter().map(abort_item).collect();
     s.guard()
         .plan(Action::AbortUploads, endpoint, bucket, items, None, None)
+}
+
+/// Whether the uploads a dry run listed (`plan`) are still what it showed,
+/// against the uploads the bucket holds `now`: each one there, with the
+/// parts and bytes it had. One that is gone (completed, aborted elsewhere)
+/// or has changed (a part since: it is in use) refuses the whole plan, and
+/// nothing is aborted. An upload the dry run did not list is never the
+/// plan's: it is left, whatever its age.
+pub fn as_planned(plan: &Plan, now: &[UploadRow]) -> Result<(), S3Error> {
+    let mut changed = Vec::new();
+    for item in &plan.items {
+        let id = item.id.as_deref().unwrap_or_default();
+        match now.iter().find(|u| u.key == item.key && u.upload_id == id) {
+            None => changed.push(format!("{} ({id}) is gone", item.key)),
+            Some(u) => {
+                let is = abort_item(u);
+                if is.bytes != item.bytes || is.detail != item.detail {
+                    changed.push(format!(
+                        "{} ({id}) is now {}, {}",
+                        item.key,
+                        is.detail,
+                        crate::guard::human_bytes(u.bytes)
+                    ));
+                }
+            }
+        }
+    }
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let more = changed.len().saturating_sub(3);
+    changed.truncate(3);
+    Err(S3Error::refused(format!(
+        "the uploads of {} changed since the dry run: {}{}: nothing was aborted; run the dry run again",
+        plan.bucket,
+        changed.join("; "),
+        if more > 0 {
+            format!("; and {more} more")
+        } else {
+            String::new()
+        }
+    )))
 }
 
 /// A dry run of adding an abort rule: the merged document, and the current one.
@@ -512,6 +554,51 @@ pub fn summary_json(r: &MpuReport) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn upload(key: &str, id: &str, parts: u32, bytes: u64) -> UploadRow {
+        UploadRow {
+            key: key.into(),
+            upload_id: id.into(),
+            initiated: Some("2026-08-12T10:00:00Z".into()),
+            age_days: Some(30.0),
+            parts,
+            bytes,
+            storage_class: None,
+            cost_so_far: 0.0,
+            cost_per_month: 0.0,
+            stale: true,
+            parts_error: None,
+        }
+    }
+
+    /// What `--yes` aborts is what the dry run listed, as it listed it: an
+    /// upload gone or grown since refuses all of it; one that was not
+    /// listed is not the plan's.
+    #[test]
+    fn a_plan_to_abort_holds_only_while_its_uploads_are_as_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let listed = [upload("a", "1", 2, 10), upload("b", "2", 1, 5)];
+        let plan = plan_abort(&s, "e", "bkt", &listed);
+        assert!(as_planned(&plan, &listed).is_ok());
+        // one more now (it came of age): still as planned, and not in the plan
+        let mut more = listed.to_vec();
+        more.push(upload("c", "3", 1, 1));
+        assert!(as_planned(&plan, &more).is_ok());
+        assert_eq!(plan.items.len(), 2);
+        // one completed or aborted elsewhere
+        let gone = as_planned(&plan, &listed[..1]).unwrap_err();
+        assert_eq!(gone.kind, s3raw::ErrorKind::Refused);
+        assert!(gone.message.contains("b (2) is gone"), "{gone}");
+        assert!(gone.message.contains("nothing was aborted"), "{gone}");
+        // one that got a part since: someone is writing it
+        let grown = [upload("a", "1", 3, 15), upload("b", "2", 1, 5)];
+        let err = as_planned(&plan, &grown).unwrap_err();
+        assert!(err.message.contains("a (1) is now 3 parts"), "{err}");
+        // the same key under another upload id is another upload
+        let other = [upload("a", "9", 2, 10), upload("b", "2", 1, 5)];
+        assert!(as_planned(&plan, &other).is_err());
+    }
 
     #[test]
     fn verdicts() {

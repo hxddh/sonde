@@ -9,10 +9,16 @@
 //! lifecycle; a smaller plan is a plain confirm. [`Guard::take`] hands the
 //! plan back for execution only when the plan is fresh and, where it is
 //! typed, the confirmation matches. Every execution is appended to the audit log.
+//!
+//! The app's plans live in its process. A terminal's dry run and its
+//! `--yes` are two processes, so the dry run's plan is kept in a file
+//! ([`Guard::save`]: `<data>/plans/`, 0600, one per command) and `--yes`
+//! takes that plan ([`Guard::take_saved`]): fresh, once, never one built
+//! anew from what the store holds by then.
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -134,18 +140,82 @@ pub struct AuditEntry {
     pub stage: Option<String>,
 }
 
+/// The command a kept plan is of: what `--yes` must name again, exactly,
+/// to run it. Two commands that differ in any of these never share a plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Scope {
+    pub action: Action,
+    /// The endpoint's id and its URL (`--url` is `adhoc` whatever it names).
+    pub endpoint: String,
+    pub url: String,
+    pub bucket: String,
+    /// The command's own arguments, as it reads them (`prefix=tmp/ days=7`).
+    pub arguments: String,
+}
+
+impl Scope {
+    /// The name of the file its plan is kept in.
+    fn file(&self) -> String {
+        use sha1::Digest;
+        let said = serde_json::to_vec(self).unwrap_or_default();
+        format!("{}.json", hex::encode(sha1::Sha1::digest(said)))
+    }
+}
+
+/// A plan as kept between a dry run and its `--yes`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Saved {
+    scope: Scope,
+    plan: Plan,
+}
+
+/// The time, as a [`Guard`] reads it.
+type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Guard {
     plans: Arc<Mutex<HashMap<String, Plan>>>,
     audit_path: PathBuf,
+    /// Where the plans of a terminal's dry runs are kept.
+    plans_dir: PathBuf,
+    clock: Clock,
 }
 
 impl Guard {
+    /// A guard writing its audit log at `audit_path`, its kept plans in
+    /// `plans/` beside it.
     pub fn new(audit_path: PathBuf) -> Self {
         Guard {
             plans: Arc::new(Mutex::new(HashMap::new())),
+            plans_dir: audit_path.with_file_name("plans"),
             audit_path,
+            clock: Arc::new(Utc::now),
         }
+    }
+
+    /// The same guard reading the time from `clock` (tests: a plan's age
+    /// without waiting for it).
+    pub fn with_clock(mut self, clock: impl Fn() -> DateTime<Utc> + Send + Sync + 'static) -> Self {
+        self.clock = Arc::new(clock);
+        self
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        (self.clock)()
+    }
+
+    /// When a plan stops being one that may run.
+    pub fn expires(plan: &Plan) -> DateTime<Utc> {
+        plan.created + chrono::Duration::seconds(PLAN_TTL_SECS)
+    }
+
+    /// Whether `plan` is too old to run (or from a time yet to come: a
+    /// clock set back is no reason to run it).
+    fn stale(&self, plan: &Plan) -> bool {
+        let age = (self.now() - plan.created).num_seconds();
+        !(-60..=PLAN_TTL_SECS).contains(&age)
     }
 
     /// Records a plan. Items-based plans confirm with their count; plans of
@@ -200,7 +270,7 @@ impl Guard {
             typed,
             confirm_hint,
             confirm_hint_text,
-            created: Utc::now(),
+            created: self.now(),
         };
         self.plans.lock().insert(plan.id.clone(), plan.clone());
         plan
@@ -220,7 +290,7 @@ impl Guard {
         let plan = plans
             .get(id)
             .ok_or_else(|| S3Error::refused("no such plan: run the dry run again"))?;
-        if (Utc::now() - plan.created).num_seconds() > PLAN_TTL_SECS {
+        if self.stale(plan) {
             plans.remove(id);
             return Err(S3Error::refused(
                 "the dry run is older than 10 minutes: run it again",
@@ -233,6 +303,97 @@ impl Guard {
             )));
         }
         Ok(plans.remove(id).unwrap())
+    }
+
+    /// Keeps `plan` as the dry run of the command `scope` says, in place of
+    /// an earlier one of that command: the plan its `--yes` will run. The
+    /// file is made 0600; plans too old to run are removed on the way.
+    pub fn save(&self, scope: &Scope, plan: &Plan) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(&self.plans_dir)
+            .map_err(|e| format!("{}: {e}", self.plans_dir.display()))?;
+        self.sweep();
+        let path = self.plans_dir.join(scope.file());
+        let saved = Saved {
+            scope: scope.clone(),
+            plan: plan.clone(),
+        };
+        let bytes = serde_json::to_vec(&saved).map_err(|e| e.to_string())?;
+        reqlog::private::replace(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(path)
+    }
+
+    /// Removes what is left in the plans' folder past its time: plans never
+    /// confirmed, and what a run cut short left behind.
+    fn sweep(&self) {
+        let Ok(dir) = std::fs::read_dir(&self.plans_dir) else {
+            return;
+        };
+        for e in dir.flatten() {
+            let path = e.path();
+            let old = match read_saved(&path) {
+                Some(s) => self.stale(&s.plan),
+                // not a plan (half of one, a file claimed by a run that
+                // died): gone once it is older than any plan may be
+                None => e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|d| d.as_secs() > PLAN_TTL_SECS as u64),
+            };
+            if old {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    /// The plan the dry run of `scope`'s command kept, if it may run now:
+    /// there, of that very command, fresh, and (`id` given) the one the dry
+    /// run named. It is taken out of its folder before it is read (a rename:
+    /// of two `--yes` at once one gets it, the other is refused), so a plan
+    /// runs once, and nothing is sent before it is gone.
+    pub fn take_saved(&self, scope: &Scope, id: Option<&str>) -> Result<Plan, S3Error> {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let none = || {
+            S3Error::refused(
+                "no dry run of this command to confirm: run it without --yes first (same endpoint, bucket and options), then again with --yes",
+            )
+        };
+        let path = self.plans_dir.join(scope.file());
+        // a plan asked for by id is left for its own `--yes` when another is there
+        if let Some(id) = id {
+            let there = read_saved(&path).ok_or_else(none)?;
+            if there.plan.id != id {
+                return Err(S3Error::refused(format!(
+                    "plan {id} is not this command's latest dry run ({}): nothing was done",
+                    there.plan.id
+                )));
+            }
+        }
+        let mine = self.plans_dir.join(format!(
+            ".{}.{}.{}.taken",
+            scope.file(),
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::rename(&path, &mine).map_err(|_| none())?;
+        let saved = read_saved(&mine);
+        let _ = std::fs::remove_file(&mine);
+        let saved = saved.ok_or_else(none)?;
+        if &saved.scope != scope {
+            return Err(none());
+        }
+        if id.is_some_and(|id| id != saved.plan.id) {
+            return Err(S3Error::refused(
+                "another dry run replaced the plan: nothing was done; run the dry run again",
+            ));
+        }
+        if self.stale(&saved.plan) {
+            return Err(S3Error::refused(
+                "the dry run is older than 10 minutes: run it again (without --yes), then --yes",
+            ));
+        }
+        Ok(saved.plan)
     }
 
     pub fn audit(&self, entry: &AuditEntry) -> Result<(), String> {
@@ -264,6 +425,10 @@ impl Guard {
     }
 }
 
+fn read_saved(path: &Path) -> Option<Saved> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
 #[cfg(test)]
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
@@ -286,6 +451,10 @@ pub struct Outcome {
     pub failed: usize,
     pub errors: Vec<S3Error>,
     pub detail: Value,
+    /// Why the outcome is not in the audit log (its `started` line stands
+    /// alone there), when it could not be written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_error: Option<String>,
 }
 
 #[cfg(test)]
@@ -379,6 +548,148 @@ mod tests {
         );
         assert_eq!(lc.confirm_hint, "the bucket name");
         assert!(lc.typed);
+    }
+
+    fn scope(arguments: &str) -> Scope {
+        Scope {
+            action: Action::AbortUploads,
+            endpoint: "e".into(),
+            url: "http://store".into(),
+            bucket: "bucket".into(),
+            arguments: arguments.into(),
+        }
+    }
+
+    /// A guard whose time is `at`'s, to move by hand.
+    fn at(dir: &Path, at: &Arc<Mutex<DateTime<Utc>>>) -> Guard {
+        let now = at.clone();
+        Guard::new(dir.join("audit.jsonl")).with_clock(move || *now.lock())
+    }
+
+    /// 32.0's `--yes` made its own plan from what the bucket held by then:
+    /// the dry run's is kept, for its own command, and runs once.
+    #[test]
+    fn a_kept_plan_is_its_commands_alone_and_runs_once() {
+        let dir = tempfile::tempdir().unwrap();
+        // another process: nothing shared but the folder
+        let (dry, yes) = (
+            Guard::new(dir.path().join("audit.jsonl")),
+            Guard::new(dir.path().join("audit.jsonl")),
+        );
+        let none = yes.take_saved(&scope("p"), None).unwrap_err();
+        assert_eq!(none.kind, s3raw::ErrorKind::Refused);
+        assert!(none.message.contains("without --yes first"), "{none}");
+        let p = dry.plan(Action::AbortUploads, "e", "bucket", items(2), None, None);
+        let path = dry.save(&scope("p"), &p).unwrap();
+        assert_eq!(path.parent().unwrap(), dir.path().join("plans"));
+        assert_eq!(
+            crate::Paths::rooted(dir.path()).plans(),
+            Guard::new(crate::Paths::rooted(dir.path()).audit_log()).plans_dir
+        );
+        // what would be aborted is the user's alone, from the moment it is made
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // another command (its prefix, its option) has no plan
+        assert!(yes.take_saved(&scope("q"), None).is_err());
+        let mut other = scope("p");
+        other.url = "http://another".into();
+        assert!(yes.take_saved(&other, None).is_err());
+        // a plan named that is not the one kept: refused, and the one kept stays
+        let wrong = yes.take_saved(&scope("p"), Some("0000")).unwrap_err();
+        assert!(
+            wrong.message.contains("not this command's latest"),
+            "{wrong}"
+        );
+        let taken = yes.take_saved(&scope("p"), Some(&p.id)).unwrap();
+        assert_eq!(taken, p);
+        let again = yes.take_saved(&scope("p"), None).unwrap_err();
+        assert!(again.message.contains("without --yes first"), "{again}");
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("plans")).unwrap().count(),
+            0
+        );
+        // a dry run again replaces the plan: the newest is the one that runs
+        let (a, b) = (
+            dry.plan(Action::AbortUploads, "e", "bucket", items(1), None, None),
+            dry.plan(Action::AbortUploads, "e", "bucket", items(3), None, None),
+        );
+        dry.save(&scope("p"), &a).unwrap();
+        dry.save(&scope("p"), &b).unwrap();
+        assert_eq!(yes.take_saved(&scope("p"), None).unwrap().id, b.id);
+    }
+
+    #[test]
+    fn a_kept_plan_past_ten_minutes_is_refused_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let time = Arc::new(Mutex::new(Utc::now()));
+        let g = at(dir.path(), &time);
+        let p = g.plan(Action::AbortUploads, "e", "bucket", items(2), None, None);
+        assert_eq!(p.created, *time.lock());
+        assert_eq!(
+            Guard::expires(&p),
+            p.created + chrono::Duration::seconds(600)
+        );
+        g.save(&scope("p"), &p).unwrap();
+        g.save(&scope("kept"), &p).unwrap();
+        g.save(&scope("fresh"), &p).unwrap();
+        // at ten minutes it still runs
+        *time.lock() += chrono::Duration::seconds(PLAN_TTL_SECS);
+        assert!(g.take_saved(&scope("fresh"), None).is_ok());
+        *time.lock() += chrono::Duration::seconds(1);
+        let late = g.take_saved(&scope("p"), None).unwrap_err();
+        assert_eq!(late.kind, s3raw::ErrorKind::Refused);
+        assert!(late.message.contains("older than 10 minutes"), "{late}");
+        // and is gone: not there to run when the clock is set back
+        *time.lock() -= chrono::Duration::seconds(300);
+        assert!(g.take_saved(&scope("p"), None).is_err());
+        // one from a time yet to come is no fresher
+        *time.lock() -= chrono::Duration::seconds(3600);
+        assert!(g.take_saved(&scope("kept"), None).is_err());
+        // the app's plans, in its process, age by the same clock
+        let p = g.plan(Action::DeleteObjects, "e", "bucket", items(2), None, None);
+        *time.lock() += chrono::Duration::seconds(PLAN_TTL_SECS + 1);
+        let late = g.take(&p.id, "").unwrap_err();
+        assert!(late.message.contains("older than 10 minutes"), "{late}");
+        // a plan never confirmed does not stay: the next dry run removes it
+        let old = g.plan(Action::AbortUploads, "e", "bucket", items(1), None, None);
+        g.save(&scope("old"), &old).unwrap();
+        *time.lock() += chrono::Duration::seconds(PLAN_TTL_SECS + 1);
+        let new = g.plan(Action::AbortUploads, "e", "bucket", items(1), None, None);
+        g.save(&scope("new"), &new).unwrap();
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("plans")).unwrap().count(),
+            1
+        );
+    }
+
+    /// Two `--yes` at once: the plan is taken by a rename, so one of them
+    /// has it and every other is refused before it sends anything.
+    #[test]
+    fn of_many_confirmations_at_once_one_takes_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let g = Guard::new(dir.path().join("audit.jsonl"));
+        for _ in 0..20 {
+            let p = g.plan(Action::AbortUploads, "e", "bucket", items(2), None, None);
+            g.save(&scope("p"), &p).unwrap();
+            let start = Arc::new(std::sync::Barrier::new(8));
+            let took: usize = (0..8)
+                .map(|_| {
+                    let (g, start) = (g.clone(), start.clone());
+                    std::thread::spawn(move || {
+                        start.wait();
+                        g.take_saved(&scope("p"), None).is_ok() as usize
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .sum();
+            assert_eq!(took, 1);
+        }
     }
 
     #[test]

@@ -64,6 +64,8 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
           description: [t("confirm.firstError", { reason: first.message }), first.requestId ? `${t("common.requestId")}: ${first.requestId}` : ""].filter(Boolean).join(" · "),
         });
       }
+      // what was done stands, and its record does not: said, and it stays until read
+      if (o.auditError) toast({ id: "audit", kind: "error", title: t("confirm.notAudited"), description: o.auditError });
       running.set(false);
       typed.set("");
       props.onClose(o);

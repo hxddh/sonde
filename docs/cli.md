@@ -9,7 +9,7 @@
 | Global options | `--config-dir` (`$SONDE_CONFIG_DIR`), `--data-dir` (`$SONDE_DATA_DIR`) |
 | Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (else an AWS URL's, `s3.<region>.amazonaws.com`; else `AWS_REGION`, `AWS_DEFAULT_REGION`; else us-east-1; `endpoints add` takes it so too), `--path-style`, `--ca-file`. Not on commands that only read files. |
 | `-f`, `--format` | `text` (default) or `json`; `check` also writes `markdown` and `github`. A command that writes only text has none. |
-| Confirmation | What changes a store or deletes runs (`runs prune`, `bucket abort-uploads`, `bucket lifecycle`, `replay`) is a dry run, exit 4; `--yes` does it. |
+| Confirmation | What changes a store or deletes runs (`runs prune`, `bucket abort-uploads`, `bucket lifecycle`, `replay`) is a dry run, exit 4; `--yes` does it. `bucket abort-uploads` and `bucket lifecycle` do what their dry run showed, and nothing without one ([below](#buckets)). |
 | Streams | The answer on stdout; hints, progress and the summary of `run` and `import` on stderr. Ctrl+C cancels the running job. A failed request prints its error, request id and the request line from the log. Keys, commands and other text sonde did not write reach the terminal with their control characters written out (`\e`, `\x07`, `\u{9b}`): a key cannot set the window's title or move the cursor. JSON escapes them as JSON does (`\u007f`, `\u202e`). A closed standard output (`sonde check \| head`) ends the output, not the command: the exit code is the command's own. |
 | A run argument | A path or a name, resolved in order: a file; `runs/<name>[.sonde]`; `runs/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | Which run | When none is named: [below](#which-run). |
@@ -103,11 +103,27 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 |---|---|
 | `sonde bucket size -e E -b B [-p PREFIX]` | What a bucket holds and why it is so big: versions, classes, prefixes, sizes, incomplete uploads. |
 | `sonde bucket uploads -e E -b B [-p PREFIX] [-f json]` | Incomplete uploads: bytes, age, cost (stale past 7 days), or that there are none; the lifecycle verdict. |
-| `sonde bucket abort-uploads -e E -b B [--older-than-days N] [--yes]` | A dry run; with `--yes` aborts (audited). |
-| `sonde bucket lifecycle -e E -b B [--days 7] [--yes]` | Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run (its rules and the one to add, each in a line), then `--yes` (audited). |
+| `sonde bucket abort-uploads -e E -b B [-p PREFIX] [--older-than-days N] [--yes [--plan ID]]` | A dry run: the uploads it would abort, kept as a plan; with `--yes` aborts those ([confirming](#confirming-a-dry-run); audited). |
+| `sonde bucket lifecycle -e E -b B [-p PREFIX] [--days 7] [--yes [--plan ID]]` | Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run (its rules and the one to add, each in a line), then `--yes` writes that document ([confirming](#confirming-a-dry-run); audited). |
 | `sonde layout -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--kind` on a prefix that is not that layout says so, exit 4; `--at` gives the state at a time. |
 | `sonde endpoints list` / `test [ID]` / `add ID [URL] [--profile P] [--replace]` | Endpoints. `add` refuses an id taken (64) unless `--replace`; it takes `--region`, `--path-style`, `--ca-file`; credentials from a profile or the default chain, never the command line. With `--profile` and no URL: the profile's `endpoint_url` and region, as an SDK reads them. |
 | `sonde endpoints test [ID] --probes BUCKET [-f json]` | The [compatibility probes](probes.md), each with its verdict next to AWS's: **pass**, **fail** (a guarantee broke), **differs**, **unsupported**, **error** (could not run), **skipped** (needs a bucket of its own); what did not pass says why in its row. Writes and deletes under `sonde-probe/` in BUCKET (naming it is consent) and removes what it wrote; audited. Exit 1 when one failed, 2 when one differs, 70 when they could not run. |
+
+### Confirming a dry run
+
+`--yes` runs the plan the same command's dry run kept ([why](security.md#one-safety-model)), so a script runs both:
+
+```sh
+sonde bucket abort-uploads -b B || [ $? -eq 4 ]   # the dry run: 4 when it lists uploads, 0 when none
+sonde bucket abort-uploads -b B --yes             # aborts what it listed; nothing to abort, exit 0
+```
+
+- The same command: endpoint (and its URL), bucket, `-p`, `--older-than-days` or `--days`. The latest dry run of it
+  is the plan; `--plan ID` (the id the dry run prints) refuses any other.
+- Exit 77 and nothing changed when there is no dry run to confirm, it is older than 10 minutes, it already ran, or
+  the bucket is not as it showed: a listed upload gone or with other parts, another lifecycle configuration. Run the
+  dry run again.
+- An upload the dry run did not list (begun or come of age since) is left, and said on stderr.
 
 ## More
 
@@ -125,8 +141,8 @@ runs (by its name, else recorded in its folder or below): `check` of another's s
 | 4 | Findings worth attention: stale uploads or no abort rule, layout warnings, a dry run |
 | 64 | Usage or configuration error (an unknown command or option too; `--help` and `--version` exit 0) |
 | 65 | Bad data: not a run (no header, another format version, a bad line in its middle), an imported CloudTrail document cut short (said where), or an import with nothing in it (an empty file or folder, a log of no S3 requests). A torn last line or a cut gzip stream is read up to the cut (said on stderr) |
-| 70 | The operation failed (connection, credentials, permission); probes that could not run; a replay could not remove what it wrote |
-| 77 | Refused by sonde before anything was sent: an endpoint it protects, a plan changed since its dry run |
+| 70 | The operation failed (connection, credentials, permission); probes that could not run; a replay could not remove what it wrote; a change made whose outcome the audit log could not take (said on stderr) |
+| 77 | Refused by sonde before anything was changed: an endpoint it protects; a `--yes` with no dry run to confirm (none, older than 10 minutes, already run), or whose bucket changed since its dry run |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
 
 ## In CI

@@ -740,6 +740,7 @@
  "versions.reading": "Reading the key's history…",
  "versions.restoreOpen": "Restore…",
  "confirm.firstError": "First: %{reason}",
+ "confirm.notAudited": "Done, but the outcome could not be written to the audit log",
  "signal.rate": "Rate",
  "signal.errors": "Errors",
  "signal.latency": "Latency · median",
