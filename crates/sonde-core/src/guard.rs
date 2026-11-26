@@ -349,11 +349,10 @@ impl Guard {
 
     /// The plan the dry run of `scope`'s command kept, if it may run now:
     /// there, of that very command, fresh, and (`id` given) the one the dry
-    /// run named. It is taken out of its folder before it is read (a rename:
-    /// of two `--yes` at once one gets it, the other is refused), so a plan
-    /// runs once, and nothing is sent before it is gone.
+    /// run named. It is taken out of its folder under a claim only one
+    /// taker can hold (of two `--yes` at once one gets it, the other is
+    /// refused), so a plan runs once, and nothing is sent before it is gone.
     pub fn take_saved(&self, scope: &Scope, id: Option<&str>) -> Result<Plan, S3Error> {
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let none = || {
             S3Error::refused(
                 "no dry run of this command to confirm: run it without --yes first (same endpoint, bucket and options), then again with --yes",
@@ -370,15 +369,17 @@ impl Guard {
                 )));
             }
         }
-        let mine = self.plans_dir.join(format!(
-            ".{}.{}.{}.taken",
-            scope.file(),
-            std::process::id(),
-            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::rename(&path, &mine).map_err(|_| none())?;
-        let saved = read_saved(&mine);
-        let _ = std::fs::remove_file(&mine);
+        // one taker at a time, by a file only one can make (`create_new` is
+        // exclusive on every platform; a rename is not: on Windows several
+        // handles to one file each rename it in turn, and each would read it)
+        let claim = self.plans_dir.join(format!(".{}.taken", scope.file()));
+        let _held = Claim::make(&claim).ok_or_else(none)?;
+        let saved = read_saved(&path);
+        // gone before anything is sent, whatever is read of it
+        let gone = std::fs::remove_file(&path).is_ok();
+        if !gone {
+            return Err(none());
+        }
         let saved = saved.ok_or_else(none)?;
         if &saved.scope != scope {
             return Err(none());
@@ -422,6 +423,46 @@ impl Guard {
         v.reverse();
         v.truncate(limit);
         v
+    }
+}
+
+/// The right to take a kept plan: a file made new, which only one taker
+/// can do, removed when the taking is over. One a taker left behind (it
+/// died holding it) is no claim after [`CLAIM_STALE`].
+struct Claim(PathBuf);
+
+/// How long a claim left behind keeps a plan from being taken.
+const CLAIM_STALE: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl Claim {
+    fn make(path: &Path) -> Option<Claim> {
+        for _ in 0..2 {
+            match reqlog::private::options()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(_) => return Some(Claim(path.to_path_buf())),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let left_behind = std::fs::metadata(path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|at| at.elapsed().ok())
+                        .is_some_and(|age| age > CLAIM_STALE);
+                    if !left_behind || std::fs::remove_file(path).is_err() {
+                        return None;
+                    }
+                }
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 

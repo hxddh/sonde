@@ -62,8 +62,8 @@ never a switch away: each is a plan (`sonde-core::guard`):
    of the same command (endpoint and its URL, bucket, prefix, `--older-than-days` or `--days`), which is refused
    (exit 77) when there is none: no `--yes` runs without its dry run, and no flag skips it.
    `--plan ID` holds `--yes` to the dry run that printed that id.
-3. Plans expire after 10 minutes and run once: a terminal's is taken out of its folder (a rename) before anything
-   is sent, so of two `--yes` at once one runs it.
+3. Plans expire after 10 minutes and run once: a terminal's is taken out of its folder by one taker before
+   anything is sent, so of two `--yes` at once one runs it.
 4. The store is read again before the first change, and a difference refuses the whole plan (exit 77, nothing
    changed; plan it again): an upload the dry run listed that is gone or has changed (a part since: it is in use),
    a lifecycle configuration that is not the one the dry run read (a PUT replaces it whole). What the dry run did
