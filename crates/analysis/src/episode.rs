@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use crate::phrase::{Phrase, p, p_shared, plural};
 use crate::summary::is_miss;
-use sonde_proxy::part::{Format, Part, part_of};
+use sonde_proxy::part::{Format, Part, data_of, may_be_data, part_of};
 
 /// The format a listing belongs to, from its prefix (`…/manifest/`,
 /// `…/_delta_log/`, …), with the directory's name.
@@ -51,107 +51,118 @@ struct Tables {
 }
 
 /// The table root a log key or log listing names: what precedes `/<dir>/`.
-fn root_before(path: &str, dir: &str) -> Option<String> {
+fn root_before<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
     if path == dir || path.starts_with(&format!("{dir}/")) {
-        return Some(String::new());
+        return Some("");
     }
     let at = path.find(&format!("/{dir}/")).or_else(|| {
         path.ends_with(&format!("/{dir}"))
             .then(|| path.len() - dir.len() - 1)
     })?;
-    Some(path[..=at].to_string())
+    Some(&path[..=at])
+}
+
+/// The root of the table a log's file (`part`) or a listing of a log's
+/// folder (no part) is of, with its trailing slash: what is above the
+/// log's folder. Two tables of one format are told apart by it.
+fn log_root<'a>(path: &'a str, format: Format, part: Option<&Part>) -> Option<&'a str> {
+    let above = |path: &'a str| &path[..path.rfind('/').map_or(0, |i| i + 1)];
+    match (format, part) {
+        // any depth under .hoodie/: the timeline, markers, the metadata table
+        (Format::Hudi, _) => root_before(path, ".hoodie"),
+        // an index's files are a folder deeper
+        (_, Some(Part::LanceIndex)) => root_before(path, "_indices"),
+        // a file in its log's folder
+        (_, Some(_)) => Some(above(above(path).trim_end_matches('/'))),
+        // the log's folder itself, listed
+        (_, None) => Some(above(path)),
+    }
+}
+
+/// A request's key, or the prefix it lists (without its last slash).
+fn path_of(r: &Record) -> Option<&str> {
+    r.key.as_deref().or_else(|| {
+        r.kind
+            .starts_with("ListObjects")
+            .then(|| query(r, "prefix").unwrap_or("").trim_end_matches('/'))
+    })
 }
 
 impl Tables {
     fn of(records: &[&Record]) -> Self {
         let mut roots = Vec::new();
         for r in records {
-            let listed = r
-                .kind
-                .starts_with("ListObjects")
-                .then(|| query(r, "prefix").unwrap_or("").trim_end_matches('/'));
-            let Some(path) = r.key.as_deref().or(listed) else {
+            let Some((format, root)) = Self::log_of(r) else {
                 continue;
             };
-            let part = part_of(path);
-            if part.as_ref().is_some_and(Part::is_data) {
+            // the formats whose data files' names do not say whose they are
+            if !matches!(
+                format,
+                Format::Delta | Format::Iceberg | Format::Hudi | Format::Paimon
+            ) {
                 continue;
             }
-            // a listing of the directory itself has no part, a key in it does
-            let format = match (&part, listed) {
-                (Some(p), _) => Some(p.format()),
-                (None, Some(prefix)) => listed_format(prefix).map(|(f, _)| f),
-                (None, None) => None,
-            };
-            let dir = match (format, &part) {
-                (Some(Format::Delta), _) => "_delta_log",
-                (Some(Format::Iceberg), _) => "metadata",
-                (Some(Format::Hudi), _) => ".hoodie",
-                (Some(Format::Paimon), Some(Part::PaimonManifest)) => "manifest",
-                (Some(Format::Paimon), Some(Part::PaimonSchema(_))) => "schema",
-                (Some(Format::Paimon), _) => "snapshot",
-                _ => continue,
-            };
-            if let Some(root) = root_before(path, dir) {
-                let entry = (
-                    r.bucket.as_deref().map(String::from),
-                    format.expect("matched above"),
-                    root,
-                );
-                if !roots.contains(&entry) {
-                    roots.push(entry);
-                }
+            let entry = (r.bucket.as_deref().map(String::from), format, root.into());
+            if !roots.contains(&entry) {
+                roots.push(entry);
             }
         }
         Tables { roots }
+    }
+
+    /// The table whose log a request reads, writes or lists: its format and
+    /// its root. None for a data file, whose name does not say.
+    fn log_of(r: &Record) -> Option<(Format, &str)> {
+        let path = path_of(r)?;
+        let part = part_of(path).filter(|p| !p.is_data());
+        let format = match &part {
+            Some(p) => p.format(),
+            None if r.key.is_none() && !may_be_data(path) => listed_format(path)?.0,
+            None => return None,
+        };
+        Some((format, log_root(path, format, part.as_ref())?))
     }
 
     /// The part a request's key names, when the run gives a reason to
     /// believe it: a data file counts only beside its table's log.
     fn part(&self, r: &Record) -> Option<Part> {
         let key = r.key.as_deref()?;
-        let part = part_of(key)?;
-        if part.is_data() {
-            self.data_part(r.bucket.as_deref(), key)
-        } else {
-            Some(part)
+        match part_of(key) {
+            Some(part) if !part.is_data() => Some(part),
+            _ if may_be_data(key) => self.data_part(r.bucket.as_deref(), key).map(|t| t.0),
+            _ => None,
         }
     }
 
-    /// Whose data file a Parquet file is: the table's whose log the run
-    /// touched, the deepest when one table is under another. The path alone
-    /// does not say: a Delta table under `…/data/` has its files there too.
-    fn data_part(&self, bucket: Option<&str>, key: &str) -> Option<Part> {
+    /// Whose data file a Parquet file is, and that table's root: the
+    /// table's whose log the run touched, the deepest when one table is
+    /// under another. The path alone does not say: a Delta table under
+    /// `…/data/` has its files there too.
+    fn data_part<'k>(&self, bucket: Option<&str>, key: &'k str) -> Option<(Part, &'k str)> {
         self.roots
             .iter()
             .filter(|(b, _, root)| b.as_deref() == bucket && key.starts_with(root.as_str()))
             .max_by_key(|(_, _, root)| root.len())
-            .and_then(|(_, f, _)| match f {
-                Format::Iceberg => Some(Part::IcebergData),
-                Format::Delta => Some(Part::DeltaData),
-                Format::Hudi => Some(Part::HudiData),
-                Format::Paimon => Some(Part::PaimonData),
-                _ => None,
-            })
+            .and_then(|(_, f, root)| Some((data_of(*f)?, &key[..root.len()])))
     }
 
-    /// The format of a request: from its key, or from a listing's prefix.
+    /// The table a request is of, its format and its root: from its key, or
+    /// from a listing's prefix.
+    fn table_of<'r>(&self, r: &'r Record) -> Option<(Format, &'r str)> {
+        if let Some(t) = Self::log_of(r) {
+            return Some(t);
+        }
+        let path = path_of(r)?;
+        // a data file, or a listing of its path, is of a table only when the table is
+        may_be_data(path)
+            .then(|| self.data_part(r.bucket.as_deref(), path))
+            .flatten()
+            .map(|(p, root)| (p.format(), root))
+    }
+
+    /// The format of a request ([`Tables::table_of`]).
     fn format_of(&self, r: &Record) -> Option<Format> {
-        if r.key.is_some() {
-            return self.part(r).map(|p| p.format());
-        }
-        if !r.kind.starts_with("ListObjects") {
-            return None;
-        }
-        let prefix = query(r, "prefix").unwrap_or("");
-        let trimmed = prefix.trim_end_matches('/');
-        match part_of(trimmed) {
-            // a listing of a data file's path is of a table only when the table is
-            Some(p) if p.is_data() => self
-                .data_part(r.bucket.as_deref(), trimmed)
-                .map(|p| p.format()),
-            _ => listed_format(prefix).map(|(f, _)| f),
-        }
+        self.table_of(r).map(|t| t.0)
     }
 }
 
@@ -596,7 +607,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         let first = unit_of(item)[0];
         (first.time, first.id)
     });
-    let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
+    // one buffer a table (its bucket, root and format): two tables of a
+    // format written at once are each their own steps
+    let mut buffers: Vec<(Table, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
     // requests that are nothing more: most of a large run, made into
@@ -611,12 +624,13 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         if !probe.is_empty() && (r.time - probe.last().unwrap().time).num_milliseconds() > BURST {
             out.extend(flush_probe(std::mem::take(&mut probe)));
         }
-        if let Some(f) = tables.format_of(r) {
+        if let Some((f, root)) = tables.table_of(r) {
             let part = tables.part(r);
-            let pos = match buffers.iter().position(|(bf, _)| *bf == f) {
+            let table = (f, r.bucket.as_deref(), root);
+            let pos = match buffers.iter().position(|(t, _)| *t == table) {
                 Some(p) => p,
                 None => {
-                    buffers.push((f, Vec::new()));
+                    buffers.push((table, Vec::new()));
                     buffers.len() - 1
                 }
             };
@@ -650,7 +664,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         alone.push(r);
     }
     out.extend(alone.iter().map(|r| single(r)));
-    for (f, rs) in buffers {
+    for ((f, ..), rs) in buffers {
         out.push(loose(f, rs));
     }
     if !probe.is_empty() {
@@ -665,8 +679,11 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     out
 }
 
-fn flush_idle(
-    buffers: &mut Vec<(Format, Vec<&Record>)>,
+/// A table a run reads or writes: its format, its bucket and its root.
+type Table<'a> = (Format, Option<&'a str>, &'a str);
+
+fn flush_idle<'a>(
+    buffers: &mut Vec<(Table<'a>, Vec<&'a Record>)>,
     now: DateTime<Utc>,
     out: &mut Vec<Episode>,
 ) {
@@ -674,7 +691,7 @@ fn flush_idle(
     while i < buffers.len() {
         let last = buffers[i].1.last().map(|r| r.time).unwrap_or(now);
         if (now - last).num_milliseconds() > IDLE {
-            let (f, rs) = buffers.remove(i);
+            let ((f, ..), rs) = buffers.remove(i);
             out.push(loose(f, rs));
         } else {
             i += 1;
@@ -3696,6 +3713,90 @@ mod tests {
         assert_eq!(eps[0].records, vec![1, 2, 3], "the files are the commit's");
     }
 
+    /// Two tables of one format written at once, their requests
+    /// interleaved: each table's commit is its own operation, with its own
+    /// files, whichever commits first.
+    #[test]
+    fn two_tables_of_a_format_written_at_once_are_each_their_own_commits() {
+        let put = |id, ms, key: &str| rec(id, ms, "PUT", "PutObject", Some(key), 200);
+        let of = |eps: &[Episode], id: u64| -> Episode {
+            eps.iter()
+                .find(|e| e.records.contains(&id))
+                .cloned()
+                .expect("an operation")
+        };
+        // Delta: orders writes two files and commits; events writes one, between them
+        let delta = [
+            put(1, 0, "lake/orders/part-00000-a.snappy.parquet"),
+            put(2, 5, "lake/events/part-00000-b.snappy.parquet"),
+            put(3, 10, "lake/orders/part-00001-c.snappy.parquet"),
+            put(4, 15, "lake/events/_delta_log/00000000000000000007.json"),
+            put(5, 20, "lake/orders/_delta_log/00000000000000000003.json"),
+        ];
+        let eps = episodes(&delta);
+        assert_eq!(eps.len(), 2, "{eps:#?}");
+        let (orders, events) = (of(&eps, 5), of(&eps, 4));
+        assert_eq!(orders.records, vec![1, 3, 5], "{eps:#?}");
+        assert_eq!(orders.title(), "commit 3 · 2 files (200 B)");
+        assert_eq!(events.records, vec![2, 4], "{eps:#?}");
+        assert_eq!(events.title(), "commit 7 · 1 file (100 B)");
+        assert!(eps.iter().all(|e| e.format == Some(Format::Delta)));
+
+        // Iceberg: the same, each with its manifests
+        let iceberg = [
+            put(1, 0, "wh/a/data/00000-0-a.parquet"),
+            put(2, 5, "wh/b/data/00000-0-b.parquet"),
+            put(3, 10, "wh/b/data/00001-0-b.parquet"),
+            put(4, 15, "wh/a/metadata/a-m0.avro"),
+            put(5, 20, "wh/b/metadata/b-m0.avro"),
+            put(6, 25, "wh/a/metadata/snap-1-0-a.avro"),
+            put(7, 30, "wh/b/metadata/snap-1-0-b.avro"),
+            put(8, 35, "wh/a/metadata/00001-x.metadata.json"),
+            put(9, 40, "wh/b/metadata/00004-y.metadata.json"),
+        ];
+        let eps = episodes(&iceberg);
+        assert_eq!(eps.len(), 2, "{eps:#?}");
+        let (a, b) = (of(&eps, 8), of(&eps, 9));
+        assert_eq!(a.records, vec![1, 4, 6, 8], "{eps:#?}");
+        assert_eq!(a.title(), "commit: table metadata v1 · 3 files (300 B)");
+        assert_eq!(b.records, vec![2, 3, 5, 7, 9], "{eps:#?}");
+        assert_eq!(b.title(), "commit: table metadata v4 · 4 files (400 B)");
+
+        // the same root in two buckets is two tables
+        let mut other = put(2, 5, "lake/orders/part-00000-b.snappy.parquet");
+        other.bucket = Some("other".into());
+        let mut others = put(4, 15, "lake/orders/_delta_log/00000000000000000001.json");
+        others.bucket = Some("other".into());
+        let eps = episodes(&[
+            put(1, 0, "lake/orders/part-00000-a.snappy.parquet"),
+            other,
+            put(3, 10, "lake/orders/_delta_log/00000000000000000003.json"),
+            others,
+        ]);
+        assert_eq!(of(&eps, 3).records, vec![1, 3], "{eps:#?}");
+        assert_eq!(of(&eps, 4).records, vec![2, 4], "{eps:#?}");
+
+        // and a table left without its commit says so for itself alone
+        let eps = episodes(&[
+            put(1, 0, "lake/orders/part-00000-a.snappy.parquet"),
+            put(2, 5, "lake/events/part-00000-b.snappy.parquet"),
+            put(3, 10, "lake/events/_delta_log/00000000000000000007.json"),
+            rec(
+                4,
+                15,
+                "GET",
+                "GetObject",
+                Some("lake/orders/_delta_log/00000000000000000002.json"),
+                200,
+            ),
+        ]);
+        assert_eq!(of(&eps, 3).records, vec![2, 3], "{eps:#?}");
+        assert_eq!(
+            of(&eps, 1).title(),
+            "1 file written, no commit followed (100 B)"
+        );
+    }
+
     #[test]
     fn unfinished_multipart_and_aborts() {
         let create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
@@ -3999,7 +4100,8 @@ mod tests {
             part_of("d.lance/_deletions/0-4-99.arrow"),
             Some(Part::LanceDeletion)
         );
-        assert_eq!(part_of("d/data/a.parquet"), Some(Part::IcebergData));
+        // (a Parquet file under data/ is no format's by its path alone)
+        assert_eq!(part_of("d/data/a.parquet"), None);
     }
 
     /// A request at `ms`: PUT (with `bytes`), GET, DELETE or a copy.

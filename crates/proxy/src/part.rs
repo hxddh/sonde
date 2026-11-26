@@ -111,7 +111,8 @@ impl Part {
         }
     }
 
-    /// A data file: only a guess from its name, taken beside its table's log.
+    /// A data file: said by its name alone ([`part_of`]), or by its table's
+    /// log ([`data_of`]).
     pub fn is_data(&self) -> bool {
         use Part::*;
         matches!(self, IcebergData | DeltaData | HudiData | PaimonData)
@@ -150,9 +151,52 @@ fn digits(s: &str, n: usize) -> Option<u64> {
         .flatten()
 }
 
+/// A data file of a table of `format`, for the formats whose data files
+/// are not known by their folder: what a Parquet file under a table's root
+/// is once that table's log (`_delta_log/`, `metadata/`, …) was seen.
+pub fn data_of(format: Format) -> Option<Part> {
+    match format {
+        Format::Iceberg => Some(Part::IcebergData),
+        Format::Delta => Some(Part::DeltaData),
+        Format::Hudi => Some(Part::HudiData),
+        Format::Paimon => Some(Part::PaimonData),
+        Format::SlateDB | Format::Lance => None,
+    }
+}
+
+/// Whether a key may be a table's data file: one [`part_of`] knows by its
+/// name, or a Parquet file under a `data/` folder or named `part-*`, as
+/// Iceberg, Delta, Hive and Spark all write them. Whose it is, if any
+/// table's, its path does not say: the log beside it does ([`data_of`]).
+pub fn may_be_data(key: &str) -> bool {
+    let name = key.rsplit('/').next().unwrap_or(key);
+    (name.ends_with(".parquet") && (key.contains("/data/") || name.starts_with("part-")))
+        || part_of(key).is_some_and(|p| p.is_data())
+}
+
+/// A data file as Iceberg's writers name it:
+/// `<partition>-<task>-<uuid>[-<n>].parquet` (`00000-0-6c5e…-00001.parquet`).
+fn iceberg_data_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".parquet") else {
+        return false;
+    };
+    let mut parts = stem.split('-');
+    let number =
+        |s: Option<&str>| s.is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+    number(parts.next()) && number(parts.next()) && parts.next().is_some()
+}
+
+/// A data file as Delta's writers (and Spark's) name it:
+/// `part-<n>-<uuid>[-c000 | .c000][.snappy].parquet`.
+fn delta_data_name(name: &str) -> bool {
+    name.starts_with("part-") && name.ends_with(".parquet")
+}
+
 /// The format part a key names, from its last two path segments. A data
-/// file's name is only a guess: the analysis takes it when the run also
-/// touched that table's log.
+/// file is known by its own name only (`part-…​.parquet`: Delta's;
+/// `00000-0-<uuid>.parquet`: Iceberg's), which is a guess the analysis
+/// takes beside that table's log; a folder's name (`data/`) says nothing,
+/// a Delta, Hudi or Hive table has one too, so any other file is none.
 pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
     let name = segs.next()?;
@@ -253,11 +297,11 @@ pub fn part_of(key: &str) -> Option<Part> {
             }
         }
         _ => {
-            // data files: under …/data/ next to metadata/ (Iceberg) or _delta_log/ (Delta)
-            if name.ends_with(".parquet") && key.contains("/data/") {
-                Some(Part::IcebergData)
-            } else if name.ends_with(".parquet") && name.starts_with("part-") {
+            // data files, by their names: the folder they are in is no evidence
+            if delta_data_name(name) {
                 Some(Part::DeltaData)
+            } else if iceberg_data_name(name) {
+                Some(Part::IcebergData)
             } else {
                 None
             }
@@ -319,4 +363,50 @@ fn is_hudi_file(name: &str) -> bool {
     };
     let parts: Vec<&str> = stem.split('_').collect();
     parts.len() == 3 && parts[2].len() >= 14 && parts[2].bytes().all(|b| b.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `data/` folder in a path is no evidence of Iceberg: a Delta table
+    /// under one keeps its files, and a file no format names is unknown.
+    #[test]
+    fn a_data_folder_does_not_make_a_file_icebergs() {
+        for key in [
+            "lake/data/events/part-00000-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab.c000.snappy.parquet",
+            "lake/data/events/day=1/part-00001-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab-c000.snappy.parquet",
+            "events/part-00000-6c5e0a1b.c000.snappy.parquet",
+        ] {
+            assert_eq!(part_of(key), Some(Part::DeltaData), "{key}");
+        }
+        for key in [
+            "wh/t/data/x=1/00000-0-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab.parquet",
+            "wh/t/data/00003-12-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab-00001.parquet",
+        ] {
+            assert_eq!(part_of(key), Some(Part::IcebergData), "{key}");
+        }
+        // Hive's, DuckDB's, anyone's: unknown, not Iceberg's
+        for key in [
+            "wh/data/x=1/a.parquet",
+            "wh/data/data_0.parquet",
+            "lake/data/events/day=1/f1.parquet",
+        ] {
+            assert_eq!(part_of(key), None, "{key}");
+            // (still a file a table's log can claim)
+            assert!(may_be_data(key), "{key}");
+        }
+        // Hudi's and Paimon's under a data/ folder are their own
+        assert_eq!(
+            part_of("lake/data/t/dt=1/3b2a-0_0-21-23_20261112093000123.parquet"),
+            Some(Part::HudiData)
+        );
+        assert_eq!(
+            part_of("lake/data/p/dt=1/bucket-0/data-6f1a-0.parquet"),
+            Some(Part::PaimonData)
+        );
+        assert!(!may_be_data("logs/2026/a.json") && !may_be_data("out/a.parquet"));
+        assert_eq!(data_of(Format::Delta), Some(Part::DeltaData));
+        assert_eq!(data_of(Format::Lance), None);
+    }
 }

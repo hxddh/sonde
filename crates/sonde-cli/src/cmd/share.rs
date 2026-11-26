@@ -101,7 +101,8 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     let keep = if a.redact {
         sonde_analysis::run::Keep::All
     } else {
-        sonde_analysis::run::Keep::Analysis
+        // (with the program's output: the page shows its lines)
+        sonde_analysis::run::Keep::AnalysisAndLogs
     };
     let mut run = super::runs::read(&file, keep)?;
     // priced before redaction hides the endpoint

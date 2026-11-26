@@ -73,6 +73,10 @@ moves with a shared runner: it is said in the job's summary and fails only past 
 | the app's first view of 100 thousand (records whole) | 217–221 MiB, 1.0–1.1 s | 250 MiB | 6 s |
 | a sorted page of operations | 48–57 ms | | 1.5 s |
 | the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 274–282 MiB, 3.5–3.9 s | 310 MiB | 45 s |
+| an import of a CloudTrail file of 300 thousand events (544 MiB of text, gzipped) | 18 MiB, 18 s | 32 MiB | 180 s |
+| a lean reading of 50 thousand requests and 200 MiB of the program's output | 40 MiB, 1.1 s | 64 MiB | 30 s |
+
+The last two measured 2026-11-26 (33.0), once each, on a 4 vCPU container with other builds running beside it.
 
 How:
 - **The record** (`reqlog::Record`, 96 bytes): its kind, method and bucket are interned `Name`s (2 bytes each); a
@@ -86,9 +90,21 @@ How:
 - **The analysis**: counts, signals, profile, operations and findings are computed once, one after another (threads
   each kept what they let go: a fifth more memory, for 2.5 s less); work is done on sorted indexes and tables by id,
   not per-request maps and copies; a run's traces keep their counts and words, not the requests they name.
+- **The program's output**: a lean reading reads past it (`RunFile::open_lean`); what shows its lines (the app's
+  run, a shared page) asks for it (`open_lean_with_logs`).
 - **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
   gets a page of operations at a time; `show --since` reads one run at a time. The app also caches each finished
   run's figures in the folder's index and reads a live recording incrementally.
+
+## Import
+
+`sonde import FILE|FOLDER` holds 24 bytes a request, not the file (`crates/analysis/src/import/stream.rs`): the
+source is decompressed and parsed as it is read (an event or an entry at a time; a `Records` document, a HAR's
+`log.entries`, or lines), each request is written at once to a file beside the run to be, and the run is written
+from that file once the end of the source has said its order (by time), its numbers and the host most of it went to.
+Its summary is then read lean, as `show` reads a run. 32.0 held the file's bytes, its text, its JSON document, its
+`Records` again and every record, then read the run whole for the summary: some ten times the file. The app's import
+and `import s3://` (many small files) still read each file whole.
 
 ## The plan
 

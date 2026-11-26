@@ -371,3 +371,239 @@ fn the_time_pane_of_a_million_requests_draws_bounded_rows() {
         310,
     );
 }
+
+/// A CloudTrail file as S3 delivers one (gzip, one `Records` document on a
+/// line) of `n` data events, a few of another service's among them, their
+/// times mostly in order as a trail's are. Returns how many are S3's, and
+/// the bytes of its text.
+fn trail(path: &Path, n: usize) -> (usize, u64) {
+    use std::io::Write;
+    let mut rng = support::Rng::new(7);
+    let file = std::fs::File::create(path).expect("the trail");
+    let mut gz =
+        flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::new(1));
+    let t0 = chrono::DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+        .expect("a time")
+        .with_timezone(&chrono::Utc);
+    let (mut s3, mut bytes) = (0usize, 0u64);
+    let mut put = |gz: &mut dyn Write, text: &str| {
+        gz.write_all(text.as_bytes()).expect("written");
+        bytes += text.len() as u64;
+    };
+    put(&mut gz, "{\"Records\":[");
+    for i in 0..n {
+        // delivered a little out of order: a second or two either way
+        let at = t0 + chrono::Duration::milliseconds(i as i64 * 20 + rng.below(3000) as i64);
+        let other = i % 97 == 96;
+        let (name, read) = match rng.below(10) {
+            0 => ("PutObject", false),
+            1 => ("HeadObject", true),
+            2 => ("ListObjectsV2", true),
+            _ => ("GetObject", true),
+        };
+        let key = format!(
+            "warehouse/db{}/t{:02}/data/dt=2026-11-{:02}/part-{:05}-6c5e0a1b-1f2e-4d3c-8b7a-{:012x}.c000.snappy.parquet",
+            rng.below(4),
+            rng.below(15),
+            1 + rng.below(28),
+            rng.below(4000),
+            rng.next() & 0xffff_ffff_ffff
+        );
+        let event = serde_json::json!({
+            "eventVersion": "1.09",
+            "userIdentity": {
+                "type": "AssumedRole",
+                "principalId": format!("AROAEXAMPLEEXAMPLE:job-{}", rng.below(16)),
+                "arn": format!("arn:aws:sts::123456789012:assumed-role/etl/job-{}", rng.below(16)),
+                "accountId": "123456789012",
+                "accessKeyId": "ASIAEXAMPLEEXAMPLE",
+                "sessionContext": {
+                    "sessionIssuer": {
+                        "type": "Role",
+                        "principalId": "AROAEXAMPLEEXAMPLE",
+                        "arn": "arn:aws:iam::123456789012:role/etl",
+                        "accountId": "123456789012",
+                        "userName": "etl"
+                    },
+                    "attributes": { "creationDate": "2026-11-02T23:50:00Z", "mfaAuthenticated": "false" }
+                }
+            },
+            "eventTime": at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "eventSource": if other { "kms.amazonaws.com" } else { "s3.amazonaws.com" },
+            "eventName": if other { "Decrypt" } else { name },
+            "awsRegion": "eu-west-1",
+            "sourceIPAddress": format!("10.0.{}.{}", rng.below(8), rng.below(250)),
+            "userAgent": "[aws-sdk-java/2.21.0 Linux/6.1.0 OpenJDK_64-Bit_Server_VM/17.0.9+9 Java/17.0.9 vendor/Eclipse_Adoptium io/sync http/Apache cfg/retry-mode/legacy]",
+            "requestParameters": {
+                "bucketName": "lake",
+                "Host": "lake.s3.eu-west-1.amazonaws.com",
+                "key": key,
+                "prefix": "warehouse/",
+                "list-type": "2"
+            },
+            "responseElements": null,
+            "additionalEventData": {
+                "SignatureVersion": "SigV4",
+                "CipherSuite": "TLS_AES_128_GCM_SHA256",
+                "bytesTransferredIn": if read { 0 } else { 8 << 20 },
+                "AuthenticationMethod": "AuthHeader",
+                "x-amz-id-2": format!("{:064x}{:012x}", rng.next(), rng.next() & 0xffff_ffff_ffff),
+                "bytesTransferredOut": if read { 1 << 20 } else { 0 }
+            },
+            "requestID": format!("{:016X}", rng.next()),
+            "eventID": format!("{:032x}", rng.next()),
+            "readOnly": read,
+            "resources": [
+                { "type": "AWS::S3::Object", "ARN": format!("arn:aws:s3:::lake/{key}") },
+                { "accountId": "123456789012", "type": "AWS::S3::Bucket", "ARN": "arn:aws:s3:::lake" }
+            ],
+            "eventType": "AwsApiCall",
+            "managementEvent": false,
+            "recipientAccountId": "123456789012",
+            "eventCategory": "Data",
+            "tlsDetails": {
+                "tlsVersion": "TLSv1.3",
+                "cipherSuite": "TLS_AES_128_GCM_SHA256",
+                "clientProvidedHostHeader": "lake.s3.eu-west-1.amazonaws.com"
+            }
+        });
+        s3 += !other as usize;
+        if i > 0 {
+            put(&mut gz, ",");
+        }
+        put(&mut gz, &event.to_string());
+    }
+    put(&mut gz, "]}");
+    gz.finish().expect("finished").flush().expect("flushed");
+    (s3, bytes)
+}
+
+/// What `sonde import` does with a CloudTrail file: read as a stream
+/// (decompressed and parsed an event at a time), each request written as
+/// it is read, and the run written from that file in time order
+/// ([`sonde_analysis::import::Spool`]). What it holds is 24 bytes a request
+/// (its time, and where it is), not the file: neither its text, nor its
+/// JSON, nor its records. Before 33.0 the same import held all three: the
+/// text twice (bytes, then a string), the document, its `Records` again,
+/// and every record.
+#[test]
+#[ignore = "a CloudTrail file of 300 thousand events: run in release, as CI does"]
+fn an_import_of_three_hundred_thousand_events_is_written_within_its_memory() {
+    use sonde_analysis::import::Spool;
+    let _alone = alone(false);
+    let dir = tempfile::tempdir().expect("a folder");
+    let source = dir.path().join("trail.json.gz");
+    let (events, text) = trail(&source, 300_000);
+    assert!(text > 400 << 20, "{text} bytes of text");
+    peak_from_now();
+    let started = Instant::now();
+    let out = dir.path().join("trail.sonde");
+    let mut spool = Spool::create(dir.path()).expect("a place for it");
+    spool.add_file(&source).expect("the trail reads");
+    let saved = spool
+        .seal("trail")
+        .expect("requests in it")
+        .save(&out)
+        .expect("the run is written");
+    let took = started.elapsed();
+    assert_eq!(saved.requests, events);
+    assert_eq!(saved.other_services, 300_000 - events);
+    let peak = peak_mib();
+    eprintln!(
+        "an import of {events} requests from {} MiB of text: {:.1} s, peak {peak:?} MiB",
+        text >> 20,
+        took.as_secs_f64()
+    );
+    held(
+        "import of 300 thousand CloudTrail events",
+        took,
+        Duration::from_secs(180),
+        IMPORT_MIB,
+    );
+    // and it does not grow as the file does: far below what the file holds
+    if let Some(peak) = peak {
+        assert!(
+            peak * 8 < text >> 20,
+            "peak {peak} MiB for {} MiB of text",
+            text >> 20
+        );
+    }
+    // the run it wrote is a run: every request, in time order
+    let run = RunFile::open_lean(&out).expect("the run opens");
+    assert_eq!(run.records.len(), events);
+    assert!(run.records.windows(2).all(|w| w[0].time <= w[1].time));
+    assert_eq!(run.header.endpoint, "s3.eu-west-1.amazonaws.com");
+}
+
+/// What an import of 300 thousand events may hold at once: what was measured
+/// (18 MiB, docs/dev/performance.md) and room for another allocator, far
+/// below its 544 MiB of text.
+const IMPORT_MIB: u64 = 32;
+
+/// A lean reading of a talkative program's run: the output sonde recorded
+/// (here 200 MiB of it, four chunks a request) is read past, not kept.
+/// `show` and `check` never read it; before 33.0 they held it all.
+#[test]
+#[ignore = "fifty thousand requests and 200 MiB of output: run in release, as CI does"]
+fn a_talkative_programs_output_is_not_held_by_a_lean_reading() {
+    use std::io::{BufRead, Write};
+    let _alone = alone(false);
+    let dir = tempfile::tempdir().expect("a folder");
+    let quiet = run(dir.path(), "lake-50000-3.sonde", |p| {
+        support::lake(50_000, p, 3)
+    });
+    // the same run, with what the program printed between its requests
+    let path = dir.path().join("talkative.sonde");
+    let mut output = 0u64;
+    {
+        let lines = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            std::fs::File::open(&quiet).expect("the run"),
+        ));
+        let mut gz = flate2::write::GzEncoder::new(
+            std::io::BufWriter::new(std::fs::File::create(&path).expect("the run")),
+            flate2::Compression::new(1),
+        );
+        let said = "x".repeat(1000);
+        for (i, line) in lines.lines().enumerate() {
+            let line = line.expect("a line");
+            writeln!(gz, "{line}").expect("written");
+            if i == 0 {
+                continue;
+            }
+            let time: String = serde_json::from_str::<serde_json::Value>(&line).expect("a record")
+                ["time"]
+                .as_str()
+                .expect("its time")
+                .into();
+            for k in 0..4 {
+                let chunk = serde_json::json!({ "log": { "time": time, "text": format!("{i}.{k} {said}\n") } });
+                let chunk = chunk.to_string();
+                output += chunk.len() as u64;
+                writeln!(gz, "{chunk}").expect("written");
+            }
+        }
+        gz.finish().expect("finished").flush().expect("flushed");
+    }
+    assert!(output > 200 << 20, "{output} bytes of output");
+    peak_from_now();
+    let started = Instant::now();
+    let s = RunFile::open_lean(&path).expect("the run opens");
+    assert!(s.logs.is_empty() && s.records.len() >= 50_000);
+    let a = Analysis::of(&s, &RequestPrices::default());
+    let took = started.elapsed();
+    assert!(!a.episodes.is_empty());
+    held(
+        "show of 50 thousand requests and 200 MiB of output",
+        took,
+        Duration::from_secs(30),
+        TALKATIVE_MIB,
+    );
+    drop((a, s));
+    // asked for, it is there (what the app's run and a shared page show)
+    let s = RunFile::open_lean_with_logs(&path).expect("the run opens");
+    assert_eq!(s.logs.len(), s.records.len() * 4);
+}
+
+/// What a lean reading of fifty thousand requests may hold, whatever their
+/// program printed (40 MiB measured; its 200 MiB of output would be 200 more).
+const TALKATIVE_MIB: u64 = 64;

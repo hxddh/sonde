@@ -515,7 +515,8 @@ fn cached_run(path: &str) -> Result<(Arc<RunFile>, bool), String> {
             let lean = kept_lean(now.0, compressed);
             // read outside the lock: another run opens meanwhile
             let s = if lean {
-                RunFile::open_lean(p)
+                // (with the program's output: `log_lines` and a shared page read it)
+                RunFile::open_lean_with_logs(p)
             } else {
                 RunFile::open(p)
             };
