@@ -705,7 +705,8 @@ mod tests {
         assert_eq!(got[0].url, "https://s3.eu-central-1.amazonaws.com");
         assert_eq!(got[0].vendor, Vendor::Aws);
         assert_eq!(got[1].id, "profile-local");
-        assert_eq!(got[1].vendor, Vendor::Minio);
+        // a port names no vendor
+        assert_eq!(got[1].vendor, Vendor::Other);
     }
 
     #[test]

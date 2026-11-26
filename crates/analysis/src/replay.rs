@@ -1194,6 +1194,40 @@ pub struct ReplayRun {
     pub unaborted_uploads: usize,
 }
 
+/// The most pages one listing is followed for: ten million entries.
+const PAGES: usize = 10_000;
+
+/// Whether `marker` was handed out before: a store that hands a marker back
+/// again would be asked for the same pages for ever, so its listing ends.
+fn again(seen: &mut std::collections::HashSet<String>, marker: impl std::fmt::Debug) -> bool {
+    !seen.insert(format!("{marker:?}"))
+}
+
+/// Every key under `prefix`, page after page: what could be listed (none
+/// where the listing is refused).
+async fn objects_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut token = None::<String>;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..PAGES {
+        let list = s3raw::ops::ListV2 {
+            prefix: Some(prefix.into()),
+            continuation_token: token.clone(),
+            url_encoding: true,
+            ..Default::default()
+        };
+        let Ok((page, _)) = base.list_objects_v2(bucket, &list).await else {
+            break;
+        };
+        out.extend(page.contents.into_iter().map(|o| o.key));
+        token = page.next_continuation_token;
+        if !page.is_truncated || token.is_none() || again(&mut seen, &token) {
+            break;
+        }
+    }
+    out
+}
+
 /// Every version and delete marker under `prefix` (key, version id,
 /// whether it is a marker): none where the store keeps no versions or does
 /// not list them.
@@ -1204,8 +1238,8 @@ async fn versions_under(
 ) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
     let (mut key, mut version) = (None::<String>, None::<String>);
-    // (a page at a time; a store that answers the same page for ever is left)
-    for _ in 0..10_000 {
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..PAGES {
         let Ok(page) = base
             .list_object_versions(
                 bucket,
@@ -1229,10 +1263,35 @@ async fn versions_under(
                 )
                 .filter_map(|(k, v, marker)| Some((k, v?, marker))),
         );
-        if !page.is_truncated || page.next_key_marker.is_none() {
+        (key, version) = (page.next_key_marker, page.next_version_id_marker);
+        if !page.is_truncated || key.is_none() || again(&mut seen, (&key, &version)) {
             break;
         }
-        (key, version) = (page.next_key_marker, page.next_version_id_marker);
+    }
+    out
+}
+
+/// Every multipart upload under `prefix` (key, upload id), page after page
+/// (1,000 a page): none where the store does not list them.
+async fn uploads_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let (mut key, mut upload) = (None::<String>, None::<String>);
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..PAGES {
+        let Ok(page) = base
+            .list_multipart_uploads(bucket, Some(prefix), key.as_deref(), upload.as_deref())
+            .await
+        else {
+            break;
+        };
+        out.extend(page.upload.into_iter().map(|u| (u.key, u.upload_id)));
+        (key, upload) = (page.next_key_marker, page.next_upload_id_marker);
+        if !page.is_truncated
+            || (key.is_none() && upload.is_none())
+            || again(&mut seen, (&key, &upload))
+        {
+            break;
+        }
     }
     out
 }
@@ -1333,11 +1392,12 @@ pub async fn replay_to_file(
     // whether the store takes DeleteObjects: found out once
     let mut batches = true;
     for b in buckets_of(&original.records, opts) {
-        if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
-            let keys: Vec<(String, Option<String>)> =
-                objects.iter().map(|o| (o.key.clone(), None)).collect();
-            removed += delete_keys(base, &b, &keys, &mut batches).await;
-        }
+        let keys: Vec<(String, Option<String>)> = objects_under(base, &b, &opts.prefix)
+            .await
+            .into_iter()
+            .map(|k| (k, None))
+            .collect();
+        removed += delete_keys(base, &b, &keys, &mut batches).await;
         // a bucket that keeps versions kept every one of them, and a
         // delete marker for each delete above: they go by their ids
         // (a bucket without versions lists none once its objects are gone)
@@ -1349,30 +1409,19 @@ pub async fn replay_to_file(
         removed_versions += delete_keys(base, &b, &versions, &mut batches).await;
         // and what is there now is what was left, each thing once: an
         // object the store also lists as a version is that version
-        let objects = base
-            .list_all(&b, &opts.prefix, usize::MAX)
-            .await
-            .map_or(0, |o| o.len());
+        let objects = objects_under(base, &b, &opts.prefix).await.len();
         let listed = versions_under(base, &b, &opts.prefix).await;
         let markers = listed.iter().filter(|(_, _, marker)| *marker).count();
         left_objects += objects;
         left_markers += markers;
         left_versions += (listed.len() - markers).saturating_sub(objects);
-        if let Ok(up) = base
-            .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
-            .await
-        {
-            for u in up.upload {
-                let _ = base.abort_multipart_upload(&b, &u.key, &u.upload_id).await;
-            }
+        // every upload under the prefix, of every page: one left has its
+        // parts billed
+        for (key, id) in uploads_under(base, &b, &opts.prefix).await {
+            let _ = base.abort_multipart_upload(&b, &key, &id).await;
         }
-        // an upload still listed would not abort: its parts are billed
-        if let Ok(up) = base
-            .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
-            .await
-        {
-            unaborted_uploads += up.upload.len();
-        }
+        // an upload still listed would not abort
+        unaborted_uploads += uploads_under(base, &b, &opts.prefix).await.len();
     }
     let replayed = crate::run::RunFile::open(out)?;
     let comparison = compare(&original.records, &replayed.records, &done);

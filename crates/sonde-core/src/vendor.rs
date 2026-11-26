@@ -8,6 +8,7 @@ pub enum Vendor {
     Aws,
     R2,
     Minio,
+    Rustfs,
     CephRgw,
     AliyunOss,
     TencentCos,
@@ -32,7 +33,7 @@ impl Vendor {
             Vendor::BackblazeB2 => Some((0.0, 0.0004, Some(0.004))),
             Vendor::Wasabi => Some((0.0, 0.0, None)),
             Vendor::Tigris => Some((0.005, 0.0005, None)),
-            Vendor::Minio | Vendor::CephRgw => Some((0.0, 0.0, None)),
+            Vendor::Minio | Vendor::Rustfs | Vendor::CephRgw => Some((0.0, 0.0, None)),
             _ => None,
         }
     }
@@ -62,16 +63,18 @@ impl Vendor {
             | Vendor::Wasabi
             | Vendor::BackblazeB2
             | Vendor::Minio
+            | Vendor::Rustfs
             | Vendor::CephRgw => Some(0.0),
             _ => None,
         }
     }
 }
 
-pub const ALL: [Vendor; 11] = [
+pub const ALL: [Vendor; 12] = [
     Vendor::Aws,
     Vendor::R2,
     Vendor::Minio,
+    Vendor::Rustfs,
     Vendor::CephRgw,
     Vendor::AliyunOss,
     Vendor::TencentCos,
@@ -88,6 +91,7 @@ impl Vendor {
             Vendor::Aws => "AWS S3",
             Vendor::R2 => "Cloudflare R2",
             Vendor::Minio => "MinIO",
+            Vendor::Rustfs => "RustFS",
             Vendor::CephRgw => "Ceph RGW",
             Vendor::AliyunOss => "Alibaba Cloud OSS",
             Vendor::TencentCos => "Tencent COS",
@@ -104,6 +108,7 @@ impl Vendor {
             Vendor::Aws => "aws",
             Vendor::R2 => "r2",
             Vendor::Minio => "minio",
+            Vendor::Rustfs => "rustfs",
             Vendor::CephRgw => "ceph-rgw",
             Vendor::AliyunOss => "aliyun-oss",
             Vendor::TencentCos => "tencent-cos",
@@ -147,7 +152,7 @@ impl Vendor {
         match self {
             Vendor::Aws => "https://s3.{region}.amazonaws.com",
             Vendor::R2 => "https://{account}.r2.cloudflarestorage.com",
-            Vendor::Minio => "http://127.0.0.1:9000",
+            Vendor::Minio | Vendor::Rustfs => "http://127.0.0.1:9000",
             Vendor::CephRgw => "http://127.0.0.1:7480",
             Vendor::AliyunOss => "https://oss-{region}.aliyuncs.com",
             Vendor::TencentCos => "https://cos.{region}.myqcloud.com",
@@ -159,7 +164,10 @@ impl Vendor {
         }
     }
 
-    /// Guesses the vendor from an endpoint URL.
+    /// Guesses the vendor from an endpoint URL: by a name in it. A port is
+    /// no evidence (MinIO, RustFS, SeaweedFS and many a proxy listen on
+    /// 9000): `http://localhost:9000` is `Other` until an answer says more
+    /// ([`Vendor::from_answer`]).
     pub fn guess(url: &str) -> Vendor {
         let u = url.to_ascii_lowercase();
         if u.contains("amazonaws.com") {
@@ -179,20 +187,63 @@ impl Vendor {
             Vendor::Wasabi
         } else if u.contains("storage.googleapis.com") {
             Vendor::GcsXml
-        } else if u.contains(":9000") || u.contains("minio") {
+        } else if u.contains("minio") {
             Vendor::Minio
-        } else if u.contains(":7480") || u.contains("rgw") || u.contains("ceph") {
+        } else if u.contains("rustfs") {
+            Vendor::Rustfs
+        } else if u.contains("rgw") || u.contains("ceph") {
             Vendor::CephRgw
         } else {
             Vendor::Other
         }
     }
 
+    /// The vendor a store's own answers name: its `Server` header, else the
+    /// shape of an error body (`bodies`: any XML error documents it sent).
+    /// `None` when nothing in them is a store's own mark. RustFS is known
+    /// by its `Server` header alone: its error body
+    /// (`<Error><Code/><Message/></Error>`) is the plain one any store may
+    /// send.
+    pub fn from_answer<'a>(
+        server: Option<&str>,
+        bodies: impl IntoIterator<Item = &'a str>,
+    ) -> Option<Vendor> {
+        let named = server.map(str::to_ascii_lowercase).and_then(|s| {
+            // `MinIO`, `RustFS/1.0.0`, `AmazonS3`, `AliyunOSS`, `tencent-cos`,
+            // `WasabiS3/7.10 (head2)`, `Tigris OS`
+            [
+                ("rustfs", Vendor::Rustfs),
+                ("minio", Vendor::Minio),
+                ("amazons3", Vendor::Aws),
+                ("aliyunoss", Vendor::AliyunOss),
+                ("tencent-cos", Vendor::TencentCos),
+                ("wasabis3", Vendor::Wasabi),
+                ("tigris", Vendor::Tigris),
+            ]
+            .into_iter()
+            .find_map(|(name, v)| s.starts_with(name).then_some(v))
+        });
+        named.or_else(|| {
+            bodies.into_iter().find_map(|b| {
+                if !b.contains("<Error>") {
+                    None
+                } else if b.contains(MINIO_HOST_ID) {
+                    Some(Vendor::Minio)
+                } else if b.contains("<RequestId>tx0000") && b.contains("<HostId>") {
+                    // RGW's transaction ids: tx000000000000000000500-006aedee7c-100e-default
+                    Some(Vendor::CephRgw)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
     /// Path-style by default for vendors that expect it.
     pub fn default_path_style(self) -> bool {
         matches!(
             self,
-            Vendor::Minio | Vendor::CephRgw | Vendor::Other | Vendor::R2
+            Vendor::Minio | Vendor::Rustfs | Vendor::CephRgw | Vendor::Other | Vendor::R2
         )
     }
 
@@ -204,6 +255,10 @@ impl Vendor {
         }
     }
 }
+
+/// The `HostId` in MinIO's error documents: the same on every server.
+const MINIO_HOST_ID: &str =
+    "<HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId>";
 
 #[cfg(test)]
 mod tests {
@@ -218,7 +273,7 @@ mod tests {
             Vendor::guess("https://s3.eu-west-1.amazonaws.com"),
             Vendor::Aws
         );
-        assert_eq!(Vendor::guess("http://localhost:9000"), Vendor::Minio);
+        assert_eq!(Vendor::guess("http://minio.lab:9000"), Vendor::Minio);
         assert_eq!(
             Vendor::guess("https://abc.r2.cloudflarestorage.com"),
             Vendor::R2
@@ -231,6 +286,62 @@ mod tests {
         assert_eq!(
             Vendor::Aws.sts_endpoint("cn-north-1").unwrap(),
             "https://sts.cn-north-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn a_port_is_no_evidence_of_a_vendor() {
+        // RustFS, SeaweedFS and many a proxy listen there as MinIO does
+        for url in [
+            "http://localhost:9000",
+            "http://127.0.0.1:9000/",
+            "https://s3.internal.example:9000",
+            "http://10.0.0.7:7480",
+        ] {
+            assert_eq!(Vendor::guess(url), Vendor::Other, "{url}");
+        }
+        assert_eq!(Vendor::guess("http://rustfs:9000"), Vendor::Rustfs);
+        assert_eq!(Vendor::guess("http://rgw.lab:7480"), Vendor::CephRgw);
+        // a store of one's own all the same: path-style, nothing per request
+        assert!(Vendor::Rustfs.default_path_style());
+        assert_eq!(Vendor::Rustfs.request_prices(), Some((0.0, 0.0, None)));
+        assert_eq!(Vendor::from_id("rustfs"), Some(Vendor::Rustfs));
+    }
+
+    #[test]
+    fn a_store_is_known_by_what_it_answers() {
+        let none: [&str; 0] = [];
+        assert_eq!(
+            Vendor::from_answer(Some("RustFS/1.0.0-alpha.90"), none),
+            Some(Vendor::Rustfs)
+        );
+        assert_eq!(
+            Vendor::from_answer(Some("rustfs"), none),
+            Some(Vendor::Rustfs)
+        );
+        assert_eq!(
+            Vendor::from_answer(Some("MinIO"), none),
+            Some(Vendor::Minio)
+        );
+        assert_eq!(
+            Vendor::from_answer(Some("AmazonS3"), none),
+            Some(Vendor::Aws)
+        );
+        // a proxy in front says nothing of the store behind it
+        assert_eq!(Vendor::from_answer(Some("nginx/1.27.0"), none), None);
+        assert_eq!(Vendor::from_answer(None, none), None);
+        // an error body: MinIO's HostId, RGW's transaction id
+        let minio = "<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>k</Key><BucketName>b</BucketName><Resource>/b/k</Resource><RequestId>18A1</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>";
+        assert_eq!(Vendor::from_answer(None, [minio]), Some(Vendor::Minio));
+        let rgw = "<Error><Code>AccessDenied</Code><RequestId>tx0000000000000000005d0-006aedee86-100e-default</RequestId><HostId>100e-default-default</HostId></Error>";
+        assert_eq!(Vendor::from_answer(None, ["", rgw]), Some(Vendor::CephRgw));
+        // the plain error document (RustFS's too) is nobody's mark
+        let plain = "<Error><Code>BadDigest</Code><Message>The Content-Md5 you specified did not match what we received.</Message></Error>";
+        assert_eq!(Vendor::from_answer(None, [plain]), None);
+        // and the header, where there is one, is the store's own word
+        assert_eq!(
+            Vendor::from_answer(Some("RustFS"), [minio]),
+            Some(Vendor::Rustfs)
         );
     }
 }

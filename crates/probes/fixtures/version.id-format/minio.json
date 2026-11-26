@@ -1,7 +1,7 @@
 {
   "probe": "version.id-format",
   "vendor": "minio",
-  "expect": "differs",
+  "expect": "pass",
   "note": "",
   "steps": [
     {

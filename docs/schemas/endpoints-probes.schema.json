@@ -16,7 +16,8 @@
       "type": "string"
     },
     "vendor": {
-      "type": "string"
+      "type": "string",
+      "description": "The store that answered, by its Server header or its error documents; else the endpoint's vendor."
     },
     "server": {
       "type": [

@@ -602,6 +602,51 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
     assert_eq!(run.unaborted_uploads, 1);
 }
 
+fn create_upload_record(id: u64, key: &str) -> reqlog::Record {
+    let mut create = put_record(id, key);
+    create.kind = "CreateMultipartUpload".into();
+    create.method = "POST".into();
+    create.lists_mut().query = vec![("uploads".into(), "".into())];
+    create.request_bytes = None.into();
+    create
+}
+
+/// A store lists 1,000 uploads a page: the ones past the first page are
+/// aborted too, and counted when they would not abort.
+#[tokio::test]
+async fn a_cleanup_aborts_the_uploads_of_every_page() {
+    let creates = || -> Vec<reqlog::Record> {
+        (0..1001)
+            .map(|i| create_upload_record(i + 1, &format!("up/{i:04}")))
+            .collect()
+    };
+    let store = MiniS3::start(true).await;
+    let run = replayed(&store, creates()).await;
+    assert_eq!(store.state.lock().open_uploads(), 0, "none left billed");
+    assert_eq!(run.unaborted_uploads, 0);
+    // and where none aborts, every one is counted, not the first page's
+    let store = MiniS3::start(true).await;
+    store.state.lock().no_abort = true;
+    let run = replayed(&store, creates()).await;
+    assert_eq!(run.unaborted_uploads, 1001);
+}
+
+/// A store that answers every page of uploads with the same marker is not
+/// asked for ever.
+#[tokio::test]
+async fn a_listing_of_uploads_that_never_ends_ends_the_cleanup() {
+    let store = MiniS3::start(true).await;
+    store.state.lock().same_uploads_page = true;
+    let run = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        replayed(&store, vec![create_upload_record(1, "big")]),
+    )
+    .await
+    .expect("the cleanup ended");
+    assert_eq!(store.state.lock().open_uploads(), 0);
+    assert_eq!(run.unaborted_uploads, 0);
+}
+
 /// A program that reads input it did not write: its replay writes
 /// stand-ins of what it read first, so nothing differs.
 #[tokio::test]
