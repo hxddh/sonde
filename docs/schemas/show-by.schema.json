@@ -6,17 +6,25 @@
   "type": "object",
   "properties": {
     "run": {
-      "type": "object",
-      "description": "The run's header."
+      "$ref": "#/$defs/runHeader"
     },
     "split": {
       "type": "object",
       "properties": {
         "by": {
-          "enum": ["kind", "prefix", "size", "caller", "key"]
+          "enum": [
+            "kind",
+            "prefix",
+            "size",
+            "caller",
+            "key"
+          ]
         },
         "sdk": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "The SDK that sent most requests (`boto3 1.44`), from their user agent."
         },
         "slowMs": {
@@ -54,17 +62,37 @@
                 "type": "string"
               },
               "args": {
-                "type": "object"
+                "type": "object",
+                "description": "Its arguments, as text.",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
-            "required": ["key", "args"]
+            "required": [
+              "key",
+              "args"
+            ]
           }
         }
       },
-      "required": ["by", "sdk", "slowMs", "slow", "cost", "currency", "rows", "text", "phrases"]
+      "required": [
+        "by",
+        "sdk",
+        "slowMs",
+        "slow",
+        "cost",
+        "currency",
+        "rows",
+        "text",
+        "phrases"
+      ]
     }
   },
-  "required": ["run", "split"],
+  "required": [
+    "run",
+    "split"
+  ],
   "$defs": {
     "row": {
       "type": "object",
@@ -127,6 +155,111 @@
         "cost",
         "costShare",
         "slow"
+      ]
+    },
+    "runHeader": {
+      "type": "object",
+      "description": "The run's first line: docs/dev/run-format.md.",
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Always `sonde-run`.",
+          "const": "sonde-run"
+        },
+        "version": {
+          "type": "integer",
+          "description": "The run format's version (docs/dev/run-format.md)."
+        },
+        "sonde": {
+          "type": "string",
+          "description": "The sonde that wrote the file (its version)."
+        },
+        "created": {
+          "type": "string",
+          "description": "When the recording began (RFC 3339)."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "The endpoint's id."
+        },
+        "url": {
+          "type": "string",
+          "description": "The endpoint's URL."
+        },
+        "region": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string",
+          "description": "The command sonde ran, when it ran one."
+        },
+        "name": {
+          "type": "string",
+          "description": "The program's name (`[program] name`, `--name`)."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "The folder the command ran in."
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        },
+        "scenario": {
+          "type": "string",
+          "description": "A trial's fault scenario."
+        },
+        "trialOf": {
+          "type": "string",
+          "description": "The clean run a trial is of (its file name)."
+        },
+        "wholeSeconds": {
+          "type": "boolean",
+          "description": "Request times are to the second (an imported log)."
+        },
+        "pathStyle": {
+          "type": "boolean",
+          "description": "The store was given by its URL (`--url`) and addressed path-style (`--path-style`). Absent otherwise (33.0)."
+        },
+        "caFile": {
+          "type": "string",
+          "description": "The CA file a store given by its URL was trusted by (`--ca-file`): its path, never its content. Absent otherwise (33.0)."
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "The program was served TLS (`--tls`). Absent otherwise (33.0)."
+        },
+        "policy": {
+          "type": "string",
+          "description": "What the recorded program was allowed to do: `allow`, `no-delete` or `read-only`. Absent in a run written before 33.0, and in one no program was recorded for (an import, a replay)."
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "created",
+        "endpoint",
+        "url",
+        "region"
+      ]
+    },
+    "git": {
+      "type": "object",
+      "description": "The commit the program's code was at.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean",
+          "description": "Changes not committed yet."
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
       ]
     }
   }

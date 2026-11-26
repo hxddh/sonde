@@ -131,6 +131,8 @@ pub async fn run_endpoint(
     })?;
     let mut results = Vec::new();
     let mut server = None;
+    // the store's own word for what it is, where its answers give one
+    let mut answered: Option<sonde_core::Vendor> = None;
     // what cleanup could not remove, for the result, the job and the audit log
     let mut leftovers: Vec<String> = Vec::new();
     let mut cancelled = false;
@@ -187,7 +189,6 @@ pub async fn run_endpoint(
             for l in &left {
                 j.observe(said_text(l));
             }
-            record_fixture(cfg.vendor.id(), &meta.id, j.verdict, &steps);
             let exchanges = s
                 .log()
                 .list(
@@ -205,6 +206,18 @@ pub async fn run_endpoint(
                     .iter()
                     .find_map(|r| r.header("server").map(String::from));
             }
+            if answered.is_none() {
+                answered = sonde_core::Vendor::from_answer(
+                    server.as_deref(),
+                    steps.0.iter().map(|s| s.body.as_str()),
+                );
+            }
+            record_fixture(
+                answered.unwrap_or(cfg.vendor).id(),
+                &meta.id,
+                j.verdict,
+                &steps,
+            );
             ProbeResult {
                 id: meta.id.clone(),
                 category: meta.category,
@@ -272,7 +285,8 @@ pub async fn run_endpoint(
         id: run_id,
         endpoint: endpoint.into(),
         endpoint_name: cfg.name.clone(),
-        vendor: cfg.vendor.id().into(),
+        // what answered, before what the endpoint was set up as
+        vendor: answered.unwrap_or(cfg.vendor).id().into(),
         server,
         started,
         finished: Utc::now().to_rfc3339(),
@@ -385,61 +399,134 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
             "{stuck_uploads} multipart uploads under {bucket}/{prefix}"
         ));
     }
-    for _ in 0..1000 {
-        let objs: Vec<(String, Option<String>)> = match c
-            .list_object_versions(bucket, Some(prefix), None, None, None)
-            .await
-        {
-            Ok(v) => v
+    // every version and delete marker, page after page; a store without
+    // versions, or one that will not list them, has its objects listed below
+    let mut stuck: std::collections::BTreeSet<(String, Option<String>)> = Default::default();
+    let mut why = String::new();
+    'versions: for _ in 0..ROUNDS {
+        let (mut km, mut vm): (Option<String>, Option<String>) = (None, None);
+        let mut pages = sonde_core::services::Pages::default();
+        let mut progressed = false;
+        loop {
+            let Ok(page) = c
+                .list_object_versions(bucket, Some(prefix), km.as_deref(), vm.as_deref(), None)
+                .await
+            else {
+                break 'versions;
+            };
+            let listed = page
                 .version
                 .iter()
                 .map(|x| (x.key.clone(), x.version_id.clone()))
                 .chain(
-                    v.delete_marker
+                    page.delete_marker
                         .iter()
                         .map(|d| (d.key.clone(), d.version_id.clone())),
-                )
-                .collect(),
-            Err(_) => match c.list_all(bucket, prefix, 1000).await {
-                Ok(o) => o.into_iter().map(|o| (o.key, None)).collect(),
+                );
+            for at in listed {
+                if stuck.contains(&at) {
+                    continue;
+                }
+                match delete(c, bucket, &at.0, at.1.as_deref()).await {
+                    Ok(_) => progressed = true,
+                    Err(e) => {
+                        why = e.to_string();
+                        stuck.insert(at);
+                    }
+                }
+            }
+            km = page.next_key_marker;
+            vm = page.next_version_id_marker;
+            if !page.is_truncated || km.is_none() {
+                break 'versions;
+            }
+            // the same page again: asked from the start, less what went
+            if pages.next((&km, &vm)).is_err() {
+                break;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    // then the objects, always: a store without versions may answer the
+    // listing of versions 200 with none in it. A key whose version would
+    // not go is left as it is (a plain DELETE would add a delete marker).
+    let held: std::collections::BTreeSet<String> = stuck.iter().map(|(k, _)| k.clone()).collect();
+    'objects: for _ in 0..ROUNDS {
+        let mut token: Option<String> = None;
+        let mut pages = sonde_core::services::Pages::default();
+        let mut progressed = false;
+        loop {
+            let list = s3raw::ops::ListV2 {
+                prefix: Some(prefix.into()),
+                continuation_token: token.clone(),
+                url_encoding: true,
+                ..Default::default()
+            };
+            let page = match c.list_objects_v2(bucket, &list).await {
+                Ok((page, _)) => page,
                 Err(e) => {
                     left.push(format!(
                         "{UNCHECKED} under {bucket}/{prefix}: objects could not be listed ({e})"
                     ));
-                    break;
+                    break 'objects;
                 }
-            },
-        };
-        if objs.is_empty() {
-            break;
-        }
-        let mut progressed = false;
-        let mut why = String::new();
-        for chunk in objs.chunks(1000) {
-            for (k, v) in chunk {
-                let mut req = s3raw::S3Request::new("DeleteObject", http::Method::DELETE)
-                    .bucket(bucket)
-                    .key(k)
-                    .header("x-amz-bypass-governance-retention", "true");
-                if let Some(v) = v {
-                    req = req.query("versionId", v.as_str());
+            };
+            for o in page.contents {
+                let at = (o.key, None);
+                if held.contains(&at.0) || stuck.contains(&at) {
+                    continue;
                 }
-                match c.send(req).await {
+                match delete(c, bucket, &at.0, None).await {
                     Ok(_) => progressed = true,
-                    Err(e) => why = e.to_string(),
+                    Err(e) => {
+                        why = e.to_string();
+                        stuck.insert(at);
+                    }
                 }
+            }
+            token = page.next_continuation_token;
+            if !page.is_truncated || token.is_none() {
+                break 'objects;
+            }
+            if pages.next(&token).is_err() {
+                break;
             }
         }
         if !progressed {
-            // none of what is listed could be deleted: it stays
-            left.push(format!(
-                "{} objects or versions under {bucket}/{prefix} ({why})",
-                objs.len()
-            ));
             break;
         }
     }
+    if !stuck.is_empty() {
+        // what is listed and could not be deleted: it stays
+        left.push(format!(
+            "{} objects or versions under {bucket}/{prefix} ({why})",
+            stuck.len()
+        ));
+    }
     left
+}
+
+/// How many times a listing that hands its marker back again is asked from
+/// the start, while each round still removes something.
+const ROUNDS: usize = 1000;
+
+/// Deletes one object (or one version of it), past a governance lock.
+async fn delete(
+    c: &S3Client,
+    bucket: &str,
+    key: &str,
+    version: Option<&str>,
+) -> Result<s3raw::S3Response, S3Error> {
+    let mut req = s3raw::S3Request::new("DeleteObject", http::Method::DELETE)
+        .bucket(bucket)
+        .key(key)
+        .header("x-amz-bypass-governance-retention", "true");
+    if let Some(v) = version {
+        req = req.query("versionId", v);
+    }
+    c.send(req).await
 }
 
 fn not_implemented(e: &S3Error) -> bool {
@@ -520,6 +607,44 @@ mod tests {
         /// while `drop_create` is on
         buckets: Mutex<BTreeSet<String>>,
         drop_create: AtomicBool,
+        /// the listing of versions: `None` 501, `Some(false)` 200 with no
+        /// version in it though objects exist, `Some(true)` each key as
+        /// one version (`v1`)
+        versions: Mutex<Option<bool>>,
+        /// keys (or versions) a listed page, 0: all of them
+        page: std::sync::atomic::AtomicUsize,
+        /// every page is the first, and said to be truncated
+        same_page: AtomicBool,
+        /// the `Server` header of every answer
+        server: Mutex<Option<String>>,
+        /// deletes that named no version where there are versions (each
+        /// would add a delete marker)
+        plain_deletes: std::sync::atomic::AtomicUsize,
+    }
+
+    /// A page of `keys` after `marker`, and whether more follow.
+    fn page_of<'a>(fake: &Fake, keys: &[&'a str], marker: &str) -> (Vec<&'a str>, bool) {
+        let size = match fake.page.load(Ordering::SeqCst) {
+            0 => usize::MAX,
+            n => n,
+        };
+        let same = fake.same_page.load(Ordering::SeqCst);
+        let after: Vec<&str> = keys
+            .iter()
+            .copied()
+            .filter(|k| same || *k > marker)
+            .collect();
+        let page: Vec<&str> = after.iter().copied().take(size).collect();
+        let more = after.len() > page.len() || (same && !page.is_empty());
+        (page, more)
+    }
+
+    fn param(query: &str, name: &str) -> String {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(&format!("{name}=")))
+            .map(|m| m.replace("%2F", "/"))
+            .unwrap_or_default()
     }
 
     async fn serve(fake: Arc<Fake>) -> String {
@@ -604,6 +729,13 @@ mod tests {
                     403,
                     "<Error><Code>AccessDenied</Code><Message>no</Message></Error>".to_string(),
                 ),
+                // a version is deleted by its id, where there are versions
+                ("DELETE", true)
+                    if *fake.versions.lock() == Some(true) && !query.contains("versionId=v1") =>
+                {
+                    fake.plain_deletes.fetch_add(1, Ordering::SeqCst);
+                    (204, String::new())
+                }
                 ("DELETE", true) => {
                     fake.keys.lock().remove(path);
                     (204, String::new())
@@ -642,18 +774,57 @@ mod tests {
                         format!("<ListMultipartUploadsResult>{page}</ListMultipartUploadsResult>"),
                     )
                 }
-                // no versions here: cleanup falls back to ListObjectsV2
-                ("GET", false) if query.contains("versions") => (
-                    501,
-                    "<Error><Code>NotImplemented</Code><Message>no</Message></Error>".to_string(),
-                ),
+                ("GET", false) if query.contains("versions") => match *fake.versions.lock() {
+                    // no versions here: cleanup lists the objects
+                    None => (
+                        501,
+                        "<Error><Code>NotImplemented</Code><Message>no</Message></Error>"
+                            .to_string(),
+                    ),
+                    Some(false) => (200, "<ListVersionsResult></ListVersionsResult>".to_string()),
+                    Some(true) => {
+                        let keys = fake.keys.lock();
+                        let keys: Vec<&str> = keys
+                            .iter()
+                            .filter_map(|k| k.strip_prefix(&format!("{path}/")))
+                            .collect();
+                        let (page, more) = page_of(&fake, &keys, &param(query, "key-marker"));
+                        let mut rows = format!("<IsTruncated>{more}</IsTruncated>");
+                        if let Some(k) = page.last().filter(|_| more) {
+                            rows.push_str(&format!(
+                                "<NextKeyMarker>{k}</NextKeyMarker>\
+                                 <NextVersionIdMarker>v1</NextVersionIdMarker>"
+                            ));
+                        }
+                        for k in page {
+                            rows.push_str(&format!(
+                                "<Version><Key>{k}</Key><VersionId>v1</VersionId></Version>"
+                            ));
+                        }
+                        (
+                            200,
+                            format!("<ListVersionsResult>{rows}</ListVersionsResult>"),
+                        )
+                    }
+                },
                 ("GET", false) => {
                     let keys = fake.keys.lock();
-                    let rows: String = keys
+                    let keys: Vec<&str> = keys
                         .iter()
                         .filter_map(|k| k.strip_prefix(&format!("{path}/")))
-                        .map(|k| format!("<Contents><Key>{k}</Key><Size>1</Size></Contents>"))
                         .collect();
+                    let (page, more) = page_of(&fake, &keys, &param(query, "continuation-token"));
+                    let mut rows = format!("<IsTruncated>{more}</IsTruncated>");
+                    if let Some(k) = page.last().filter(|_| more) {
+                        rows.push_str(&format!(
+                            "<NextContinuationToken>{k}</NextContinuationToken>"
+                        ));
+                    }
+                    for k in page {
+                        rows.push_str(&format!(
+                            "<Contents><Key>{k}</Key><Size>1</Size></Contents>"
+                        ));
+                    }
                     (200, format!("<ListBucketResult>{rows}</ListBucketResult>"))
                 }
                 _ => (200, String::new()),
@@ -663,8 +834,12 @@ mod tests {
             } else {
                 body
             };
+            let server = match &*fake.server.lock() {
+                Some(s) => format!("server: {s}\r\n"),
+                None => String::new(),
+            };
             let reply = format!(
-                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\netag: \"e\"\r\n\r\n{body}",
+                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\n{server}etag: \"e\"\r\n\r\n{body}",
                 body.len()
             );
             if c.write_all(reply.as_bytes()).await.is_err() {
@@ -832,6 +1007,100 @@ mod tests {
             fake.uploads.lock().iter().collect::<Vec<_>>(),
             ["/scratch/p/a-stuck"]
         );
+    }
+
+    async fn put_keys(c: &S3Client, n: usize) {
+        for i in 0..n {
+            c.send(
+                s3raw::S3Request::new("PutObject", http::Method::PUT)
+                    .bucket("scratch")
+                    .key(&format!("p/k{i:02}"))
+                    .body("x"),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    /// Some stores without versions answer ListObjectVersions 200 with no
+    /// version in it: the objects are there all the same.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_removes_the_objects_a_listing_of_versions_did_not_name() {
+        let fake = Arc::new(Fake::default());
+        *fake.versions.lock() = Some(false);
+        fake.page.store(2, Ordering::SeqCst);
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+        let c = s.client("fake").unwrap();
+        put_keys(&c, 5).await;
+        assert_eq!(cleanup(&c, "scratch", "p/", &[]).await, [] as [&str; 0]);
+        assert!(fake.keys.lock().is_empty(), "{:?}", fake.keys.lock());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_removes_the_versions_and_the_objects_of_every_page() {
+        for versions in [None, Some(true)] {
+            let fake = Arc::new(Fake::default());
+            *fake.versions.lock() = versions;
+            fake.page.store(2, Ordering::SeqCst);
+            let dir = tempfile::tempdir().unwrap();
+            let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+            let c = s.client("fake").unwrap();
+            put_keys(&c, 7).await;
+            assert_eq!(cleanup(&c, "scratch", "p/", &[]).await, [] as [&str; 0]);
+            assert!(fake.keys.lock().is_empty(), "{versions:?}");
+            // a version went by its id: no delete marker was added
+            assert_eq!(fake.plain_deletes.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    /// A store that answers every page with the first is asked from the
+    /// start while that removes something, and then no more.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_ends_on_a_listing_that_never_does() {
+        for (versions, deny) in [(None, false), (Some(true), false), (None, true)] {
+            let fake = Arc::new(Fake::default());
+            *fake.versions.lock() = versions;
+            fake.page.store(2, Ordering::SeqCst);
+            fake.same_page.store(true, Ordering::SeqCst);
+            let dir = tempfile::tempdir().unwrap();
+            let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+            let c = s.client("fake").unwrap();
+            put_keys(&c, 5).await;
+            fake.deny_delete.store(deny, Ordering::SeqCst);
+            let left =
+                tokio::time::timeout(Duration::from_secs(60), cleanup(&c, "scratch", "p/", &[]))
+                    .await
+                    .expect("the cleanup ended");
+            if deny {
+                // the page it was shown, counted once
+                assert_eq!(left.len(), 1, "{left:?}");
+                assert!(left[0].starts_with("2 objects or versions under scratch/p/"));
+            } else {
+                assert_eq!(left, [] as [&str; 0]);
+                assert!(fake.keys.lock().is_empty(), "{versions:?}");
+            }
+        }
+    }
+
+    /// The endpoint is set up as `other` (a URL names no vendor): the run
+    /// is of the store that answered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_names_the_store_that_answered() {
+        for (server, vendor) in [(Some("RustFS/1.0.0"), "rustfs"), (None, "other")] {
+            let fake = Arc::new(Fake::default());
+            *fake.server.lock() = server.map(String::from);
+            let dir = tempfile::tempdir().unwrap();
+            let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+            let id = spawn(&s, "fake", one_probe());
+            let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&id))
+                .await
+                .expect("the job ended")
+                .unwrap();
+            let run: Run = serde_json::from_value(v).unwrap();
+            assert_eq!(run.vendor, vendor);
+            assert_eq!(run.server.as_deref(), server);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

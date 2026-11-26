@@ -11,9 +11,12 @@
 //! Two faults are not an error in the store's place. A body cut short
 //! ([`Effect::CutBody`]) is the store's own answer, stopped part way. A lost
 //! race ([`Effect::LostRace`]) is a 412 to a conditional write that would
-//! have won; it is counted by commit ([`commit_family`]), not by key: the
-//! next number in a table's log is the lost commit's retry, and is let
-//! through. A stale listing ([`Effect::StaleList`]) is the store's own
+//! have won, answered without the store: a write the program is told it
+//! lost is never in the store, so a writer that reads its log again finds
+//! no commit of its own to take for another's and commit a second time
+//! over. It is counted by commit ([`commit_family`]), not by key, and in a
+//! log numbered without gaps the retry is the same number: a later one is
+//! held (412 again) until the lost one stands ([`commit_slot`]). A stale listing ([`Effect::StaleList`]) is the store's own
 //! listing with a key this run wrote left out, once.
 
 use std::collections::{HashMap, VecDeque};
@@ -38,9 +41,9 @@ pub enum Effect {
     /// A download's answer goes out with its headers and its whole length;
     /// the body stops part way ([`cut_at`]) and the connection drops.
     CutBody,
-    /// A conditional write is answered 412 though it would have won. One
-    /// with `If-None-Match: *` is sent on first (the object is the
-    /// program's own: sonde writes nothing); one with `If-Match` is not.
+    /// A conditional write is answered 412 though it would have won, and
+    /// is not sent on: the store never holds a write the program was told
+    /// it lost (its retry would find it and commit again over it).
     LostRace,
     /// A listing's answer leaves out the keys this run wrote that it would
     /// show, each key once: a listing that does not yet show a write.
@@ -112,9 +115,10 @@ pub fn condition_of(r: &reqlog::Record) -> Option<Condition> {
 /// The commit a conditional write is an attempt at. The log of a table
 /// format names each commit by the next number, so the write that follows a
 /// lost one has another key and is still its retry: SlateDB's manifests, WAL
-/// and compaction states, Iceberg's table metadata, Delta's `_delta_log`
-/// and Lance's `_versions` are each one family for a folder. Any other key
-/// is a family of its own (a lock, a pointer written with `If-Match`).
+/// and compaction states, Iceberg's table metadata, Delta's `_delta_log`,
+/// Lance's `_versions`, Paimon's snapshots and schemas and a Hudi timeline's
+/// instants are each one family for a folder. Any other key is a family of
+/// its own (a lock, a pointer written with `If-Match`).
 pub fn commit_family(bucket: Option<&str>, key: Option<&str>) -> String {
     let (b, k) = (bucket.unwrap_or(""), key.unwrap_or(""));
     let Some(kind) = log_kind(k) else {
@@ -134,8 +138,38 @@ fn log_kind(key: &str) -> Option<&'static str> {
         Part::IcebergMetadata(_) => "metadata",
         Part::DeltaCommit(_) => "commit",
         Part::LanceManifest(_) => "version",
+        // Paimon commits by creating the next snapshot (and schema) if
+        // absent; its manifests are named by a UUID and race no one, and
+        // LATEST/EARLIEST are hints written over, each a key of its own
+        Part::PaimonSnapshot(_) => "snapshot",
+        Part::PaimonSchema(_) => "schema",
+        // a Hudi timeline (`.hoodie/`, 1.x `.hoodie/timeline/`, the
+        // metadata table's own): an instant asked for, begun and completed
+        // are files created once each; a writer that loses starts another
+        // instant, so the folder is the family
+        Part::HudiInstant { .. } => "instant",
         _ => return None,
     })
+}
+
+/// The number of the commit a key is, in a log numbered without gaps: a
+/// commit there is made on the one before, so a writer that loses number N
+/// reads the log again and writes N again when nothing took it. None for a
+/// key of its own, for a log whose names are not numbers in a row (a Hudi
+/// instant is a time, an Iceberg file may carry none), and for SlateDB's
+/// WAL, whose writer steps past a taken number by design.
+pub fn commit_slot(key: Option<&str>) -> Option<u64> {
+    use crate::part::Part;
+    match crate::part::part_of(key?)? {
+        Part::SlateManifest(n)
+        | Part::SlateCompactions(n)
+        | Part::DeltaCommit(n)
+        | Part::LanceManifest(n)
+        | Part::PaimonSnapshot(n)
+        | Part::PaimonSchema(n) => Some(n),
+        Part::IcebergMetadata(n) => n,
+        _ => None,
+    }
 }
 
 /// Whether a key is a commit in a table's log ([`commit_family`]): where a
@@ -677,9 +711,6 @@ pub enum Verdict {
     /// cannot be cut (an error, a body too small) was no attempt met:
     /// [`Faults::unmeet`] takes `met` back.
     CutBody { met: Met },
-    /// Answer 412. `forward`: the write is sent on first (`If-None-Match:
-    /// *`), and a store that refused it itself was no attempt met either.
-    LoseRace { forward: bool, met: Met },
     /// Send it on, and leave out of the listing it answers the keys this
     /// run wrote ([`Faults::hide`]).
     HideWritten,
@@ -736,6 +767,9 @@ pub struct Faults {
     /// The keys this run wrote, by bucket, and whether a listing has left
     /// each out yet (a stale listing hides each once).
     written: Mutex<HashMap<(String, String), bool>>,
+    /// The commit each numbered log was told it lost and has not made
+    /// since, by family ([`commit_slot`]): a create past it is held.
+    owed: Mutex<HashMap<String, u64>>,
 }
 
 fn matches_op(on: &[String], op: &str) -> bool {
@@ -771,6 +805,22 @@ impl Faults {
             rate: Mutex::new(HashMap::new()),
             most: Mutex::new(HashMap::new()),
             written: Mutex::new(HashMap::new()),
+            owed: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The store's answer showed an object at `bucket/key` (a read or a
+    /// write answered 2xx, a create the store itself answered 412). A
+    /// commit a log was told it lost and that now stands is owed no more,
+    /// and the log's next number goes through.
+    pub fn stands(&self, bucket: Option<&str>, key: Option<&str>) {
+        let Some(slot) = commit_slot(key) else {
+            return;
+        };
+        let mut owed = self.owed.lock();
+        let family = commit_family(bucket, key);
+        if owed.get(&family) == Some(&slot) {
+            owed.remove(&family);
         }
     }
 
@@ -899,6 +949,24 @@ impl Faults {
             if r.most > 0 && self.most.lock().get(&i).is_some_and(|n| *n >= r.most) {
                 continue;
             }
+            let lost = Verdict::Answer {
+                status: 412,
+                code: "PreconditionFailed".into(),
+            };
+            // a create past the number its log was told it lost, which no
+            // one made: sent on, it would leave the log a gap (the lost
+            // write is in no store). Held, as lost as the one before it
+            if r.effect == Effect::LostRace
+                && condition == Some(Condition::Create)
+                && let Some(slot) = commit_slot(key)
+                && self
+                    .owed
+                    .lock()
+                    .get(&commit_family(bucket, key))
+                    .is_some_and(|n| slot > *n)
+            {
+                return Some(lost);
+            }
             if let Effect::Rate { reads, writes } = r.effect {
                 let read = method == "GET" || method == "HEAD";
                 let limit = if read { reads } else { writes };
@@ -936,6 +1004,12 @@ impl Faults {
                     continue;
                 }
                 *n += 1;
+                if r.effect == Effect::LostRace
+                    && condition == Some(Condition::Create)
+                    && let Some(slot) = commit_slot(key)
+                {
+                    self.owed.lock().insert(id.clone(), slot);
+                }
                 counted = Met(Some((i, id)));
             }
             if r.most > 0 {
@@ -949,10 +1023,7 @@ impl Faults {
                 Effect::LostAnswer => Verdict::LoseAnswer,
                 Effect::Delay { ms } => Verdict::Wait(Duration::from_millis(*ms)),
                 Effect::CutBody => Verdict::CutBody { met: counted },
-                Effect::LostRace => Verdict::LoseRace {
-                    forward: condition == Some(Condition::Create),
-                    met: counted,
-                },
+                Effect::LostRace => lost,
                 Effect::Rate { .. } | Effect::StaleList => unreachable!("handled above"),
             });
         }
@@ -1404,21 +1475,35 @@ mod tests {
         let create = Some(("If-None-Match", "*"));
         // a write without a condition races no one
         assert_eq!(put("t/_delta_log/00000000000000000001.json", None), None);
-        let lost = put("t/_delta_log/00000000000000000001.json", create);
-        assert!(
-            matches!(lost, Some(Verdict::LoseRace { forward: true, .. })),
-            "{lost:?}"
-        );
-        // the next number is that commit's retry
+        let lost = Some(Verdict::Answer {
+            status: 412,
+            code: "PreconditionFailed".into(),
+        });
+        assert_eq!(put("t/_delta_log/00000000000000000001.json", create), lost);
+        // the next number is held while the lost one stands nowhere: sent
+        // on, it would leave the log a gap
+        assert_eq!(put("t/_delta_log/00000000000000000002.json", create), lost);
+        assert_eq!(put("t/_delta_log/00000000000000000002.json", create), lost);
+        // the lost number again is that commit's retry
+        assert_eq!(put("t/_delta_log/00000000000000000001.json", create), None);
+        f.stands(Some("b"), Some("t/_delta_log/00000000000000000001.json"));
+        // and once it stands, the log goes on: one race lost for the log
         assert_eq!(put("t/_delta_log/00000000000000000002.json", create), None);
-        // another table's log is another commit
-        assert!(put("u/_delta_log/00000000000000000001.json", create).is_some());
+        // another table's log is another commit; a commit the store shows
+        // to stand (another writer's, read back) is stepped past
+        let other = "u/_delta_log/00000000000000000001.json";
+        assert_eq!(put(other, create), lost);
+        f.stands(Some("b"), Some(other));
+        assert_eq!(put("u/_delta_log/00000000000000000002.json", create), None);
+        // a SlateDB WAL writer steps past a taken number by design, and a
+        // Hudi writer starts another instant: the next key is the retry
+        assert_eq!(put("db/wal/00000000000000000007.sst", create), lost);
+        assert_eq!(put("db/wal/00000000000000000008.sst", create), None);
+        assert_eq!(put("h/.hoodie/20240101120000000.commit", create), lost);
+        assert_eq!(put("h/.hoodie/20240101120500000.commit", create), None);
         // If-Match is answered without being sent on, and once for its key
         let swap = put("lock", Some(("if-match", "\"abc\"")));
-        assert!(
-            matches!(swap, Some(Verdict::LoseRace { forward: false, .. })),
-            "{swap:?}"
-        );
+        assert_eq!(swap, lost);
         assert_eq!(put("lock", Some(("if-match", "\"abc\""))), None);
         // If-None-Match with an ETag is a read's condition, not a create
         assert_eq!(put("other", Some(("if-none-match", "\"abc\""))), None);
@@ -1445,6 +1530,50 @@ mod tests {
             fam("d.lance/_versions/18446744073709551612.manifest")
         );
         assert_ne!(fam("a/_delta_log/00000000000000000001.json"), fam("a/x"));
+        // Paimon: snapshots are one log and schemas another; a manifest
+        // (named by a UUID) and the LATEST hint are keys of their own
+        assert_eq!(fam("p/snapshot/snapshot-3"), fam("p/snapshot/snapshot-4"));
+        assert_ne!(fam("p/snapshot/snapshot-3"), fam("p/schema/schema-3"));
+        assert_eq!(fam("p/schema/schema-0"), fam("p/schema/schema-1"));
+        assert!(is_log(Some("p/snapshot/snapshot-3")));
+        for own in [
+            "p/snapshot/LATEST",
+            "p/snapshot/EARLIEST",
+            "p/manifest/manifest-6a1f-0",
+            "p/manifest/manifest-list-6a1f-0",
+        ] {
+            assert!(!is_log(Some(own)), "{own}");
+        }
+        // Hudi: a timeline's instants, whatever their state, 0.x and 1.x;
+        // the metadata table's timeline is its own
+        assert_eq!(
+            fam("h/.hoodie/20240101120000000.commit"),
+            fam("h/.hoodie/20240101120500000.deltacommit.requested")
+        );
+        assert_eq!(
+            fam("h/.hoodie/20240101120000000.replacecommit.inflight"),
+            fam("h/.hoodie/20240101120000000.inflight")
+        );
+        assert_eq!(
+            fam("h/.hoodie/timeline/20240101120000000_20240101120003000.commit"),
+            fam("h/.hoodie/timeline/20240101120500000.deltacommit.requested")
+        );
+        assert_ne!(
+            fam("h/.hoodie/20240101120000000.commit"),
+            fam("h/.hoodie/metadata/.hoodie/20240101120000000.deltacommit")
+        );
+        let v1 = "h/.hoodie/timeline/20240101120000000_20240101120003000.commit";
+        assert!(is_log(Some(v1)));
+        assert!(!is_log(Some("h/.hoodie/hoodie.properties")));
+        // the commits numbered in a row, and the ones that are not
+        let slot = |k: &str| commit_slot(Some(k));
+        assert_eq!(slot("a/_delta_log/00000000000000000007.json"), Some(7));
+        assert_eq!(slot("p/snapshot/snapshot-3"), Some(3));
+        let lance = "d.lance/_versions/18446744073709551613.manifest";
+        assert_eq!(slot(lance), Some(2));
+        assert_eq!(slot("db/wal/00000000000000000007.sst"), None);
+        assert_eq!(slot("h/.hoodie/20240101120000000.commit"), None);
+        assert_eq!(slot("lock"), None);
         assert_ne!(fam("lock-a"), fam("lock-b"));
     }
 }

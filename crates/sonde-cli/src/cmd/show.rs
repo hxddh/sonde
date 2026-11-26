@@ -487,9 +487,10 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
 }
 
 /// A run just made (`import`): its summary and findings on stderr, as
-/// `run` says its own; stdout is for what was asked (`show` reads it).
+/// `run` says its own; stdout is for what was asked (`show` reads it). Read
+/// as `show` reads it: for what it amounts to, not whole.
 pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
-    let run = super::runs::read(file, sonde_analysis::run::Keep::All)?;
+    let run = super::runs::read(file, sonde_analysis::run::Keep::Analysis)?;
     let mut analysis = Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
     sonde_analysis::program::mark_expected(
         &mut analysis.observations,
@@ -595,7 +596,9 @@ fn finding_json(o: &sonde_analysis::episode::Observation, cwd: Option<&Path>) ->
 }
 
 /// A finding's callers, each with its line of code read from the folder the
-/// program ran in (`cwd`), when the file is there.
+/// program ran in (`cwd`), when the file is program source inside it: the
+/// run names both, and may be someone else's
+/// ([`sonde_analysis::code::line`]).
 fn callers_json(
     o: &sonde_analysis::episode::Observation,
     cwd: Option<&Path>,
@@ -606,7 +609,7 @@ fn callers_json(
             let mut c = serde_json::to_value(caller).unwrap_or_default();
             if let (Some(file), Some(line), Some(m)) =
                 (caller.file.as_deref(), caller.line, c.as_object_mut())
-                && let Some(code) = code_line(cwd, file, line)
+                && let Some(code) = sonde_analysis::code::line(cwd, file, line)
             {
                 m.insert("code".into(), code.into());
             }
@@ -665,31 +668,10 @@ fn since_json(
     v
 }
 
-/// Line `line` of `file` (relative to `cwd`, where the program ran), trimmed
-/// and cut to 200 characters; none when the file is not there to read.
-fn code_line(cwd: Option<&Path>, file: &str, line: u32) -> Option<String> {
-    use std::io::BufRead;
-    let path = Path::new(file);
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd?.join(path)
-    };
-    let f = std::fs::File::open(path).ok()?;
-    if !f.metadata().ok()?.is_file() {
-        return None;
-    }
-    let text = std::io::BufReader::new(f)
-        .lines()
-        .nth(line.checked_sub(1)? as usize)?
-        .ok()?;
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.chars().take(200).collect())
-}
-
 /// The command that records the program again, to see a fix work: as it
 /// was run (`sonde run --url URL -- python3 etl.py`, `-e NAME`, `--demo`,
-/// in the folder it ran in), and a run written with `-o` written beside it
+/// in the folder it ran in, under the policy and with the TLS it was
+/// recorded with), and a run written with `-o` written beside it
 /// again under the next name (`footer1.sonde`, then `footer2.sonde`). None
 /// for a run that is no program's (an import, a replay).
 fn verify_command(
@@ -715,6 +697,10 @@ fn verify_command(
             sonde_analysis::program::shell_join(&[n.into()])
         ));
     }
+    args.extend(policy_arg(header));
+    if header.tls {
+        args.push("--tls".into());
+    }
     if let Some(out) = next_beside(s, path) {
         args.push(format!(
             "-o {}",
@@ -723,6 +709,23 @@ fn verify_command(
     }
     args.push(format!("-- {command}"));
     Some(args.join(" "))
+}
+
+/// `--policy P` for a run recorded under a policy `sonde run` would not
+/// choose by itself in the folder it ran in (`[record] policy` of its
+/// sonde.toml, else allow): recorded again without it, the program would be
+/// let do more, or less. None for a run that does not say (before 33.0), or
+/// names no policy sonde has.
+fn policy_arg(header: &sonde_analysis::run::RunHeader) -> Option<String> {
+    let recorded = sonde_proxy::Policy::named(header.policy.as_deref()?)?;
+    let own = header
+        .cwd
+        .as_deref()
+        .and_then(|d| sonde_analysis::project::find(Path::new(d)))
+        .and_then(|f| sonde_analysis::project::read(&f).ok())
+        .and_then(|p| p.policy)
+        .unwrap_or(sonde_proxy::Policy::Allow);
+    (recorded != own).then(|| format!("--policy {}", recorded.name()))
 }
 
 /// Where a run written with `-o` (outside the runs folder) is written

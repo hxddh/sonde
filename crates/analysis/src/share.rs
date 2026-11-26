@@ -233,7 +233,7 @@ pub fn run_json(s: &RunFile, prices: &crate::profile::RequestPrices) -> Value {
 }
 
 /// [`run_json`], written as it is made. `s` may be a run read with
-/// [`RunFile::open_lean`] when `full` is its file: the records are then
+/// [`RunFile::open_lean_with_logs`] (its output is on the page) when `full` is its file: the records are then
 /// written from the file, one at a time, and never all held.
 pub fn write_run_json(
     s: &RunFile,
@@ -247,8 +247,9 @@ pub fn write_run_json(
     // say) never reaches it
     let mut header = s.header.clone();
     header.command = header.command.as_deref().map(crate::program::scrub_command);
-    // the folder names this machine's user
+    // the folder names this machine's user, and so may a file's path
     header.cwd = None;
+    header.ca_file = None;
     // the findings as the app shows a run's: its plan of diagnoses, ranked by the time they save, and where the
     // program's time went
     let summary = summarize(&s.records);
@@ -601,7 +602,7 @@ mod tests {
         let full = RunFile::open(&path).unwrap();
         let mut whole = Vec::new();
         write_run_json(&full, None, &prices, None, &mut whole).unwrap();
-        let lean = RunFile::open_lean(&path).unwrap();
+        let lean = RunFile::open_lean_with_logs(&path).unwrap();
         let mut streamed = Vec::new();
         write_run_json(&lean, Some(&path), &prices, None, &mut streamed).unwrap();
         assert!(whole == streamed, "the two documents differ");
@@ -650,6 +651,10 @@ mod tests {
                 scenario: None,
                 trial_of: None,
                 whole_seconds: false,
+                path_style: false,
+                ca_file: None,
+                tls: false,
+                policy: None,
             },
             records: vec![],
             logs: vec![],

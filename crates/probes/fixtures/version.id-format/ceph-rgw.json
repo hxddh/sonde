@@ -1,7 +1,7 @@
 {
   "probe": "version.id-format",
   "vendor": "ceph-rgw",
-  "expect": "differs",
+  "expect": "pass",
   "note": "",
   "steps": [
     {

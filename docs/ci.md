@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v32
+      - uses: hxddh/sonde@v33
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -45,10 +45,10 @@ step with the run's own command and store.
 |---|---|
 | Install | The release binary of `version` (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`; RUN with shell syntax (`&&`, `|`, `>`, `cd x &&`, `$`) is `bash -c RUN`, all of it recorded; a plain RUN (`docker run …`, `spark-submit …`, a glob expanded) is run itself, so sonde sets it up. The program is named by what runs (`etl` of `python etl.py`). The program's exit status fails the job, after the steps below. |
-| Baseline | `auto`: of the newest 6 completed runs of the same workflow, the first that kept the artifact `artifact` in a format this sonde reads (`gh run list`, `gh run download`). A pull request looks at push runs on its base branch; a push or a schedule at the earlier runs of its own event on its own branch. None kept, on a pull request: its merge-base, recorded in the same job (above). None: a warning with why, and no `--baseline` (sonde.toml's `[check] baseline` applies, else the budget alone). |
+| Baseline | `auto`: of the newest 6 runs of the same workflow that succeeded (a failed run, whose program or check or build failed, is never a baseline), the first that kept the artifact `artifact` in a format this sonde reads (`gh run list`, `gh run download`). A pull request looks at push runs on its base branch; a push or a schedule at the earlier runs of its own event on its own branch. None kept, on a pull request: its merge-base, recorded in the same job (above). None: a warning with why, and no `--baseline` (sonde.toml's `[check] baseline` applies, else the budget alone). |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share RUN --baseline BASE` in `working-directory` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
-| Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
+| Keep | The run, as the artifact `<artifact>`, when the program exited 0: the next runs' baseline (the repository's artifact retention, 90 days by default). |
 | Comment | `sonde check -f markdown` (the report's link from `SONDE_REPORT_URL`): the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
 | Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
 
@@ -65,7 +65,7 @@ step with the run's own command and store.
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `32.0.0`, `32`, `32.0` (the newest 32.0.x), `latest`, `path`. Tag `@v32` installs the newest 32.x; `@v32.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
+| `version` | the action's tag; at a branch or commit, its own major | `33.0.0`, `33`, `33.0` (the newest 33.0.x), `latest`, `path`. Tag `@v33` installs the newest 33.x; `@v33.0.0` that release. At a branch or a commit (`@main`, `@<sha>`): the newest release of the major its `Cargo.toml` says (none released yet fails the step); `latest` is refused there. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 

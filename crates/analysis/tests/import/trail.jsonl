@@ -1,0 +1,7 @@
+{"eventTime":"2026-02-06T00:00:05Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","awsRegion":"us-east-1","requestID":"LINE000000000001","userAgent":"[Boto3/1.34 Python/3.12]","requestParameters":{"bucketName":"lake","key":"t/a.parquet"},"additionalEventData":{"bytesTransferredOut":8192.0}}
+{"eventTime":"2026-02-06T00:00:05Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","awsRegion":"us-east-1","requestID":"LINE000000000002","userAgent":"[Boto3/1.34 Python/3.12]","requestParameters":{"bucketName":"lake","key":"t/b.parquet"},"additionalEventData":{"bytesTransferredOut":4096.0}}
+
+{"eventTime":"2026-02-06T00:00:04Z","eventSource":"s3.amazonaws.com","eventName":"HeadObject","awsRegion":"us-east-1","requestID":"LINE000000000003","requestParameters":{"bucketName":"lake","key":"t/a.parquet"}}
+{"eventTime":"2026-02-06T00:00:04Z","eventSource":"kms.amazonaws.com","eventName":"Decrypt","awsRegion":"us-east-1"}
+{"eventTime":"2026-02-06T00:00:06Z","eventSource":"s3.amazonaws.com","eventName":"CompleteMultipartUpload","awsRegion":"us-east-1","requestParameters":{"bucketName":"lake","key":"t/big.parquet","uploadId":"u-1"}}
+{"eventTime":"2026-02-06T00:00:07Z","eventSource":"s3.amazonaws.com","eventName":"GetObj

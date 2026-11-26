@@ -136,6 +136,22 @@ pub(super) async fn start_under(
         header = header.ran_in(&dir);
     }
     header.name = of.name.clone().filter(|n| !n.trim().is_empty());
+    // how it is recorded, for `show`'s verify to say again: a store named
+    // for this run alone (`--url`) as it was reached, and the rules. A
+    // file's path, never a credential.
+    if ep == super::ADHOC
+        && let Some(e) = s.endpoint_config(&ep)
+    {
+        header.path_style = e.path_style;
+        header.ca_file = e.ca_file.as_deref().map(|p| {
+            std::path::absolute(p)
+                .unwrap_or_else(|_| p.to_path_buf())
+                .to_string_lossy()
+                .into_owned()
+        });
+    }
+    header.tls = r.tls;
+    header.policy = Some(policy.name().into());
     // a run recorded again starts with no verdict of its last recording
     if under.is_none() {
         sonde_analysis::trial::remove(&path);
@@ -458,7 +474,8 @@ pub(super) fn kinds_table(
 
 /// The store a run was recorded against, as `sonde run` is told it again:
 /// `--demo`, `--url URL` (a run against a URL given so, its query left
-/// out), else `-e NAME`. None for a run of no endpoint (an import).
+/// out; with `--path-style` and `--ca-file FILE` when it was reached so),
+/// else `-e NAME`. None for a run of no endpoint (an import).
 pub(super) fn store_args(h: &RunHeader) -> Option<String> {
     match h.endpoint.as_str() {
         "" => None,
@@ -466,10 +483,18 @@ pub(super) fn store_args(h: &RunHeader) -> Option<String> {
         super::ADHOC => {
             let url = super::check::url_shown(&h.url);
             (!url.is_empty()).then(|| {
-                format!(
+                let mut args = format!(
                     "--url {}",
                     sonde_analysis::program::shell_join(&[url.into()])
-                )
+                );
+                if h.path_style {
+                    args.push_str(" --path-style");
+                }
+                if let Some(ca) = h.ca_file.as_deref().filter(|c| !c.is_empty()) {
+                    args.push_str(" --ca-file ");
+                    args.push_str(&sonde_analysis::program::shell_join(&[ca.into()]));
+                }
+                args
             })
         }
         e => Some(format!(
@@ -915,6 +940,25 @@ mod tests {
             Some("-e prod")
         );
         assert_eq!(store_args(&h("", "")), None);
+        // 33.0: a store reached path-style, or trusted by a file of its
+        // own, is said so again; a path is quoted as a shell needs it
+        let mut custom = h(super::super::ADHOC, "https://minio.internal:9000/");
+        custom.path_style = true;
+        custom.ca_file = Some("/etc/my certs/it's ca.pem".into());
+        let quoted = if cfg!(windows) {
+            "\"/etc/my certs/it's ca.pem\""
+        } else {
+            "'/etc/my certs/it'\\''s ca.pem'"
+        };
+        assert_eq!(
+            store_args(&custom).unwrap(),
+            format!("--url https://minio.internal:9000/ --path-style --ca-file {quoted}")
+        );
+        // a configured endpoint keeps its own: nothing to say again
+        let mut named = h("prod", "https://s3");
+        named.path_style = true;
+        named.ca_file = Some("/ca.pem".into());
+        assert_eq!(store_args(&named).as_deref(), Some("-e prod"));
     }
 
     /// 24.0 said `from 12+ callers` of exactly 12.

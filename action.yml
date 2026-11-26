@@ -40,7 +40,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `32.0.0`, `32` (the newest 32.x), `32.0` (the newest 32.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v32`: the newest 32.x; `@v32.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
+    description: "The sonde to install: `33.0.0`, `33` (the newest 33.x), `33.0` (the newest 33.0.x), `latest`, or `path` (the one on PATH). Default: this action's tag (`@v33`: the newest 33.x; `@v33.0.0`: that release); at a branch or a commit, the newest release of the major its code is (`latest` is refused there)."
     default: ""
   working-directory:
     description: Where the command runs.
@@ -127,7 +127,9 @@ runs:
         path: ${{ steps.report.outputs.file }}
         overwrite: true
 
+    # (a run whose program failed is no baseline: it is in the report, and not kept)
     - name: Keep the run (the baseline of the pull requests that follow)
+      if: steps.record.outputs.exit == '0'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact }}

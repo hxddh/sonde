@@ -278,14 +278,25 @@ impl Probe for MetadataLimit {
 
 pub struct VersionIdFormat;
 
-/// What a version id looks like.
+/// Whether a version id is what S3 promises of one: an opaque string that
+/// is URL-ready (letters, digits, `-`, `.`, `_`, `~`) and at most 1,024
+/// bytes long. Its shape beyond that is the store's own.
+pub fn version_id_is_opaque(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 1024
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
+}
+
+/// What a version id looks like: a note for the reader, not a verdict.
 pub fn version_id_shape(id: &str) -> &'static str {
     if id == "null" {
         "null"
     } else if id.len() == 32
         && id
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
     {
         "aws-like (32 URL-safe characters)"
     } else if id.len() == 36 && id.chars().filter(|c| *c == '-').count() == 4 {
@@ -353,23 +364,22 @@ impl Probe for VersionIdFormat {
         if ids[0] == ids[1] {
             return Judgement::say(Verdict::Fail, ph!("judge.version.id-format.fail.2"), s);
         }
-        let shape = version_id_shape(&ids[0]);
-        let mut j = if shape.starts_with("aws-like") {
-            Judgement::say(
+        // an id is opaque: a UUID or a number is as good as AWS's 32
+        // characters, and its shape is said, not judged
+        let mut j = match ids.iter().find(|i| !version_id_is_opaque(i)) {
+            None => Judgement::say(
                 Verdict::Pass,
-                ph!("judge.version.id-format.pass", shape = shape),
-                s,
-            )
-        } else {
-            Judgement::say(
-                Verdict::Differs,
                 ph!(
-                    "judge.version.id-format.differs",
-                    shape = shape,
-                    p1 = ids[0]
+                    "judge.version.id-format.pass",
+                    shape = version_id_shape(&ids[0])
                 ),
                 s,
-            )
+            ),
+            Some(id) => Judgement::say(
+                Verdict::Differs,
+                ph!("judge.version.id-format.differs", p1 = id),
+                s,
+            ),
         };
         j.observe(ph!("obs.ids", ids = ids.join(", ")));
         j
@@ -593,21 +603,24 @@ impl Probe for ExpressAppend {
         if let Some(j) = super::setup_failed(s, &["create"]) {
             return j;
         }
-        if append.not_implemented() || (!append.ok() && head.header("content-length") == Some("5"))
-        {
+        let len = head.header("content-length").unwrap_or("?");
+        // a write at an offset that replaced the object lost its first five
+        // bytes, whatever the other write was answered
+        if len == "3" {
+            return Judgement::say(Verdict::Fail, ph!("judge.express.append.fail.2"), s);
+        }
+        if append.not_implemented() || (!append.ok() && len == "5") {
             return Judgement::say(
                 Verdict::Unsupported,
                 ph!("judge.express.append.unsupported", p1 = append.describe()),
                 s,
             );
         }
-        let len = head.header("content-length").unwrap_or("?");
         match len {
             "8" if !wrong.ok() => {
                 Judgement::say(Verdict::Pass, ph!("judge.express.append.pass"), s)
             }
             "8" => Judgement::say(Verdict::Fail, ph!("judge.express.append.fail"), s),
-            "3" => Judgement::say(Verdict::Fail, ph!("judge.express.append.fail.2"), s),
             other => Judgement::say(
                 Verdict::Differs,
                 ph!("judge.express.append.differs", other = other),

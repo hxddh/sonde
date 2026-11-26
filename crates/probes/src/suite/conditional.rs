@@ -18,8 +18,14 @@ pub fn probes() -> Vec<Box<dyn Probe>> {
     ]
 }
 
-/// A 501 / NotImplemented, or a write that ignored the condition.
-fn unsupported_or(steps: &Steps, j: Judgement) -> Judgement {
+/// A conditional write's verdict. `broken`: the condition was ignored
+/// (something was written, replaced or deleted that must not have been),
+/// which is a fail whatever any other step answered. Otherwise a 501 /
+/// NotImplemented from any step is unsupported, and otherwise it is `rest`.
+fn judged(steps: &Steps, broken: Option<Judgement>, rest: impl FnOnce() -> Judgement) -> Judgement {
+    if let Some(j) = broken {
+        return j;
+    }
     if let Some(s) = steps.any_not_implemented() {
         return Judgement::say(
             Verdict::Unsupported,
@@ -27,7 +33,7 @@ fn unsupported_or(steps: &Steps, j: Judgement) -> Judgement {
             steps,
         );
     }
-    j
+    rest()
 }
 
 pub struct PutIfNoneMatch;
@@ -50,38 +56,45 @@ impl Probe for PutIfNoneMatch {
         if let Some(j) = super::write_refused(s, &["first"]) {
             return j;
         }
-        let j = if !first.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail"), s)
-        } else if second.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail.2"), s)
-        } else if second.is(412) {
-            Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-none-match.pass"), s)
-        } else if second.is(409) {
-            Judgement::say(
-                Verdict::Differs,
-                ph!("judge.cond.put-if-none-match.differs"),
-                s,
-            )
-        } else {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-none-match.differs.2",
-                    p1 = crate::model::status_text(second.status),
-                    p2 = crate::model::or_none(second.code.as_deref())
-                ),
-                s,
-            )
-        };
-        let j = if j.verdict == Verdict::Pass
+        // the object was there: a second write that went through replaced it
+        let broken = if first.ok() && second.ok() {
+            Some(ph!("judge.cond.put-if-none-match.fail.2"))
+        } else if first.ok()
+            && second.is(412)
             && read.ok()
             && read.body != String::from_utf8_lossy(&data(16, 1))
         {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail.3"), s)
+            Some(ph!("judge.cond.put-if-none-match.fail.3"))
         } else {
-            j
+            None
         };
-        unsupported_or(s, j)
+        judged(
+            s,
+            broken.map(|p| Judgement::say(Verdict::Fail, p, s)),
+            || {
+                if !first.ok() {
+                    Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail"), s)
+                } else if second.is(412) {
+                    Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-none-match.pass"), s)
+                } else if second.is(409) {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!("judge.cond.put-if-none-match.differs"),
+                        s,
+                    )
+                } else {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-none-match.differs.2",
+                            p1 = crate::model::status_text(second.status),
+                            p2 = crate::model::or_none(second.code.as_deref())
+                        ),
+                        s,
+                    )
+                }
+            },
+        )
     }
 }
 
@@ -121,35 +134,43 @@ impl Probe for PutIfMatch {
             return j;
         }
         let (stale, current, missing) = (s.at("stale"), s.at("current"), s.at("missing"));
-        let j = if stale.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail"), s)
-        } else if !current.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
+        let broken = if stale.ok() {
+            Some(ph!("judge.cond.put-if-match.fail"))
         } else if missing.ok() {
             // an object written that must not be: the guarantee broke
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.3"), s)
-        } else if stale.is(412) && missing.is(404) {
-            Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-match.pass"), s)
-        } else if stale.is(412) {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-match.differs",
-                    p1 = crate::model::status_text(missing.status)
-                ),
-                s,
-            )
+            Some(ph!("judge.cond.put-if-match.fail.3"))
         } else {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-match.differs.2",
-                    p1 = crate::model::status_text(stale.status)
-                ),
-                s,
-            )
+            None
         };
-        unsupported_or(s, j)
+        judged(
+            s,
+            broken.map(|p| Judgement::say(Verdict::Fail, p, s)),
+            || {
+                if !current.ok() {
+                    Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
+                } else if stale.is(412) && missing.is(404) {
+                    Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-match.pass"), s)
+                } else if stale.is(412) {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-match.differs",
+                            p1 = crate::model::status_text(missing.status)
+                        ),
+                        s,
+                    )
+                } else {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-match.differs.2",
+                            p1 = crate::model::status_text(stale.status)
+                        ),
+                        s,
+                    )
+                }
+            },
+        )
     }
 }
 
@@ -203,30 +224,29 @@ impl Probe for CopyIfMatch {
             s.at("right-source"),
             s.at("dest-exists"),
         );
-        let j = if wrong.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail"), s)
-        } else if !right.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail.2"), s)
-        } else if exists.ok() {
-            Judgement::say(Verdict::Differs, ph!("judge.cond.copy-if-match.differs"), s)
-        } else if wrong.is(412) && exists.is(412) {
-            Judgement::say(Verdict::Pass, ph!("judge.cond.copy-if-match.pass"), s)
-        } else {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.copy-if-match.differs.2",
-                    p1 = crate::model::status_text(wrong.status),
-                    p2 = crate::model::status_text(exists.status)
-                ),
-                s,
-            )
-        };
-        if exists.not_implemented() && j.verdict == Verdict::Pass {
-            j
-        } else {
-            unsupported_or(s, j)
-        }
+        // a copy from a source that was not the one named
+        let broken = wrong
+            .ok()
+            .then(|| Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail"), s));
+        judged(s, broken, || {
+            if !right.ok() {
+                Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail.2"), s)
+            } else if exists.ok() {
+                Judgement::say(Verdict::Differs, ph!("judge.cond.copy-if-match.differs"), s)
+            } else if wrong.is(412) && exists.is(412) {
+                Judgement::say(Verdict::Pass, ph!("judge.cond.copy-if-match.pass"), s)
+            } else {
+                Judgement::say(
+                    Verdict::Differs,
+                    ph!(
+                        "judge.cond.copy-if-match.differs.2",
+                        p1 = crate::model::status_text(wrong.status),
+                        p2 = crate::model::status_text(exists.status)
+                    ),
+                    s,
+                )
+            }
+        })
     }
 }
 
@@ -269,38 +289,42 @@ impl Probe for CopyDestIfMatch {
             return j;
         }
         let (stale, current, missing) = (s.at("stale"), s.at("current"), s.at("missing"));
-        let j = if stale.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.copy-dest-if-match.fail"), s)
-        } else if !current.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
+        let broken = if stale.ok() {
+            Some(ph!("judge.cond.copy-dest-if-match.fail"))
         } else if missing.ok() {
-            Judgement::say(
-                Verdict::Fail,
-                ph!("judge.cond.copy-dest-if-match.fail.2"),
-                s,
-            )
-        } else if stale.is(412) && missing.is(404) {
-            Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-match.pass"), s)
-        } else if stale.is(412) {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-match.differs",
-                    p1 = crate::model::status_text(missing.status)
-                ),
-                s,
-            )
+            Some(ph!("judge.cond.copy-dest-if-match.fail.2"))
         } else {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-match.differs.2",
-                    p1 = crate::model::status_text(stale.status)
-                ),
-                s,
-            )
+            None
         };
-        unsupported_or(s, j)
+        judged(
+            s,
+            broken.map(|p| Judgement::say(Verdict::Fail, p, s)),
+            || {
+                if !current.ok() {
+                    Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
+                } else if stale.is(412) && missing.is(404) {
+                    Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-match.pass"), s)
+                } else if stale.is(412) {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-match.differs",
+                            p1 = crate::model::status_text(missing.status)
+                        ),
+                        s,
+                    )
+                } else {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-match.differs.2",
+                            p1 = crate::model::status_text(stale.status)
+                        ),
+                        s,
+                    )
+                }
+            },
+        )
     }
 }
 
@@ -361,36 +385,46 @@ impl Probe for DeleteIfMatch {
             (s.at("stale"), s.at("kept"), s.at("current"), s.at("gone"));
         let (batch, batch_kept) = (s.at("batch-stale"), s.at("batch-kept"));
         let batched = s.at("batch-create").ok();
-        let j = if stale.ok() || kept.is(404) {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.delete-if-match.fail"), s)
-        } else if !current.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
-        } else if gone.ok() {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.delete-if-match.fail.2"), s)
+        // deleted with a stale ETag, alone or in a batch; or said deleted
+        // and still there
+        let broken = if stale.ok() || kept.is(404) {
+            Some(ph!("judge.cond.delete-if-match.fail"))
+        } else if current.ok() && gone.ok() {
+            Some(ph!("judge.cond.delete-if-match.fail.2"))
         } else if batched && batch.ok() && batch_kept.is(404) {
-            Judgement::say(Verdict::Fail, ph!("judge.cond.delete-if-match.fail.3"), s)
-        } else if !stale.is(412) {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.put-if-match.differs.2",
-                    p1 = crate::model::status_text(stale.status)
-                ),
-                s,
-            )
-        } else if !batched || !batch.ok() || !batch.body.contains("PreconditionFailed") {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.delete-if-match.differs",
-                    p1 = crate::model::status_text(batch.status)
-                ),
-                s,
-            )
+            Some(ph!("judge.cond.delete-if-match.fail.3"))
         } else {
-            Judgement::say(Verdict::Pass, ph!("judge.cond.delete-if-match.pass"), s)
+            None
         };
-        unsupported_or(s, j)
+        judged(
+            s,
+            broken.map(|p| Judgement::say(Verdict::Fail, p, s)),
+            || {
+                if !current.ok() {
+                    Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
+                } else if !stale.is(412) {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.put-if-match.differs.2",
+                            p1 = crate::model::status_text(stale.status)
+                        ),
+                        s,
+                    )
+                } else if !batched || !batch.ok() || !batch.body.contains("PreconditionFailed") {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.delete-if-match.differs",
+                            p1 = crate::model::status_text(batch.status)
+                        ),
+                        s,
+                    )
+                } else {
+                    Judgement::say(Verdict::Pass, ph!("judge.cond.delete-if-match.pass"), s)
+                }
+            },
+        )
     }
 }
 
@@ -433,35 +467,44 @@ impl Probe for CompleteIfNoneMatch {
             return j;
         }
         let (complete, head) = (s.at("complete"), s.at("head"));
-        let j = if complete.ok() {
-            Judgement::say(
-                Verdict::Fail,
-                ph!("judge.cond.complete-if-none-match.fail"),
-                s,
-            )
-        } else if complete.is(412) && head.header("content-length") == Some("8") {
-            Judgement::say(
-                Verdict::Pass,
-                ph!("judge.cond.complete-if-none-match.pass"),
-                s,
-            )
-        } else if complete.is(412) {
-            Judgement::say(
-                Verdict::Fail,
-                ph!("judge.cond.complete-if-none-match.fail.2"),
-                s,
-            )
+        // the racing object replaced: by a Complete that went through, or
+        // by one that was answered 412
+        let kept = head.header("content-length") == Some("8");
+        let broken = if complete.ok() {
+            Some(ph!("judge.cond.complete-if-none-match.fail"))
+        } else if complete.is(412) && head.ok() && !kept {
+            Some(ph!("judge.cond.complete-if-none-match.fail.2"))
         } else {
-            Judgement::say(
-                Verdict::Differs,
-                ph!(
-                    "judge.cond.complete-if-none-match.differs",
-                    p1 = crate::model::status_text(complete.status),
-                    p2 = crate::model::or_none(complete.code.as_deref())
-                ),
-                s,
-            )
+            None
         };
-        unsupported_or(s, j)
+        judged(
+            s,
+            broken.map(|p| Judgement::say(Verdict::Fail, p, s)),
+            || {
+                if complete.is(412) && kept {
+                    Judgement::say(
+                        Verdict::Pass,
+                        ph!("judge.cond.complete-if-none-match.pass"),
+                        s,
+                    )
+                } else if complete.is(412) {
+                    Judgement::say(
+                        Verdict::Fail,
+                        ph!("judge.cond.complete-if-none-match.fail.2"),
+                        s,
+                    )
+                } else {
+                    Judgement::say(
+                        Verdict::Differs,
+                        ph!(
+                            "judge.cond.complete-if-none-match.differs",
+                            p1 = crate::model::status_text(complete.status),
+                            p2 = crate::model::or_none(complete.code.as_deref())
+                        ),
+                        s,
+                    )
+                }
+            },
+        )
     }
 }

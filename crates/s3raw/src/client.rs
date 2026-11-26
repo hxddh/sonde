@@ -574,6 +574,20 @@ impl S3Client {
         bucket: Option<&str>,
         key: Option<&str>,
     ) -> (String, String, String) {
+        self.address_raw(endpoint, bucket, key.map(encode_key).as_deref())
+    }
+
+    /// [`S3Client::address`] for a key already written for the wire
+    /// (percent-encoded by whoever sent it): it goes into the path as it is,
+    /// byte for byte, so `a%2Fb`, `%FF` or `a//b` reach the store as sent.
+    /// The path is the one to send, not the one to sign
+    /// ([`sigv4::canonical_uri`]).
+    pub fn address_raw(
+        &self,
+        endpoint: &url::Url,
+        bucket: Option<&str>,
+        raw_key: Option<&str>,
+    ) -> (String, String, String) {
         let scheme = endpoint.scheme();
         let mut host = endpoint.host_str().unwrap_or("").to_string();
         let port = endpoint.port().map(|p| format!(":{p}")).unwrap_or_default();
@@ -588,8 +602,8 @@ impl S3Client {
             }
         }
         path.push('/');
-        if let Some(k) = key {
-            path.push_str(&encode_key(k));
+        if let Some(k) = raw_key {
+            path.push_str(k);
         }
         let host_header = format!("{host}{port}");
         (format!("{scheme}://{host_header}"), path, host_header)
@@ -1317,6 +1331,40 @@ mod tests {
             .await
             .unwrap_err();
         assert!(e.to_string().contains("stopped"), "{e}");
+    }
+
+    /// A key written for the wire goes into the path as it is, under
+    /// either style, and is signed as the store reads it.
+    #[test]
+    fn a_key_already_written_for_the_wire_is_addressed_as_it_is() {
+        let raw = "a%2Fb//%ff/../c+d";
+        let path_style = client("https://s3.example.com/base/", Addressing::Path);
+        let ep = path_style.cfg.endpoint.clone();
+        assert_eq!(
+            path_style.address_raw(&ep, Some("data"), Some(raw)),
+            (
+                "https://s3.example.com".to_string(),
+                format!("/base/data/{raw}"),
+                "s3.example.com".to_string()
+            )
+        );
+        let virtual_host = client("https://s3.example.com", Addressing::Virtual);
+        let ep = virtual_host.cfg.endpoint.clone();
+        let (origin, path, host) = virtual_host.address_raw(&ep, Some("data"), Some(raw));
+        assert_eq!(
+            (origin.as_str(), path.as_str(), host.as_str()),
+            (
+                "https://data.s3.example.com",
+                "/a%2Fb//%ff/../c+d",
+                "data.s3.example.com"
+            )
+        );
+        assert_eq!(sigv4::canonical_uri(&path), "/a/b//%FF/../c%2Bd");
+        // a key sonde names itself is written by `encode_key`, as before
+        assert_eq!(
+            virtual_host.address(&ep, Some("data"), Some("a b/c")).1,
+            "/a%20b/c"
+        );
     }
 
     #[test]

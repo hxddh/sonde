@@ -2062,6 +2062,12 @@ fn identity_as(o: &Observation, literal: bool) -> String {
     };
     // one finding whatever its form ([`kind_of_phrase`])
     let key = kind_of_phrase(p.key);
+    // about several buckets: each of them, not the folder they share (none)
+    if OF_BUCKET.contains(&key)
+        && let Some(buckets) = p.args.get(BUCKETS)
+    {
+        return format!("{key}|{}", several(buckets, literal));
+    }
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
         .filter_map(|k| {
@@ -2088,9 +2094,52 @@ const OF_BUCKET: &[&str] = &[
     "obs.crawl",
 ];
 
+/// The argument of a finding's phrase that names its buckets when its
+/// objects are in several (`a,b`: sorted, a comma between), beside what
+/// its words say. No bucket's name has a comma or a `/`.
+pub const BUCKETS: &str = "buckets";
+
+/// Several buckets (`a,b`) as an identity says them: each made [`stable`]
+/// (or as it was, `literal`), sorted, each once. Buckets named by the day
+/// (`logs-2026-11-25,logs-2026-11-26`) are one (`logs-{date}`).
+fn several(buckets: &str, literal: bool) -> String {
+    let all: BTreeSet<String> = buckets
+        .split(',')
+        .map(|b| if literal { b.to_string() } else { stable(b) })
+        .collect();
+    all.into_iter().collect::<Vec<_>>().join(",")
+}
+
+/// Whether two identities name one finding: the same, or of one kind that
+/// is about its bucket ([`OF_BUCKET`], one finding a run) with a bucket in
+/// common (`obs.small|a,b` and `obs.small|a`: small files still written to
+/// `a` are the same finding, less of it, not one fixed and another new).
+/// What a program's kept name, the run before's and an entry of `[check]`
+/// name a finding by.
+pub fn same_finding(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (Some((kind, a)), Some((k, b))) = (a.split_once('|'), b.split_once('|')) else {
+        return false;
+    };
+    if kind != k || !OF_BUCKET.contains(&kind) || a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a.split(',').any(|x| b.split(',').any(|y| x == y))
+}
+
+/// Whether `id` is what rules 5 named a finding about several buckets
+/// (`obs.small|/`: the folder its buckets share, none): it says no bucket,
+/// so it is not made again by these rules.
+pub fn of_no_bucket(id: &str) -> bool {
+    id.split_once('|')
+        .is_some_and(|(kind, about)| OF_BUCKET.contains(&kind) && about == "/")
+}
+
 /// What a finding of `kind` is about, of the key or prefix `v` it names:
 /// its bucket for the kinds [`OF_BUCKET`] (`demo` of `demo/out/a/`; several
-/// buckets' `/` as it is), else `v`.
+/// buckets' `a,b`, and rules 5's `/` for them, as they are), else `v`.
 fn about_of<'a>(kind: &str, v: &'a str) -> &'a str {
     if !OF_BUCKET.contains(&kind) {
         return v;
@@ -2107,7 +2156,12 @@ fn about_of<'a>(kind: &str, v: &'a str) -> &'a str {
 pub fn by_rules(id: &str) -> String {
     let mut parts = id.split('|');
     let kind = kind_of_phrase(parts.next().unwrap_or(""));
-    let about: Vec<String> = parts.map(|v| stable(about_of(kind, v))).collect();
+    let about: Vec<String> = parts
+        .map(|v| match OF_BUCKET.contains(&kind) {
+            true => several(about_of(kind, v), false),
+            false => stable(about_of(kind, v)),
+        })
+        .collect();
     format!("{kind}|{}", about.join("|"))
 }
 
@@ -2347,7 +2401,18 @@ pub fn names_after(a: &Run, b: &Run) -> Vec<(String, String)> {
         .iter()
         .filter(|o| !o.identity.is_empty() && !in_a.contains(&o.identity))
         .filter_map(|o| {
-            let was = by_literal.remove(&literal_identity(o))?;
+            let was = match by_literal.remove(&literal_identity(o)) {
+                Some(was) => was,
+                // about its buckets, some of them the same ([`same_finding`])
+                None => {
+                    let at = by_literal
+                        .iter()
+                        .filter(|(_, was)| same_finding(was, &o.identity))
+                        .map(|(literal, _)| literal.clone())
+                        .min()?;
+                    by_literal.remove(&at)?
+                }
+            };
             Some((o.identity.clone(), was.to_string()))
         })
         .collect()
@@ -2355,12 +2420,16 @@ pub fn names_after(a: &Run, b: &Run) -> Vec<(String, String)> {
 
 /// Whether the identity `id` (a finding's, as a program keeps it) names
 /// the finding whose literal identity is `literal`: of one kind, each part
-/// of what it is about as the finding's, or that made [`stable`].
+/// of what it is about as the finding's, or that made [`stable`]; or, about
+/// its buckets, with one in common ([`same_finding`]).
 fn names(id: &str, literal: &str) -> bool {
     let (Some((kind, about)), Some((k, theirs))) = (id.split_once('|'), literal.split_once('|'))
     else {
         return false;
     };
+    if OF_BUCKET.contains(&kind) && same_finding(id, &by_rules(literal)) {
+        return true;
+    }
     let mut parts = about.split('/');
     kind == k
         && theirs.split('/').all(|t| {
@@ -2437,8 +2506,11 @@ pub const FINDING_KINDS: &[&str] = &[
 /// a digit inside a word (`s3out`); 4 makes a prefix near its rate
 /// (`obs.prefixrate.reads`, `.writes`) a throttling (`obs.throttled`); 5
 /// makes a read written back, deletes one at a time and small writes about
-/// their bucket ([`OF_BUCKET`]).
-pub const IDENTITY_RULES: u32 = 5;
+/// their bucket ([`OF_BUCKET`]); 6 names each bucket of one about several
+/// (`obs.small|a,b`, where 5 said `/`, or the bucket of the key a read
+/// written back named), the same finding as one of its kind with a bucket
+/// in common ([`same_finding`]).
+pub const IDENTITY_RULES: u32 = 6;
 
 /// A key or prefix with what changes from one run of a program to the next
 /// taken out: the value of a `name=value` folder `name={v}`, a UUID

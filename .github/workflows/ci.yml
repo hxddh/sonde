@@ -97,6 +97,37 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 scripts/gen-probe-docs.py --check
 
+  fixes:
+    # the fix code sonde prints, held to compile: every snippet of every
+    # language against its SDK at the versions tools/fix-check pins, and the
+    # ones whose meaning matters run (crates/analysis/tests/fix_code.rs). The
+    # unit job parses them wherever it runs; here nothing may be passed over.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: debug, save-if: false }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.14", cache: pip, cache-dependency-path: .github/requirements.txt }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24", cache: npm, cache-dependency-path: tools/fix-check/node/package-lock.json }
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with: { go-version-file: tools/fix-check/go/go.mod, cache-dependency-path: tools/fix-check/go/go.sum }
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with: { distribution: temurin, java-version: "17", cache: maven, cache-dependency-path: tools/fix-check/java/pom.xml }
+      - name: The SDKs the fixes are compiled against (the test itself reaches no network)
+        run: |
+          pip install "$(grep '^boto3==' .github/requirements.txt)"
+          (cd tools/fix-check/go && go mod download)
+          (cd tools/fix-check/java && mvn -q dependency:go-offline dependency:build-classpath)
+          (cd tools/fix-check/node && npm ci)
+          (cd tools/fix-check/rust && cargo fetch --locked)
+      - name: Every fix compiles against its SDK, and does what it says
+        env: { SONDE_FIXES_STRICT: "1" }
+        run: cargo test --locked -p sonde-analysis --test fix_code -- --nocapture
+
   budgets:
     # runs of any size, held (optimised, as released): each test's
     # peak memory, the same from run to run, against its budget; its time,
@@ -197,11 +228,12 @@ jobs:
         run: |
           pip install -r .github/requirements.txt
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
-          shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh
+          shellcheck action/*.sh install.sh scripts/release-wait*.sh scripts/changelog-section*.sh scripts/check-stripped*.sh
           actionlint
       - run: bash action/test.sh
       - run: bash scripts/release-wait.test.sh
       - run: bash scripts/changelog-section.test.sh
+      - run: bash scripts/check-stripped.test.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: debug, save-if: false }

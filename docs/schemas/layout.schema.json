@@ -38,70 +38,147 @@
         "type": "array",
         "description": "Display text, not stable.",
         "items": {
-          "type": "object",
-          "properties": {
-            "label": {
-              "type": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "label",
-            "value"
-          ]
+          "$ref": "#/$defs/fact"
         }
       },
       "issues": {
         "type": "array",
+        "description": "What is wrong or worth a look in what the prefix holds (exit 1 with an error, 4 with a warning).",
         "items": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "severity": {
+              "enum": [
+                "info",
+                "warning",
+                "error"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Display text, not stable."
+            },
+            "messageText": {
+              "type": "array",
+              "description": "Display text, not stable: `message` as phrases.",
+              "items": {
+                "$ref": "#/$defs/phrase"
+              }
+            }
+          },
+          "required": [
+            "severity",
+            "message"
+          ]
         }
       },
       "timeline": {
         "type": "array",
+        "description": "What was written, in order: one entry a commit, a snapshot, a manifest, a gap.",
         "items": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "When (RFC 3339), where the layout or the listing says."
+            },
+            "kind": {
+              "type": "string",
+              "description": "`wal`, `manifest`, `fence`, `snapshot`, `segment`, `commit`, `gap`, …: a layout's own, not a closed list."
+            },
+            "label": {
+              "type": "string",
+              "description": "Display text, not stable."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Display text, not stable (may be empty)."
+            },
+            "key": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The object it is read from."
+            },
+            "bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "That object's size."
+            },
+            "labelText": {
+              "type": "array",
+              "description": "Display text, not stable: `label` as phrases.",
+              "items": {
+                "$ref": "#/$defs/phrase"
+              }
+            },
+            "detailText": {
+              "type": "array",
+              "description": "Display text, not stable: `detail` as phrases.",
+              "items": {
+                "$ref": "#/$defs/phrase"
+              }
+            }
+          },
+          "required": [
+            "time",
+            "kind",
+            "label",
+            "detail",
+            "key",
+            "bytes"
+          ]
         }
       },
       "tables": {
         "type": "array",
         "description": "Display text, not stable.",
         "items": {
-          "type": "object",
-          "properties": {
-            "title": {
-              "type": "string",
-              "description": "Display text, not stable."
-            },
-            "columns": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "rows": {
-              "type": "array",
-              "items": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "required": [
-            "title",
-            "columns",
-            "rows"
-          ]
+          "$ref": "#/$defs/table"
         }
       },
       "snapshots": {
         "type": "array",
+        "description": "The logical states over time, oldest first (`--at` picks the last at or before a time).",
         "items": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "When it was taken (RFC 3339)."
+            },
+            "label": {
+              "type": "string",
+              "description": "Display text, not stable."
+            },
+            "facts": {
+              "type": "array",
+              "description": "Display text, not stable.",
+              "items": {
+                "$ref": "#/$defs/fact"
+              }
+            },
+            "tables": {
+              "type": "array",
+              "description": "Display text, not stable.",
+              "items": {
+                "$ref": "#/$defs/table"
+              }
+            }
+          },
+          "required": [
+            "time",
+            "label"
+          ]
         }
       },
       "objects": {
@@ -142,6 +219,64 @@
       },
       "required": [
         "key"
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "labelText": {
+          "type": "array",
+          "description": "Display text, not stable: `label` as a phrase.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "valueText": {
+          "type": "array",
+          "description": "Display text, not stable: `value` as phrases, when it is words (a figure is said as it is).",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ]
+    },
+    "table": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Display text, not stable."
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "title",
+        "columns",
+        "rows"
       ]
     }
   }

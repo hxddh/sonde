@@ -3,7 +3,7 @@
 //! - configuration: `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`,
 //!   else `~/.config/sonde` on Linux and `~/Library/Application Support/sonde`
 //!   on macOS (`config.toml`);
-//! - data (request log database, scan cache, probe runs, audit log, runs):
+//! - data (request log database, scan cache, probe runs, audit log, plans, runs):
 //!   `$SONDE_DATA_DIR`, else the platform's data directory (`~/.local/share/sonde`,
 //!   `~/Library/Application Support/sonde`);
 //! - exports and downloads: `exports/` and `downloads/` under the data
@@ -47,6 +47,10 @@ impl Paths {
     }
     pub fn audit_log(&self) -> PathBuf {
         self.data_dir.join("audit.jsonl")
+    }
+    /// The plans of dry runs made in a terminal, each until its `--yes`.
+    pub fn plans(&self) -> PathBuf {
+        self.data_dir.join("plans")
     }
     pub fn scan_cache(&self) -> PathBuf {
         self.data_dir.join("scans")

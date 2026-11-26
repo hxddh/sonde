@@ -38,9 +38,17 @@ pub struct State {
     pub undeletable: Vec<String>,
     /// Multipart uploads are not aborted (the answer is 500).
     pub no_abort: bool,
+    /// Every page of multipart uploads is the first, said to be truncated
+    /// (a store whose listing never ends).
+    pub same_uploads_page: bool,
 }
 
 impl State {
+    /// How many multipart uploads are neither completed nor aborted.
+    #[allow(dead_code)]
+    pub fn open_uploads(&self) -> usize {
+        self.uploads.len()
+    }
     fn version(&mut self, bucket: &str, key: &str, marker: bool) {
         if self.versioned {
             self.next += 1;
@@ -97,7 +105,11 @@ async fn serve(
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let (parts, body) = req.into_parts();
-    let body = body.collect().await.unwrap().to_bytes().to_vec();
+    // a request whose body stops before its end made nothing
+    let Ok(body) = body.collect().await else {
+        return Ok(err(400, "IncompleteBody"));
+    };
+    let body = body.to_bytes().to_vec();
     let host = parts
         .headers
         .get("host")
@@ -250,15 +262,35 @@ async fn serve(
         ("HEAD", None) if s.buckets.contains_key(&bucket) => reply(200, &[], ""),
         ("HEAD", None) => reply(404, &[], ""),
         ("GET", None) if has("uploads") => {
+            // 1,000 a page, as S3 lists them, in the order of (key, upload id)
             let prefix = get("prefix").unwrap_or_default();
-            let mut out =
-                String::from("<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>");
-            for (id, (b, k, _)) in &s.uploads {
-                if *b == bucket && k.starts_with(&prefix) {
-                    out.push_str(&format!(
-                        "<Upload><Key>{k}</Key><UploadId>{id}</UploadId></Upload>"
-                    ));
-                }
+            let after = (!s.same_uploads_page)
+                .then(|| get("key-marker").zip(get("upload-id-marker")))
+                .flatten();
+            let mut all: Vec<(&String, &String)> = s
+                .uploads
+                .iter()
+                .filter(|(_, (b, k, _))| *b == bucket && k.starts_with(&prefix))
+                .map(|(id, (_, k, _))| (k, id))
+                .filter(|(k, id)| {
+                    after.as_ref().is_none_or(|(km, um)| {
+                        (k.as_str(), id.as_str()) > (km.as_str(), um.as_str())
+                    })
+                })
+                .collect();
+            all.sort();
+            let page = &all[..all.len().min(1000)];
+            let more = all.len() > page.len() || (s.same_uploads_page && !page.is_empty());
+            let mut out = format!("<ListMultipartUploadsResult><IsTruncated>{more}</IsTruncated>");
+            if let Some((k, id)) = page.last().filter(|_| more) {
+                out.push_str(&format!(
+                    "<NextKeyMarker>{k}</NextKeyMarker><NextUploadIdMarker>{id}</NextUploadIdMarker>"
+                ));
+            }
+            for (k, id) in page {
+                out.push_str(&format!(
+                    "<Upload><Key>{k}</Key><UploadId>{id}</UploadId></Upload>"
+                ));
             }
             out.push_str("</ListMultipartUploadsResult>");
             reply(200, &[], out)

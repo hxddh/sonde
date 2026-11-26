@@ -427,3 +427,233 @@ fn keys_sonde_cannot_send_are_said_and_not_held_against_the_store() {
     assert!(!j.summary.contains("a/../b"), "{}", j.summary);
     assert!(j.observations.iter().any(|o| o.contains("not tested")));
 }
+
+fn not_implemented(label: &str) -> Step {
+    Step {
+        code: Some("NotImplemented".into()),
+        ..step(label, 501, "")
+    }
+}
+
+fn with(label: &str, status: u16, header: (&str, &str)) -> Step {
+    Step {
+        headers: vec![(header.0.into(), header.1.into())],
+        ..step(label, status, "")
+    }
+}
+
+/// A write, a copy or a delete that went through against its condition
+/// lost data: no 501 from another step of the probe makes that "unsupported".
+#[test]
+fn a_broken_guarantee_stays_a_fail_when_another_step_is_not_implemented() {
+    let cases: Vec<(&str, Vec<Step>)> = vec![
+        (
+            "cond.put-if-none-match",
+            vec![
+                step("first", 200, ""),
+                step("second", 200, ""),
+                not_implemented("read"),
+            ],
+        ),
+        (
+            "cond.put-if-match",
+            vec![
+                step("create", 200, ""),
+                step("stale", 200, ""),
+                step("current", 200, ""),
+                not_implemented("missing"),
+            ],
+        ),
+        (
+            "cond.put-if-match",
+            vec![
+                step("create", 200, ""),
+                step("stale", 412, ""),
+                not_implemented("current"),
+                step("missing", 200, ""),
+            ],
+        ),
+        (
+            "cond.copy-if-match",
+            vec![
+                step("source", 200, ""),
+                step("wrong-source", 200, ""),
+                step("right-source", 200, ""),
+                not_implemented("dest-exists"),
+            ],
+        ),
+        (
+            "cond.copy-dest-if-match",
+            vec![
+                step("source", 200, ""),
+                step("dest", 200, ""),
+                step("stale", 200, ""),
+                step("current", 200, ""),
+                not_implemented("missing"),
+            ],
+        ),
+        (
+            "cond.delete-if-match",
+            vec![
+                step("create", 200, ""),
+                step("stale", 204, ""),
+                step("kept", 404, ""),
+                step("current", 404, ""),
+                step("gone", 404, ""),
+                step("batch-create", 200, ""),
+                not_implemented("batch-stale"),
+                step("batch-kept", 200, ""),
+            ],
+        ),
+        (
+            "cond.complete-if-none-match",
+            vec![
+                step("create-upload", 200, ""),
+                step("part", 200, ""),
+                step("racing-put", 200, ""),
+                step("complete", 200, ""),
+                not_implemented("head"),
+            ],
+        ),
+        (
+            // the append is refused, and the write at a wrong offset replaced the object
+            "express.append",
+            vec![
+                step("create", 200, ""),
+                not_implemented("append"),
+                step("wrong-offset", 200, ""),
+                with("head", 200, ("content-length", "3")),
+            ],
+        ),
+    ];
+    for (id, steps) in cases {
+        let j = probes::probe(id).unwrap().judge(&Steps(steps));
+        assert_eq!(j.verdict, Verdict::Fail, "{id}: {}", j.summary);
+    }
+}
+
+/// And a 501 where nothing broke is still "unsupported": also when the
+/// write the 501 answered is the one that had to go through.
+#[test]
+fn a_conditional_write_that_is_not_implemented_is_unsupported() {
+    let cases: Vec<(&str, Vec<Step>)> = vec![
+        (
+            "cond.put-if-none-match",
+            vec![not_implemented("first"), not_implemented("second")],
+        ),
+        (
+            "cond.put-if-match",
+            vec![
+                step("create", 200, ""),
+                not_implemented("stale"),
+                not_implemented("current"),
+                not_implemented("missing"),
+            ],
+        ),
+        (
+            "cond.copy-if-match",
+            vec![
+                step("source", 200, ""),
+                step("wrong-source", 412, ""),
+                step("right-source", 200, ""),
+                not_implemented("dest-exists"),
+            ],
+        ),
+        (
+            "cond.delete-if-match",
+            vec![
+                step("create", 200, ""),
+                not_implemented("stale"),
+                step("kept", 200, ""),
+                not_implemented("current"),
+                step("gone", 200, ""),
+            ],
+        ),
+        (
+            "cond.complete-if-none-match",
+            vec![
+                step("create-upload", 200, ""),
+                step("part", 200, ""),
+                step("racing-put", 200, ""),
+                not_implemented("complete"),
+                with("head", 200, ("content-length", "8")),
+            ],
+        ),
+        (
+            "express.append",
+            vec![
+                step("create", 200, ""),
+                not_implemented("append"),
+                not_implemented("wrong-offset"),
+                with("head", 200, ("content-length", "5")),
+            ],
+        ),
+    ];
+    for (id, steps) in cases {
+        let j = probes::probe(id).unwrap().judge(&Steps(steps));
+        assert_eq!(j.verdict, Verdict::Unsupported, "{id}: {}", j.summary);
+    }
+}
+
+fn version_ids(a: &str, b: &str) -> Steps {
+    Steps(vec![
+        step("create-bucket", 200, ""),
+        step("enable", 200, ""),
+        step("put-0", 200, ""),
+        step("put-1", 200, ""),
+        Step {
+            label: "ids".into(),
+            body: format!("{a} {b}"),
+            ..Default::default()
+        },
+    ])
+}
+
+/// A version id is opaque: AWS's own carry `-`, `.` and `_`, and a store's
+/// UUID or number is no difference a program can rely on (exit 2 is for
+/// those). Only an id that is not URL-ready differs.
+#[test]
+fn a_version_id_is_judged_as_opaque_and_its_shape_only_said() {
+    let p = probes::probe("version.id-format").unwrap();
+    for (a, b, shape) in [
+        // AWS
+        (
+            "Rb_2YuqvPZ3hxrw-RkDv7Gcd.oYb8gVu",
+            "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrH",
+            "aws-like (32 URL-safe characters)",
+        ),
+        // MinIO, RustFS
+        (
+            "20cba8e0-5b69-4623-af77-050259b1272a",
+            "466a5b40-3679-4e98-891c-6f0cd77ef87e",
+            "uuid",
+        ),
+        // Ceph RGW: 31 or 32 characters
+        (
+            "0vr60aWdzMPXM.fNKnti.gjaehzIzCb",
+            ".XW6NzpenG4uIkDd6ChZ5ra4frgrtMz",
+            "other",
+        ),
+        ("1700000000000001", "1700000000000002", "numeric"),
+    ] {
+        let j = p.judge(&version_ids(a, b));
+        assert_eq!(j.verdict, Verdict::Pass, "{a}: {}", j.summary);
+        assert_eq!(j.summary, format!("unique ids, {shape}"));
+    }
+    for (a, b) in [
+        (
+            "3/L4kqtJlcpXroDTDmJ+rmSpXd3dIbrH",
+            "4/L4kqtJlcpXroDTDmJ+rmSpXd3dIbrH",
+        ),
+        ("ok-1", "bad?2"),
+    ] {
+        let j = p.judge(&version_ids(a, b));
+        assert_eq!(j.verdict, Verdict::Differs, "{a} {b}: {}", j.summary);
+    }
+    let j = p.judge(&version_ids("same", "same"));
+    assert_eq!(j.verdict, Verdict::Fail, "{}", j.summary);
+    assert!(probes::suite::misc::version_id_is_opaque("a-b.c_d~e"));
+    assert!(!probes::suite::misc::version_id_is_opaque(
+        &"x".repeat(1025)
+    ));
+}

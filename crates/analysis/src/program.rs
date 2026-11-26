@@ -787,8 +787,9 @@ pub struct Gated {
 
 /// The run's findings `known` does not name (by identity, an entry made
 /// by older rules read by these), or names with a smaller count: judged
-/// by counts alone, never by a share of the run (one of time alone, past a
-/// fifth more). One kept on purpose (`expect`) is none.
+/// by counts alone ([`crate::fixloop::count_moved`]: exact under a hundred,
+/// past a hundredth from there), never by a share of the run (one of time
+/// alone, past a fifth more). One kept on purpose (`expect`) is none.
 pub fn gated(
     findings: &[Observation],
     known: &std::collections::BTreeMap<String, usize>,
@@ -801,17 +802,14 @@ pub fn gated(
             let count = crate::fixloop::count_of(o);
             let was = known
                 .iter()
-                .find(|(k, _)| {
-                    let k = k.trim();
-                    k == identity || expected_identity(k) == identity
-                })
+                .find(|(k, _)| entry_names(k, &identity))
                 .map(|(_, n)| *n);
             // requests one after another, or throttled: their count moves
             // with the timing, so it grew only past a fifth more (as the
             // fix loop)
             let grew = |n: usize| match crate::fixloop::varying_count(o) {
                 Some(_) => count * 4 > n * 5,
-                None => count > n,
+                None => crate::fixloop::count_moved(n, count).is_gt(),
             };
             was.is_none_or(grew).then(|| Gated {
                 identity,
@@ -835,14 +833,13 @@ pub fn loose(
         .iter()
         .filter_map(|(k, &n)| {
             let k = k.trim();
-            let o = findings.iter().find(|o| {
-                let id = crate::profile::finding_identity(o);
-                k == id || expected_identity(k) == id
-            });
+            let o = findings
+                .iter()
+                .find(|o| entry_names(k, &crate::profile::finding_identity(o)));
             let count = o.map_or(0, crate::fixloop::count_of);
             let fewer = match o.and_then(crate::fixloop::varying_count) {
                 Some(_) => count * 5 < n * 4,
-                None => count < n,
+                None => crate::fixloop::count_moved(n, count).is_lt(),
             };
             (fewer && o.is_none_or(|o| o.expected.is_none())).then(|| Gated {
                 identity: k.to_string(),
@@ -864,7 +861,12 @@ pub fn kept_texts(
     for g in loose.iter_mut().filter(|g| g.text.is_empty()) {
         let by = kept
             .get(&g.identity)
-            .or_else(|| kept.get(&crate::profile::by_rules(&g.identity)));
+            .or_else(|| kept.get(&crate::profile::by_rules(&g.identity)))
+            .or_else(|| {
+                kept.iter()
+                    .find(|(k, _)| crate::profile::same_finding(k, &g.identity))
+                    .map(|(_, t)| t)
+            });
         if let Some(t) = by {
             g.text = t.text.clone();
         }
@@ -949,10 +951,9 @@ pub fn expected<'a>(
     let kind = id.split('|').next().unwrap_or("");
     // an entry made by older rules is read by these; one that names what
     // two findings of a run share names both
-    let named = expect.iter().find(|(e, _)| {
-        let e = e.trim();
-        e == id || expected_identity(e) == id || e == expected_identity(&id)
-    });
+    let named = expect
+        .iter()
+        .find(|(e, _)| entry_names(e, &id) || e.trim() == expected_identity(&id));
     named
         .or_else(|| expect.iter().find(|(e, _)| e.trim() == kind))
         .map(|(_, why)| why.trim())
@@ -967,6 +968,24 @@ pub fn mark_expected(
     for o in findings {
         o.expected = expected(o, expect).map(String::from);
     }
+}
+
+/// Whether an entry of `[check.findings]` or `expect` names the finding of
+/// identity `id`: as written, or made by the rules of now
+/// ([`expected_identity`]); or, of a finding about its buckets, with a
+/// bucket in common ([`crate::profile::same_finding`]: an entry written
+/// when its objects were in two buckets names it when they are in one), and
+/// rules 5's `"obs.small|/"` (several buckets, none named) the one of its
+/// kind.
+fn entry_names(entry: &str, id: &str) -> bool {
+    let e = entry.trim();
+    let by_rules = expected_identity(e);
+    e == id
+        || by_rules == id
+        || crate::profile::same_finding(&by_rules, id)
+        || (crate::profile::of_no_bucket(&by_rules)
+            && crate::profile::kind_of(&by_rules) == crate::profile::kind_of(id)
+            && !id.ends_with('|'))
 }
 
 /// An entry of `expect` as an identity: what it is about made
@@ -1029,6 +1048,21 @@ pub const DEFAULT_TOLERANCE: f64 = 0.1;
 /// budget of 1 ms + 10% failed on that noise alone.
 pub const WAITING_SLACK_MS: f64 = 50.0;
 
+/// The most a timing of `base_ms` may be with `tolerance` more (0.1 is
+/// 10%) and [`WAITING_SLACK_MS`]: what `check` holds a run's waiting to
+/// against its baseline, and writes as `check --init`'s `max-waiting`.
+pub fn timing_limit(base_ms: f64, tolerance: f64) -> f64 {
+    base_ms * (1.0 + tolerance) + WAITING_SLACK_MS
+}
+
+/// The room [`timing_limit`] leaves over `base_ms`: how far one run's
+/// timing may be from another's before `check` says it moved. The least a
+/// program's noise is taken for while only two or three of its runs say it
+/// ([`crate::fixloop::spread_ms`]).
+pub fn timing_room(base_ms: f64, tolerance: f64) -> f64 {
+    base_ms * tolerance + WAITING_SLACK_MS
+}
+
 pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
     let grow = 1.0 + tolerance;
     BaselineLimits {
@@ -1037,7 +1071,7 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
             .floor()
             .max(base.requests as f64),
         // a run this short varies more than its tolerance
-        waiting_ms: base.waiting_ms * grow + WAITING_SLACK_MS,
+        waiting_ms: timing_limit(base.waiting_ms, tolerance),
         // a free baseline (deletes only) still lets a run cost a hundredth of a
         // cent; one that cost anything is held to its percent, however small
         // (the same floor on top was 100% of a run costing 0.0001)
@@ -1167,17 +1201,26 @@ pub fn check(
         }
         {
             // a warning the baseline did not have as a warning: new, or grown from a note
-            let was_warning: std::collections::HashSet<String> =
+            let was_warning: Vec<String> =
                 b.3.iter()
                     .filter(|o| o.level == "warn")
                     .map(crate::profile::finding_identity)
                     .collect();
+            let was_warning: std::collections::HashSet<&str> =
+                was_warning.iter().map(String::as_str).collect();
+            // (a read written back in two buckets, then in one of them: the same)
+            let was_warning = |id: &str| {
+                was_warning.contains(id)
+                    || was_warning
+                        .iter()
+                        .any(|w| crate::profile::same_finding(w, id))
+            };
             new_warnings = run
                 .3
                 .iter()
                 .filter(|o| {
                     o.level == "warn"
-                        && !was_warning.contains(&crate::profile::finding_identity(o))
+                        && !was_warning(&crate::profile::finding_identity(o))
                         && o.expected.is_none()
                 })
                 .map(|o| o.text.clone())
@@ -1854,6 +1897,28 @@ mod tests {
         assert!(gated(&[throttled(110)], &k).is_empty());
         assert_eq!(gated(&[throttled(130)], &k).len(), 1);
         assert!(loose(&[throttled(90)], &k).is_empty());
+    }
+
+    /// 33.0: a key known at 10,000 reads and read 10,003 times failed the
+    /// check as grown. Known counts are held as the fix loop judges them:
+    /// to the unit under a hundred, within a hundredth from there.
+    #[test]
+    fn a_known_count_a_few_off_among_thousands_neither_fails_nor_is_loose() {
+        // (the hot key alone: so many reads one after another are a finding too)
+        let run = |n: u64| -> Vec<Observation> {
+            let (_, _, mut ob) = point(&(1..=n).map(|i| rec(i, "hot")).collect::<Vec<_>>());
+            ob.retain(|o| o.kind == "obs.hot");
+            ob
+        };
+        let k = |n: usize| std::collections::BTreeMap::from([("obs.hot|b/hot".to_string(), n)]);
+        assert!(gated(&run(10_003), &k(10_000)).is_empty());
+        assert!(loose(&run(9_950), &k(10_000)).is_empty());
+        assert_eq!(gated(&run(10_101), &k(10_000))[0].known, Some(10_000));
+        assert_eq!(loose(&run(9_899), &k(10_000))[0].count, 9_899);
+        // a small count, to the unit
+        assert_eq!(gated(&run(13), &k(12)).len(), 1);
+        assert_eq!(loose(&run(12), &k(13)).len(), 1);
+        assert!(gated(&run(12), &k(12)).is_empty() && loose(&run(12), &k(12)).is_empty());
     }
 
     /// 29.0's eval: `check --init` wrote a read written back

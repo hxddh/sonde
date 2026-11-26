@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use sonde_analysis::run::RunFile;
+use sonde_analysis::trial_plan::Place;
 use sonde_core::Sonde;
 
 use crate::Cli;
@@ -28,7 +29,7 @@ pub struct RunArgs {
     /// program started elsewhere, print each request, and stop at Ctrl-C.
     #[arg(long, value_name = "ADDR", num_args = 0..=1,
           default_missing_value = "127.0.0.1:9000",
-          conflicts_with_all = ["demo", "trial", "faults", "name", "no_callers"])]
+          conflicts_with_all = ["demo", "trial", "faults", "same_place", "name", "no_callers"])]
     listen: Option<SocketAddr>,
     /// With --listen: take requests from other machines too (any Host).
     /// Anyone who has the keys sonde prints can then use the endpoint's
@@ -60,6 +61,12 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
+    /// Run the trial though its runs share one place: the program writes,
+    /// its command has no `{trial}` and its keys do not name SONDE_TRIAL,
+    /// so every run under a fault writes where the first run wrote. Without
+    /// it such a trial is refused (exit 77).
+    #[arg(long)]
+    same_place: bool,
     /// The program's name: its runs, baseline and trial verdicts go by it
     /// (default: sonde.toml's `[program] name` for the program it `runs`,
     /// else what the command runs: `etl` for `python3 etl.py 5`).
@@ -96,6 +103,15 @@ async fn listen(
         eprintln!("warning: sonde takes requests from other machines on {addr}");
     }
     let mut started = start(s, rec, addr, None, allow_remote).await?;
+    // Ctrl-C is sonde's before it says so: the handler is installed at the
+    // future's first poll, and one sent between "Ctrl-C stops" and that poll
+    // would kill sonde with its run unfinished
+    let mut stop = std::pin::pin!(tokio::signal::ctrl_c());
+    let stopped = tokio::select! {
+        biased;
+        r = &mut stop => { r?; true }
+        _ = std::future::ready(()) => false,
+    };
     let (set, unset) = started.proxy.env();
     eprintln!(
         "sonde is listening on {}. Point the application at it:\n",
@@ -109,7 +125,9 @@ async fn listen(
     }
     eprintln!("\nCtrl-C stops.\n");
     let printer = follow(&started.log, false);
-    tokio::signal::ctrl_c().await?;
+    if !stopped {
+        stop.await?;
+    }
     printer.abort();
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
@@ -206,6 +224,9 @@ struct RunCtx {
     /// What the runs made: a trial's runs may remove what the clean run
     /// made, under no-delete as under allow.
     made: Arc<sonde_proxy::Made>,
+    /// Each run under a fault is held to the places with its own name:
+    /// the program reads SONDE_TRIAL ([`Place::Seen`]).
+    held: std::sync::atomic::AtomicBool,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -308,14 +329,6 @@ struct Ran {
     signal: Option<i32>,
 }
 
-/// Whether the command gives each run of a trial a place of its own, as far
-/// as its words say: `{trial}` in an argument, or SONDE_TRIAL named in one.
-fn names_its_place(command: &[String]) -> bool {
-    command
-        .iter()
-        .any(|w| w.contains("{trial}") || w.contains("SONDE_TRIAL"))
-}
-
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
     // a word like a flag where the command starts is a flag of run's
     // mistyped, not a program (none is named `--typo`)
@@ -383,6 +396,11 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .filter(|n| !n.is_empty())
         .or_else(|| project.file.program.name_for(&command));
     let trying = a.trial || !asked.is_empty();
+    if a.same_place && !trying {
+        return Err(super::usage(
+            "--same-place is said of a trial: give it with --trial or --fault",
+        ));
+    }
     let ctx = RunCtx {
         trying,
         name,
@@ -394,6 +412,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         },
         callers: !a.no_callers && project.file.record.name_callers != Some(false),
         made: Arc::default(),
+        held: false.into(),
     };
     let clean = run_once(s, a, None, &ctx).await?;
     let (file, code) = (clean.file.clone(), clean.code);
@@ -416,16 +435,24 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         eprintln!("\nNo trial: the program sent no requests to fail.");
         return Ok(code);
     }
-    // only a program that writes writes over itself, run after run
-    if !names_its_place(&a.command)
-        && clean_run
-            .records
-            .iter()
-            .any(|r| matches!(r.method.as_str(), "PUT" | "POST" | "DELETE"))
-    {
-        eprintln!(
-            "warning: the command has no {{trial}} and does not name SONDE_TRIAL: every run of the trial writes to the same place"
-        );
+    // only a program that writes writes over itself, run after run: before
+    // any run under a fault, each must have a place of its own (the demo
+    // store is sonde's own, made anew)
+    match sonde_analysis::trial_plan::place(&command, &clean_run.records) {
+        Place::Shared if a.demo => {}
+        Place::Shared if a.same_place => eprintln!(
+            "warning: the command has no {{trial}} and its keys do not name SONDE_TRIAL: every run of the trial writes to the same place (--same-place)"
+        ),
+        Place::Shared => {
+            eprintln!(
+                "\nNo trial: the program writes, and nothing gives each run a place of its own: the command has no {{trial}}, and the keys it wrote do not all name SONDE_TRIAL (clean). Under a fault it would write where this run wrote.\n  Put {{trial}} in the command (-- python etl.py s3://scratch/etl-{{trial}}/), or SONDE_TRIAL in every key the program writes;\n  --same-place runs the trial where it is."
+            );
+            return Ok(77);
+        }
+        // the program reads SONDE_TRIAL, as far as one run shows: each run
+        // under a fault is held to the keys that name it
+        Place::Seen if !a.same_place => ctx.held.store(true, std::sync::atomic::Ordering::Relaxed),
+        Place::Seen | Place::Named | Place::Reads => {}
     }
     let scenarios = if !asked.is_empty() {
         asked
@@ -644,6 +671,11 @@ async fn run_once(
     // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
     // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
+    ctx.made.keep_to(
+        under
+            .filter(|_| ctx.held.load(std::sync::atomic::Ordering::Relaxed))
+            .map(|u| u.scenario.name.as_str()),
+    );
     // keys under the run's own place are its own to remove
     if ctx.trying {
         for place in sonde_analysis::trial::places(&a.command, trial) {
@@ -1005,8 +1037,22 @@ impl DuckdbInit {
         // (the port: one file a recording)
         let port = endpoint.rsplit(':').next().unwrap_or("0");
         let path = dir.join(format!("init-{port}.sql"));
-        std::fs::write(&path, sql).ok()?;
-        Some(Self(path))
+        Self::write_private(path, &sql).ok()
+    }
+
+    /// The file made new and the owner's alone (0600) from its first byte:
+    /// it holds what `~/.duckdbrc` holds, a `CREATE SECRET` among it. One
+    /// left by a run that died is removed, never written through.
+    fn write_private(path: PathBuf, sql: &str) -> std::io::Result<Self> {
+        use std::io::Write;
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+        let mut file = reqlog::private::create_new(&path)?;
+        let init = Self(path);
+        file.write_all(sql.as_bytes())?;
+        Ok(init)
     }
 }
 
@@ -1144,6 +1190,29 @@ fn no_requests(command: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 33.0's review: the init file (a copy of `~/.duckdbrc`, where a
+    /// `CREATE SECRET` is kept) was written with the umask's permissions.
+    #[cfg(unix)]
+    #[test]
+    fn duckdbs_init_file_is_the_owners_alone_and_goes_with_the_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("init-1.sql");
+        // one a run that died left, readable by all: not written through
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let init =
+            DuckdbInit::write_private(path.clone(), "CREATE SECRET (KEY_ID 'k');\n").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "CREATE SECRET (KEY_ID 'k');\n"
+        );
+        drop(init);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn nothing_reached_names_the_programs_own_way_first() {

@@ -60,6 +60,21 @@ pub struct RunHeader {
     /// once, which waited for which) is not said of such a run.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whole_seconds: bool,
+    /// How a store named for the run alone (`--url`) was reached:
+    /// path-style, and the file of its own authorities (the file's path,
+    /// never what is in it). Recording the program again needs them said
+    /// again; a configured endpoint keeps its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub path_style: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<String>,
+    /// The program was served TLS (`--tls`, `[record] tls`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tls: bool,
+    /// The policy it was recorded under (`allow`, `no-delete`,
+    /// `read-only`): what the program was let do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
 }
 
 /// The commit a run's code was at.
@@ -141,6 +156,10 @@ impl RunHeader {
             scenario: None,
             trial_of: None,
             whole_seconds: false,
+            path_style: false,
+            ca_file: None,
+            tls: false,
+            policy: None,
         }
     }
 
@@ -313,7 +332,16 @@ impl RunWriter {
 }
 
 impl Sink for RunWriter {
+    /// The one way a request gets into a run's file, whoever made the
+    /// record (the recording, a replay, an importer): never unredacted.
     fn write(&self, record: &Record) {
+        let redacted;
+        let record = if record.is_redacted() {
+            record
+        } else {
+            redacted = record.clone().redacted();
+            &redacted
+        };
         let mut out = self.out.lock();
         if !out.line(record) {
             out.lost += 1;
@@ -683,10 +711,17 @@ impl RunFile {
 
     /// [`RunFile::open`] for reading what the run amounts to (its
     /// operations, findings, time, cost): what no analysis reads of a record
-    /// is not kept ([`Keep::Analysis`]), which is most of its size. Not for
-    /// showing a request whole, replaying it or writing it out.
+    /// is not kept ([`Keep::Analysis`]), which is most of its size, nor the
+    /// program's output (`logs` is empty). Not for showing a request whole,
+    /// replaying it or writing it out.
     pub fn open_lean(path: &Path) -> Result<RunFile, String> {
         RunFile::read(path, Keep::Analysis)
+    }
+
+    /// [`RunFile::open_lean`], with the program's output: for what shows
+    /// its lines beside the analysis (a shared page, the app's run).
+    pub fn open_lean_with_logs(path: &Path) -> Result<RunFile, String> {
+        RunFile::read(path, Keep::AnalysisAndLogs)
     }
 
     /// Reads a run file as a stream: the file is never held as text, its
@@ -809,8 +844,19 @@ pub enum Keep {
     /// What the analyses read: the URL (the bucket, key and query are kept
     /// apart), the endpoint and region (the header has them), the store's
     /// request and host ids and the headers no analysis reads
-    /// ([`read_by_analysis`]) are dropped.
+    /// ([`read_by_analysis`]) are dropped, and the program's output (no
+    /// analysis reads it, and a talkative program's is most of its run).
     Analysis,
+    /// [`Keep::Analysis`], and the program's output: asked for by what
+    /// shows it.
+    AnalysisAndLogs,
+}
+
+impl Keep {
+    /// Whether records are kept as an analysis reads them.
+    fn lean(self) -> bool {
+        self != Keep::All
+    }
 }
 
 /// Whether an analysis reads a header (an operation, a finding, a signal,
@@ -894,15 +940,17 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
         }
         if l.starts_with("{\"log\":") {
             match serde_json::from_str::<LogLine>(l) {
+                // read either way (a line that is none is not a run's), kept when asked for
+                Ok(_) if keep == Keep::Analysis => {}
                 Ok(x) => out.logs.push(x.log),
                 Err(e) => out.bad = Some((i, e.to_string())),
             }
             continue;
         }
         let lean: &dyn Fn(&str) -> bool = &read_by_analysis;
-        match Record::from_line(l, (keep == Keep::Analysis).then_some(lean)) {
+        match Record::from_line(l, keep.lean().then_some(lean)) {
             Ok(mut r) => {
-                if keep == Keep::Analysis {
+                if keep.lean() {
                     lean_read(&mut r);
                 }
                 out.records.push(r)
@@ -1190,6 +1238,55 @@ mod tests {
         assert_eq!(s.records[0].kind, "GetObject");
         assert_eq!(s.logs.len(), 1);
         assert_eq!(s.header.sonde, None);
+        // how it was recorded is not known of a run that does not say
+        // (one written before 33.0), and is written only when there is
+        // something to say
+        let h = &s.header;
+        assert_eq!(
+            (
+                h.path_style,
+                h.ca_file.as_deref(),
+                h.tls,
+                h.policy.as_deref()
+            ),
+            (false, None, false, None)
+        );
+        let plain = serde_json::to_string(&RunHeader::new("e", "u", "r", None)).unwrap();
+        for field in ["pathStyle", "caFile", "tls", "policy"] {
+            assert!(!plain.contains(field), "{plain}");
+        }
+        let said = least.replacen(
+            r#""later":{"x":1}"#,
+            r#""pathStyle":true,"caFile":"/etc/ca.pem","tls":true,"policy":"no-delete""#,
+            1,
+        );
+        std::fs::write(&path, &said).unwrap();
+        let h = RunFile::open(&path).unwrap().header;
+        assert_eq!(
+            (
+                h.path_style,
+                h.ca_file.as_deref(),
+                h.tls,
+                h.policy.as_deref()
+            ),
+            (true, Some("/etc/ca.pem"), true, Some("no-delete"))
+        );
+        let again = serde_json::to_value(&h).unwrap();
+        assert_eq!(
+            (
+                &again["pathStyle"],
+                &again["caFile"],
+                &again["tls"],
+                &again["policy"]
+            ),
+            (
+                &true.into(),
+                &"/etc/ca.pem".into(),
+                &true.into(),
+                &"no-delete".into()
+            )
+        );
+        std::fs::write(&path, least).unwrap();
         // a line short of a required field is not a record
         std::fs::write(&path, least.replace(r#""latencyMs":3.5,"#, "")).unwrap();
         assert!(RunFile::open(&path).is_err());
@@ -1324,6 +1421,45 @@ mod tests {
             assert_eq!(s.records[5999].key.as_deref(), Some("k5999"));
             assert_eq!(s.logs.len(), 12);
             assert_eq!(s.logs[11].text, "at 5500\n");
+        }
+    }
+
+    /// A lean reading is for what a run amounts to: the program's output,
+    /// which no analysis reads, is kept only by the reading that asks for it.
+    #[test]
+    fn a_lean_reading_keeps_the_programs_output_only_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("talkative.sonde");
+        recorded(&path, 6000);
+        for compressed in [false, true] {
+            if compressed {
+                compress(&path).unwrap();
+            }
+            let whole = RunFile::open(&path).unwrap();
+            assert_eq!(whole.logs.len(), 12);
+            let lean = RunFile::open_lean(&path).unwrap();
+            assert!(lean.logs.is_empty(), "{} chunks kept", lean.logs.len());
+            assert_eq!(lean.records.len(), 6000);
+            let asked = RunFile::open_lean_with_logs(&path).unwrap();
+            assert_eq!(asked.logs.len(), 12);
+            assert_eq!(asked.logs[11].text, "at 5500\n");
+            // lean either way: the records are the same
+            assert!(asked.records[0].rare().url.is_empty());
+            assert_eq!(
+                serde_json::to_string(&asked.records).unwrap(),
+                serde_json::to_string(&lean.records).unwrap()
+            );
+        }
+        // a line of output that does not read is still not a run's, kept or not
+        let plain = dir.path().join("bad.sonde");
+        recorded(&plain, 3);
+        let mut text = std::fs::read_to_string(&plain).unwrap();
+        let at = text.find("{\"log\":").unwrap();
+        text.insert_str(at, "{\"log\":{\"time\":7}}\n");
+        std::fs::write(&plain, text).unwrap();
+        for keep in [Keep::All, Keep::Analysis, Keep::AnalysisAndLogs] {
+            let e = RunFile::read(&plain, keep).unwrap_err();
+            assert!(e.starts_with("line "), "{keep:?}: {e}");
         }
     }
 

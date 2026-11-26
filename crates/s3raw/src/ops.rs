@@ -465,7 +465,9 @@ impl S3Client {
         xml::caller_identity(&r.text())
     }
 
-    /// Every key under `prefix`, following continuation tokens.
+    /// Every key under `prefix`, following continuation tokens. A store
+    /// that hands a token back again would be asked for the same pages for
+    /// ever: that is an error.
     pub async fn list_all(
         &self,
         bucket: &str,
@@ -473,7 +475,8 @@ impl S3Client {
         limit: usize,
     ) -> Result<Vec<xml::Object>, S3Error> {
         let mut out = Vec::new();
-        let mut token = None;
+        let mut token: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
         loop {
             let (page, _) = self
                 .list_objects_v2(
@@ -491,6 +494,13 @@ impl S3Client {
                 break;
             }
             token = page.next_continuation_token;
+            if let Some(t) = &token
+                && !seen.insert(t.clone())
+            {
+                return Err(S3Error::decode(format!(
+                    "the store handed back the continuation token {t:?} again: the listing would never end"
+                )));
+            }
         }
         out.truncate(limit);
         Ok(out)

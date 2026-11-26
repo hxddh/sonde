@@ -285,7 +285,8 @@ pub struct Caller {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
     pub requests: usize,
-    /// The line of code itself, when its file is there to read (`show`).
+    /// The line of code itself, when its file is program source inside the
+    /// folder the run ran in and there to read (`show`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }

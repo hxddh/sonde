@@ -152,15 +152,30 @@ impl Source for ProcessSource {
             .output()
             .await
             .map_err(|e| format!("credential_process: {e}"))?;
+        // what the process printed may hold a secret, and an error is
+        // shown, sent to a recorded program and kept in its run: how it
+        // ended only
         if !out.status.success() {
             return Err(format!(
-                "credential_process exited with {}: {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
+                "credential_process exited with {} (run it yourself to see what it says)",
+                out.status
             ));
         }
-        let p: ProcessOutput = serde_json::from_slice(&out.stdout)
-            .map_err(|e| format!("credential_process output: {e}"))?;
+        let p: ProcessOutput = serde_json::from_slice(&out.stdout).map_err(|e| {
+            // (serde's own words can quote a value)
+            let what = match e.classify() {
+                serde_json::error::Category::Data => {
+                    "is JSON without the fields a credential_process prints"
+                }
+                serde_json::error::Category::Eof => "is JSON cut short",
+                _ => "is not JSON",
+            };
+            format!(
+                "credential_process output {what} (line {}, column {})",
+                e.line(),
+                e.column()
+            )
+        })?;
         Ok(Some(
             Credentials::new(
                 p.access_key_id,
@@ -894,6 +909,41 @@ mod tests {
         assert_eq!(c.access_key_id, "AKIPROC");
         assert_eq!(c.session_token.unwrap().expose(), "t");
         assert!(c.expiry.is_some());
+    }
+
+    /// 33.0's review: a failing process's stderr, and what serde quotes of
+    /// its stdout, were the error: shown, answered to a recorded program
+    /// and kept in its run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_credential_process_error_never_repeats_what_it_printed() {
+        let failed = ProcessSource {
+            command: "echo SECRET-ON-STDERR >&2; echo SECRET-ON-STDOUT; exit 3".into(),
+        }
+        .fetch()
+        .await
+        .unwrap_err();
+        assert_eq!(
+            failed,
+            "credential_process exited with exit status: 3 (run it yourself to see what it says)"
+        );
+        for (printed, said) in [
+            (r#""hunter2-secret""#, "is JSON without the fields"),
+            (
+                r#"{"AccessKeyId":"AKIA","SecretAccessKey":["hunter2-secret"]}"#,
+                "is JSON without the fields",
+            ),
+            ("hunter2-secret", "is not JSON"),
+            (r#"{"AccessKeyId":"hunter2-secret""#, "is JSON cut short"),
+        ] {
+            let e = ProcessSource {
+                command: format!("printf '%s' '{printed}'"),
+            }
+            .fetch()
+            .await
+            .unwrap_err();
+            assert!(!e.contains("hunter2") && e.contains(said), "{e}");
+        }
     }
 
     #[test]

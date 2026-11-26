@@ -112,22 +112,31 @@ committer settings; empty `…/` directory markers are reported with their delet
 
 ## How a request is handled
 
-1. Bucket and key from the path (`/bucket/key`); the query decoded as is (`+` stays).
+1. Bucket and key from the path (`/bucket/key`), each `%XX` its byte (`a%2Fb` is the key `a/b`; bytes that are not
+   UTF-8 are recorded as `%XX`); the query decoded as is (`+` stays).
 2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys, over header values in UTF-8
    (`x-amz-meta-name: café`, as sent). Else `403 SignatureDoesNotMatch`, recorded as refused, never forwarded.
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
-   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
-   (`a/../b`, a key of its own in S3) are forwarded as sent.
-5. Re-signed (SigV4) for the real endpoint, in the bucket's region: a redirect that names another
+   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`.
+5. The key goes on as the program wrote it, byte for byte: an encoded slash (`a%2Fb`), `%25`, `+`, bytes that are
+   not UTF-8 (`%FF`), empty segments (`a//b`) and `.` and `..` segments (`a/../b`, a key of its own in S3) reach the
+   store as sent, path-style or virtual-hosted. Re-signed (SigV4) for the real endpoint, over the path as a store
+   reads it (decoded, then encoded once), in the bucket's region: a redirect that names another
    (`x-amz-bucket-region`, as AWS answers for a bucket elsewhere) is kept for the bucket, a request with no body is
-   sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through, except: signed `aws-chunked`
-   (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
-   checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
-   `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged.
-6. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
-7. The response streams back unchanged; an error body's first 64 KiB is kept on the record.
+   sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through:
+   signed `aws-chunked` (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) decoded as it arrives and sent unsigned (its
+   trailing checksum carried in an unsigned `aws-chunked` body; with a trailer sonde does not know, or as a control
+   document, read whole, up to 1 GiB, and sent with its SHA-256); `STREAMING-UNSIGNED-PAYLOAD-TRAILER` unchanged; a
+   body without a length is buffered (S3 needs `Content-Length`).
+6. A body is held to what its headers said. An `aws-chunked` payload shorter than `x-amz-decoded-content-length`, a
+   body cut before its last chunk or its `Content-Length`, or a program gone part way gets `400 IncompleteBody`; a
+   payload longer than said, or framing that does not read, `400 InvalidRequest`; a body that stops for the idle
+   limit (60 s), `400 RequestTimeout`. The store is not sent the body's last bytes before it has ended as said, so
+   it keeps no object of such an upload; the record says why (`transportError`).
+7. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
+8. The response streams back unchanged; an error body's first 64 KiB is kept on the record.
 
 A record holds the program's headers (signatures redacted), the URL sonde sent to, status, bytes each way, request
 ids, the error body, **latency** (the whole exchange, until the body is through or the program stops reading) and
@@ -141,13 +150,27 @@ sonde's own destructive acts are each a dry run, then `--yes` ([security](securi
 | Policy | Allows | Refuses |
 |---|---|---|
 | `allow` (default) | everything: the program does with its data what it would without sonde | nothing |
-| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning (a versioning document that does not read as plainly `Enabled`), any write sonde cannot name |
+| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags; a retention set or lengthened, a legal hold turned on; turning versioning on; every bucket setting not at right; removing what this recording made, and its ACL (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `RenameObject`; what removes data later or lifts what guards it: `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, `PUT ?acl` (a bucket's, or an object's the recording did not make), `PUT`/`DELETE ?publicAccessBlock`, `PUT ?ownershipControls`, suspending versioning and turning a legal hold off (a document that does not read as plainly `Enabled` / `ON`), any request with `x-amz-bypass-governance-retention` (a delete or a shorter retention, of its own objects too); any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 
-A program may remove what it made in the same recording: abort an upload it started, delete an object or a version
-it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
+A program may remove what it made in the same recording: abort an upload it started, delete an object it made or
+a version it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
 `DeleteObjects` whose every object is such, a bucket it created. A write over an object goes through: with versioning
 on, the store keeps the old version; without it, use `read-only` to keep what is there.
+
+**An object is the recording's when its key held nothing before the write**, as the store's own answers show:
+
+| The store answered | The key is the recording's to delete |
+|---|---|
+| 2xx to a write sent with `If-None-Match: *` | yes: it was created |
+| 404 to a GET or HEAD of the key, then 2xx to a write | yes: nothing was there |
+| 2xx with `x-amz-version-id` (the bucket keeps versions) | yes: a delete adds a marker, and only the version it wrote may be deleted by id |
+| 2xx to any other write | no: on a bucket without versions the key may have stood before the run, and a write over it must not make it deletable |
+
+sonde asks the store nothing of its own to find out (recording adds no request and no wait), so a program that writes
+a temporary key without looking and deletes it is refused the delete under `no-delete`: give the trial its `{trial}`
+place, or `--policy allow`. A store that ignores `If-None-Match` answers 2xx to a create over an object
+([probe](probes.md) `cond.put-if-none-match` tells).
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy` in `sonde.toml`;
 `allow`, or `no-delete` for `--trial` (sonde's own faults could push a program down a path it would
@@ -184,6 +207,9 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
   are skipped and counted.
 - CloudTrail keeps upload id, part, listing page and version; HAR keeps headers (secrets masked).
 - A 404 `NoSuchBucket` is an error; a missing key is a lookup.
+- A file or folder is read as a stream and written as it is read: a CloudTrail file or a HAR of several GiB takes
+  some tens of MiB to import ([performance](dev/performance.md#import)), and disk beside the run for its requests
+  until it is written.
 
 | Source | Times | Who sent it | SDK |
 |---|---|---|---|
@@ -217,7 +243,9 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 | Hudi | a completed instant (`.hoodie/<instant>.commit`, `.deltacommit`, `.replacecommit`, …, or 1.x `.hoodie/timeline/`); `.requested`, `.inflight`, `.hoodie/.temp/` fold in; base and log files counted |
 | Paimon | `snapshot/snapshot-<n>`, `LATEST`/`EARLIEST`, `schema/schema-<n>`; manifests and `bucket-<n>/` files fold in |
 
-- A format's other requests fold into the next commit point; a completed multipart upload is one write.
+- A format's other requests fold into the next commit point of their own table (its bucket, root and format: two
+  tables written at once are each their own steps); a completed multipart upload is one write.
+- A Parquet file is a table's when the run touched that table's log: its folder's name (`data/`) says nothing.
 - Lookups across numbered files (SlateDB's newest WAL) are their own step.
 - Files with no commit within 2 s are reported as written without one.
 
@@ -283,7 +311,9 @@ grouped differences, what the program relies on, the cost on each store, and bot
 - S3 Express One Zone (directory buckets, `<name>--<zone>--x-s3`): `CreateSession` and every request to one get
   `501 NotImplemented`, never forwarded, whatever the policy.
 - One target endpoint per run.
-- No overall time limit per exchange; 60 s without a byte cuts it. Connecting gives up after 10 s.
+- No overall time limit per exchange; 60 s without a byte cuts it (a request body that stops is answered
+  `400 RequestTimeout`, an answer that stops `502`). Connecting gives up after 10 s.
 - `run` waits up to 5 s at exit for requests in flight.
 - Replay is sequential: concurrency and timing are not reproduced.
-- Signed `aws-chunked` and length-less bodies are read whole: up to 1 GiB each, 2 GiB at once (more waits).
+- Length-less bodies, and signed `aws-chunked` ones with a trailer sonde does not know, are read whole: up to 1 GiB
+  each, 2 GiB at once (more waits).

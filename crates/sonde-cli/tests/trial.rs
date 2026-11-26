@@ -392,9 +392,10 @@ async fn program(what: &str) -> i32 {
         }
         // a commit to a log by conditional create (E2E_KEY names the log's
         // folder). `commits` reads the log again on a 412 and writes the
-        // next number; `never-commits` takes the 412 for an answer;
-        // `overwrites` writes the same key without its condition; `fenced`
-        // stops there, as a SlateDB writer does
+        // number after the newest commit it finds there, as a Delta writer
+        // does; `never-commits` takes the 412 for an answer; `overwrites`
+        // writes the same key without its condition; `fenced` stops there,
+        // as a SlateDB writer does
         "commits" | "never-commits" | "never-overwrites" | "never-fenced" => {
             let dir = given();
             let name = |n: u32| {
@@ -411,12 +412,16 @@ async fn program(what: &str) -> i32 {
             {
                 return 1;
             }
-            for n in 1..5 {
+            let mut n = 1;
+            for _ in 1..5 {
                 match app.send_raw(create(n)).await.map(|r| r.status) {
                     Ok(200) => return 0,
                     Ok(412) => match what {
                         "commits" => {
-                            let _ = app.send_raw(get(&name(n))).await;
+                            // what won: each commit from the one it lost on
+                            while ok(app.send_raw(get(&name(n))).await) {
+                                n += 1;
+                            }
                         }
                         "never-overwrites" => {
                             let _ = app.send_raw(put(&name(n), "commit")).await;
@@ -521,6 +526,14 @@ impl Bench {
         // a run path recorded again, as these tests do, is written over
         if args.first() == Some(&"run") && args.contains(&"-o") && !args.contains(&"--force") {
             c.arg("--force");
+        }
+        // these programs write to fixed keys, of a store made for the test:
+        // their trials are asked for where they are
+        if args.first() == Some(&"run")
+            && (args.contains(&"--trial") || args.contains(&"--fault"))
+            && !args.contains(&"--same-place")
+        {
+            c.arg("--same-place");
         }
         if program.is_some() {
             c.arg("--").args(the_program_command());
@@ -1093,6 +1106,7 @@ async fn a_program_fed_by_a_pipe_reads_the_same_in_every_run() {
     let mut c = b.sonde(Some("stdin"));
     c.args([
         "run",
+        "--same-place",
         "--fault",
         "slowdown",
         "--fault",
@@ -1129,7 +1143,7 @@ async fn an_interrupt_ends_the_trial_and_writes_no_verdict() {
     for (signal, code) in [("INT", 130), ("TERM", 143)] {
         let b = Bench::new().await;
         let mut c = b.sonde(Some("hangs-under-trial"));
-        c.args(["run", "--trial", "-o", "run.sonde", "--"])
+        c.args(["run", "--trial", "--same-place", "-o", "run.sonde", "--"])
             .args(the_program_command())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -1340,6 +1354,10 @@ async fn run_keyed(b: &Bench, program: &str, key: &str, args: &[&str]) -> Out {
     if args.contains(&"-o") {
         c.arg("--force");
     }
+    // a key without `{trial}` is one place for every run: asked for
+    if !key.contains("{trial}") && (args.contains(&"--trial") || args.contains(&"--fault")) {
+        c.arg("--same-place");
+    }
     c.arg("--")
         .args(the_program_command())
         .arg(format!("E2E_KEY={key}"));
@@ -1458,7 +1476,8 @@ async fn a_marker_created_if_absent_is_not_offered_a_race_and_survives_one() {
         "{}",
         o.stderr
     );
-    // asked for: it took the 412 as "it is there", and it is
+    // asked for: it took the 412 as "it is there", as it would against a
+    // writer that won (none did: the marker is in no store)
     let o = run_keyed(
         &b,
         "marker",
@@ -1480,10 +1499,119 @@ async fn a_marker_created_if_absent_is_not_offered_a_race_and_survives_one() {
     assert_eq!(t["yielded"], 1, "{t:#}");
     assert!(!o.stderr.contains("never made"), "{}", o.stderr);
     assert!(
-        b.store
+        !b.store
             .keys("data")
             .contains(&"out-lost-race/_SUCCESS".to_string())
     );
+}
+
+/// A trial of a program that writes is run only where each run has a place
+/// of its own: `{trial}` in the command, or SONDE_TRIAL in every key it
+/// wrote. Otherwise no run under a fault starts (exit 77), unless
+/// `--same-place` asks for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trial_that_would_write_where_the_clean_run_wrote_is_refused_before_any_fault() {
+    let b = Bench::new().await;
+    let run = |program: &'static str, flags: &'static [&'static str], key: &'static str| {
+        let mut c = b.sonde(Some(program));
+        c.args(["run", "-o", "run.sonde", "--force"])
+            .args(flags)
+            .arg("--")
+            .args(the_program_command());
+        if !key.is_empty() {
+            c.arg(format!("E2E_KEY={key}"));
+        }
+        async move { out(c.output().await.unwrap()) }
+    };
+    // a fixed key: refused once the clean run has shown it writes
+    for flags in [&["--trial"][..], &["--fault", "slowdown"]] {
+        let before = b.store.sent("PUT").len();
+        let o = run("never-placed", flags, "etl-fixed").await;
+        assert_eq!(o.code, Some(77), "{}", o.stderr);
+        assert!(
+            o.stderr.contains("No trial: the program writes")
+                && o.stderr.contains("{trial}")
+                && o.stderr.contains("--same-place"),
+            "{}",
+            o.stderr
+        );
+        // the clean run's two writes, and none under a fault
+        assert_eq!(b.store.sent("PUT").len(), before + 2, "{}", o.stderr);
+        assert!(trials(&b.path("run.sonde")).is_empty());
+        assert!(!b.path("trials").exists());
+    }
+    // asked for: run where it is, and said
+    let o = run(
+        "never-placed",
+        &["--fault", "slowdown", "--same-place"],
+        "etl-fixed",
+    )
+    .await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    assert!(
+        o.stderr.contains("writes to the same place"),
+        "{}",
+        o.stderr
+    );
+    assert_eq!(trials(&b.path("run.sonde")).len(), 1);
+    // `{trial}` in the command: a place for each run
+    let o = run("placed", &["--fault", "slowdown"], "etl-{trial}").await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    // SONDE_TRIAL read by the program: every key it wrote names its run
+    let o = run("placed", &["--fault", "slowdown"], "").await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert!(!o.stderr.contains("No trial"), "{}", o.stderr);
+    assert!(
+        b.store
+            .keys("data")
+            .contains(&"etl-slowdown/state".to_string())
+    );
+    // the flag is a trial's: alone it is a mistake
+    let o = run("placed", &["--same-place"], "etl-fixed").await;
+    assert_eq!(o.code, Some(64), "{}", o.stderr);
+    // a program that only reads has nothing to write over
+    b.store
+        .state
+        .lock()
+        .buckets
+        .entry("data".into())
+        .or_default()
+        .insert("big".into(), (vec![b'x'; BIG], "\"big\"".into()));
+    let o = run("downloads", &["--fault", "slowdown"], "").await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+}
+
+/// A program whose every key named its clean run (`clean`, by chance or by
+/// SONDE_TRIAL) is held, under a fault, to the keys that name that run: a
+/// write elsewhere is refused, and reaches no store.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_under_a_fault_is_held_to_the_keys_that_name_it() {
+    let b = Bench::new().await;
+    // the key it is given is `etl-clean` in every run: the clean run's
+    // name by chance, not the run's own
+    let mut c = b.sonde(Some("never-placed"));
+    c.args([
+        "run",
+        "--policy",
+        "allow",
+        "--fault",
+        "slowdown",
+        "-o",
+        "held.sonde",
+        "--",
+    ])
+    .args(the_program_command())
+    .arg("E2E_KEY=etl-clean");
+    let before = b.store.sent("PUT").len();
+    let o = out(c.output().await.unwrap());
+    assert_eq!(
+        b.store.sent("PUT").len(),
+        before + 2,
+        "the clean run's only"
+    );
+    let t = trial(&trials(&b.path("held.sonde")), "slowdown").clone();
+    assert_eq!(t["standing"], "refused", "{t:#}\n{}", o.stderr);
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2015,9 +2143,31 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
     let all = trials(&b.path("commits.sonde"));
     // chosen by itself: the clean run wrote on a condition
     let t = trial(&all, "lost-race");
-    // (and the lost answer of a conditional create is this program's
-    // undoing: its retry finds its own write there and takes it for
-    // another's, commit after commit)
+    assert_eq!(t["standing"], "survived", "{t:#}");
+    assert_eq!(
+        (&t["faults"], &t["races"], &t["retried"]),
+        (&1.into(), &1.into(), &1.into()),
+        "{t:#}"
+    );
+    // the write it was told it lost is in no store: it read the log again,
+    // found no commit there and made its own once (32.0 sent the lost write
+    // on, and this writer committed again as number 2 over it)
+    let keys = b.store.keys("data");
+    let commits = |place: &str| -> Vec<&String> {
+        let log = format!("{place}/_delta_log/");
+        keys.iter().filter(|k| k.starts_with(&log)).collect()
+    };
+    assert_eq!(
+        commits("t-lost-race"),
+        [&format!("t-lost-race/_delta_log/{:020}.json", 1)],
+        "{keys:?}"
+    );
+    assert_eq!(commits("t-clean").len(), 1, "{keys:?}");
+    // (the lost answer of a conditional create is another matter: that
+    // write is in the store, and its retry finds it there and takes it for
+    // another's. The table then holds its commit more than once, and the verdict
+    // says so)
+    assert!(commits("t-lost-answer").len() > 1, "{keys:?}");
     assert_eq!(
         trial(&all, "lost-answer")["standing"],
         "broke",
@@ -2025,21 +2175,6 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
         o.stderr
     );
     assert_eq!(o.code, Some(1), "{}", o.stderr);
-    assert_eq!(t["standing"], "survived", "{t:#}");
-    assert_eq!(
-        (&t["faults"], &t["races"], &t["retried"]),
-        (&1.into(), &1.into(), &1.into()),
-        "{t:#}"
-    );
-    // the program's own write went to the store, and sonde wrote nothing
-    let keys = b.store.keys("data");
-    for n in [1, 2] {
-        assert!(
-            keys.contains(&format!("t-lost-race/_delta_log/{n:020}.json")),
-            "{keys:?}"
-        );
-    }
-    assert!(!keys.contains(&format!("t-clean/_delta_log/{:020}.json", 2)));
     // the 412 was sonde's: the run does not call it the store's race
     let shown = b
         .run(
@@ -2191,7 +2326,7 @@ async fn an_interrupt_ends_what_the_program_started_too() {
     let pidfile = b.path("grandchild.pid");
     let mut c = b.sonde(Some("spawns-under-trial"));
     c.env("E2E_PIDFILE", &pidfile)
-        .args(["run", "--trial", "-o", "run.sonde", "--"])
+        .args(["run", "--trial", "--same-place", "-o", "run.sonde", "--"])
         .args(the_program_command())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2238,11 +2373,19 @@ async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
     use tokio::io::AsyncWriteExt;
     let b = Bench::new().await;
     let mut c = b.sonde(Some("stdin-size"));
-    c.args(["run", "--fault", "slowdown", "-o", "run.sonde", "--"])
-        .args(the_program_command())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    c.args([
+        "run",
+        "--same-place",
+        "--fault",
+        "slowdown",
+        "-o",
+        "run.sonde",
+        "--",
+    ])
+    .args(the_program_command())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = c.spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     // past the 8 MiB sonde keeps in memory: kept in a file for the trial

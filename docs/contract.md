@@ -10,7 +10,7 @@ The contract starts at 19.0 (D-138). A break comes only in a major, in the major
 | | What | Documented in | Tested by |
 |---|---|---|---|
 | Run files | The `.sonde` format: header, records, log lines, versioning | [run-format.md](dev/run-format.md) | `the_format_as_its_spec_says` (`crates/analysis/src/run.rs`) |
-| JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
+| JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas, read strictly both ways: every field an output holds is in its schema, every property a schema names is in an output or listed there with why) |
 | `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-errors`, `max-transfer`, `expect`, `findings`, `tolerance`, `baseline`), `[program]` (`name`, `runs`, `runs-per-month`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/analysis/src/project.rs` (one reader for CLI and app) |
 | `config.toml` | Its place, `[settings]` (`theme`, `language`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`, `egress`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
@@ -48,14 +48,14 @@ The contract starts at 19.0 (D-138). A break comes only in a major, in the major
 
 | Release | Changes |
 |---|---|
-| **Major** (`32.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
+| **Major** (`33.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
 | **Minor** (`24.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
 | **Patch** (`24.0.2`) | fixes where documented behaviour did not hold |
 
 Within a major:
 
-- JSON objects may gain fields; read the ones you know (schemas leave objects open). An `enum` gains values only in
-  a minor that says so.
+- JSON objects may gain fields; read the ones you know (schemas leave objects open). A field added is in its schema
+  in the same release: the test reads the schemas as closed. An `enum` gains values only in a minor that says so.
 - A run's file may gain fields within its version. sonde reads its own format version and refuses any other by
   name.
 - `sonde.toml` may gain keys. An older sonde refuses an unknown key (exit 64) rather than half-reading the file.

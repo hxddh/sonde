@@ -3,7 +3,8 @@
 //! its kind and what it is about, never a run's own ids or counts). Between
 //! two runs it is *fixed* (gone at any threshold), *less* or *more* (still
 //! there at any threshold, its count fallen or grown), *open* (as much) or
-//! *new* (none of it before): judged by its count alone, never by a
+//! *new* (none of it before): judged by its count alone ([`count_moved`]:
+//! exact under a hundred, within a hundredth from there), never by a
 //! threshold relative to the run's size. A fixed or less one says the
 //! requests its own asks fell by and the time it was predicted to save; the
 //! run's wall time is said once, for the run, against the program's own
@@ -412,9 +413,38 @@ pub fn count_of(o: &Observation) -> usize {
         .unwrap_or(o.impact)
 }
 
-/// Where a finding in both runs stands by its counts: more, less or as much.
+/// The count from which a finding's count is as much within a hundredth
+/// ([`count_room`]): under it, counts are exact.
+pub const COUNT_EXACT_UNDER: usize = 100;
+
+/// How far from `was` a finding's count is as much: the one rule the fix
+/// loop ([`changes`]) and `[check.findings]` ([`crate::program::gated`])
+/// judge counts by. None under [`COUNT_EXACT_UNDER`] (3 then 4 is more); a
+/// hundredth of it from there, rounded down (10,000 then 10,003 is as much,
+/// 10,000 then 10,101 more): a count that large is a workload's, and moves
+/// by a retry or a page with no change to the program.
+pub fn count_room(was: usize) -> usize {
+    if was < COUNT_EXACT_UNDER {
+        0
+    } else {
+        was / 100
+    }
+}
+
+/// `now` against `was` as counts of one finding: more or less only past
+/// [`count_room`] of `was`.
+pub fn count_moved(was: usize, now: usize) -> std::cmp::Ordering {
+    if now.abs_diff(was) <= count_room(was) {
+        std::cmp::Ordering::Equal
+    } else {
+        now.cmp(&was)
+    }
+}
+
+/// Where a finding in both runs stands by its counts: more, less or as much
+/// ([`count_moved`]).
 fn by_counts(was: usize, now: usize) -> State {
-    match now.cmp(&was) {
+    match count_moved(was, now) {
         std::cmp::Ordering::Greater => State::More,
         std::cmp::Ordering::Less => State::Less,
         std::cmp::Ordering::Equal => State::Open,
@@ -453,7 +483,8 @@ impl<'a> Traces<'a> {
     /// The trace that is `o` (of the other run, `id` its identity): by its
     /// identity; else, a run with no finding to name it after, by what it
     /// is about as it was (`b/t00/`); else by what it is about made stable,
-    /// when `o` was named so and one alone reads so.
+    /// when `o` was named so and one alone reads so; else, one about its
+    /// buckets, by a bucket in common ([`crate::profile::same_finding`]).
     fn of_finding(&self, id: &str, o: &Observation) -> Option<&'a Observation> {
         use crate::profile::{identity, literal_identity};
         if let Some(t) = self.run.traces.get(id) {
@@ -463,10 +494,18 @@ impl<'a> Traces<'a> {
             return Some(t);
         }
         let stable = identity(o);
-        if stable != id {
-            return None;
+        if stable == id
+            && let Some(t) = self.stable.get(&stable).copied().flatten()
+        {
+            return Some(t);
         }
-        self.stable.get(&stable).copied().flatten()
+        // about its buckets, some of them the same: the one of its kind
+        self.run
+            .traces
+            .iter()
+            .filter(|(theirs, _)| crate::profile::same_finding(id, theirs))
+            .min_by_key(|(theirs, _)| theirs.as_str())
+            .map(|(_, t)| t)
     }
 }
 
@@ -608,7 +647,11 @@ fn error_changes(a: &Run, b: &Run) -> Vec<FindingChange> {
             _ if was == now => continue,
             (0, _) => State::New,
             (_, 0) => State::Fixed,
-            _ => by_counts(was, now),
+            // (as much, within its room: nothing moved)
+            _ => match by_counts(was, now) {
+                State::Open => continue,
+                moved => moved,
+            },
         };
         let said = |n: usize| {
             p(
@@ -680,13 +723,15 @@ pub struct Recent {
 /// identity and count, hashed (FNV-1a). A finding whose count moves with
 /// the timing ([`varying_count`]: requests one after another, throttled)
 /// by its identity alone: two runs of one program differ in it by noise.
+/// A count of [`COUNT_EXACT_UNDER`] or more by its first two digits
+/// (10,003 as 10,000): as much, by [`count_room`], is no fix between runs.
 pub fn findings_of(command: Option<&str>, found: &[Observation]) -> String {
     let mut each: Vec<String> = found
         .iter()
         .filter(|o| !o.identity.is_empty())
         .map(|o| match varying_count(o) {
             Some(_) => o.identity.clone(),
-            None => format!("{}={}", o.identity, count_of(o)),
+            None => format!("{}={}", o.identity, leading(count_of(o))),
         })
         .collect();
     each.sort_unstable();
@@ -701,6 +746,16 @@ pub fn findings_of(command: Option<&str>, found: &[Observation]) -> String {
         h = h.wrapping_mul(0x100000001b3);
     }
     format!("{h:016x}")
+}
+
+/// A count as two runs alike have it ([`findings_of`]): as it is under
+/// [`COUNT_EXACT_UNDER`], its first two digits from there.
+fn leading(n: usize) -> usize {
+    let mut unit = 1;
+    while n / unit >= COUNT_EXACT_UNDER {
+        unit *= 10;
+    }
+    n / unit * unit
 }
 
 /// A program's findings over its runs.
@@ -901,9 +956,10 @@ impl Program {
     /// The findings kept under older rules of identity, made again by
     /// these ([`crate::profile::IDENTITY_RULES`], [`crate::profile::by_rules`]):
     /// what each is about made [`crate::profile::stable`] again, a bucket's
-    /// kinds' about their bucket. Findings that become one, or were
-    /// told apart by rank (`#2`), are let go: what told them apart is not
-    /// kept. How many were let go.
+    /// kinds' about their bucket. Findings that become one, were told
+    /// apart by rank (`#2`), or were about several buckets and named none
+    /// (`obs.small|/`), are let go: what told them apart is not kept. How
+    /// many were let go.
     pub fn rekey(&mut self) -> usize {
         use crate::profile::{IDENTITY_RULES, by_rules};
         if self.rules >= IDENTITY_RULES {
@@ -922,6 +978,15 @@ impl Program {
             by.entry(by_rules(base)).or_default().push((id, t));
         }
         let mut dropped = 0;
+        // (several buckets' `/` of rules 5 names none of them: let go, and
+        // kept again by its buckets with the next run)
+        by.retain(|id, same| {
+            let gone = crate::profile::of_no_bucket(id);
+            if gone {
+                dropped += same.len();
+            }
+            !gone
+        });
         for (id, mut same) in by {
             if same.len() == 1 {
                 let (_, t) = same.pop().expect("one");
@@ -1056,8 +1121,8 @@ pub const NOISE_RUNS: usize = 5;
 /// How much a program's wall time varies run to run, in ms, before run
 /// `not` (recorded at `created`): of its runs before it, the newest and
 /// those just before it alike in command and findings (each identity
-/// with its count: no fix between them), [`NOISE_RUNS`] at most, the
-/// largest move from one to the next. A fix between two runs is not
+/// with its count: no fix between them), [`NOISE_RUNS`] at most, the band
+/// two of them differ within ([`spread_ms`]). A fix between two runs is not
 /// noise. None with fewer than two such runs: no band is known.
 pub fn noise_ms(program: &Program, created: &str, not: &str) -> Option<f64> {
     let mut earlier = program
@@ -1071,19 +1136,54 @@ pub fn noise_ms(program: &Program, created: &str, not: &str) -> Option<f64> {
         .take(NOISE_RUNS)
         .map(|r| r.wall_ms)
         .collect();
-    (walls.len() >= 2).then(|| {
-        walls
-            .windows(2)
-            .map(|w| (w[0] - w[1]).abs())
-            .fold(0.0, f64::max)
-    })
+    spread_ms(&walls)
 }
 
-/// Says whether the run's wall time moved by less than the program's
-/// runs vary (`noise`, ms): then what moved is not told from noise.
+/// The band two runs of one program differ within by noise alone, 19 times
+/// in 20, read from a few of its `times` (ms, in any order): the one
+/// estimate of a program's spread. Their range says how far apart runs
+/// fall: over the range a normal sample of their number has (1.128 of two,
+/// 1.693 of three, 2.059 of four, 2.326 of five, 2.534 of six) it is one
+/// run's deviation, and two runs differ by less than 2.77 of those (1.96 ×
+/// √2) 19 times in 20. So a time drifting up evenly over five runs (4 ×
+/// 10 ms) has a band of 48 ms, not the 10 ms between two neighbours.
+///
+/// - One time, or none: no band is known.
+/// - Two: 2.46 × their difference, and never under what `sonde check`
+///   allows a timing over its baseline on one run's word
+///   ([`crate::program::timing_room`] of their median: a tenth and 50 ms).
+///   Two runs a millisecond apart say little of the third.
+/// - Three: 1.64 × their range, never under half that room.
+/// - Four or more: 1.35, 1.19, 1.09 × their range, alone.
+pub fn spread_ms(times: &[f64]) -> Option<f64> {
+    /// The mean range of a normal sample of 2..=6, in deviations.
+    const RANGE_OF: [f64; 5] = [1.128, 1.693, 2.059, 2.326, 2.534];
+    /// The difference of two runs, in one run's deviations, 19 times in 20.
+    const TWO_RUNS: f64 = 1.96 * std::f64::consts::SQRT_2;
+    let n = times.len();
+    if n < 2 || times.iter().any(|t| !t.is_finite()) {
+        return None;
+    }
+    let mut sorted = times.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let range = sorted[n - 1] - sorted[0];
+    let band = TWO_RUNS * range / RANGE_OF[n.min(RANGE_OF.len() + 1) - 2];
+    let median = (sorted[(n - 1) / 2] + sorted[n / 2]) / 2.0;
+    let room = crate::program::timing_room(median, crate::program::DEFAULT_TOLERANCE);
+    let least = match n {
+        2 => room,
+        3 => room / 2.0,
+        _ => 0.0,
+    };
+    Some((band.max(least) * 10.0).round() / 10.0)
+}
+
+/// Says whether the run's wall time moved by no more than the program's
+/// runs vary (`noise`, ms: [`spread_ms`]): then what moved is not told
+/// from noise, and no time is said saved.
 pub fn within_noise(c: &mut RunChange, noise: Option<f64>) {
     c.noise_ms = noise;
-    c.within_noise = noise.is_some_and(|b| (c.wall_ms.0 - c.wall_ms.1).abs() < b);
+    c.within_noise = noise.is_some_and(|b| (c.wall_ms.0 - c.wall_ms.1).abs() <= b);
 }
 
 /// A run against the program's run before it.

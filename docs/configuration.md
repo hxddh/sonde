@@ -60,7 +60,7 @@ id = "prod"                                    # letters, digits, - _ .
 name = "Production (eu-west-1)"
 url = "https://s3.eu-west-1.amazonaws.com"
 region = "eu-west-1"
-vendor = "aws"                                 # aws r2 minio ceph-rgw aliyun-oss tencent-cos tigris backblaze-b2 wasabi gcs-xml other
+vendor = "aws"                                 # aws r2 minio rustfs ceph-rgw aliyun-oss tencent-cos tigris backblaze-b2 wasabi gcs-xml other
 path-style = false
 credentials = { kind = "profile", name = "prod" }
 egress = false                                 # read in its region (true: from outside it, billed); unset: not known
@@ -83,8 +83,9 @@ credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-v
 
 Request and egress prices left at S3's (as above) are the endpoint's vendor's own list prices, read 2026-11-18: egress
 $0.09/GB on AWS (first 10 TB a month), $0.12/GiB on GCS, $0.08/GB on Alibaba OSS (outside the Chinese mainland), none
-on R2, Tigris, Wasabi, B2 (up to three times what is stored), MinIO and Ceph; Tencent COS's is S3's until set. A
-price you set wins for every endpoint.
+on R2, Tigris, Wasabi, B2 (up to three times what is stored), MinIO, RustFS and Ceph; Tencent COS's is S3's until set. A
+price you set wins for every endpoint. An endpoint added with no vendor gets the one its URL names (`amazonaws.com`,
+`minio`, `rustfs`, `rgw`); a port names none (`http://localhost:9000` is `other`, priced as S3 until its vendor is set).
 
 ### One-off endpoint
 

@@ -788,6 +788,64 @@ fn a_finding_that_grew_is_more_never_less() {
     assert_eq!(slow.state, State::Less);
 }
 
+/// 33.0: counts were compared to the unit at any size, so a key read
+/// 10,000 times and then 10,003 (a retry, a page more) was "more", and
+/// failed a `[check.findings]` that knew it at 10,000. A count of a hundred
+/// or more is as much within a hundredth; a small one is exact.
+#[test]
+fn a_large_count_a_few_off_is_as_much_and_a_small_one_is_exact() {
+    let state = |was: u64, now: u64| {
+        let c = compare_runs(&run_of(&hot(was)), &run_of(&hot(now)));
+        let f = c
+            .findings
+            .iter()
+            .find(|f| f.identity == "obs.hot|b/hot")
+            .expect("the hot key");
+        assert_eq!(f.counts, Some([was as usize, now as usize]));
+        f.state
+    };
+    assert_eq!(state(10_000, 10_003), State::Open);
+    assert_eq!(state(10_003, 10_000), State::Open);
+    assert_eq!(state(10_000, 10_100), State::Open);
+    assert_eq!(state(10_000, 10_101), State::More);
+    assert_eq!(state(10_000, 9_899), State::Less);
+    // under a hundred, to the unit
+    assert_eq!(state(12, 13), State::More);
+    assert_eq!(state(13, 12), State::Less);
+    assert_eq!(state(99, 100), State::More);
+    assert_eq!(state(100, 101), State::Open);
+    assert_eq!(state(100, 102), State::More);
+    // the one rule, as `[check.findings]` judges by it too
+    use std::cmp::Ordering::{Equal, Greater};
+    assert_eq!(fixloop::count_room(99), 0);
+    assert_eq!(fixloop::count_room(10_000), 100);
+    assert_eq!(fixloop::count_moved(3, 4), Greater);
+    assert_eq!(fixloop::count_moved(10_000, 10_003), Equal);
+    // failures a few off among thousands: nothing to say
+    let failing = |n: u64| -> Vec<Record> {
+        (1..=n)
+            .map(|i| Record {
+                status: Some(500),
+                rare: reqlog::Rare {
+                    error_body: Some("<Error><Code>InternalError</Code></Error>".into()),
+                    ..Default::default()
+                }
+                .into(),
+                ..get(i, "x")
+            })
+            .collect()
+    };
+    let errors = |was: u64, now: u64| {
+        compare_runs(&run_of(&failing(was)), &run_of(&failing(now)))
+            .findings
+            .iter()
+            .find(|f| f.identity.starts_with("obs.errors"))
+            .map(|f| f.state)
+    };
+    assert_eq!(errors(2_000, 2_003), None);
+    assert_eq!(errors(3, 4), Some(State::More));
+}
+
 /// Every kind of failure is compared: one that moved is a finding of the
 /// change, new, more, less or fixed.
 #[test]
@@ -996,8 +1054,8 @@ fn hot_every(n: u64, gap: i64) -> Vec<Record> {
 /// 29.0's eval: the noise band was the spread of the last runs, an earlier
 /// fix among them, so a real fix read "within noise". The band is read
 /// from the runs before alike in their findings (no fix between them), as
-/// the largest move from one to the next; the run's time is said once,
-/// for the run, never as a finding's saving.
+/// the band two of them differ within (`fixloop::spread_ms`); the run's time
+/// is said once, for the run, never as a finding's saving.
 #[test]
 fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
     let dir = tempfile::tempdir().unwrap();
@@ -1005,12 +1063,13 @@ fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
     ran(dir.path(), 1, &hot_every(12, 30), Some(0));
     let second = ran(dir.path(), 2, &hot_every(12, 31), Some(0));
     assert_eq!(second.change.as_ref().unwrap().noise_ms, None);
-    // two runs alike (335 ms, 346 ms): they vary by 11 ms
+    // three runs alike (335, 346, 335 ms): 1.64 × their 11 ms is 18 ms, under
+    // half what a check allows one run over another (a tenth of 335 ms and 50 ms)
     ran(dir.path(), 3, &hot_every(12, 30), Some(0));
     // fixed, 330 ms sooner: well past the band; the finding says its prediction
     let fixed = ran(dir.path(), 4, &hot_every(1, 10), Some(0));
     let c = fixed.change.as_ref().unwrap();
-    assert_eq!(c.noise_ms, Some(11.0));
+    assert!((c.noise_ms.unwrap() - 41.75).abs() < 0.06, "{c:#?}");
     assert!(!c.within_noise);
     let f = fixed
         .findings
@@ -1028,15 +1087,89 @@ fn a_runs_time_is_judged_against_the_noise_of_runs_with_no_fix_between() {
     assert_eq!(after.change.as_ref().unwrap().noise_ms, None);
     let again = ran(dir.path(), 6, &hot_every(1, 10), Some(0));
     let c = again.change.as_ref().unwrap();
-    assert_eq!(c.noise_ms, Some(0.0));
+    // two runs to the millisecond the same say little of a third: the
+    // check's room for 5 ms, never 0
+    assert_eq!(c.noise_ms, Some(50.5));
+    assert!(c.within_noise);
     // a run that moved by less than its runs vary is within noise
     let dir = tempfile::tempdir().unwrap();
     ran(dir.path(), 1, &hot_every(12, 30), Some(0));
     ran(dir.path(), 2, &hot_every(12, 40), Some(0));
     let near = ran(dir.path(), 3, &hot_every(12, 35), Some(0));
     let c = near.change.as_ref().unwrap();
-    assert_eq!(c.noise_ms, Some(110.0));
+    // (335 ms, 445 ms: 2.46 × 110 ms)
+    assert_eq!(c.noise_ms, Some(270.3));
     assert!(c.within_noise, "{c:#?}");
+}
+
+/// 33.0: the band was the largest move from one run to the next, so a time
+/// drifting up 11 ms a run (a cache filling, a table growing) had a band of
+/// 11 ms though its runs were 44 ms apart, and the next 11 ms were told
+/// from noise. The band is read from how far apart the runs fall.
+#[test]
+fn a_time_that_drifts_run_after_run_is_not_a_quiet_program() {
+    let dir = tempfile::tempdir().unwrap();
+    // 335, 346, 357, 368, 379 ms
+    for (i, gap) in (30..35).enumerate() {
+        ran(dir.path(), i as i64 + 1, &hot_every(12, gap), Some(0));
+    }
+    // 390 ms: one step more of the same drift
+    let next = ran(dir.path(), 6, &hot_every(12, 35), Some(0));
+    let c = next.change.as_ref().unwrap();
+    assert_eq!(c.wall_ms, (379.0, 390.0));
+    // five runs 44 ms apart: 1.96 × √2 × 44 / 2.326
+    assert_eq!(c.noise_ms, Some(52.4));
+    assert!(c.within_noise, "{c:#?}");
+    // a real move is still told from it
+    let dir = tempfile::tempdir().unwrap();
+    for (i, gap) in (30..35).enumerate() {
+        ran(dir.path(), i as i64 + 1, &hot_every(12, gap), Some(0));
+    }
+    let slow = ran(dir.path(), 6, &hot_every(12, 45), Some(0));
+    let c = slow.change.as_ref().unwrap();
+    assert_eq!(c.wall_ms, (379.0, 500.0));
+    assert!(!c.within_noise, "{c:#?}");
+}
+
+/// 33.0: two runs that happened to take the same time made a band of 0 ms,
+/// and the third run's 11 ms were "its runs vary by 0 ms": a move. Two runs
+/// say little: their band is never under what `check` allows one run over
+/// another, three runs' never under half of it, and a band is past only when
+/// the run moved by more than it.
+#[test]
+fn two_or_three_runs_alike_are_not_a_band_of_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot_every(12, 30), Some(0));
+    // one run before: no band
+    let second = ran(dir.path(), 2, &hot_every(12, 30), Some(0));
+    assert_eq!(second.change.as_ref().unwrap().noise_ms, None);
+    assert!(!second.change.as_ref().unwrap().within_noise);
+    // two before, 335 ms each: a tenth of it and 50 ms
+    let third = ran(dir.path(), 3, &hot_every(12, 31), Some(0));
+    let c = third.change.as_ref().unwrap();
+    assert_eq!(c.wall_ms, (335.0, 346.0));
+    assert_eq!(c.noise_ms, Some(83.5));
+    assert!(c.within_noise, "{c:#?}");
+    // three before (335, 335, 346 ms): 1.64 × 11 ms is 18 ms, under half the
+    // room of their median (16.75 + 25 ms)
+    let fourth = ran(dir.path(), 4, &hot_every(12, 30), Some(0));
+    let c = fourth.change.as_ref().unwrap();
+    assert!((c.noise_ms.unwrap() - 41.75).abs() < 0.06, "{c:#?}");
+    assert!(c.within_noise, "{c:#?}");
+    // four before (335, 335, 346, 335 ms): their spread alone, 1.35 × 11 ms
+    let fifth = ran(dir.path(), 5, &hot_every(12, 32), Some(0));
+    let c = fifth.change.as_ref().unwrap();
+    assert_eq!(c.wall_ms, (335.0, 357.0));
+    assert_eq!(c.noise_ms, Some(14.8));
+    assert!(!c.within_noise, "{c:#?}");
+    // the estimate itself: in any order, and none of one run
+    assert_eq!(fixloop::spread_ms(&[]), None);
+    assert_eq!(fixloop::spread_ms(&[335.0]), None);
+    assert_eq!(
+        fixloop::spread_ms(&[346.0, 335.0, 335.0, 335.0]),
+        Some(14.8)
+    );
+    assert_eq!(fixloop::spread_ms(&[1000.0, 3000.0]), Some(4914.6));
 }
 
 /// 28.0's eval: 6 polls of `_READY` under the 1% a finding needs in a run of
@@ -1506,4 +1639,220 @@ fn a_workload_that_truly_shrank_is_no_fix() {
         Some("the workload shrank"),
         "{c:#?}"
     );
+}
+
+/// A request to `bucket/key`, the `id`th of its run.
+fn to(id: u64, op: &str, bucket: &str, key: &str) -> Record {
+    Record {
+        method: match op {
+            "PutObject" => "PUT",
+            "DeleteObject" => "DELETE",
+            _ => "GET",
+        }
+        .into(),
+        kind: op.into(),
+        bucket: Some(bucket.into()),
+        status: Some(if op == "DeleteObject" { 204 } else { 200 }),
+        ..get(id, key)
+    }
+}
+
+/// `n` objects deleted one request each in each of `buckets`.
+fn deleted(buckets: &[(&str, u64)]) -> Vec<Record> {
+    let mut out = Vec::new();
+    for (b, n) in buckets {
+        for i in 0..*n {
+            let id = out.len() as u64 + 1;
+            out.push(to(id, "DeleteObject", b, &format!("tmp/{i}.bin")));
+        }
+    }
+    out
+}
+
+fn identity_of(r: &Run, kind: &str) -> String {
+    r.observations
+        .iter()
+        .find(|o| o.kind == kind)
+        .unwrap_or_else(|| panic!("{kind} in {:?}", kinds(r)))
+        .identity
+        .clone()
+}
+
+/// 33.0: a finding about its bucket whose objects were in two buckets was
+/// about the folder the two share, none: `obs.deletes|/`. With one of the
+/// buckets cleaned up it was `obs.deletes|a`: one finding fixed and another
+/// new, for less of the same. And a read written back was about the bucket
+/// of the key written back the most, which is one bucket's this run and
+/// another's the next. Several buckets are each named, and a finding with
+/// one of them is the same finding.
+#[test]
+fn a_finding_about_several_buckets_is_one_finding_as_its_buckets_come_and_go() {
+    let both = run_of(&deleted(&[("a", 30), ("b", 30)]));
+    let one = run_of(&deleted(&[("a", 30)]));
+    // one bucket's as it ever was; two named, sorted
+    assert_eq!(identity_of(&one, "obs.deletes"), "obs.deletes|a");
+    assert_eq!(identity_of(&both, "obs.deletes"), "obs.deletes|a,b");
+    assert_eq!(
+        identity_of(&run_of(&deleted(&[("b", 30), ("a", 30)])), "obs.deletes"),
+        "obs.deletes|a,b"
+    );
+    // buckets named by the day are one, whatever the day
+    let daily = |days: [u32; 2]| {
+        let names = days.map(|d| format!("logs-2026-11-{d:02}"));
+        run_of(&deleted(&[(&names[0], 30), (&names[1], 30)]))
+    };
+    assert_eq!(
+        identity_of(&daily([25, 26]), "obs.deletes"),
+        "obs.deletes|logs-{date}"
+    );
+    assert_eq!(
+        identity_of(&daily([25, 26]), "obs.deletes"),
+        identity_of(&daily([26, 27]), "obs.deletes")
+    );
+    // b cleaned up: less of the one finding, by the name it had
+    let c = compare_runs(&both, &one);
+    let of: Vec<_> = c
+        .findings
+        .iter()
+        .filter(|f| f.identity.starts_with("obs.deletes"))
+        .map(|f| (f.identity.as_str(), f.state, f.counts))
+        .collect();
+    assert_eq!(of, [("obs.deletes|a,b", State::Less, Some([60, 30]))]);
+    // and back in both: more, not new
+    let c = compare_runs(&one, &both);
+    let of: Vec<_> = c
+        .findings
+        .iter()
+        .filter(|f| f.identity.starts_with("obs.deletes"))
+        .map(|f| (f.identity.as_str(), f.state))
+        .collect();
+    assert_eq!(of, [("obs.deletes|a", State::More)]);
+    // other buckets altogether: another finding
+    let c = compare_runs(&one, &run_of(&deleted(&[("c", 30)])));
+    assert_eq!(state_of(&c.findings, "obs.deletes|a"), State::Fixed);
+    assert_eq!(state_of(&c.findings, "obs.deletes|c"), State::New);
+    // under its threshold in the one bucket left (a trace): less, not fixed
+    let c = compare_runs(&both, &run_of(&deleted(&[("b", 5)])));
+    let of: Vec<_> = c
+        .findings
+        .iter()
+        .filter(|f| f.identity.starts_with("obs.deletes"))
+        .map(|f| (f.identity.as_str(), f.state))
+        .collect();
+    assert_eq!(of, [("obs.deletes|a,b", State::Less)]);
+
+    // a read written back in two buckets: whichever key is written back
+    // the most, one finding
+    let rmw = |cycles: &[(&str, u64)]| {
+        let mut out = Vec::new();
+        for (b, n) in cycles {
+            for _ in 0..*n {
+                for op in ["GetObject", "PutObject"] {
+                    out.push(to(out.len() as u64 + 1, op, b, "state.json"));
+                }
+            }
+        }
+        run_of(&out)
+    };
+    let (x, y) = (rmw(&[("a", 4), ("b", 3)]), rmw(&[("a", 3), ("b", 4)]));
+    assert_eq!(identity_of(&x, "obs.rmw"), "obs.rmw|a,b");
+    assert_eq!(identity_of(&y, "obs.rmw"), "obs.rmw|a,b");
+    assert_eq!(identity_of(&rmw(&[("a", 4)]), "obs.rmw"), "obs.rmw|a");
+    let c = compare_runs(&x, &y);
+    assert_eq!(state_of(&c.findings, "obs.rmw"), State::Open);
+    assert_eq!(
+        c.findings
+            .iter()
+            .filter(|f| f.identity.starts_with("obs.rmw"))
+            .count(),
+        1
+    );
+
+    // over a program's runs: kept by the name it was first known by
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &deleted(&[("a", 30), ("b", 30)]), Some(0));
+    let less = ran(dir.path(), 2, &deleted(&[("a", 30)]), Some(0));
+    let again = ran(dir.path(), 3, &deleted(&[("a", 30)]), Some(0));
+    for (said, state) in [(&less, State::Less), (&again, State::Open)] {
+        let of: Vec<_> = said
+            .findings
+            .iter()
+            .filter(|f| f.identity.starts_with("obs.deletes"))
+            .map(|f| (f.identity.as_str(), f.state))
+            .collect();
+        assert_eq!(of, [("obs.deletes|a,b", state)]);
+    }
+    let kept = fixloop::read(dir.path());
+    let ids: Vec<&String> = kept["job"]
+        .findings
+        .keys()
+        .filter(|k| k.starts_with("obs.deletes"))
+        .collect();
+    assert_eq!(ids, ["obs.deletes|a,b"]);
+}
+
+/// What a project wrote of a finding about several buckets by the rules
+/// before (`obs.deletes|/`, a read written back by its first key's bucket)
+/// names it still, in `[check] expect` and `[check.findings]`; a program's
+/// kept `…|/`, which names no bucket, is let go.
+#[test]
+fn names_given_a_finding_about_several_buckets_by_older_rules_still_name_it() {
+    use sonde_analysis::program::{expected, gated, loose};
+    let both = run_of(&deleted(&[("a", 30), ("b", 30)]));
+    let deletes: Vec<_> = both
+        .observations
+        .iter()
+        .filter(|o| o.kind == "obs.deletes")
+        .cloned()
+        .collect();
+    assert_eq!(deletes[0].identity, "obs.deletes|a,b");
+    let known = |id: &str, n: usize| std::collections::BTreeMap::from([(id.to_string(), n)]);
+    for id in [
+        "obs.deletes|/",
+        "obs.deletes|a,b",
+        "obs.deletes|b",
+        "obs.deletes|a,c",
+    ] {
+        assert!(gated(&deletes, &known(id, 60)).is_empty(), "{id}");
+        assert!(loose(&deletes, &known(id, 60)).is_empty(), "{id}");
+        assert_eq!(gated(&deletes, &known(id, 50))[0].known, Some(50), "{id}");
+        let why =
+            std::collections::BTreeMap::from([(id.to_string(), "a nightly sweep".to_string())]);
+        assert_eq!(expected(&deletes[0], &why), Some("a nightly sweep"), "{id}");
+    }
+    // another bucket's, or another kind's, is not it
+    for id in ["obs.deletes|c", "obs.small|/", "obs.small|a"] {
+        assert_eq!(gated(&deletes, &known(id, 60))[0].known, None, "{id}");
+    }
+    // an entry of two buckets names the finding left in one of them
+    let one = run_of(&deleted(&[("a", 30)]));
+    let left: Vec<_> = one
+        .observations
+        .iter()
+        .filter(|o| o.kind == "obs.deletes")
+        .cloned()
+        .collect();
+    assert!(gated(&left, &known("obs.deletes|a,b", 60)).is_empty());
+    assert_eq!(loose(&left, &known("obs.deletes|a,b", 60))[0].count, 30);
+
+    // a program's findings kept by rules 5
+    let tracked = |kind: &str| {
+        serde_json::json!({
+            "kind": kind, "text": "t", "state": "open", "since": "run-01.sonde",
+            "predicted": {"requests": 11, "ms": 0.0}
+        })
+    };
+    let mut kept: fixloop::Program = serde_json::from_value(serde_json::json!({
+        "rules": 5,
+        "findings": {
+            "obs.deletes|/": tracked("obs.deletes"),
+            "obs.small|data": tracked("obs.small"),
+            "obs.rmw|a": tracked("obs.rmw"),
+        }
+    }))
+    .unwrap();
+    assert_eq!(kept.rekey(), 1);
+    assert_eq!(kept.rules, 6);
+    let ids: Vec<&String> = kept.findings.keys().collect();
+    assert_eq!(ids, ["obs.rmw|a", "obs.small|data"]);
 }

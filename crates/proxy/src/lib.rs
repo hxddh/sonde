@@ -28,9 +28,9 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use chrono::Utc;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full, Limited, StreamBody};
+use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -50,10 +50,12 @@ pub enum Policy {
     /// Everything: a program does with its data what it would without sonde.
     #[default]
     Allow,
-    /// Nothing that removes data: deletes, aborts, lifecycle rules, bucket
-    /// policies, versioning suspended, but for what the recording made
-    /// itself ([`Made`]). Writes go through, over an object or not. A
-    /// trial's default.
+    /// Nothing that removes data or what guards it ([`no_delete`]):
+    /// deletes, aborts, lifecycle rules, bucket policies and ACLs, the
+    /// public access block, versioning suspended, a legal hold lifted, a
+    /// retention bypassed, but for what the recording made itself
+    /// ([`Made`]). Writes go through, over an object or not. A trial's
+    /// default.
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,
@@ -93,12 +95,14 @@ impl Policy {
         query: &[(String, String)],
     ) -> Option<&'static str> {
         let q = |n: &str| query.iter().any(|(k, _)| k == n);
-        // a bucket policy can deny its owner the bucket
-        let removes = op::is_destructive(op)
-            || method == "DELETE"
-            || (method == "POST" && q("delete"))
-            || (method == "PUT" && (q("lifecycle") || q("policy")))
-            || (op == "Unknown" && method != "GET" && method != "HEAD");
+        let read = method == "GET" || method == "HEAD";
+        // by the table, and by the method and the query whatever the name
+        // (a bucket policy can deny its owner the bucket)
+        let removes = !read
+            && (matches!(no_delete(op), NoDelete::Refused | NoDelete::Own)
+                || method == "DELETE"
+                || (method == "POST" && q("delete"))
+                || (method == "PUT" && (q("lifecycle") || q("policy"))));
         match self {
             Policy::Allow => None,
             Policy::NoDelete if removes => Some("no-delete"),
@@ -108,23 +112,109 @@ impl Policy {
     }
 
     /// Why a request is refused for what its document says, once it is
-    /// read: versioning anything but enabled (or a document not read) under
-    /// no-delete. A suspended bucket's next write replaces the version it
-    /// would keep.
+    /// read: under no-delete, versioning anything but enabled and a legal
+    /// hold anything but on (or a document not read). A suspended bucket's
+    /// next write replaces the version it would keep; a hold lifted leaves
+    /// its version to be deleted.
     pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
+        let keeps = match op {
+            "PutBucketVersioning" => keeps_versions,
+            "PutObjectLegalHold" => keeps_hold,
+            _ => return None,
+        };
+        (self == Policy::NoDelete && !body.is_some_and(keeps)).then_some("no-delete")
+    }
+
+    /// Why a request is refused for a header it carries: under no-delete,
+    /// one that asks the store to set a governance retention aside
+    /// (`x-amz-bypass-governance-retention`), on a delete or on a shorter
+    /// retention, of the recording's own objects too. Without it the store
+    /// itself lets a retention only grow.
+    pub fn refuses_headers(self, headers: &[(String, String)]) -> Option<&'static str> {
         (self == Policy::NoDelete
-            && op == "PutBucketVersioning"
-            && !body.is_some_and(keeps_versions))
+            && headers.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case("x-amz-bypass-governance-retention")
+                    && !v.trim().eq_ignore_ascii_case("false")
+            }))
         .then_some("no-delete")
     }
 }
 
-/// Whether a PutBucketVersioning document, read as an XML reader reads it,
-/// leaves versioning on: `VersioningConfiguration` (the S3 namespace its
-/// only attribute) holding at most one `Status`, `Enabled`, and one
-/// `MfaDelete`, `Enabled` or `Disabled`, as plain text. Anything else
-/// (entities, comments, CDATA, prefixes, another encoding) is not.
-fn keeps_versions(doc: &str) -> bool {
+/// What no-delete does with a write ([`no_delete`]). A read (GET, HEAD) is
+/// never refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoDelete {
+    /// Goes through: it removes nothing and lifts no guard.
+    Passes,
+    /// Refused, whatever it names.
+    Refused,
+    /// Refused, but on what the recording made itself ([`Made::may_remove`]).
+    Own,
+    /// Goes through when its document reads as keeping what is there
+    /// ([`Policy::refuses_document`]).
+    Document,
+}
+
+/// The table no-delete goes by: every operation [`op::classify`] names, and
+/// `Refused` for a name it does not hold (a write sonde cannot name). Data
+/// is removed by a delete, an abort, a rename and a lifecycle rule; what
+/// guards it is lifted by a bucket policy, an ACL, the public access block,
+/// ownership controls, versioning suspended and a legal hold turned off.
+pub fn no_delete(op: &str) -> NoDelete {
+    use NoDelete::*;
+    match op {
+        "PutObject"
+        | "CopyObject"
+        | "CreateMultipartUpload"
+        | "UploadPart"
+        | "UploadPartCopy"
+        | "CompleteMultipartUpload"
+        | "PutObjectTagging"
+        // without the bypass header ([`Policy::refuses_headers`]) the store
+        // lets a retention only grow
+        | "PutObjectRetention"
+        | "RestoreObject"
+        | "SelectObjectContent"
+        // re-encrypting keeps every byte
+        | "UpdateObjectEncryption"
+        | "CreateBucket"
+        | "PutBucketCors"
+        | "PutBucketTagging"
+        | "PutBucketEncryption"
+        | "PutObjectLockConfiguration"
+        | "PutBucketNotificationConfiguration"
+        | "PutBucketReplication"
+        | "PutBucketWebsite"
+        | "PutBucketLogging"
+        | "PutBucketAccelerateConfiguration"
+        | "PutBucketRequestPayment"
+        | "PutBucketAnalyticsConfiguration"
+        | "PutBucketMetricsConfiguration"
+        | "PutBucketInventoryConfiguration"
+        | "PutBucketIntelligentTieringConfiguration" => Passes,
+        "PutBucketVersioning" | "PutObjectLegalHold" => Document,
+        "DeleteObject"
+        | "DeleteObjects"
+        | "DeleteBucket"
+        | "AbortMultipartUpload"
+        // who may reach an object: the recording's own to change, like its
+        // own to remove
+        | "PutObjectAcl" => Own,
+        _ if op.starts_with("Get") || op.starts_with("List") || op.starts_with("Head") => Passes,
+        "CreateSession" => Passes,
+        // RenameObject (its source's key goes), PutBucketLifecycleConfiguration,
+        // PutBucketPolicy, PutBucketAcl, PutPublicAccessBlock,
+        // PutBucketOwnershipControls, DeleteObjectTagging, every Delete of a
+        // bucket's setting, and `Unknown`
+        _ => Refused,
+    }
+}
+
+/// The fields of a small S3 document read as an XML reader reads it:
+/// `root` (the S3 namespace its only attribute) holding at most one of each
+/// of `fields`, as plain text. None for anything else (entities, comments,
+/// CDATA, prefixes, another encoding).
+fn plain_fields(doc: &str, root: &str, fields: &[&str]) -> Option<Vec<(String, String)>> {
     use quick_xml::events::Event;
     const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
     let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
@@ -135,25 +225,22 @@ fn keeps_versions(doc: &str) -> bool {
     let (mut first, mut rooted) = (true, false);
     loop {
         let Ok(event) = reader.read_event() else {
-            return false;
+            return None;
         };
         match event {
             Event::Decl(_) if first => {}
             Event::Start(e) => {
                 let name = e.name().0.to_string();
                 let fits = match open.len() {
-                    0 => !rooted && name == "VersioningConfiguration",
-                    1 => {
-                        (name == "Status" || name == "MfaDelete")
-                            && !seen.iter().any(|(n, _)| *n == name)
-                    }
+                    0 => !rooted && name == root,
+                    1 => fields.contains(&name.as_str()) && !seen.iter().any(|(n, _)| *n == name),
                     _ => false,
                 };
                 let plain = e.attributes().all(|a| {
                     a.is_ok_and(|a| open.is_empty() && a.key.0 == "xmlns" && a.value == NS)
                 });
                 if !(fits && plain) {
-                    return false;
+                    return None;
                 }
                 rooted = true;
                 if open.len() == 1 {
@@ -166,21 +253,51 @@ fn keeps_versions(doc: &str) -> bool {
             }
             Event::Text(t) if open.len() == 2 => match seen.last_mut() {
                 Some((_, text)) if text.is_empty() => text.push_str(&t),
-                _ => return false,
+                _ => return None,
             },
             Event::Text(t) if space(&t) => {}
-            Event::Eof => {
-                return rooted
-                    && open.is_empty()
-                    && seen.iter().all(|(n, v)| match n.as_str() {
-                        "Status" => v == "Enabled",
-                        _ => v == "Enabled" || v == "Disabled",
-                    });
-            }
-            _ => return false,
+            Event::Eof => return (rooted && open.is_empty()).then_some(seen),
+            _ => return None,
         }
         first = false;
     }
+}
+
+/// Whether a PutBucketVersioning document leaves versioning on:
+/// `VersioningConfiguration` holding at most one `Status`, `Enabled`, and
+/// one `MfaDelete`, `Enabled` or `Disabled` ([`plain_fields`]).
+fn keeps_versions(doc: &str) -> bool {
+    plain_fields(doc, "VersioningConfiguration", &["Status", "MfaDelete"]).is_some_and(|seen| {
+        seen.iter().all(|(n, v)| match n.as_str() {
+            "Status" => v == "Enabled",
+            _ => v == "Enabled" || v == "Disabled",
+        })
+    })
+}
+
+/// Whether a PutObjectLegalHold document leaves the hold on: `LegalHold`
+/// holding one `Status`, `ON` ([`plain_fields`]).
+fn keeps_hold(doc: &str) -> bool {
+    plain_fields(doc, "LegalHold", &["Status"])
+        .is_some_and(|seen| seen.len() == 1 && seen[0].1 == "ON")
+}
+
+/// Whether `text` holds `word` as a whole word: no letter or digit on
+/// either side (`etl-slowdown/state` holds `slowdown`, `slowdowns/x` does
+/// not). How a trial's run is known to be in its own place.
+pub fn has_word(text: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    let part = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
+    text.match_indices(word).any(|(i, _)| {
+        !part(text[..i].chars().next_back()) && !part(text[i + word.len()..].chars().next())
+    })
+}
+
+/// Whether `op` reads an object at its key: answered 404, nothing is there.
+fn reads_object(op: &str) -> bool {
+    matches!(op, "GetObject" | "HeadObject")
 }
 
 /// Whether `op` writes an object whole at its key.
@@ -192,13 +309,25 @@ pub fn writes_object(op: &str) -> bool {
 }
 
 /// What a recording made itself, which no-delete lets it remove: objects
-/// (and their versions) it wrote, uploads it started, buckets it created,
-/// and what is under a trial's own place ([`Made::own_place`]). A program
-/// that writes a temporary file and deletes it, or aborts its own upload,
-/// runs under no-delete as it does anywhere.
+/// it created (and versions it wrote), uploads it started, buckets it
+/// created, and what is under a trial's own place ([`Made::own_place`]).
+///
+/// An object is the recording's when its key held nothing before: the
+/// store answered a create (`If-None-Match: *`) 2xx, or answered 404 for
+/// the key before the write, or keeps versions (the write's answer names
+/// one, so a delete only adds a marker). A write over a key not seen
+/// absent proves nothing: on a bucket without versions it would otherwise
+/// make an object that stood before the run the recording's to delete.
+/// sonde asks the store nothing of its own to know, so a program that
+/// writes a temporary key blindly and deletes it is refused the delete
+/// (its trial's `{trial}` place, or `--policy allow`, lifts that).
 #[derive(Debug, Default)]
 pub struct Made {
     objects: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    /// Keys the store answered 404 for: a write there makes an object.
+    absent: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    /// The word a trial's run writes under ([`Made::keep_to`]).
+    kept_to: parking_lot::Mutex<Option<String>>,
     versions: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
     uploads: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
     buckets: parking_lot::Mutex<std::collections::HashSet<String>>,
@@ -211,22 +340,80 @@ impl Made {
     /// made, as that run could.
     pub fn of(records: &[Record]) -> Made {
         let m = Made::default();
-        for r in records.iter().filter(|r| !r.is_error()) {
+        let mut in_time: Vec<&Record> = records
+            .iter()
+            .filter(|r| r.rare().injected.is_none())
+            .collect();
+        in_time.sort_by_key(|r| (r.time, r.id));
+        for r in in_time {
             let header = |n: &str| {
                 r.response_headers()
                     .iter()
                     .find(|h| h.name.eq_ignore_ascii_case(n))
                     .map(|h| h.value.as_str())
             };
+            let versioned = r.query().iter().any(|(k, _)| k == "versionId");
             match (r.bucket.as_deref(), r.key.as_deref()) {
-                (Some(b), Some(k)) if writes_object(&r.kind) => {
-                    m.object(b, k, header("x-amz-version-id"))
+                (Some(b), Some(k))
+                    if r.status == Some(404) && reads_object(&r.kind) && !versioned =>
+                {
+                    m.missing(b, k)
                 }
+                _ if r.is_error() => {}
+                (Some(b), Some(k)) if writes_object(&r.kind) => m.object(
+                    b,
+                    k,
+                    header("x-amz-version-id"),
+                    fault::condition_of(r) == Some(fault::Condition::Create),
+                ),
                 (Some(b), None) if r.kind == "CreateBucket" => m.bucket(b),
                 _ => {}
             }
         }
         m
+    }
+
+    /// The store answered 404 for `bucket/key`: nothing is there, and a
+    /// write there makes an object of the recording's own.
+    pub fn missing(&self, bucket: &str, key: &str) {
+        self.absent
+            .lock()
+            .insert((bucket.to_string(), key.to_string()));
+    }
+
+    /// A trial's run writes only where `word` stands as a whole word (the
+    /// run's name, which the program put in its keys from `SONDE_TRIAL`):
+    /// what [`Made::strays`] holds each write to.
+    pub fn keep_to(&self, word: Option<&str>) {
+        *self.kept_to.lock() = word.filter(|w| !w.is_empty()).map(str::to_string);
+    }
+
+    /// The word a write strays from, if the run is kept to one
+    /// ([`Made::keep_to`]) and the write names a place without it: its
+    /// bucket and key, each object of a batch of deletes (`document`), the
+    /// bucket alone for a request without a key.
+    pub fn strays(
+        &self,
+        method: &str,
+        op: &str,
+        bucket: Option<&str>,
+        key: Option<&str>,
+        document: Option<&str>,
+    ) -> Option<String> {
+        if method == "GET" || method == "HEAD" {
+            return None;
+        }
+        let word = self.kept_to.lock().clone()?;
+        let b = bucket.unwrap_or("");
+        let within = |key: &str| has_word(&format!("{b}/{key}"), &word);
+        let stays = match (op, key) {
+            (_, Some(k)) => within(k),
+            ("DeleteObjects", None) => document
+                .and_then(reqlog::deleted_objects_strict)
+                .is_some_and(|objects| objects.iter().all(|(k, _)| within(k))),
+            (_, None) => has_word(b, &word),
+        };
+        (!stays).then_some(word)
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
@@ -238,13 +425,18 @@ impl Made {
         }
     }
 
-    /// The recording wrote `bucket/key` (as `version`, when the bucket
-    /// keeps versions): it may delete it.
-    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>) {
-        self.objects
-            .lock()
-            .insert((bucket.to_string(), key.to_string()));
-        if let Some(v) = version.filter(|v| !v.is_empty() && *v != "null") {
+    /// The store answered a write of `bucket/key` 2xx (as `version`, when
+    /// the bucket keeps versions; `created`: sent with `If-None-Match: *`).
+    /// The version is the recording's to delete. The key is when the write
+    /// made it: a create, a key the store had answered 404 for, or a
+    /// bucket that keeps versions (a delete there removes none).
+    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>, created: bool) {
+        let place = (bucket.to_string(), key.to_string());
+        let version = version.filter(|v| !v.is_empty() && *v != "null");
+        if created || version.is_some() || self.absent.lock().contains(&place) {
+            self.objects.lock().insert(place);
+        }
+        if let Some(v) = version {
             self.versions
                 .lock()
                 .insert((bucket.to_string(), key.to_string(), v.to_string()));
@@ -284,7 +476,8 @@ impl Made {
 
     /// Whether a removal no-delete would refuse takes only what this
     /// recording made: an upload it started, an object or version it wrote,
-    /// a bucket it created. A batch of deletes (`document`) goes by each of
+    /// a bucket it created (and so for an object's ACL, changed in
+    /// place). A batch of deletes (`document`) goes by each of
     /// its objects; one that does not read is not the recording's.
     pub fn may_remove(
         &self,
@@ -301,7 +494,9 @@ impl Made {
                     .lock()
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
-            ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
+            ("DeleteObject" | "PutObjectAcl", Some(b), Some(k)) => {
+                self.own_object(b, k, q("versionId"))
+            }
             ("DeleteObjects", Some(b), None) => document
                 .and_then(reqlog::deleted_objects_strict)
                 .is_some_and(|objects| {
@@ -1107,17 +1302,56 @@ fn decode(s: &str) -> String {
         .into_owned()
 }
 
+/// A key as the path names it: each `%XX` its byte, and nothing else
+/// changed (`+` is a plus, `%2F` a slash of the key). Bytes that are not
+/// UTF-8 text stay as written (`%FF`): no other key is named in their place.
+fn decode_key(s: &str) -> String {
+    let bytes: Vec<u8> = percent_encoding::percent_decode_str(s).collect();
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        out.push_str(chunk.valid());
+        for b in chunk.invalid() {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Bucket and key from the Host header and the path. `<bucket>.localhost`
 /// hosts are virtual-hosted style; anything else is path style.
 pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) {
+    let (bucket, key) = split_target(host, path);
+    (
+        bucket.map(|b| match b {
+            Ok(host) => host,
+            Err(segment) => decode(segment),
+        }),
+        key.map(decode_key),
+    )
+}
+
+/// The key of a request as its path has it, undecoded: what is sent on to
+/// the store, byte for byte ([`s3raw::S3Client::address_raw`]).
+pub fn raw_key<'a>(host: &str, path: &'a str) -> Option<&'a str> {
+    split_target(host, path).1
+}
+
+/// Where a path names the bucket and the key: the bucket the Host names
+/// (`Ok`) or the path's first segment as written (`Err`), and the rest as
+/// written.
+#[allow(clippy::type_complexity)]
+fn split_target<'a>(
+    host: &str,
+    path: &'a str,
+) -> (Option<Result<String, &'a str>>, Option<&'a str>) {
     let rest = path.strip_prefix('/').unwrap_or(path);
-    let non_empty = |s: &str| (!s.is_empty()).then(|| decode(s));
+    let non_empty = |s: &'a str| (!s.is_empty()).then_some(s);
     if let Some(bucket) = host_bucket(host) {
-        return (Some(bucket), non_empty(rest));
+        return (Some(Ok(bucket)), non_empty(rest));
     }
     match rest.split_once('/') {
-        Some((b, k)) => (non_empty(b), non_empty(k)),
-        None => (non_empty(rest), None),
+        Some((b, k)) => (non_empty(b).map(Err), non_empty(k)),
+        None => (non_empty(rest).map(Err), None),
     }
 }
 
@@ -1166,6 +1400,33 @@ fn xml_text(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// What a recorded program is told, and its run keeps, when sonde has no
+/// credentials for the store: that, and how a `credential_process` ended.
+/// Never the source's own words: a process's output, a token file's path
+/// or an STS answer is not the program's to read.
+fn credentials_failure(endpoint_id: &str, error: &str) -> String {
+    let ended = error
+        .split("credential_process exited with ")
+        .nth(1)
+        .and_then(|rest| {
+            ["exit status: ", "exit code: ", "signal: "]
+                .iter()
+                .find_map(|kind| {
+                    let code: String = rest
+                        .strip_prefix(kind)?
+                        .chars()
+                        .take_while(|c| c.is_ascii_hexdigit() || *c == 'x')
+                        .take(12)
+                        .collect();
+                    (!code.is_empty()).then(|| format!(" (credential_process: {kind}{code})"))
+                })
+        })
+        .unwrap_or_default();
+    format!(
+        "sonde has no credentials for {endpoint_id}{ended}: `sonde endpoints test {endpoint_id}` says why"
+    )
 }
 
 fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
@@ -1265,8 +1526,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .and_then(|b| shared.regions.lock().get(b).cloned())
         .unwrap_or_else(|| cfg.region.clone());
     let endpoint = in_region(&cfg.endpoint, &cfg.region, &region);
-    let (origin, path, upstream_host) =
-        client.address(&endpoint, bucket.as_deref(), key.as_deref());
+    // the key goes on as the program wrote it, byte for byte (`a%2Fb`,
+    // `%FF`, `a//b`): decoded and encoded again it could name another key.
+    // It is signed as the store reads it.
+    let raw_key = raw_key(&host, parts.uri.path());
+    let (origin, path, upstream_host) = client.address_raw(&endpoint, bucket.as_deref(), raw_key);
+    let canonical = sigv4::canonical_uri(&path);
     let qs = sigv4::canonical_query(&query);
     let url = if qs.is_empty() {
         format!("{origin}{path}")
@@ -1391,6 +1656,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             return Ok(refuse(&shared, record, msg));
         }
     }
+    if let Some(mode) = shared.cfg.policy.refuses_headers(&app_headers) {
+        let msg = format!(
+            "sonde refused {operation}: it sets a governance retention aside (x-amz-bypass-governance-retention), and the proxy runs in {mode} mode"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
@@ -1399,6 +1670,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
     let streaming_sig = chunked::is_signed_streaming(&content_sha);
+    // what an aws-chunked body says its payload comes to: held to it
+    let declared: Option<u64> = header_value(&parts.headers, "x-amz-decoded-content-length")
+        .parse()
+        .ok();
+    let unsigned_chunks = content_sha == sigv4::STREAMING_UNSIGNED_TRAILER;
+    // no time for the whole exchange (a large body takes what it takes), only
+    // for one that has stopped moving
+    let idle = cfg.timeout;
     // a signed aws-chunked body is decoded as it arrives, unless it is a
     // control document (read whole, kept) or its length cannot be told the
     // store before it ends
@@ -1408,14 +1687,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a body read whole waits its turn in the buffering budget, held until
     // the request is answered
     let _budget = if (streaming_sig && streamed.is_none()) || (has_body && length.is_none()) {
-        let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
-            .parse()
-            .ok()
-            .or(length);
         shared
             .buffered
             .clone()
-            .acquire_many_owned(buffer_share(&shared.cfg, declared))
+            .acquire_many_owned(buffer_share(&shared.cfg, declared.or(length)))
             .await
             .ok()
     } else {
@@ -1437,10 +1712,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         } else {
             1 << 20
         };
-        let taken = body.take().expect("not read yet");
-        match Limited::new(taken, limit).collect().await {
-            Ok(c) => {
-                let raw = c.to_bytes();
+        match whole(None, body.take(), limit, idle).await {
+            Ok(raw) => {
                 // the document itself, not its transfer framing
                 // (kept now: a request sonde answers itself has it too)
                 let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
@@ -1463,10 +1736,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 early = Some(raw);
             }
             Err(e) => {
-                let msg = format!("sonde could not read the request body: {e}");
+                let msg = e.message();
                 record.rare_mut().transport_error = Some(msg.clone());
                 shared.log.push(record);
-                return Ok(xml_error(400, "IncompleteBody", &msg));
+                return Ok(xml_error(400, e.code, &msg));
             }
         }
     }
@@ -1492,6 +1765,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         return Ok(refuse(&shared, record, msg));
     }
+    // a trial's run kept to its own place writes nowhere else
+    if let Some(word) = shared.cfg.made.strays(
+        &method,
+        &operation,
+        bucket.as_deref(),
+        key.as_deref(),
+        record.rare().request_body.as_deref(),
+    ) {
+        let msg = format!(
+            "sonde refused {operation}: this run of the trial writes only where its name ({word}) is, and this is elsewhere (--same-place lifts that)"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
 
     // a trial's faults: answered here, delayed, or sent on with the answer
     // to be lost. The record says so, so that no reader blames the store.
@@ -1507,18 +1793,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             headers: &app_headers,
         })
         .map(|v| (f.name.clone(), v))
-    });
-    // a write that loses its race without being sent on is answered as any
-    // error in the store's place is
-    let fault = fault.map(|(name, v)| match v {
-        fault::Verdict::LoseRace { forward: false, .. } => (
-            name,
-            fault::Verdict::Answer {
-                status: 412,
-                code: "PreconditionFailed".into(),
-            },
-        ),
-        v => (name, v),
     });
     match fault {
         Some((name, fault::Verdict::Answer { status, code })) => {
@@ -1555,10 +1829,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             record.rare_mut().injected = Some(name);
             after = After::LoseAnswer;
         }
-        Some((name, fault::Verdict::LoseRace { met, .. })) => {
-            record.rare_mut().injected = Some(name);
-            after = After::LoseRace(met);
-        }
         Some((name, fault::Verdict::CutBody { met })) => {
             record.rare_mut().injected = Some(name);
             after = After::CutBody(met);
@@ -1583,10 +1853,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
-    // no time for the whole exchange (a large body takes what it takes), only
-    // for one that has stopped moving
-    let idle = cfg.timeout;
     let moved = Moved::default();
+    // what becomes of the program's body on its way: a body that is not the
+    // one its headers said fails the request as the program's own mistake
+    let upload = Upload::default();
     // the payload's bytes, when the body sent is framed otherwise
     let mut payload_len = None;
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
@@ -1596,17 +1866,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             plan.forward(&mut out);
             (
                 plan.payload_hash().to_string(),
-                plan.body(incoming, moved.clone()),
+                plan.body(incoming, moved.clone(), upload.clone()),
                 Some(plan.sent_len()),
             )
         } else if streaming_sig {
-            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer, idle).await {
                 Ok(raw) => raw,
                 Err(e) => {
-                    let msg = format!("sonde could not read the request body: {e}");
+                    let msg = e.message();
                     record.rare_mut().transport_error = Some(msg.clone());
                     held.push(record);
-                    return Ok(xml_error(400, "IncompleteBody", &msg));
+                    return Ok(xml_error(400, e.code, &msg));
                 }
             };
             let decoded = match chunked::decode(&raw) {
@@ -1617,6 +1887,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
             };
+            // the payload it said it had, no less and no more
+            if let Err(e) = BodyError::length(declared, decoded.payload.len() as u64) {
+                let msg = e.message();
+                record.rare_mut().transport_error = Some(msg.clone());
+                held.push(record);
+                return Ok(xml_error(400, e.code, &msg));
+            }
             out.retain(|(k, _)| {
                 let k = k.to_ascii_lowercase();
                 k != "x-amz-decoded-content-length" && k != "x-amz-trailer"
@@ -1661,38 +1938,57 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // a control document (DeleteObjects, a lifecycle rule): small,
                 // kept on the record so the request can be replayed
                 Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
-                    match whole(early.take(), body.take(), 1 << 20).await {
+                    let read = whole(early.take(), body.take(), 1 << 20, idle)
+                        .await
+                        .and_then(|raw| {
+                            // unsigned aws-chunked: the payload it said it had
+                            if unsigned_chunks && declared.is_some() {
+                                let d = chunked::decode(&raw).map_err(BodyError::framing)?;
+                                BodyError::length(declared, d.payload.len() as u64)?;
+                            }
+                            Ok(raw)
+                        });
+                    match read {
                         Ok(raw) => {
                             record.rare_mut().request_body =
                                 Some(String::from_utf8_lossy(&raw).into_owned());
                             (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
-                            let msg = format!("sonde could not read the request body: {e}");
+                            let msg = e.message();
                             record.rare_mut().transport_error = Some(msg.clone());
                             held.push(record);
-                            return Ok(xml_error(400, "IncompleteBody", &msg));
+                            return Ok(xml_error(400, e.code, &msg));
                         }
                     }
                 }
                 Some(n) => {
-                    let moved = moved.clone();
-                    let stream = body
-                        .take()
-                        .expect("a body not read early is still here")
-                        .into_data_stream()
-                        .inspect_ok(move |_| moved.touch());
-                    (hash, reqwest::Body::wrap_stream(stream), Some(n))
+                    // as sent; an unsigned aws-chunked body's payload is
+                    // measured as it goes, against what it said
+                    let framing = match declared {
+                        Some(declared) if unsigned_chunks => Framing::Measured {
+                            decoder: chunked::Decoder::default(),
+                            declared,
+                        },
+                        _ => Framing::Plain,
+                    };
+                    let incoming = body.take().expect("a body not read early is still here");
+                    (
+                        hash,
+                        client_body(incoming, moved.clone(), upload.clone(), framing),
+                        Some(n),
+                    )
                 }
                 None => {
                     // chunked transfer without a length: S3 wants one
-                    let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+                    let read = whole(early.take(), body.take(), shared.cfg.max_buffer, idle).await;
+                    let raw = match read {
                         Ok(raw) => raw,
                         Err(e) => {
-                            let msg = format!("sonde could not read the request body: {e}");
+                            let msg = e.message();
                             record.rare_mut().transport_error = Some(msg.clone());
                             held.push(record);
-                            return Ok(xml_error(400, "IncompleteBody", &msg));
+                            return Ok(xml_error(400, e.code, &msg));
                         }
                     };
                     let n = raw.len() as u64;
@@ -1706,10 +2002,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         };
     // an unsigned aws-chunked body goes as sent: its payload is what it says
-    if content_sha == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
-        payload_len = header_value(&parts.headers, "x-amz-decoded-content-length")
-            .parse()
-            .ok();
+    if unsigned_chunks {
+        payload_len = declared;
     }
     record.request_bytes = payload_len.or(sent_len).into();
     held.keep(&record);
@@ -1727,7 +2021,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             sigv4::sign_headers(
                 &mut out,
                 &method,
-                &path,
+                &canonical,
                 &query,
                 &payload_hash,
                 &region,
@@ -1739,7 +2033,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         Ok(None) => {}
         Err(e) => {
-            let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
+            let msg = credentials_failure(&cfg.endpoint_id, &e.message);
             record.rare_mut().transport_error = Some(msg.clone());
             held.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));
@@ -1751,9 +2045,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         out.push(("content-length".into(), n.to_string()));
     }
-    // a key with a `.` or `..` segment goes as written: the HTTP client's
-    // URL library would fold it into another key
-    let as_is = key.as_deref().is_some_and(s3raw::has_dot_segment);
+    // a path the HTTP client's URL library would write otherwise (a `.` or
+    // `..` segment folded into another key, a `\` or `|` encoded) goes as
+    // written, on a connection of its own
+    let as_is = reqwest::Url::parse(&url).map_or(true, |u| u.path() != path);
     let send = async {
         if as_is {
             return asis::send(
@@ -1785,7 +2080,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     moved.touch();
     let sent = tokio::select! {
         r = send => r,
-        _ = moved.quiet_for(idle) => Err(stalled(idle)),
+        _ = moved.quiet_for(idle) => {
+            // the store waits for a body the program has stopped sending
+            if upload.waiting() {
+                upload.fail(BodyError::quiet(idle));
+            }
+            Err(stalled(idle))
+        }
     };
     let mut sent = sent;
     // the bucket is in another region (AWS says which): kept for the
@@ -1804,7 +2105,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             && let Some(creds) = &signed_with
         {
             let endpoint = in_region(&cfg.endpoint, &cfg.region, &moved_to);
-            let (origin, path, host) = client.address(&endpoint, Some(b), key.as_deref());
+            let (origin, path, host) = client.address_raw(&endpoint, Some(b), raw_key);
             let url = if qs.is_empty() {
                 format!("{origin}{path}")
             } else {
@@ -1819,7 +2120,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             sigv4::sign_headers(
                 &mut again,
                 &method,
-                &path,
+                &sigv4::canonical_uri(&path),
                 &query,
                 &payload_hash,
                 &moved_to,
@@ -1847,6 +2148,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let resp = match sent {
         Ok(r) => r,
         Err(msg) => {
+            // the program's own body failed the request (cut, stalled, not
+            // the length it said): its mistake, answered as S3 answers it.
+            // The store saw the request stop before its end, and kept nothing.
+            if let Some(e) = upload.failed() {
+                let msg = e.message();
+                record.rare_mut().transport_error = Some(msg.clone());
+                held.push(record);
+                return Ok(xml_error(400, e.code, &msg));
+            }
             record.rare_mut().transport_error = Some(msg.clone());
             held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
@@ -1859,6 +2169,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     s3raw::fill_ids(&mut record, &headers);
     record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
     held.keep(&record);
+    let created = fault::condition(app_headers.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        == Some(fault::Condition::Create);
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1867,7 +2179,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case("x-amz-version-id"))
             .map(|(_, v)| v.as_str());
-        shared.cfg.made.object(b, k, version);
+        shared.cfg.made.object(b, k, version, created);
+    }
+    if status.as_u16() == 404
+        && reads_object(&operation)
+        && !query.iter().any(|(k, _)| k == "versionId")
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+    {
+        shared.cfg.made.missing(b, k);
     }
     if status.is_success()
         && operation == "CreateBucket"
@@ -1884,29 +2203,27 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         f.wrote(&operation, bucket.as_deref(), key.as_deref());
     }
-    match &after {
-        After::LoseRace(met) if !status.is_success() => {
-            // the store refused the write itself: its answer, not sonde's
-            if let Some(f) = faults {
-                f.unmeet(met);
-            }
-            record.rare_mut().injected = None;
-            after = After::Forward;
-        }
-        After::CutBody(met) => {
-            let whole = resp.content_length();
-            match whole.and_then(fault::cut_at) {
-                Some(at) if status.is_success() => cut = whole.map(|n| (at, n)),
-                _ => {
-                    if let Some(f) = faults {
-                        f.unmeet(met);
-                    }
-                    record.rare_mut().injected = None;
-                    after = After::Forward;
+    // an object the store shows to be there: read or written, or a create
+    // it refused itself
+    if let Some(f) = faults
+        && key.is_some()
+        && ((status.is_success() && (reads_object(&operation) || writes_object(&operation)))
+            || (status.as_u16() == 412 && created))
+    {
+        f.stands(bucket.as_deref(), key.as_deref());
+    }
+    if let After::CutBody(met) = &after {
+        let whole = resp.content_length();
+        match whole.and_then(fault::cut_at) {
+            Some(at) if status.is_success() => cut = whole.map(|n| (at, n)),
+            _ => {
+                if let Some(f) = faults {
+                    f.unmeet(met);
                 }
+                record.rare_mut().injected = None;
+                after = After::Forward;
             }
         }
-        _ => {}
     }
     let plain = !headers
         .iter()
@@ -1975,31 +2292,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.rare_mut().injected = None;
         after = After::Forward;
     }
-    if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
+    if after == After::LoseAnswer {
         // the store acted; the program is told it failed
         // (its body read and let go piece by piece: a lost GET of a large
         // object is not held in memory to be thrown away)
         drain(resp, idle).await;
         let name = record.rare().injected.clone().unwrap_or_default();
-        let (told, code, msg) = if after == After::LoseAnswer {
-            (
-                500,
-                "InternalError",
-                format!(
-                    "sonde lost the store's answer ({}) on purpose (scenario {name})",
-                    status.as_u16()
-                ),
-            )
-        } else {
-            (
-                412,
-                "PreconditionFailed",
-                format!(
-                    "sonde answered that the write lost its race, on purpose (scenario {name}); the store made it ({})",
-                    status.as_u16()
-                ),
-            )
-        };
+        let (told, code, msg) = (
+            500,
+            "InternalError",
+            format!(
+                "sonde lost the store's answer ({}) on purpose (scenario {name})",
+                status.as_u16()
+            ),
+        );
         record
             .lists_mut()
             .response_headers
@@ -2145,8 +2451,6 @@ enum After {
     Forward,
     /// The answer is replaced by a 500.
     LoseAnswer,
-    /// A write the store made is answered 412.
-    LoseRace(fault::Met),
     /// The answer's body stops part way.
     CutBody(fault::Met),
     /// The listing leaves out keys this run wrote.
@@ -2288,21 +2592,313 @@ fn cut_short(
 }
 
 /// A request body whole: the one read early, or the one still to read
-/// (`limit` bytes at most).
+/// (`limit` bytes at most, and never `idle` without a byte: a program that
+/// stops sending is answered, not waited for).
 async fn whole(
     early: Option<Bytes>,
     body: Option<Incoming>,
     limit: usize,
-) -> Result<Bytes, String> {
-    match (early, body) {
-        (Some(raw), _) => Ok(raw),
-        (None, Some(body)) => Limited::new(body, limit)
-            .collect()
-            .await
-            .map(|c| c.to_bytes())
-            .map_err(|e| e.to_string()),
-        (None, None) => Ok(Bytes::new()),
+    idle: std::time::Duration,
+) -> Result<Bytes, BodyError> {
+    let mut body = match (early, body) {
+        (Some(raw), _) => return Ok(raw),
+        (None, Some(body)) => body,
+        (None, None) => return Ok(Bytes::new()),
+    };
+    let mut raw = bytes::BytesMut::new();
+    loop {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Err(_) => return Err(BodyError::quiet(idle)),
+            Ok(None) => return Ok(raw.freeze()),
+            Ok(Some(Err(e))) => return Err(BodyError::cut(&e)),
+            Ok(Some(Ok(frame))) => {
+                let Ok(data) = frame.into_data() else {
+                    continue;
+                };
+                if raw.len() + data.len() > limit {
+                    return Err(BodyError {
+                        code: "IncompleteBody",
+                        why: "length limit exceeded".into(),
+                    });
+                }
+                raw.extend_from_slice(&data);
+            }
+        }
     }
+}
+
+/// Why a request's body is not the one its headers said: S3's error code
+/// for it, and the reason.
+#[derive(Debug, Clone)]
+struct BodyError {
+    code: &'static str,
+    why: String,
+}
+
+impl BodyError {
+    /// What the program is answered, and its record says.
+    fn message(&self) -> String {
+        format!("sonde could not read the request body: {}", self.why)
+    }
+
+    /// The connection gave no more of it (the program went, or closed it).
+    fn cut(e: &dyn std::error::Error) -> BodyError {
+        let mut why = e.to_string();
+        let mut src = e.source();
+        while let Some(s) = src {
+            why.push_str(": ");
+            why.push_str(&s.to_string());
+            src = s.source();
+        }
+        BodyError {
+            code: "IncompleteBody",
+            why,
+        }
+    }
+
+    /// The program sent none of it for the idle limit.
+    fn quiet(idle: std::time::Duration) -> BodyError {
+        BodyError {
+            code: "RequestTimeout",
+            why: format!(
+                "the program sent no more of it for {} s",
+                idle.as_secs_f64()
+            ),
+        }
+    }
+
+    /// Its `aws-chunked` framing does not read.
+    fn framing(why: String) -> BodyError {
+        BodyError {
+            code: "InvalidRequest",
+            why,
+        }
+    }
+
+    /// Its `aws-chunked` framing stops before its end.
+    fn unfinished(why: String) -> BodyError {
+        BodyError {
+            code: "IncompleteBody",
+            why,
+        }
+    }
+
+    /// A payload of `got` bytes that was said to be `declared`
+    /// (`x-amz-decoded-content-length`): fewer is a body cut short, more is
+    /// not the request that was signed.
+    fn length(declared: Option<u64>, got: u64) -> Result<(), BodyError> {
+        match declared {
+            Some(d) if got < d => Err(BodyError {
+                code: "IncompleteBody",
+                why: format!(
+                    "its payload is {got} bytes, fewer than the {d} x-amz-decoded-content-length said"
+                ),
+            }),
+            Some(d) if got > d => Err(BodyError::longer(d)),
+            _ => Ok(()),
+        }
+    }
+
+    fn longer(declared: u64) -> BodyError {
+        BodyError {
+            code: "InvalidRequest",
+            why: format!(
+                "its payload is more than the {declared} bytes x-amz-decoded-content-length said"
+            ),
+        }
+    }
+}
+
+/// What becomes of a request's body while it is sent on: whether the
+/// program is being waited for, and how the body failed, if it did. The
+/// handler reads it when the exchange with the store fails, to tell the
+/// program's mistake from the store's.
+#[derive(Clone, Default)]
+struct Upload(Arc<parking_lot::Mutex<(bool, Option<BodyError>)>>);
+
+impl Upload {
+    fn wait(&self, waiting: bool) {
+        self.0.lock().0 = waiting;
+    }
+
+    /// Whether the next piece of the body is being waited for.
+    fn waiting(&self) -> bool {
+        self.0.lock().0
+    }
+
+    fn fail(&self, e: BodyError) {
+        self.0.lock().1.get_or_insert(e);
+    }
+
+    fn failed(&self) -> Option<BodyError> {
+        self.0.lock().1.clone()
+    }
+}
+
+/// How a body sent on as it arrives is read on its way.
+enum Framing {
+    /// As sent: its `Content-Length` is all it says of itself.
+    Plain,
+    /// An unsigned `aws-chunked` body, sent as it is: its payload is
+    /// measured against the length it said.
+    Measured {
+        decoder: chunked::Decoder,
+        declared: u64,
+    },
+    /// A signed `aws-chunked` body, decoded ([`Streamed`]): its payload
+    /// sent as it is, or framed again with the trailers `named`.
+    Decoded {
+        decoder: chunked::Decoder,
+        declared: u64,
+        encoder: Option<chunked::Encoder>,
+        named: Vec<(String, usize)>,
+    },
+}
+
+impl Framing {
+    /// What of `piece` goes on, once it has been read.
+    fn take(&mut self, piece: Bytes) -> Result<Bytes, BodyError> {
+        match self {
+            Framing::Plain => Ok(piece),
+            Framing::Measured { decoder, declared } => {
+                decoder.measure(&piece).map_err(BodyError::framing)?;
+                if decoder.decoded > *declared {
+                    return Err(BodyError::longer(*declared));
+                }
+                Ok(piece)
+            }
+            Framing::Decoded {
+                decoder,
+                declared,
+                encoder,
+                ..
+            } => {
+                let mut out = Vec::new();
+                decoder.feed(&piece, &mut out).map_err(BodyError::framing)?;
+                if decoder.decoded > *declared {
+                    return Err(BodyError::longer(*declared));
+                }
+                if let Some(e) = encoder {
+                    out = e.push(&out);
+                }
+                Ok(Bytes::from(out))
+            }
+        }
+    }
+
+    /// The body has ended: whether it ended where it said it would, and
+    /// what is still to send (a body framed again: its last chunk and
+    /// trailers).
+    fn end(&mut self) -> Result<Vec<u8>, BodyError> {
+        match self {
+            Framing::Plain => Ok(Vec::new()),
+            Framing::Measured { decoder, declared } => {
+                decoder.finish().map_err(BodyError::unfinished)?;
+                BodyError::length(Some(*declared), decoder.decoded)?;
+                Ok(Vec::new())
+            }
+            Framing::Decoded {
+                decoder,
+                declared,
+                encoder,
+                named,
+            } => {
+                decoder.finish().map_err(BodyError::unfinished)?;
+                BodyError::length(Some(*declared), decoder.decoded)?;
+                let Some(e) = encoder else {
+                    return Ok(Vec::new());
+                };
+                // the trailers named, in their order, each as long as said
+                let mut trailers = Vec::new();
+                for (name, len) in named.iter() {
+                    match decoder.trailers.iter().find(|(k, _)| k == name) {
+                        Some((_, v)) if v.len() == *len => trailers.push((name.clone(), v.clone())),
+                        _ => {
+                            return Err(BodyError::framing(format!(
+                                "aws-chunked: no trailer {name} of its length"
+                            )));
+                        }
+                    }
+                }
+                Ok(e.finish(&trailers))
+            }
+        }
+    }
+}
+
+/// The program's body, sent on to the store a piece at a time as it
+/// arrives. An `aws-chunked` body is held to the payload length it said:
+/// its last piece is kept back until the body has ended as it should, so a
+/// body cut short, never ended, or longer than said fails the request
+/// before the store has all of it, and no object is made of it. Why it
+/// failed is left in `upload`.
+fn client_body(
+    incoming: Incoming,
+    moved: Moved,
+    upload: Upload,
+    framing: Framing,
+) -> reqwest::Body {
+    struct At {
+        from: http_body_util::BodyDataStream<Incoming>,
+        framing: Framing,
+        /// The last piece read, not sent yet.
+        held: Option<Bytes>,
+        done: bool,
+    }
+    let at = At {
+        from: incoming.into_data_stream(),
+        framing,
+        held: None,
+        done: false,
+    };
+    let pieces = futures::stream::unfold(at, move |mut at| {
+        let (moved, upload) = (moved.clone(), upload.clone());
+        async move {
+            if at.done {
+                return None;
+            }
+            let failed = |mut at: At, e: BodyError| {
+                at.done = true;
+                let io = std::io::Error::new(std::io::ErrorKind::InvalidData, e.why.clone());
+                upload.fail(e);
+                Some((Err(io), at))
+            };
+            loop {
+                upload.wait(true);
+                let next = at.from.next().await;
+                upload.wait(false);
+                match next {
+                    Some(Ok(piece)) => {
+                        moved.touch();
+                        let out = match at.framing.take(piece) {
+                            Ok(out) => out,
+                            Err(e) => return failed(at, e),
+                        };
+                        if matches!(at.framing, Framing::Plain) {
+                            return Some((Ok(out), at));
+                        }
+                        if !out.is_empty()
+                            && let Some(before) = at.held.replace(out)
+                        {
+                            return Some((Ok(before), at));
+                        }
+                    }
+                    Some(Err(e)) => return failed(at, BodyError::cut(&e)),
+                    None => {
+                        let tail = match at.framing.end() {
+                            Ok(tail) => tail,
+                            Err(e) => return failed(at, e),
+                        };
+                        at.done = true;
+                        let mut last = bytes::BytesMut::from(at.held.take().unwrap_or_default());
+                        last.extend_from_slice(&tail);
+                        return (!last.is_empty()).then(|| (Ok(last.freeze()), at));
+                    }
+                }
+            }
+        }
+    });
+    reqwest::Body::wrap_stream(pieces)
 }
 
 /// A signed `aws-chunked` body sent on as it arrives: its chunks'
@@ -2376,83 +2972,17 @@ impl Streamed {
     }
 
     /// The body sent: decoded (and framed again) a piece at a time. A body
-    /// that is not aws-chunked, or whose trailers are not the ones named,
-    /// fails the request (the store has not been told all of it).
-    fn body(&self, incoming: Incoming, moved: Moved) -> reqwest::Body {
-        struct At {
-            from: http_body_util::BodyDataStream<Incoming>,
-            decoder: chunked::Decoder,
-            encoder: Option<chunked::Encoder>,
-            named: Vec<(String, usize)>,
-            done: bool,
-        }
-        let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
-        let at = At {
-            from: incoming.into_data_stream(),
+    /// that is not aws-chunked, whose payload is not the length said, or
+    /// whose trailers are not the ones named, fails the request (the store
+    /// has not been told all of it).
+    fn body(&self, incoming: Incoming, moved: Moved, upload: Upload) -> reqwest::Body {
+        let framing = Framing::Decoded {
             decoder: chunked::Decoder::default(),
+            declared: self.decoded,
             encoder: (!self.trailers.is_empty()).then(|| chunked::Encoder::new(RECHUNK)),
             named: self.trailers.clone(),
-            done: false,
         };
-        let pieces = futures::stream::unfold(at, move |mut at| {
-            let moved = moved.clone();
-            async move {
-                if at.done {
-                    return None;
-                }
-                loop {
-                    let mut out = Vec::new();
-                    match at.from.next().await {
-                        Some(Ok(piece)) => {
-                            moved.touch();
-                            if let Err(e) = at.decoder.feed(&piece, &mut out) {
-                                at.done = true;
-                                return Some((Err(bad(e)), at));
-                            }
-                            if let Some(e) = &mut at.encoder {
-                                out = e.push(&out);
-                            }
-                            if !out.is_empty() {
-                                return Some((Ok(Bytes::from(out)), at));
-                            }
-                        }
-                        Some(Err(e)) => {
-                            at.done = true;
-                            return Some((Err(std::io::Error::other(e)), at));
-                        }
-                        None => {
-                            at.done = true;
-                            if let Err(e) = at.decoder.finish() {
-                                return Some((Err(bad(e)), at));
-                            }
-                            let Some(e) = &mut at.encoder else {
-                                return None;
-                            };
-                            // the trailers named, in their order, each as long as said
-                            let mut trailers = Vec::new();
-                            for (name, len) in &at.named {
-                                match at.decoder.trailers.iter().find(|(k, _)| k == name) {
-                                    Some((_, v)) if v.len() == *len => {
-                                        trailers.push((name.clone(), v.clone()))
-                                    }
-                                    _ => {
-                                        return Some((
-                                            Err(bad(format!(
-                                                "aws-chunked: no trailer {name} of its length"
-                                            ))),
-                                            at,
-                                        ));
-                                    }
-                                }
-                            }
-                            let tail = e.finish(&trailers);
-                            return Some((Ok(Bytes::from(tail)), at));
-                        }
-                    }
-                }
-            }
-        });
-        reqwest::Body::wrap_stream(pieces)
+        client_body(incoming, moved, upload, framing)
     }
 }
 
@@ -2712,6 +3242,33 @@ mod tests {
         }
     }
 
+    /// The key a path names, and the key as it goes on: `%2F` is a slash of
+    /// the key and stays `%2F` on the wire; bytes that are no UTF-8 name no
+    /// other key (33.0: `%FF` was read as U+FFFD, and sent on as that).
+    #[test]
+    fn a_key_is_read_from_its_path_and_kept_as_written() {
+        for (host, path, key, raw) in [
+            ("127.0.0.1:9000", "/b/a%2Fb", "a/b", "a%2Fb"),
+            ("127.0.0.1:9000", "/b/%FF%fe", "%FF%FE", "%FF%fe"),
+            (
+                "127.0.0.1:9000",
+                "/b/caf%C3%A9%E9",
+                "café%E9",
+                "caf%C3%A9%E9",
+            ),
+            ("127.0.0.1:9000", "/b/100%25+x", "100%+x", "100%25+x"),
+            ("127.0.0.1:9000", "/b//a//", "/a//", "/a//"),
+            ("data.localhost:9000", "//a/../b", "/a/../b", "/a/../b"),
+        ] {
+            let (_, k) = parse_target(host, path);
+            assert_eq!(k.as_deref(), Some(key), "{path}");
+            assert_eq!(raw_key(host, path), Some(raw), "{path}");
+        }
+        assert_eq!(raw_key("127.0.0.1:9000", "/b/"), None);
+        assert_eq!(raw_key("127.0.0.1:9000", "/b"), None);
+        assert_eq!(raw_key("data.localhost", "/"), None);
+    }
+
     #[test]
     fn queries() {
         assert_eq!(
@@ -2848,7 +3405,7 @@ mod budget_tests {
         assert!(removes("data", "tclean/x") && removes("data", "tclean"));
         assert!(!removes("data", "tcleanup/x"));
         assert!(removes("b", "etl-slowdown/k") && !removes("c", "etl-slowdown/k"));
-        m.object("data", "tmp/part", None);
+        m.object("data", "tmp/part", None, true);
         assert!(removes("data", "tmp/part") && !removes("data", "tmp/other"));
     }
 
@@ -2857,8 +3414,8 @@ mod budget_tests {
     #[test]
     fn a_batch_is_the_recordings_only_as_an_xml_reader_reads_it() {
         let m = Made::default();
-        m.object("b", "mine", None);
-        m.object("b", "a&b", None);
+        m.object("b", "mine", None, true);
+        m.object("b", "a&b", None, true);
         let removes = |doc: &str| m.may_remove("DeleteObjects", Some("b"), None, &[], Some(doc));
         let ns = r#"xmlns="http://s3.amazonaws.com/doc/2006-03-01/""#;
         // what clients send

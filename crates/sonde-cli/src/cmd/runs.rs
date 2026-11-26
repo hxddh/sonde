@@ -465,20 +465,30 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     }
     .unwrap_or_else(|| "imported".into());
     let name = name.strip_suffix(".json").unwrap_or(&name).to_string();
+    if !is_dir {
+        std::fs::File::open(&a.file)
+            .map_err(|e| super::usage(format!("{}: {e}", a.file.display())))?;
+    }
+    // read as a stream and written as it is read, beside the run to be: a
+    // file of several GiB is never held (the requests wait in a file of
+    // their own there, for the order and the names only the end says)
+    let beside = match &a.out {
+        Some(out) => out.parent().map(PathBuf::from).unwrap_or_default(),
+        None => {
+            let dir = s.paths().runs();
+            std::fs::create_dir_all(&dir)?;
+            dir
+        }
+    };
+    let mut spool = sonde_analysis::import::Spool::create(&beside)?;
     let mut folder = None;
-    let imported = if is_dir {
-        sonde_analysis::import::import_dir(&a.file, &name).map(|d| {
-            folder = Some((d.files, d.left_out));
-            d.imported
-        })
+    let read = if is_dir {
+        spool.add_dir(&a.file).map(|d| folder = Some(d))
     } else {
         // as S3 delivers CloudTrail, and as logs are often kept: gzip
-        let bytes = std::fs::read(&a.file)
-            .map_err(|e| super::usage(format!("{}: {e}", a.file.display())))?;
-        sonde_analysis::import::text_of(&bytes)
-            .and_then(|text| sonde_analysis::import::import_counted(&text, &name))
+        spool.add_file(&a.file)
     };
-    let imported = match imported {
+    let sealed = match read.and_then(|()| spool.seal(&name)) {
         Ok(x) => x,
         // a file cut short or with nothing in it is bad data (65); the wrong
         // file, a usage error
@@ -491,30 +501,26 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             });
         }
     };
-    let (source, run) = (imported.source, &imported.run);
     let path = match &a.out {
         Some(p) => p.clone(),
-        None => {
-            let dir = s.paths().runs();
-            std::fs::create_dir_all(&dir)?;
-            sonde_analysis::run::fresh_path(&dir, &name)
-        }
+        None => sonde_analysis::run::fresh_path(&beside, &name),
     };
-    sonde_analysis::import::save(run, &path)?;
+    let imported = sealed.save(&path)?;
+    let source = imported.source;
     if a.out.is_some() {
         sonde_analysis::index::note_elsewhere(&s.paths().runs(), &path);
     }
     match &folder {
         Some((files, _)) => eprintln!(
             "{} from {files} file{} of {} → {}",
-            output::count(run.records.len(), "request"),
+            output::count(imported.requests, "request"),
             if *files == 1 { "" } else { "s" },
             source.name(),
             path.display()
         ),
         None => eprintln!(
             "{} from {} → {}",
-            output::count(run.records.len(), "request"),
+            output::count(imported.requests, "request"),
             source.a(),
             path.display()
         ),

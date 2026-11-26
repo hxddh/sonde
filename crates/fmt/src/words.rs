@@ -39,6 +39,11 @@ pub fn phrase(key: &str) -> Option<&'static str> {
     words().phrase.get(key).map(String::as_str)
 }
 
+/// Every phrase of a run, by its key (in no order).
+pub fn phrase_keys() -> impl Iterator<Item = &'static str> {
+    words().phrase.keys().map(String::as_str)
+}
+
 /// A run's phrase `key` as the locale keeps it, and its English: a key
 /// read back as text (a verdict's) said again as a phrase.
 pub fn phrase_entry(key: &str) -> Option<(&'static str, &'static str)> {

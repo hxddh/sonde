@@ -37,7 +37,30 @@
         "object",
         "null"
       ],
-      "description": "Who the credentials are (STS)."
+      "description": "Who the credentials are (STS GetCallerIdentity, as it names them); null where the vendor has no STS or it failed (`identityNote`).",
+      "properties": {
+        "Arn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The caller's ARN."
+        },
+        "UserId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Its unique id."
+        },
+        "Account": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The account's id."
+        }
+      }
     },
     "identityNote": {
       "type": [

@@ -12,7 +12,10 @@ cat >"$t/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$FAKE/gh.log"
 case "$1 $2" in
-  "run list") for id in ${FAKE_RUNS:-}; do echo "$id"; done ;;
+  "run list")
+    # (runs that failed are listed only to who asks for every completed run)
+    case " $* " in *" --status success "*) ;; *) for id in ${FAKE_FAILED_RUNS:-}; do echo "$id"; done ;; esac
+    for id in ${FAKE_RUNS:-}; do echo "$id"; done ;;
   "run download")
     [ "$3" = "${FAKE_HAS:-}" ] || exit 1
     while [ $# -gt 0 ]; do [ "$1" = -D ] && dir="$2"; shift; done
@@ -53,7 +56,14 @@ export GITHUB_STEP_SUMMARY="$t/summary"
 step() { : >"$GITHUB_OUTPUT"; bash "$here/sonde-action.sh" "$@"; }
 # (out of any git checkout: a pull request's merge-base is recorded only in one, below)
 mkdir -p "$t/nogit" && cd "$t/nogit"
-output() { sed -n "s/^$1=//p" "$GITHUB_OUTPUT"; }
+# an output as GitHub reads it: `name<<delimiter`, the value's lines, the delimiter
+output() {
+  awk -v name="$1" '
+    delim == "" { i = index($0, "<<"); if (i) { cur = substr($0, 1, i - 1); delim = substr($0, i + 2) }; next }
+    $0 == delim { delim = ""; next }
+    cur == name { print }
+  ' "$GITHUB_OUTPUT"
+}
 failed=0
 is() {
   if [ "$2" != "$3" ]; then
@@ -97,7 +107,7 @@ is "install @v19 with 19.0: the newest 19.0.x" "$(fetched v19 19.0)" download/v1
 is "install @v19.3 (a prerelease alone) fails before downloading" "$(fetched v19.3)" ""
 is "it says so" "$(grep -c 'no release of sonde 19.3 found' "$t/said")" 1
 is "install with a version that is none fails before downloading" "$(fetched v19 19.x)" ""
-is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (32.0.0), a major (32)' "$t/said")" 1
+is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (33.0.0), a major (33)' "$t/said")" 1
 is "install of a major with no release fails before downloading" "$(fetched v7)" ""
 # a branch, a commit, a local checkout: the newest release of its own major, never `latest`
 is "install @main of 19.1.0: the newest 19.x" "$(fetched main)" download/v19.2.10
@@ -145,6 +155,11 @@ is "of this workflow, on the base branch" "$(grep -c -- '--workflow ci.yml --bra
 FAKE_SHOW=65 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
 is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" ""
 is "it says why" "$(grep -c 'not one this sonde reads' "$t/said")" 1
+# a run that failed (its program, its check, the build) is never a baseline
+FAKE_FAILED_RUNS="33" FAKE_RUNS="11 22" FAKE_HAS=33 step baseline >"$t/said"
+is "a failed run's artifact is not the baseline" "$(output baseline)" ""
+is "only runs that succeeded are asked for" "$(grep -c -- '--status success' "$t/gh.log")" "$(grep -c '^gh run list' "$t/gh.log")"
+is "the run is kept as a baseline only when the program succeeded" "$(awk '/^    - name: Keep the run/ { on = 1; next } /^    - name:/ { on = 0 } on && /if: steps.record.outputs.exit == .0./ { print 1 }' "$here/../action.yml")" 1
 FAKE_RUNS="11" step baseline >"$t/said"
 is "none kept: nothing passed (sonde.toml's baseline then applies)" "$(output baseline)" ""
 is "none kept: a warning" "$(grep -c '^::warning title=sonde::no baseline' "$t/said")" 1
@@ -244,6 +259,14 @@ is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t
   is "run-args: \$(...) kept as typed" "$(grep -c -x -F '$(touch' "$t/sonde.run")" 1
   SONDE_RUN="python3 etl.py *.csv" step record >/dev/null
   is "a glob is the shell's expansion, the program run itself" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|etl.py|*.csv"
+  # a glob names its files; no word of the command is read as shell again
+  (
+    mkdir -p "$t/globs" && cd "$t/globs" && touch 'b.csv' 'a b.csv' 'c;x.csv' 'n.txt'
+    SONDE_RUN="tool [1]=x #n *.csv '*.txt' \\*.csv" step record >/dev/null
+  )
+  is "a glob's files are words, the rest as typed" "$(sed -n '/^--$/,$p' "$t/sonde.run" | tail -n +2 | paste -sd'|')" "tool|[1]=x|#n|a b.csv|b.csv|c;x.csv|*.txt|*.csv"
+  SONDE_RUN="echo data/{a,b}.csv" step record >/dev/null
+  is "braces are bash's to expand" "$(sed -n '/^--$/,$p' "$t/sonde.run" | tail -n +2 | paste -sd'|')" "bash|-c|echo data/{a,b}.csv"
   if SONDE_RUN="python3 etl.py" SONDE_RUN_ARGS="--url 'x" step record >/dev/null 2>&1; then is "run-args: an open quote fails the step" 0 1; fi
   rm -f "$t/pwned"
   SONDE_CHECK_ARGS='--tolerance 5 $(touch "$FAKE/pwned") "a b"' SONDE_FILE=f SONDE_BASELINE=auto step check >/dev/null
@@ -266,6 +289,18 @@ is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t
   SONDE_RUN='true && echo outside >"$FAKE/ran"' step record >/dev/null || true
   is "nothing runs outside sonde" "$(cat "$t/ran")" ""
 }
+
+# an output is one value whatever it holds: a newline starts no output of its own
+(
+  # shellcheck source=/dev/null
+  GITHUB_OUTPUT="$t/out.multi" && : >"$GITHUB_OUTPUT" && export GITHUB_OUTPUT
+  eval "$(sed -n '/^out() {$/,/^}$/p' "$here/sonde-action.sh")"
+  out file "$(printf 'a.sonde\npassed=true')"
+  out exit 3
+)
+is "an output with a newline is one output" "$(GITHUB_OUTPUT="$t/out.multi" output file | paste -sd'|')" "a.sonde|passed=true"
+is "and injects none" "$(GITHUB_OUTPUT="$t/out.multi" output passed)" ""
+is "the next output is read" "$(GITHUB_OUTPUT="$t/out.multi" output exit)" 3
 
 # check: passed or not; anything else is the step's failure
 export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=none

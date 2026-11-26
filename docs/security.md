@@ -12,8 +12,11 @@ destructive actions are gated, and a recorded program is limited by a policy.
   (`credentials: "keep"` keeps static keys without reading them).
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
   parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)), before anything stores or
-  shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no
-  signature.
+  shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. A run's file redacts
+  again what it is given to write, so an imported HAR or log is held to the same. "Copy as curl" has no signature.
+- A source of credentials that fails says how, not what it printed: a `credential_process`'s exit status, never its
+  output. A recorded program is answered `500 SondeCredentials` naming the endpoint (and that exit status) only, and
+  the run keeps the same.
 - `config.toml` is written with mode 0600 (its temporary file is created so).
 
 ## Network
@@ -32,12 +35,19 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
 - On Unix, files holding a program's traffic are `0600` regardless of umask: runs, each runs folder's
-  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`.
+  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`, a dry run's plan
+  (`plans/`, made so). So is the init file a recorded DuckDB CLI is given (a copy of `~/.duckdbrc`, made new with
+  that mode and removed with the run).
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
   `//host/share`).
 - A code location in a run opens only a source or text file (allow-listed extensions) inside the folder it ran
   in; anything else is shown in the file manager; a network path opens nothing.
+- `sonde show -f json` reads a caller's line (`code`) by the same rule (one implementation, `sonde-analysis::code`),
+  and from program source only: the file must be a regular file inside the folder the run ran in, links followed,
+  never a settings or data file, a device or a network path. A run names that folder and its callers itself, so a
+  run from someone else can have no other file read out (`/etc/passwd`, `../../.aws/credentials`, a link out of the
+  tree); what it can still name is a line of source under a folder of its choosing.
 
 ## One safety model
 
@@ -47,12 +57,22 @@ never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
 2. It runs only with `--yes` (in the app, its confirmation: the count or bucket name typed for more than 100 items
-   or a lifecycle, a plain confirm below), built again then: what it changes is what the dry run would list at
-   that moment.
-3. Plans expire after 10 minutes and run once. A lifecycle plan is refused when the bucket's configuration changed
-   since it was made (a PUT replaces it whole): plan it again.
-4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
-   be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
+   or a lifecycle, a plain confirm below), and what runs is that plan, never one made again from what the store
+   holds by then. The app keeps it in its process; a terminal's dry run keeps it in `<data>/plans/` for the `--yes`
+   of the same command (endpoint and its URL, bucket, prefix, `--older-than-days` or `--days`), which is refused
+   (exit 77) when there is none: no `--yes` runs without its dry run, and no flag skips it.
+   `--plan ID` holds `--yes` to the dry run that printed that id.
+3. Plans expire after 10 minutes and run once: a terminal's is taken out of its folder by one taker before
+   anything is sent, so of two `--yes` at once one runs it.
+4. The store is read again before the first change, and a difference refuses the whole plan (exit 77, nothing
+   changed; plan it again): an upload the dry run listed that is gone or has changed (a part since: it is in use),
+   a lifecycle configuration that is not the one the dry run read (a PUT replaces it whole). What the dry run did
+   not show is never touched: an upload begun since is left, and said. S3 has no conditional abort or lifecycle
+   PUT, so a change between that reading and the request itself is not seen.
+5. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
+   be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors). An
+   outcome that cannot be written is said (stderr and exit 70 in a terminal, a notice in the app): its
+   `started` line stands alone.
 
 Probes write too (under `sonde-probe/` in the scratch bucket):
 
@@ -81,10 +101,48 @@ you would without sonde.
 - The Runs pane's code change runs `git diff` and `git show` in the run's folder with commits checked as hex and
   fsmonitor off, so a shared run cannot make it run anything else.
 
+## Copied commands
+
+A run's file can come from anyone, and "Copy as aws cli" and "Copy as curl" put its values on a command line. A
+copied command runs the one tool with the request's values as values, whatever they hold (`reqlog::copy`):
+
+- Written for one shell, each value quoted by its rules: POSIX `sh` (fish reads it the same), on Windows PowerShell
+  (`curl.exe`, `aws.exe`). The app copies for the platform's; `reqlog::copy` also writes for cmd.exe's prompt.
+- No value is an option: `aws` gets `--name=value`, curl its URL after `--` with globbing off (`-g`). A value `aws`
+  would read from a file or fetch (`file://`, `fileb://`, `http://`, `https://`) goes in `--cli-input-json`.
+- A URL is `http` or `https`, written again without a password, and a method is a method's name: a request
+  whose are not is not copied, and a comment says why. A header whose name is not a header's name is left out.
+- Control characters and BiDi controls are left out of every value (a comment says the command is not exact), and
+  no comment holds a value.
+- PowerShell before 7.3 hands a program an argument with a `"` (or a `\` at its end) as something else: a command
+  holding one runs only where `$PSNativeCommandArgumentPassing` is `Standard` or `Windows`, and says so elsewhere.
+
+## Runs from elsewhere
+
+A run's file holds a command and the folder it ran in, and the app's Run again and Try under faults start them. A
+file anyone can send is not believed about either.
+
+- Whether a run is sonde's own is decided in Rust, from where its file is and never from what it says: only a run
+  recorded into the runs folder is. A file opened, dropped, picked or linked to (`sonde://open`) is kept there as a
+  copy and marked as an import in the folder's index before it is written; it, and a run written elsewhere (`-o`),
+  are from elsewhere. (A file put in the runs folder by hand is taken for a recording.)
+- Of a run from elsewhere nothing starts until a dialog has shown the command and the folder exactly as they would
+  run and the user has said yes: no value hidden, nothing cut, and every character that would not show as itself
+  (a line break, a control or escape character, one that turns the text's direction, one of no width) written as
+  `⟨U+202E⟩`. Its title in the app is the command whole, too.
+- The bridge holds the interface to it. `Runs.runAgain` is given the run, not a command (Rust reads the command
+  from the file), and it and `Runs.trial` refuse a run from elsewhere unless the call carries the command and folder
+  the user confirmed, equal to the character to what would run.
+- Where a command is only read (lists, titles, a shared page) values that may be secrets are hidden (`TOKEN=…`),
+  but never one the shell runs a command to make (`TOKEN="$(…)"` is shown whole), and what would not show as itself
+  is written out there as well.
+
 ## Shared runs
 
 `sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds (`--redact`:
-bucket and key names as tokens; headers, bodies, URLs, output and arguments dropped). It fetches nothing and runs no
+bucket and key names as tokens, an id made of digits among them (an account's 12, an address, a number in groups;
+numbers of up to 8 digits, dates and zero-padded counters are the layout's and stay); headers, bodies, URLs, output
+and arguments dropped; the run it is compared with named by its time, not its file). It fetches nothing and runs no
 server.
 The command it shows hides variables set before the program, options that name a secret (`--token …`,
 `--password=…`) and URL passwords (`https://me:…@host`).

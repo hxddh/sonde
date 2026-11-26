@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use sonde_core::Sonde;
+use sonde_core::config::STALE_UPLOAD_DAYS;
+use sonde_core::guard::{Action, Guard, Outcome, Plan, Scope};
 use sonde_core::services::{exec, mpu};
 
 use crate::output::{self, Format};
@@ -47,9 +49,12 @@ pub(super) enum MpuAction {
         /// Only uploads older than this many days (default: 7).
         #[arg(long)]
         older_than_days: Option<f64>,
-        /// Abort the uploads the dry run lists.
+        /// Abort the uploads this command's dry run listed (in the last 10 minutes), and no other.
         #[arg(long)]
         yes: bool,
+        /// With --yes: only if the dry run to confirm is this one (the id it printed).
+        #[arg(long, value_name = "ID", requires = "yes")]
+        plan: Option<String>,
     },
     /// Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run, unless --yes.
     Lifecycle {
@@ -58,9 +63,12 @@ pub(super) enum MpuAction {
         /// Abort an upload this many days after it began.
         #[arg(long, default_value_t = 7)]
         days: u32,
-        /// Add the rule the dry run shows.
+        /// Write the document this command's dry run showed (in the last 10 minutes), if the bucket's is still the one it read.
         #[arg(long)]
         yes: bool,
+        /// With --yes: only if the dry run to confirm is this one (the id it printed).
+        #[arg(long, value_name = "ID", requires = "yes")]
+        plan: Option<String>,
     },
 }
 
@@ -123,6 +131,53 @@ fn rules_text(doc: Option<&str>) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// The command a dry run's plan is kept for: `--yes` runs the plan of the
+/// same command only (endpoint, bucket, prefix, its own option).
+fn scope(s: &Sonde, action: Action, ep: &str, t: &Target, option: String) -> Scope {
+    Scope {
+        action,
+        endpoint: ep.to_string(),
+        url: s.endpoint_config(ep).map(|e| e.url).unwrap_or_default(),
+        bucket: t.bucket.clone(),
+        arguments: format!("prefix={} {option}", t.prefix),
+    }
+}
+
+/// Keeps a dry run's plan for its `--yes`, and says until when.
+fn keep(s: &Sonde, scope: &Scope, plan: &Plan) -> anyhow::Result<String> {
+    s.guard().save(scope, plan).map_err(|e| {
+        anyhow::anyhow!("the dry run could not be kept ({e}): --yes would have no plan to run")
+    })?;
+    Ok(format!(
+        "plan {}, kept until {}",
+        plan.id,
+        Guard::expires(plan).format("%H:%M:%S UTC")
+    ))
+}
+
+/// Whether the outcome is on record: said on stderr when the audit log
+/// could not take it (the change itself was made).
+fn on_record(o: &Outcome) -> bool {
+    if let Some(e) = &o.audit_error {
+        eprintln!(
+            "sonde: warning: the change was made, but its outcome could not be written to the audit log ({e}): only its \"started\" line is there"
+        );
+    }
+    o.audit_error.is_none()
+}
+
+fn print_items(plan: &Plan) {
+    for i in &plan.items {
+        println!(
+            "  abort {}  {}  {}",
+            i.key,
+            i.id.clone().unwrap_or_default(),
+            i.detail
+        );
+    }
+    println!("{}", plan.summary);
 }
 
 pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i32> {
@@ -200,49 +255,88 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
             target: t,
             older_than_days,
             yes,
+            plan: id,
         } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
+            let min = older_than_days.unwrap_or(STALE_UPLOAD_DAYS as f64);
+            let scope = scope(
+                s,
+                Action::AbortUploads,
+                &ep,
+                t,
+                format!("older-than-days={min}"),
+            );
+            // what --yes runs is the dry run's plan, taken before anything
+            // is sent: never one made from what the bucket holds by now
+            let confirmed = match yes {
+                true => Some(s.guard().take_saved(&scope, id.as_deref())?),
+                false => None,
+            };
+            if confirmed.as_ref().is_some_and(|p| p.items.is_empty()) {
+                println!("the dry run listed no upload older than {min} days: nothing to abort");
+                return Ok(0);
+            }
             let r: mpu::MpuReport = serde_json::from_value(
                 super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), true).await?,
             )?;
-            let min = older_than_days.unwrap_or(r.threshold_days as f64);
             let chosen: Vec<mpu::UploadRow> = r
                 .uploads
                 .into_iter()
                 .filter(|u| u.age_days.unwrap_or(0.0) > min)
                 .collect();
-            if chosen.is_empty() {
-                println!("no upload older than {min} days");
-                return Ok(0);
-            }
-            let plan = mpu::plan_abort(s, &ep, &t.bucket, &chosen);
-            for i in &plan.items {
-                println!(
-                    "  abort {}  {}  {}",
-                    i.key,
-                    i.id.clone().unwrap_or_default(),
-                    i.detail
-                );
-            }
-            println!("{}", plan.summary);
-            if !yes {
-                println!("\ndry run: to abort them, run again with --yes");
+            let Some(plan) = confirmed else {
+                let plan = mpu::plan_abort(s, &ep, &t.bucket, &chosen);
+                let kept = keep(s, &scope, &plan)?;
+                if chosen.is_empty() {
+                    println!("no upload older than {min} days");
+                    return Ok(0);
+                }
+                print_items(&plan);
+                println!("\ndry run ({kept}): to abort them, run again with --yes");
                 return Ok(4);
-            }
-            let o = exec::execute(s, &plan.id, &plan.confirm).await?;
+            };
+            // each upload it listed, as it listed it: else nothing is aborted
+            mpu::as_planned(&plan, &chosen)?;
+            print_items(&plan);
+            let unlisted = chosen
+                .iter()
+                .filter(|u| {
+                    !plan
+                        .items
+                        .iter()
+                        .any(|i| i.key == u.key && i.id.as_deref() == Some(u.upload_id.as_str()))
+                })
+                .count();
+            let o = exec::run(s, plan).await?;
             println!("aborted {}, failed {}", o.succeeded, o.failed);
             for e in &o.errors {
                 eprintln!("  {e}");
             }
-            Ok(if o.failed > 0 { 70 } else { 0 })
+            if unlisted > 0 {
+                eprintln!(
+                    "{} older than {min} days now, not in the dry run: left as {}. Run the dry run again to list {}",
+                    output::count(unlisted, "more upload"),
+                    if unlisted == 1 { "it is" } else { "they are" },
+                    if unlisted == 1 { "it" } else { "them" },
+                );
+            }
+            let recorded = on_record(&o);
+            Ok(if o.failed > 0 || !recorded { 70 } else { 0 })
         }
         MpuAction::Lifecycle {
             target: t,
             days,
             yes,
+            plan: id,
         } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
-            let plan = mpu::plan_lifecycle_rule(s, &ep, &t.bucket, &t.prefix, *days).await?;
+            let scope = scope(s, Action::PutLifecycle, &ep, t, format!("days={days}"));
+            // --yes writes the document the dry run showed, and only over the
+            // one it read (checked as it runs): never one merged anew
+            let plan = match yes {
+                true => s.guard().take_saved(&scope, id.as_deref())?,
+                false => mpu::plan_lifecycle_rule(s, &ep, &t.bucket, &t.prefix, *days).await?,
+            };
             // the rules, read: what the bucket has, and what it would have
             let before = rules_text(plan.previous_document.as_deref());
             let after = rules_text(plan.document.as_deref());
@@ -258,16 +352,17 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                 println!("  {line}");
             }
             if !yes {
-                println!("\ndry run: to add the rule, run again with --yes");
+                let kept = keep(s, &scope, &plan)?;
+                println!("\ndry run ({kept}): to add the rule, run again with --yes");
                 return Ok(4);
             }
-            let o = exec::execute(s, &plan.id, &plan.confirm).await?;
+            let o = exec::run(s, plan).await?;
             if let Some(e) = o.errors.first() {
                 eprintln!("{e}");
                 return Ok(70);
             }
             println!("applied");
-            Ok(0)
+            Ok(if on_record(&o) { 0 } else { 70 })
         }
     }
 }

@@ -18,9 +18,9 @@ import { Icon } from "./icon";
 import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Choice, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, FIT_PADDING, Heading, ICON, KeyValue, ListRow, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
-import { commandLine } from "../command";
+import { commandLine, exactText, ranCommand } from "../command";
 
-export { commandLine, programOf, ranCommand, scrubCommand } from "../command";
+export { commandLine, exactText, programOf, ranCommand, scrubCommand } from "../command";
 export { RunList, tellApart } from "./runlist";
 
 export { clock };
@@ -183,7 +183,8 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     <View class="gap-2">
       <View class="flex-row items-center gap-3">
         <View selectable class="min-w-0 flex-1" tooltip={<Tip text={runMeta(props.view)} />}>
-          <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
+          {/* a run from elsewhere, beside its Run again: the command whole, nothing of it hidden */}
+          <Title command={command() ? (props.view.external && ranCommand(command()) ? `$ ${exactText(command()!.trim())}` : commandLine(command()!)) : props.view.header.endpoint} />
         </View>
         {props.actions?.()}
       </View>
@@ -220,11 +221,11 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
   );
 }
 
-const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", rust: "Rust · object_store" } as const;
+const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", rust: "Rust · object_store", "rust-aws": "Rust · aws-sdk-s3" } as const;
 type Sdk = keyof typeof SDKS | "config";
 /** A fix's tab: the engine whose setting it is, the SDK's own name, or (a change to the bucket, not the program) "Bucket" in the reader's language. */
 const fixTitle = (f: Fix) => f.setting?.engine ?? (f.sdk === "config" ? t("fix.bucket") : SDKS[f.sdk]);
-const LANG = { python: "python", java: "java", go: "go", js: "javascript", rust: "rust", config: "xml" } as const;
+const LANG = { python: "python", java: "java", go: "go", js: "javascript", rust: "rust", "rust-aws": "rust", config: "xml" } as const;
 /** A fix's language for its highlighting: an engine's by how its comment begins (Rust's `//`, SQL's `--`). */
 const langOf = (f: Fix) => (f.sdk !== "config" ? LANG[f.sdk] : f.code.startsWith("//") ? "rust" : f.code.startsWith("--") ? "sql" : f.setting ? "bash" : LANG.config);
 /** An engine's setting as one line to paste: a flag with its value (alone when it is `true`), else `key = value`. */
@@ -257,7 +258,7 @@ function SettingPanel(props: { s: EngineSetting; onOpenCode?: (place: string) =>
 const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   if (!sdk) return null;
   const s = sdk.toLowerCase();
-  return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : s.startsWith("object_store") ? "rust" : null;
+  return s.startsWith("aws-sdk-rust") ? "rust-aws" : s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : s.startsWith("object_store") ? "rust" : null;
 };
 
 /** "Copy as expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
