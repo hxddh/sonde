@@ -543,7 +543,7 @@ export interface EngineSetting {
 
 /** A finding's fix: code for an SDK, or (`config`) a store's or an engine's setting. */
 export interface Fix {
-  sdk: "python" | "java" | "go" | "js" | "rust" | "config";
+  sdk: "python" | "java" | "go" | "js" | "rust" | "rust-aws" | "config";
   code: string;
   setting?: EngineSetting;
 }

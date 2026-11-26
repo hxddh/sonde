@@ -2263,6 +2263,9 @@ fn fixes_for(advice: &Said) -> Vec<crate::fixes::Fix> {
             ("trial.advice.timeout", "go") => Borrowed(
                 "s3.NewFromConfig(cfg, func(o *s3.Options) {\n    o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) { t.ResponseHeaderTimeout = 2 * time.Second })\n})",
             ),
+            ("trial.advice.timeout", crate::fixes::RUST_AWS) => Borrowed(
+                "aws_config::defaults(BehaviorVersion::latest()).timeout_config(TimeoutConfig::builder().connect_timeout(Duration::from_secs(2)).read_timeout(Duration::from_secs(2)).build()).retry_config(RetryConfig::standard().with_max_attempts(5)).load().await",
+            ),
             ("trial.advice.timeout", "java") => Borrowed(
                 "// (the artifact apache5-client, the SDK's HTTP client; on an older SDK, ApacheHttpClient of apache-client)\nS3Client.builder().httpClientBuilder(Apache5HttpClient.builder().socketTimeout(Duration.ofSeconds(2))).overrideConfiguration(o -> o.retryStrategy(RetryMode.STANDARD)).build()",
             ),
@@ -2282,7 +2285,7 @@ fn fixes_for(advice: &Said) -> Vec<crate::fixes::Fix> {
             _ => return None,
         })
     };
-    ["python", "js", "go", "java"]
+    ["python", "js", "go", "java", crate::fixes::RUST_AWS]
         .into_iter()
         .map(|lang| {
             let comment = if lang == "python" { "#" } else { "//" };
@@ -2297,6 +2300,12 @@ fn fixes_for(advice: &Said) -> Vec<crate::fixes::Fix> {
             }
         })
         .collect()
+}
+
+/// The fixes of an advice by its phrase's key (`trial.advice.cut`), for
+/// [`crate::fixes::catalogue`].
+pub(crate) fn advice_fixes(key: &str) -> Vec<crate::fixes::Fix> {
+    fixes_for(&Said::new(key, &[]))
 }
 
 /// The verdicts that did not survive (broke, degraded) as findings of the

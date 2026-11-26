@@ -1598,7 +1598,7 @@
       "properties": {
         "sdk": {
           "type": "string",
-          "description": "`python`, `java`, `go`, `js`, `rust` (object_store), or `config` for a store's or an engine's setting."
+          "description": "`python`, `java`, `go`, `js`, `rust` (object_store), `rust-aws` (the AWS SDK for Rust), or `config` for a store's or an engine's setting."
         },
         "code": {
           "type": "string",

@@ -3099,7 +3099,19 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             // requests at once by those one after another, not all of their operations'
             let timed: Vec<&Record> = o.timed_ids.iter().filter_map(|id| by_id.get(id)).collect();
             let of = if timed.is_empty() { &rs } else { &timed };
-            o.fixes = crate::fixes::for_finding(first.key, of);
+            // what is read again and written by the program itself after
+            // its first read: its copy is kept until the write, not for
+            // the run (a copy kept past it answers what the write replaced)
+            let rewritten = matches!(first.key, "obs.hot" | "obs.rangeagain")
+                && written_after_first_read(
+                    o.kept_ids
+                        .iter()
+                        .chain(&o.saved_ids)
+                        .filter_map(|id| by_id.get(id)),
+                    &writes,
+                    &by_key,
+                );
+            o.fixes = crate::fixes::for_finding(first.key, of, rewritten);
         }
         (o.callers, o.sdk) = sonde_proxy::callers::of(&rs);
         // the engine's own setting, where its requests are an engine's
@@ -3189,6 +3201,40 @@ fn written_between(
         .iter()
         .take_while(|(at, _)| *at < last)
         .any(|(_, k)| changes(k))
+}
+
+/// Whether the program wrote any object of `reads` (a finding's: those a
+/// copy kept would answer, and each stretch's first) after its first read
+/// of it: a PUT, a copy onto it, a completed upload, a delete, a batch
+/// delete that names it (`writes` and, by key, `by_key`). Such a key's reads
+/// are counted stretch by stretch ([`unchanging`]), and a copy of it is one
+/// to drop on each write, never one kept for the run.
+fn written_after_first_read<'a>(
+    reads: impl Iterator<Item = &'a Record>,
+    writes: &std::collections::HashMap<&str, Vec<(Order, &str)>>,
+    by_key: &std::collections::HashMap<&str, Vec<u32>>,
+) -> bool {
+    let mut first: std::collections::HashMap<(&str, &str), Order> = Default::default();
+    for r in reads {
+        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+            continue;
+        };
+        let at = order_of(r);
+        first
+            .entry((b, k))
+            .and_modify(|f| *f = at.min(*f))
+            .or_insert(at);
+    }
+    first.into_iter().any(|((b, k), read)| {
+        let (Some(w), Some(at)) = (writes.get(b), by_key.get(b)) else {
+            return false;
+        };
+        // the key's writes, in time order: the last is the one to look at
+        let to = at.partition_point(|i| w[*i as usize].1 <= k);
+        to.checked_sub(1)
+            .map(|i| w[at[i] as usize])
+            .is_some_and(|(when, key)| key == k && when > read)
+    })
 }
 
 /// The stretches of one key's reads (`group`, by place) between its writes
