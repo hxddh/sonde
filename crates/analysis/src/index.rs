@@ -160,6 +160,8 @@ struct Read {
     stamp: Option<(u64, u64)>,
     lines: usize,
     index: Arc<Index>,
+    /// Whether the file was there and read (an index of nothing else).
+    present: bool,
 }
 
 /// The indexes read in this process, by folder: read again only when the file changed.
@@ -181,15 +183,24 @@ fn parse(bytes: &[u8]) -> (Index, usize) {
 
 /// What the index of `dir` holds, read again only when it changed.
 pub fn of(dir: &Path) -> Arc<Index> {
+    load(dir).0
+}
+
+/// [`of`], and whether the file was there and could be read: a folder
+/// whose index is missing or unreadable holds nothing, but says nothing
+/// either (of what was imported into it, say).
+fn load(dir: &Path) -> (Arc<Index>, bool) {
     let file = dir.join(FILE);
     let stamp = crate::summary::stamp(&file);
     let mut read = READ.lock();
     if let Some(r) = read.get(dir)
         && r.stamp == stamp
     {
-        return r.index.clone();
+        return (r.index.clone(), r.present);
     }
-    let (index, lines) = std::fs::read(&file).map(|b| parse(&b)).unwrap_or_default();
+    let bytes = std::fs::read(&file);
+    let present = bytes.is_ok();
+    let (index, lines) = bytes.map(|b| parse(&b)).unwrap_or_default();
     let index = Arc::new(index);
     read.insert(
         dir.to_path_buf(),
@@ -197,9 +208,34 @@ pub fn of(dir: &Path) -> Arc<Index> {
             stamp,
             lines,
             index: index.clone(),
+            present,
         },
     );
-    index
+    (index, present)
+}
+
+/// Whether `run` was recorded into the runs folder `dir`: decided from
+/// where the file really is (links followed) and from what the folder's
+/// index says was imported, never from anything in the file, which
+/// whoever made it wrote. Only a regular `.sonde` file directly in `dir`
+/// that is no import was; and only when the index is there to say so: a
+/// folder whose index is missing or cannot be read has every file from
+/// elsewhere (an import would otherwise pass for a recording). A trial's
+/// run, in `trials/`, is not directly in it.
+pub fn recorded_in(dir: &Path, run: &Path) -> bool {
+    let (Ok(file), Ok(dir)) = (run.canonicalize(), dir.canonicalize()) else {
+        return false;
+    };
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let inside = file.parent() == Some(dir.as_path()) && name.ends_with(".sonde") && file.is_file();
+    if !inside {
+        return false;
+    }
+    let (index, present) = load(&dir);
+    present && !index.folder.imports.values().any(|n| *n == name)
 }
 
 /// The folder a run is in, and its name there.
@@ -347,6 +383,7 @@ pub fn update<T>(
                 apply(index, &name, change);
             }
             r.stamp = after;
+            r.present = true;
             r.lines += lines.iter().filter(|b| **b == b'\n').count();
             // mostly stale lines: written again, one line a thing kept
             let f = &r.index.folder;
@@ -462,6 +499,59 @@ mod tests {
             .filter(|n| !n.starts_with('.'))
             .collect();
         assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn a_run_is_recorded_here_only_when_the_index_is_there_to_say_it_is_no_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let own = d.join("own.sonde");
+        let imported = d.join("imported.sonde");
+        std::fs::write(&own, "").unwrap();
+        std::fs::write(&imported, "").unwrap();
+        // no index (lost, or never written): every file is from elsewhere
+        assert!(!recorded_in(d, &own));
+        assert!(!recorded_in(d, &imported));
+        // an index that cannot be read is no index either
+        std::fs::create_dir(d.join(FILE)).unwrap();
+        READ.lock().clear();
+        assert!(!recorded_in(d, &own));
+        std::fs::remove_dir(d.join(FILE)).unwrap();
+        // there and empty: nothing was imported
+        std::fs::write(d.join(FILE), "").unwrap();
+        assert!(recorded_in(d, &own) && recorded_in(d, &imported));
+        update(d, |_| {
+            (
+                vec![(
+                    "digest".into(),
+                    Change::Import(Some("imported.sonde".into())),
+                )],
+                (),
+            )
+        })
+        .unwrap();
+        assert!(recorded_in(d, &own));
+        assert!(!recorded_in(d, &imported));
+        // not directly in the folder, not a run, not there
+        std::fs::create_dir(d.join("trials")).unwrap();
+        std::fs::write(d.join("trials/t.sonde"), "").unwrap();
+        std::fs::write(d.join("notes.txt"), "").unwrap();
+        assert!(!recorded_in(d, &d.join("trials/t.sonde")));
+        assert!(!recorded_in(d, &d.join("notes.txt")));
+        assert!(!recorded_in(d, &d.join("gone.sonde")));
+        // the index removed: elsewhere again, though this process read it
+        std::fs::remove_file(d.join(FILE)).unwrap();
+        assert!(!recorded_in(d, &own));
+    }
+
+    #[test]
+    fn a_first_change_makes_the_index_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = dir.path().join("own.sonde");
+        std::fs::write(&own, "").unwrap();
+        assert!(!recorded_in(dir.path(), &own));
+        set(&own, Change::Exit(0));
+        assert!(recorded_in(dir.path(), &own));
     }
 
     #[test]

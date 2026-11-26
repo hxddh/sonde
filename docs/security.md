@@ -13,7 +13,9 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
   parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)), before anything stores or
   shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. A run's file redacts
-  again what it is given to write, so an imported HAR or log is held to the same. "Copy as curl" has no signature.
+  again what it is given to write, so an imported HAR or log is held to the same; a mask in a value (`…`,
+  `«redacted»`) is no proof it was redacted, only redacting it again changing nothing is. "Copy as curl" has no
+  signature, and a command longer than cmd.exe reads in one line is not copied for it (it would run another).
 - A source of credentials that fails says how, not what it printed: a `credential_process`'s exit status, never its
   output. A recorded program is answered `500 SondeCredentials` naming the endpoint (and that exit status) only, and
   the run keeps the same.
@@ -47,7 +49,12 @@ destructive actions are gated, and a recorded program is limited by a policy.
   and from program source only: the file must be a regular file inside the folder the run ran in, links followed,
   never a settings or data file, a device or a network path. A run names that folder and its callers itself, so a
   run from someone else can have no other file read out (`/etc/passwd`, `../../.aws/credentials`, a link out of the
-  tree); what it can still name is a line of source under a folder of its choosing.
+  tree). Only a run recorded here has its lines read: one from elsewhere (an import, a file opened from anywhere,
+  `-o`) names its folder itself, so `show` says where each caller is and reads nothing.
+- Every use of a run's folder (its project's `sonde.toml`, its engine settings, git, a code change) goes through one
+  check (`sonde-analysis::code::local_dir`): a folder on this machine, on Windows a drive's (`C:\…`, `\\?\C:\…`) that
+  still is one once resolved. A share (`\\host\share`), a device or NT path (`\\.\`, `\\?\GLOBALROOT`, `\??\`) is never
+  listed, read or given to git, so a file from elsewhere cannot make sonde reach a host.
 
 ## One safety model
 
@@ -125,7 +132,8 @@ file anyone can send is not believed about either.
 - Whether a run is sonde's own is decided in Rust, from where its file is and never from what it says: only a run
   recorded into the runs folder is. A file opened, dropped, picked or linked to (`sonde://open`) is kept there as a
   copy and marked as an import in the folder's index before it is written; it, and a run written elsewhere (`-o`),
-  are from elsewhere. (A file put in the runs folder by hand is taken for a recording.)
+  are from elsewhere. (A file put in the runs folder by hand is taken for a recording while the folder's index is
+  there to say it is no import; with the index lost or unreadable every run there is from elsewhere.)
 - Of a run from elsewhere nothing starts until a dialog has shown the command and the folder exactly as they would
   run and the user has said yes: no value hidden, nothing cut, and every character that would not show as itself
   (a line break, a control or escape character, one that turns the text's direction, one of no width) written as

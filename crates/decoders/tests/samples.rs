@@ -610,7 +610,11 @@ async fn iceberg_v3_deletion_vectors_and_statistics() {
     };
     assert_eq!(said("Records"), Some("140"));
     assert_eq!(said("Deleted rows"), Some("10"));
-    assert_eq!(said("Data files"), Some("3"));
+    assert_eq!(
+        said("Data files"),
+        Some("2"),
+        "data files only, not the Puffin file"
+    );
     let files = &snap.tables[0].rows;
     assert_eq!(files.len(), 4);
     let vectors: Vec<_> = files.iter().filter(|r| r[1] == "deletion vector").collect();

@@ -134,7 +134,8 @@ impl DataFile {
 
 /// What a snapshot's files come to. A Puffin file of several deletion
 /// vectors is one file, its bytes counted once; the rows its vectors delete
-/// are not live.
+/// are not live, nor those position delete files name. Equality deletes
+/// name values, not rows: what they delete is not known from the files.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct Totals {
     /// Files: each path once.
@@ -142,7 +143,8 @@ struct Totals {
     data_files: usize,
     delete_files: usize,
     bytes: i64,
-    /// Rows of the data files, less those deletion vectors delete.
+    /// Rows of the data files, less those deletion vectors and position
+    /// delete files delete.
     records: i64,
     vectors: usize,
     /// Rows deletion vectors delete.
@@ -153,6 +155,8 @@ impl Totals {
     fn of(files: &[DataFile]) -> Totals {
         let mut t = Totals::default();
         let mut shared: BTreeSet<&str> = BTreeSet::new();
+        // rows position delete files (v2) delete
+        let mut positions = 0;
         for f in files {
             if f.vector.is_some() {
                 t.vectors += 1;
@@ -169,9 +173,12 @@ impl Totals {
                 t.records += f.records;
             } else {
                 t.delete_files += 1;
+                if f.content == 1 && f.vector.is_none() {
+                    positions += f.records.max(0);
+                }
             }
         }
-        t.records = (t.records - t.deleted).max(0);
+        t.records = (t.records - t.deleted - positions).max(0);
         t
     }
 }
@@ -684,7 +691,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         let mut facts = vec![
             fact("Snapshot", s.id),
             fact("Operation", &s.operation),
-            fact("Data files", totals.files),
+            fact("Data files", totals.data_files),
             fact("Records", totals.records),
             fact("Bytes", human_bytes(totals.bytes.max(0) as u64)),
         ];
@@ -720,6 +727,41 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file(path: &str, content: i64, records: i64, vector: bool) -> DataFile {
+        DataFile {
+            path: path.into(),
+            content,
+            format: if vector { "puffin" } else { "parquet" }.into(),
+            records,
+            bytes: 100,
+            vector: vector.then_some(Vector {
+                offset: 4,
+                size: 40,
+                of: None,
+            }),
+        }
+    }
+
+    /// v2 position deletes delete rows as v3 deletion vectors do; equality
+    /// deletes name values, and are no count of rows.
+    #[test]
+    fn position_deletes_are_not_live_rows_and_delete_files_are_no_data_files() {
+        let t = Totals::of(&[
+            file("d1.parquet", 0, 100, false),
+            file("d2.parquet", 0, 50, false),
+            file("p1.parquet", 1, 30, false),
+            file("e1.parquet", 2, 7, false),
+            file("v.puffin", 1, 5, true),
+            file("v.puffin", 1, 5, true),
+        ]);
+        assert_eq!((t.files, t.data_files, t.delete_files), (5, 2, 3));
+        assert_eq!(t.records, 150 - 30 - 10);
+        assert_eq!((t.vectors, t.deleted), (2, 10));
+        // never fewer than none
+        let t = Totals::of(&[file("d", 0, 10, false), file("p", 1, 30, false)]);
+        assert_eq!(t.records, 0);
+    }
 
     /// 78 bytes whose header's map says it holds some hundred million
     /// entries (`fuzz/`, `iceberg_avro`): refused, not reserved.

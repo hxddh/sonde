@@ -27,6 +27,12 @@ pub async fn run(s: &Sonde, plan: Plan) -> Result<Outcome, S3Error> {
             plan.bucket
         )));
     }
+    // the uploads a plan aborts, as it listed them: one gone or written to
+    // since refuses all (a terminal's `--yes` and the app's confirm alike)
+    if plan.action == Action::AbortUploads {
+        let now = crate::services::mpu::listed_now(s, &plan).await?;
+        crate::services::mpu::as_planned(&plan, &now)?;
+    }
     let mut entry = AuditEntry {
         time: Utc::now(),
         plan: plan.id.clone(),
@@ -239,6 +245,76 @@ mod tests {
         // and an outcome that was written says nothing of it
         let v = serde_json::to_value(Outcome::default()).unwrap();
         assert!(v.get("auditError").is_none(), "{v}");
+    }
+
+    /// A plan to abort uploads runs only on the uploads as it listed them,
+    /// in the app as in a terminal: one written to since (it is in use)
+    /// refuses all of it, before the audit log or the store is touched.
+    #[tokio::test]
+    async fn uploads_changed_since_their_plan_are_not_aborted() {
+        use crate::services::mpu;
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let server = crate::demo::start().await.unwrap();
+        let mut e =
+            crate::EndpointConfig::new("d", "d", &server.url(), "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Static {
+            access_key_id: "AKIADEMODEMODEMO0000".into(),
+            secret_access_key: "demo".into(),
+        };
+        s.add_transient_endpoint(e).unwrap();
+        let c = s.client("d").unwrap();
+        let stale = || async {
+            let job = mpu::scan(&s, "d", "demo", "");
+            let r: mpu::MpuReport =
+                serde_json::from_value(s.jobs().wait(&job).await.unwrap()).unwrap();
+            r.uploads
+                .into_iter()
+                .filter(|u| u.stale)
+                .collect::<Vec<_>>()
+        };
+        let uploads = || async {
+            let mut ids: Vec<String> = c
+                .list_multipart_uploads("demo", None, None, None)
+                .await
+                .unwrap()
+                .upload
+                .into_iter()
+                .map(|u| u.upload_id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let rows = stale().await;
+        assert_eq!(rows.len(), 2);
+        let plan = mpu::plan_abort(&s, "d", "demo", &rows);
+        // meanwhile, a part arrives in one of them
+        let part = s3raw::S3Request::new("UploadPart", http::Method::PUT)
+            .bucket("demo")
+            .key("videos/raw-0042.mov")
+            .query("partNumber", "2")
+            .query("uploadId", "upload-old-2")
+            .body(s3raw::Body::from("more"));
+        c.send_raw(part).await.unwrap();
+        let err = execute(&s, &plan.id, &plan.confirm).await.unwrap_err();
+        assert_eq!(err.kind, s3raw::ErrorKind::Refused, "{err}");
+        assert!(err.message.contains("changed since the dry run"), "{err}");
+        assert!(
+            err.message
+                .contains("videos/raw-0042.mov (upload-old-2) is now 2 parts"),
+            "{err}"
+        );
+        assert_eq!(
+            uploads().await,
+            ["upload-new", "upload-old-1", "upload-old-2"]
+        );
+        assert!(s.guard().audit_entries(10).is_empty());
+        // planned again from what is there: it runs, and only on what it lists
+        let plan = mpu::plan_abort(&s, "d", "demo", &stale().await);
+        let out = execute(&s, &plan.id, &plan.confirm).await.unwrap();
+        assert_eq!((out.succeeded, out.failed), (2, 0));
+        assert_eq!(uploads().await, ["upload-new"]);
     }
 
     /// A lifecycle PUT replaces the whole configuration: a rule added

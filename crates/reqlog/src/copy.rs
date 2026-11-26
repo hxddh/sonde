@@ -178,6 +178,26 @@ impl Command {
     }
 }
 
+/// The most cmd.exe reads in one line, in UTF-16 units: a longer paste is
+/// cut, and what runs is another command.
+const CMD_LINE: usize = 8191;
+
+impl Command {
+    /// [`Command::render`], or why not when cmd.exe could not read it whole.
+    fn render_or_refuse(self, shell: Shell) -> String {
+        let out = self.render(shell);
+        let long = shell == Shell::Cmd && out.lines().any(|l| l.encode_utf16().count() >= CMD_LINE);
+        if long {
+            refused(
+                shell,
+                "it is longer than cmd.exe reads in one line (8191 characters); copy it for PowerShell",
+            )
+        } else {
+            out
+        }
+    }
+}
+
 /// A request that is not copied: why, as a comment.
 fn refused(shell: Shell, why: &str) -> String {
     format!("{} sonde: not copied: {why}", shell.comment())
@@ -410,7 +430,7 @@ const NUMBERS: &[&str] = &[
 /// An `aws s3api` command doing what the record did, written for `shell`.
 pub fn as_aws_cli(r: &Record, shell: Shell) -> String {
     match aws_cli(r, shell) {
-        Ok(c) => c.render(shell),
+        Ok(c) => c.render_or_refuse(shell),
         Err(why) => refused(shell, why),
     }
 }
@@ -521,7 +541,7 @@ fn header_name(name: &str) -> bool {
 /// one with `--aws-sigv4`.
 pub fn as_curl(r: &Record, shell: Shell) -> String {
     match curl(r, shell) {
-        Ok(c) => c.render(shell),
+        Ok(c) => c.render_or_refuse(shell),
         Err(why) => refused(shell, why),
     }
 }
@@ -1535,5 +1555,23 @@ mod tests {
         }
         // nothing ran but the two functions: no file was made
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cmd_refuses_a_line_it_would_cut() {
+        let mut r = rec();
+        r.kind = "GetObject".into();
+        // a key of quotes and percents: each written longer for cmd.exe
+        let key = "\"%".repeat(2000);
+        r.key = Some(key.into());
+        r.rare_mut().url = format!("http://127.0.0.1:9000/bucket/{}", "%22%25".repeat(2000));
+        for text in [as_curl(&r, Shell::Cmd), as_aws_cli(&r, Shell::Cmd)] {
+            assert!(
+                text.starts_with("rem sonde: not copied: it is longer than cmd.exe"),
+                "{text}"
+            );
+        }
+        assert!(!as_curl(&r, Shell::PowerShell).contains("not copied"));
+        assert!(!as_curl(&rec(), Shell::Cmd).contains("not copied"));
     }
 }

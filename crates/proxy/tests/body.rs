@@ -429,3 +429,59 @@ async fn a_signed_body_read_whole_is_as_long_as_it_said() {
     })
     .await;
 }
+
+/// A signed body that says it carries nothing (`x-amz-decoded-content-length:
+/// 0`) is held to its framing too: the store, told a length of 0, would never
+/// read it, so it is read whole first. Its last chunk, and nothing past it,
+/// goes through as an empty object; anything else is refused and makes
+/// none. Before 34.1 any body at all went through as an empty object.
+#[tokio::test]
+async fn a_signed_body_of_no_payload_is_held_to_its_framing() {
+    bounded(async {
+        let (store, proxy, _log) = setup(None).await;
+        let sig = "0".repeat(64);
+        let last = format!("0;chunk-signature={sig}\r\n\r\n");
+        for (key, body, code) in [
+            ("empty-exact", last.clone(), None),
+            // the last chunk with no blank line after it, as SDKs end
+            ("empty-bare", format!("0;chunk-signature={sig}\r\n"), None),
+            (
+                "empty-garbled",
+                "zz;chunk-signature=x\r\n\r\n".to_string(),
+                Some("InvalidRequest"),
+            ),
+            (
+                "empty-cut",
+                format!("0;chunk-signature={}", &sig[..10]),
+                Some("IncompleteBody"),
+            ),
+            ("empty-none", String::new(), Some("IncompleteBody")),
+            (
+                "empty-more",
+                format!("5;chunk-signature={sig}\r\nhello\r\n{last}"),
+                Some("InvalidRequest"),
+            ),
+        ] {
+            let answer = exchange(
+                &proxy,
+                &put(&proxy, key, SIGNED, 0, body.as_bytes(), body.len()),
+                Then::Waits,
+            )
+            .await;
+            match code {
+                None => {
+                    assert!(answer.starts_with("HTTP/1.1 200"), "{key}: {answer}");
+                    assert!(store.keys("data").contains(&key.to_string()), "{key}");
+                }
+                Some(code) => {
+                    refused(&answer, code, key);
+                    assert!(
+                        !store.keys("data").contains(&key.to_string()),
+                        "{key}: an object was made"
+                    );
+                }
+            }
+        }
+    })
+    .await;
+}

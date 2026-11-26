@@ -525,7 +525,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
       onExpect={(o) => copy(`expect = { ${JSON.stringify(o.identity)} = ${JSON.stringify(t("expect.reason"))} }`, t("expect.copied"))}
       onOpenCode={(place) => api.runs.openCode(props.path, place).catch(report)}
       // the demo's job: its fix applied to its code, and run again
-      onApply={isDemoJob(view()!.header) ? () => void applyDemoFix(view()!.header.cwd) : undefined}
+      onApply={isDemoJob(view()) ? () => void applyDemoFix() : undefined}
     />
   );
   /** When: the run's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
@@ -676,7 +676,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const roomy = () => box().w >= BREAK.inspector;
   const inspecting = () => !!(episode() || record() || diagnosis());
   /** The inspector shows a diagnosis's Apply (the demo's job): the screen's one primary. */
-  const applying = () => !episode() && !record() && !!diagnosis() && isDemoJob(view()?.header) && !!headOf(view()!, diagnosis()!)?.fixes?.length;
+  const applying = () => !episode() && !record() && !!diagnosis() && isDemoJob(view()) && !!headOf(view()!, diagnosis()!)?.fixes?.length;
   const inspectorTitle = () => (record() ? t("inspector.request") : episode() ? t("inspector.operation") : diagnosis() ? t("fix.title") : t("inspector.operation"));
   // the findings a line each, the one chosen in full, so the operations keep the room; a tall window has it for both
   const dense = () => box().h < BREAK.tall;

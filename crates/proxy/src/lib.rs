@@ -353,7 +353,9 @@ impl Made {
                     .map(|h| h.value.as_str())
             };
             let versioned = r.query().iter().any(|(k, _)| k == "versionId");
-            match (r.bucket.as_deref(), r.key.as_deref()) {
+            // a record's `%FF` may be a key of bytes or one of text: neither is proven
+            let key = r.key.as_deref().filter(|k| !may_be_bytes(k));
+            match (r.bucket.as_deref(), key) {
                 (Some(b), Some(k))
                     if r.status == Some(404) && reads_object(&r.kind) && !versioned =>
                 {
@@ -1317,6 +1319,23 @@ fn decode_key(s: &str) -> String {
     out
 }
 
+/// Whether a key as the path writes it decodes to UTF-8 text: one that
+/// does not has a record ([`decode_key`]'s `%FF`) that a key of text
+/// (`%25FF`) has too.
+fn text_key(raw: &str) -> bool {
+    std::str::from_utf8(&percent_encoding::percent_decode_str(raw).collect::<Vec<u8>>()).is_ok()
+}
+
+/// Whether a key as a record has it could be one that is not text: it
+/// holds a `%XX` of a byte past ASCII, as [`decode_key`] writes one.
+fn may_be_bytes(key: &str) -> bool {
+    key.as_bytes().windows(3).any(|w| {
+        w[0] == b'%'
+            && matches!(w[1], b'8'..=b'9' | b'A'..=b'F')
+            && matches!(w[2], b'0'..=b'9' | b'A'..=b'F')
+    })
+}
+
 /// Bucket and key from the Host header and the path. `<bucket>.localhost`
 /// hosts are virtual-hosted style; anything else is path style.
 pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) {
@@ -1530,6 +1549,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // `%FF`, `a//b`): decoded and encoded again it could name another key.
     // It is signed as the store reads it.
     let raw_key = raw_key(&host, parts.uri.path());
+    // the key no-delete knows what was made by: a key that is not text has
+    // a record (`%FF`) another key's has too (`%25FF`), so it is not one
+    let made_key = key.as_deref().filter(|_| raw_key.is_none_or(text_key));
     let (origin, path, upstream_host) = client.address_raw(&endpoint, bucket.as_deref(), raw_key);
     let canonical = sigv4::canonical_uri(&path);
     let qs = sigv4::canonical_query(&query);
@@ -1643,13 +1665,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let mut judge_batch = false;
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let own = mode == "no-delete"
-            && shared.cfg.made.may_remove(
-                &operation,
-                bucket.as_deref(),
-                key.as_deref(),
-                &query,
-                None,
-            );
+            && shared
+                .cfg
+                .made
+                .may_remove(&operation, bucket.as_deref(), made_key, &query, None);
         judge_batch = mode == "no-delete" && operation == "DeleteObjects" && !own;
         if !own && !judge_batch {
             let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
@@ -1747,7 +1766,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         && !shared.cfg.made.may_remove(
             &operation,
             bucket.as_deref(),
-            key.as_deref(),
+            made_key,
             &query,
             record.rare().request_body.as_deref(),
         )
@@ -1870,8 +1889,32 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Some(plan.sent_len()),
             )
         } else if streaming_sig {
-            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer, idle).await {
-                Ok(raw) => raw,
+            // a body that says it carries nothing is framing alone: a few
+            // lines, read whole and held to them before the store has any
+            let empty = declared == Some(0);
+            let limit = if empty {
+                EMPTY_FRAMING_MAX
+            } else {
+                shared.cfg.max_buffer
+            };
+            let read = whole(early.take(), body.take(), limit, idle)
+                .await
+                .map_err(|e| {
+                    if empty && e.over_limit() {
+                        BodyError::longer(0)
+                    } else {
+                        e
+                    }
+                })
+                .and_then(|raw| decode_whole(&raw))
+                .and_then(|d| {
+                    // the payload it said it had, no less and no more
+                    BodyError::length(declared, d.payload.len() as u64)?;
+                    let trailers = named_checksums(&parts.headers, d.trailers)?;
+                    Ok((d.payload, trailers))
+                });
+            let (payload, trailers) = match read {
+                Ok(read) => read,
                 Err(e) => {
                     let msg = e.message();
                     record.rare_mut().transport_error = Some(msg.clone());
@@ -1879,21 +1922,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     return Ok(xml_error(400, e.code, &msg));
                 }
             };
-            let decoded = match chunked::decode(&raw) {
-                Ok(d) => d,
-                Err(e) => {
-                    record.rare_mut().transport_error = Some(e.clone());
-                    held.push(record);
-                    return Ok(xml_error(400, "InvalidRequest", &e));
-                }
-            };
-            // the payload it said it had, no less and no more
-            if let Err(e) = BodyError::length(declared, decoded.payload.len() as u64) {
-                let msg = e.message();
-                record.rare_mut().transport_error = Some(msg.clone());
-                held.push(record);
-                return Ok(xml_error(400, e.code, &msg));
-            }
             out.retain(|(k, _)| {
                 let k = k.to_ascii_lowercase();
                 k != "x-amz-decoded-content-length" && k != "x-amz-trailer"
@@ -1909,18 +1937,18 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
             out.retain(|(k, v)| !(k.eq_ignore_ascii_case("content-encoding") && v.is_empty()));
-            for (k, v) in decoded.trailers {
+            for (k, v) in trailers {
                 if !out.iter().any(|(n, _)| n.eq_ignore_ascii_case(&k)) {
                     out.push((k, v));
                 }
             }
-            let hash = sigv4::sha256_hex(&decoded.payload);
-            let n = decoded.payload.len() as u64;
+            let hash = sigv4::sha256_hex(&payload);
+            let n = payload.len() as u64;
             if reqlog::is_control_operation(&operation) {
                 record.rare_mut().request_body =
-                    Some(String::from_utf8_lossy(&decoded.payload).into_owned());
+                    Some(String::from_utf8_lossy(&payload).into_owned());
             }
-            (hash, moved.body(decoded.payload.into()), Some(n))
+            (hash, moved.body(payload.into()), Some(n))
         } else if !has_body {
             let hash = if content_sha.is_empty() {
                 sigv4::EMPTY_SHA256.to_string()
@@ -2173,7 +2201,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         == Some(fault::Condition::Create);
     if status.is_success()
         && writes_object(&operation)
-        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+        && let (Some(b), Some(k)) = (bucket.as_deref(), made_key)
     {
         let version = headers
             .iter()
@@ -2184,7 +2212,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if status.as_u16() == 404
         && reads_object(&operation)
         && !query.iter().any(|(k, _)| k == "versionId")
-        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+        && let (Some(b), Some(k)) = (bucket.as_deref(), made_key)
     {
         shared.cfg.made.missing(b, k);
     }
@@ -2618,13 +2646,64 @@ async fn whole(
                 if raw.len() + data.len() > limit {
                     return Err(BodyError {
                         code: "IncompleteBody",
-                        why: "length limit exceeded".into(),
+                        why: OVER_LIMIT.into(),
                     });
                 }
                 raw.extend_from_slice(&data);
             }
         }
     }
+}
+
+/// Why [`whole`] stopped reading a body past its limit.
+const OVER_LIMIT: &str = "length limit exceeded";
+
+/// The most an `aws-chunked` body of no payload is read to: its last chunk
+/// and a trailer or two, signed.
+const EMPTY_FRAMING_MAX: usize = 64 << 10;
+
+/// An `aws-chunked` body held whole, decoded: framing that does not read is
+/// `InvalidRequest`, framing that stops before its end `IncompleteBody`, as
+/// a body decoded as it arrives ([`Framing::end`]).
+fn decode_whole(raw: &[u8]) -> Result<chunked::Decoded, BodyError> {
+    let mut d = chunked::Decoder::default();
+    let mut payload = Vec::with_capacity(raw.len());
+    d.feed(raw, &mut payload).map_err(BodyError::framing)?;
+    d.finish().map_err(BodyError::unfinished)?;
+    Ok(chunked::Decoded {
+        payload,
+        trailers: d.trailers,
+    })
+}
+
+/// The trailers of a signed `aws-chunked` body read whole that go on as
+/// headers: the checksums `x-amz-trailer` names, each of which must be
+/// there. No other trailer goes on: it was never judged as a header is
+/// (a `x-amz-bypass-governance-retention` there would reach the store
+/// signed), nor can it stand for one sonde sets (`host`, `content-length`).
+fn named_checksums(
+    headers: &http::HeaderMap,
+    trailers: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, BodyError> {
+    let mut out = Vec::new();
+    for name in header_value(headers, "x-amz-trailer")
+        .split(',')
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| chunked::checksum_len(t).is_some())
+    {
+        if out.iter().any(|(k, _)| *k == name) {
+            continue;
+        }
+        match trailers.iter().find(|(k, _)| *k == name) {
+            Some((_, v)) => out.push((name, v.clone())),
+            None => {
+                return Err(BodyError::framing(format!(
+                    "aws-chunked: no trailer {name}"
+                )));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Why a request's body is not the one its headers said: S3's error code
@@ -2636,6 +2715,11 @@ struct BodyError {
 }
 
 impl BodyError {
+    /// It was longer than [`whole`] reads.
+    fn over_limit(&self) -> bool {
+        self.why == OVER_LIMIT
+    }
+
     /// What the program is answered, and its record says.
     fn message(&self) -> String {
         format!("sonde could not read the request body: {}", self.why)
@@ -2919,7 +3003,8 @@ const RECHUNK: usize = 64 << 10;
 
 impl Streamed {
     /// How a request's body is streamed, when it can be: its payload's
-    /// length said, and each trailer one whose length is known.
+    /// length said and not 0 (or a trailer to send), and each trailer one
+    /// whose length is known.
     fn of(headers: &http::HeaderMap) -> Option<Streamed> {
         let decoded = header_value(headers, "x-amz-decoded-content-length")
             .parse()
@@ -2930,6 +3015,11 @@ impl Streamed {
             .filter(|t| !t.is_empty())
             .map(|t| chunked::checksum_len(&t).map(|n| (t, n)))
             .collect::<Option<Vec<_>>>()?;
+        // nothing to send: the store, told a length of 0, would never ask
+        // for the body, and its framing would go unread (read whole instead)
+        if decoded == 0 && trailers.is_empty() {
+            return None;
+        }
         Some(Streamed { decoded, trailers })
     }
 
@@ -3149,6 +3239,40 @@ impl Drop for Pending {
 mod tests {
     use super::*;
 
+    /// A key that is not text and the key of text its record reads as are
+    /// told apart: the path says which it is, and a record that could be
+    /// either proves neither made.
+    #[test]
+    fn a_key_of_bytes_is_not_the_text_its_record_reads_as() {
+        assert!(!text_key("%FF") && !text_key("a/caf%E9"));
+        assert!(text_key("%25FF") && text_key("%E6%97%A5") && text_key("a+b"));
+        assert_eq!(decode_key("%FF"), decode_key("%25FF"));
+        assert!(may_be_bytes("%FF") && may_be_bytes("caf%E9"));
+        assert!(
+            !may_be_bytes("100%")
+                && !may_be_bytes("%25")
+                && !may_be_bytes("%ff")
+                && !may_be_bytes("%7F")
+        );
+        let mut create = Record {
+            method: "PUT".into(),
+            kind: "PutObject".into(),
+            bucket: Some("data".into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        create
+            .lists_mut()
+            .request_headers
+            .push(Header::new("If-None-Match", "*"));
+        let of = |key: &str| {
+            let mut r = create.clone();
+            r.key = Some(key.into());
+            Made::of(&[r]).may_remove("DeleteObject", Some("data"), Some(key), &[], None)
+        };
+        assert!(of("tmp/a") && of("100%"));
+        assert!(!of("%FF") && !of("caf%E9"));
+    }
     #[test]
     fn an_injected_error_is_escaped_as_a_refusal_is() {
         use http_body_util::BodyExt;

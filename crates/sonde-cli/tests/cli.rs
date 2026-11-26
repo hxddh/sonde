@@ -277,24 +277,54 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     let out = stdout(&sonde(t.path(), &["show", &first, "--all"]));
     // what sonde reads from requests: the lookups are an operation, not four
     // lines. The job is played in real time, and lookups are one burst while
-    // no more than a quarter of a second apart (`episode::BURST`): a runner
-    // that stalls between two of them reads `3 lookups` and one more
-    // operation, which is as true a reading of that run (a Windows runner
-    // did, between the first and the second). The burst's rule is held on
-    // times of its own in `crates/analysis`; here, that the demo reads so.
-    let burst = ["4 lookups", "3 lookups"]
-        .iter()
-        .any(|n| out.contains(&format!("{n} in demo/tour/, none found")));
+    // no more than a quarter of a second apart (`episode::BURST`), three or
+    // more of them: a runner that stalls between two reads them in the
+    // stretches its stalls leave (a Windows runner read `3 lookups`, a stall
+    // between the first and the second). The burst's rule is held on times of
+    // its own in `crates/analysis`; here, that the demo reads as its times say.
+    let mut bursts: Vec<usize> = Vec::new();
+    let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
+    let file = t.path().join("data/runs").join(format!("{first}.sonde"));
+    let text = std::io::read_to_string(flate2::read::MultiGzDecoder::new(
+        std::fs::File::open(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())),
+    ))
+    .unwrap();
+    for line in text.lines().skip(1) {
+        let r: serde_json::Value = serde_json::from_str(line).unwrap();
+        let lookup = r["method"] == "HEAD"
+            && r["status"] == 404
+            && r["key"].as_str().is_some_and(|k| k.starts_with("tour/"));
+        if !lookup {
+            continue;
+        }
+        let time: chrono::DateTime<chrono::Utc> = r["time"].as_str().unwrap().parse().unwrap();
+        match last {
+            Some(l) if (time - l).num_milliseconds() <= 250 => *bursts.last_mut().unwrap() += 1,
+            _ => bursts.push(1),
+        }
+        last = Some(time);
+    }
+    assert_eq!(bursts.iter().sum::<usize>(), 4, "four lookups in {text}");
+    let grouped: Vec<usize> = bursts.iter().copied().filter(|n| *n >= 3).collect();
+    for n in &grouped {
+        let said = format!("{n} lookups in demo/tour/, none found");
+        assert!(
+            out.contains(&said),
+            "no {said:?} (bursts {bursts:?}) in:\n{out}"
+        );
+    }
+    if grouped.is_empty() {
+        assert!(
+            !out.contains("lookups in demo/tour/"),
+            "bursts {bursts:?}:\n{out}"
+        );
+    }
+    // 12 requests, each burst one operation
+    let operations = 12 - grouped.iter().map(|n| n - 1).sum::<usize>();
+    let said = format!("12 requests ({operations} operations) from boto3 1.35");
     assert!(
-        burst,
-        "no lookups in demo/tour/ read as one operation in:\n{out}"
-    );
-    let operations = ["9 operations", "10 operations"]
-        .iter()
-        .any(|n| out.contains(&format!("12 requests ({n}) from boto3 1.35")));
-    assert!(
-        operations,
-        "not 12 requests in 9 operations (10 on a stalled runner) in:\n{out}"
+        out.contains(&said),
+        "no {said:?} (bursts {bursts:?}) in:\n{out}"
     );
     for line in [
         // the costs of a few requests are under a cent: their shares, in the table
@@ -4173,7 +4203,8 @@ fn an_outcome_the_audit_log_could_not_take_is_said_on_stderr() {
 /// of each caller: `show` reads a line of code only from program source
 /// inside that folder. A caller that names a file elsewhere (by its whole
 /// path, by `..`, through a link), or one that is no source, has no line of
-/// it in any output.
+/// it in any output. Nor has a run that was not recorded here (a file
+/// elsewhere on the disk): it names its folder itself.
 #[test]
 fn show_reads_a_callers_line_only_from_source_inside_the_folder_the_run_ran_in() {
     use std::io::Read;
@@ -4204,17 +4235,20 @@ fn show_reads_a_callers_line_only_from_source_inside_the_folder_the_run_ran_in()
         std::os::unix::fs::symlink(root.join("outside.py"), project.join("link.py")).unwrap();
         std::os::unix::fs::symlink(&root, project.join("up")).unwrap();
     }
-    // the run as someone crafted it: it ran in `cwd`, its callers in `file`
-    let crafted = |name: &str, cwd: &Path, file: &str| -> String {
+    // the run as someone crafted it: it ran in `cwd`, its callers in `file`;
+    // put in the runs folder by hand, it is taken for a recording
+    let runs = t.path().join("data/runs");
+    let crafted_in = |dir: &Path, name: &str, cwd: &Path, file: &str| -> String {
         let (header, records) = text.split_once('\n').unwrap();
         let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
         header["cwd"] = cwd.to_str().unwrap().into();
         let file = serde_json::to_string(file).unwrap();
         let records = records.replace("export.py:", &format!("{}:", file.trim_matches('"')));
-        let path = root.join(name);
+        let path = dir.join(name);
         std::fs::write(&path, format!("{header}\n{records}")).unwrap();
         path.to_string_lossy().into_owned()
     };
+    let crafted = |name: &str, cwd: &Path, file: &str| crafted_in(&runs, name, cwd, file);
     let outputs = |run: &str| -> String {
         [
             vec!["show", run, "-f", "json"],
@@ -4247,6 +4281,12 @@ fn show_reads_a_callers_line_only_from_source_inside_the_folder_the_run_ran_in()
         "{at}"
     );
     assert!(outputs(&inside).contains("INSIDE-LINE"));
+    // the same run as a file elsewhere: the place is said, no line is read
+    let theirs = crafted_in(&root, "theirs.sonde", &project, "etl/export.py");
+    let at = first_place(&theirs);
+    assert_eq!(at["file"], "etl/export.py", "{at}");
+    assert!(at.get("code").is_none(), "{at}");
+    assert!(!outputs(&theirs).contains("INSIDE-LINE"));
     let whole = |p: &str| root.join(p).to_string_lossy().into_owned();
     let mut elsewhere = vec![
         // by its whole path (as /etc/passwd would be named), a source file too

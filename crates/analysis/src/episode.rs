@@ -2114,6 +2114,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             )
             .weigh(put_ids.len(), put_saved.len(), total)
             .saving_of(put_saved)
+            // packed, the same bytes are uploaded in fewer writes
+            .keeping_bytes()
             .across(put_buckets),
         );
     }

@@ -1057,7 +1057,7 @@ pub fn timing_limit(base_ms: f64, tolerance: f64) -> f64 {
 
 /// The room [`timing_limit`] leaves over `base_ms`: how far one run's
 /// timing may be from another's before `check` says it moved. The least a
-/// program's noise is taken for while only two or three of its runs say it
+/// program's noise is taken for by two of its runs, and half of it by more
 /// ([`crate::fixloop::spread_ms`]).
 pub fn timing_room(base_ms: f64, tolerance: f64) -> f64 {
     base_ms * tolerance + WAITING_SLACK_MS

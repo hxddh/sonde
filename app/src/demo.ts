@@ -12,9 +12,12 @@ import { busy, launch, running } from "./run";
 import { findingOnOpen, go, openRun, paneOnOpen, report, shownRun, startDemo } from "./store";
 import type { RunView } from "./types";
 
-/** Whether a run is the demo's job, on the demo store: its finding can be applied. */
-export function isDemoJob(h: RunView["header"] | null | undefined): boolean {
-  return !!h && h.endpoint === "demo" && (h.command ?? "").trim() === DEMO_COMMAND;
+/** Whether a run is the demo's job, on the demo store, recorded here: its finding can be applied. A run opened from
+ * elsewhere (`external`, decided in Rust) is never taken for it, whatever its header says. */
+export function isDemoJob(v: Pick<RunView, "header" | "external"> | null | undefined): boolean {
+  if (!v || v.external) return false;
+  const h = v.header;
+  return h.endpoint === "demo" && (h.command ?? "").trim() === DEMO_COMMAND;
 }
 
 /** Plays the demo's job as its file stands: its run opens as it starts, as any program's does, and once it has
@@ -47,13 +50,13 @@ export async function runDemo(): Promise<boolean> {
   }
 }
 
-/** The demo's finding applied to its job's code, and the job run again (in the folder its run ran in). */
-export async function applyDemoFix(cwd: string | null | undefined): Promise<boolean> {
+/** The demo's finding applied to its job's code, and the job run again, in the demo's own folder (never one a run
+ * names). */
+export async function applyDemoFix(): Promise<boolean> {
   if (running()) return (busy(), false);
   try {
     if (!(await startDemo())) return false;
-    // (the folder the run ran in: the job's own, written first where the run does not say)
-    const dir = cwd || api.runs.demoJob().cwd;
+    const dir = api.runs.demoJob().cwd;
     api.runs.demoFix();
     return await play(dir, DEMO_COMMAND);
   } catch (e) {

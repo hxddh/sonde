@@ -62,11 +62,11 @@ pub fn made(r: &Record) -> bool {
 
 /// What `records` leave. `names`: the names of the runs it is held against
 /// (a trial's scenario and `clean`; none for runs that are no trial's),
-/// each read as one word wherever a key holds it. The same names for both
-/// runs: a program puts its run's name where it likes (`t{trial}/x` is
-/// `tclean/x` in one run and `tslowdown/x` in the other), and a word of its
-/// own that holds one (`errors/x` under the scenario `error`) reads the
-/// same in both.
+/// each read as one word wherever a key holds it ([`trial_names`]). The
+/// same names for both runs: a program puts its run's name where it likes
+/// (`t{trial}/x` is `tclean/x` in one run and `tslowdown/x` in the other),
+/// and a word of its own that holds one (`errors/x` under the scenario
+/// `error`) reads the same in both.
 pub fn left<'a>(records: impl IntoIterator<Item = &'a Record>, names: &[&str]) -> Left {
     left_where(records, names, made)
 }
@@ -81,13 +81,7 @@ pub fn left_where<'a>(
 ) -> Left {
     let mut in_time: Vec<&Record> = records.into_iter().collect();
     in_time.sort_by_key(|r| (r.time, r.id));
-    let read = |key: &str| {
-        let mut key = key.to_string();
-        for name in names.iter().filter(|n| !n.is_empty()) {
-            key = key.replace(name, "{trial}");
-        }
-        crate::profile::stable(&key)
-    };
+    let read = |key: &str| crate::profile::stable(&trial_names(key, names));
     // Each key the run changed, by a hash of its name (a run of a million
     // writes keeps sixteen bytes a key, not the keys): how it reads
     // ([`crate::profile::stable`], kept once per reading), whether it
@@ -131,13 +125,27 @@ pub fn left_where<'a>(
             ("PutObject" | "CopyObject" | "CompleteMultipartUpload", Some(key)) => {
                 change(bucket, key, true);
             }
-            ("DeleteObject", Some(key)) => change(bucket, key, false),
+            ("RenameObject", Some(key)) => {
+                // the object by its new name, and none by its old one
+                if let Some((from_bucket, from)) = crate::stored::rename_source(r) {
+                    change(&from_bucket, &from, false);
+                }
+                change(bucket, key, true);
+            }
+            // a delete that names a version takes that version away, not
+            // the key: what stands under it is not known from the requests
+            // (another version, or none), and it is taken to stand
+            ("DeleteObject", Some(key)) if !r.query().iter().any(|(k, _)| k == "versionId") => {
+                change(bucket, key, false)
+            }
             ("DeleteObjects", _) => {
                 let rare = r.rare();
                 match rare.request_body.as_deref() {
                     Some(doc) if !rare.request_body_truncated => {
-                        for (key, _version) in reqlog::deleted_objects(doc) {
-                            change(bucket, &key, false);
+                        for (key, version) in reqlog::deleted_objects(doc) {
+                            if version.is_none() {
+                                change(bucket, &key, false);
+                            }
                         }
                     }
                     _ => unknown = true,
@@ -161,6 +169,58 @@ pub fn left_where<'a>(
         removed,
         unknown,
     }
+}
+
+/// `key` with each of `names` in it read as `{trial}`: wherever it stands,
+/// in any case, its words joined by `-`, `_` or nothing (a program that
+/// names its output after `lost-answer` may write `lost_answer`,
+/// `LostAnswer` or `lostanswer`). Read once from the left, the longest name
+/// first where two start at one place: `clean` is not read as the `lean`
+/// in it.
+pub fn trial_names(key: &str, names: &[&str]) -> String {
+    let words: Vec<Vec<&str>> = names
+        .iter()
+        .map(|n| {
+            n.split(['-', '_'])
+                .filter(|w| !w.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.is_empty() {
+        return key.to_string();
+    }
+    // how many bytes of `at` one name's words take, if they start it
+    let take = |at: &[u8], words: &[&str]| -> Option<usize> {
+        let mut i = 0;
+        for (n, w) in words.iter().enumerate() {
+            if n > 0 && matches!(at.get(i), Some(b'-' | b'_')) {
+                i += 1;
+            }
+            let w = w.as_bytes();
+            if !at.get(i..i + w.len())?.eq_ignore_ascii_case(w) {
+                return None;
+            }
+            i += w.len();
+        }
+        Some(i)
+    };
+    let bytes = key.as_bytes();
+    let mut out = String::with_capacity(key.len());
+    let (mut i, mut from) = (0, 0);
+    while i < bytes.len() {
+        match words.iter().filter_map(|w| take(&bytes[i..], w)).max() {
+            Some(n) => {
+                out.push_str(&key[from..i]);
+                out.push_str("{trial}");
+                i += n;
+                from = i;
+            }
+            None => i += 1,
+        }
+    }
+    out.push_str(&key[from..]);
+    out
 }
 
 impl Left {
@@ -358,6 +418,78 @@ mod tests {
         // and a key that is another key is still another
         let other = left(&[put(1, "etl-error/state"), put(2, "terror/y")], &names);
         assert_eq!(other.against(&clean).map(|d| d.absent), Some(2));
+    }
+
+    #[test]
+    fn a_runs_name_is_read_however_the_program_spells_it() {
+        let names = ["lost-answer", "clean"];
+        let clean = left(&[put(1, "out/clean/x"), put(2, "Clean.log")], &names);
+        for (dir, log) in [
+            ("lost_answer", "LostAnswer.log"),
+            ("lostanswer", "LOST-ANSWER.log"),
+            ("lost-answer", "lost_Answer.log"),
+        ] {
+            let tried = left(&[put(1, &format!("out/{dir}/x")), put(2, log)], &names);
+            assert_eq!(tried.against(&clean), None, "{dir} {log}");
+        }
+        assert_eq!(
+            trial_names("a/slow-first-byte/b", &["slow-first-byte"]),
+            "a/{trial}/b"
+        );
+        assert_eq!(
+            trial_names("a/slow_first_byte", &["slow-first-byte"]),
+            "a/{trial}"
+        );
+        // its words, not a word of them alone
+        assert_eq!(trial_names("lost/x", &["lost-answer"]), "lost/x");
+    }
+
+    #[test]
+    fn a_name_that_is_part_of_another_reads_neither_short() {
+        // `clean` read whole, not as the `lean` or the `a` in it, in both runs
+        for name in ["lean", "a"] {
+            let names = [name, "clean"];
+            assert_eq!(trial_names("tclean/x", &names), "t{trial}/x");
+            assert_eq!(trial_names(&format!("t{name}/x"), &names), "t{trial}/x");
+            let clean = left(&[put(1, "tclean/x"), put(2, "cleaner/y")], &names);
+            let tried = left(
+                &[put(1, &format!("t{name}/x")), put(2, "cleaner/y")],
+                &names,
+            );
+            assert_eq!(tried.against(&clean), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_rename_takes_its_source_away_and_leaves_its_destination() {
+        let mut renamed = rec(3, "PUT", "RenameObject", Some("out/final"), 200);
+        renamed
+            .lists_mut()
+            .request_headers
+            .push(reqlog::Header::new("x-amz-rename-source", "/b/out/tmp"));
+        let run = left(&[put(1, "out/tmp"), renamed.clone()], &[]);
+        assert_eq!(run, left(&[put(1, "out/final")], &[]));
+        // one of a key that stood before: taken away, as a delete is
+        let before = left(&[renamed], &[]);
+        assert_eq!(before.objects(), 1);
+        let d = left(&[put(1, "out/final")], &[]).against(&before).unwrap();
+        assert_eq!((d.missing, d.extra), (0, 1));
+        assert_eq!(d.an_extra.as_deref(), Some("b/out/tmp"));
+    }
+
+    #[test]
+    fn a_delete_of_one_version_does_not_take_the_key_away() {
+        let mut one = rec(2, "DELETE", "DeleteObject", Some("t/a"), 204);
+        one.lists_mut().query = vec![("versionId".into(), "v1".into())];
+        assert_eq!(left(&[put(1, "t/a"), one], &[]).objects(), 1);
+        let mut batch = rec(3, "POST", "DeleteObjects", None, 200);
+        batch.rare_mut().request_body = Some(
+            "<Delete><Object><Key>t/a</Key><VersionId>v1</VersionId></Object>\
+             <Object><Key>t/b</Key></Object></Delete>"
+                .into(),
+        );
+        let l = left(&[put(1, "t/a"), put(2, "t/b"), batch], &[]);
+        assert_eq!(l, left(&[put(1, "t/a")], &[]));
     }
 
     #[test]

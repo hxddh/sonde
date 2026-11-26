@@ -58,8 +58,8 @@ pub fn month(header: &RunHeader, seconds: f64, cost: f64, currency: &str) -> Opt
 /// ran, when it is for this program (`runs` names its command, or no
 /// `runs` is given).
 fn runs_per_month(header: &RunHeader) -> Option<f64> {
-    let cwd = std::path::Path::new(header.cwd.as_deref()?);
-    let project = crate::project::of(cwd).ok()??;
+    let cwd = crate::code::local_dir(std::path::Path::new(header.cwd.as_deref()?))?;
+    let project = crate::project::of(&cwd).ok()??;
     let program = &project.file.program;
     let n = program.runs_per_month?;
     let mine = match program.runs.as_deref() {

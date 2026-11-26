@@ -392,6 +392,94 @@ pub fn plan_abort(s: &Sonde, endpoint: &str, bucket: &str, uploads: &[UploadRow]
         .plan(Action::AbortUploads, endpoint, bucket, items, None, None)
 }
 
+/// The uploads a plan to abort lists, as the bucket holds them now: those
+/// of its uploads still there, each with its parts and bytes summed again
+/// (what [`as_planned`] holds them to). Read before anything is aborted,
+/// by [`crate::services::exec::run`], for a terminal's `--yes` and the
+/// app's confirm alike. A part that cannot be listed fails the reading:
+/// nothing is then aborted.
+pub async fn listed_now(s: &Sonde, plan: &Plan) -> Result<Vec<UploadRow>, S3Error> {
+    if plan.items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let c = s.client(&plan.endpoint)?;
+    let b = plan.bucket.as_str();
+    // the listing under the keys' common prefix holds every one of them
+    let mut prefix = plan.items[0].key.as_str();
+    for i in &plan.items[1..] {
+        let common = prefix
+            .char_indices()
+            .zip(i.key.chars())
+            .find(|((_, a), b)| a != b)
+            .map_or(prefix.len().min(i.key.len()), |((at, _), _)| at);
+        prefix = &prefix[..common];
+    }
+    let planned = |key: &str, id: &str| {
+        plan.items
+            .iter()
+            .any(|i| i.key == key && i.id.as_deref() == Some(id))
+    };
+    let mut uploads = Vec::new();
+    let (mut km, mut um): (Option<String>, Option<String>) = (None, None);
+    let mut pages = crate::services::Pages::default();
+    loop {
+        let page = c
+            .list_multipart_uploads(b, Some(prefix), km.as_deref(), um.as_deref())
+            .await?;
+        uploads.extend(
+            page.upload
+                .into_iter()
+                .filter(|u| planned(&u.key, &u.upload_id)),
+        );
+        if !page.is_truncated
+            || (page.next_key_marker.is_none() && page.next_upload_id_marker.is_none())
+        {
+            break;
+        }
+        km = page.next_key_marker;
+        um = page.next_upload_id_marker;
+        pages.next((&km, &um))?;
+    }
+    let rows: Vec<Result<UploadRow, S3Error>> = stream::iter(uploads)
+        .map(|u| {
+            let c = c.clone();
+            async move {
+                let (mut parts, mut bytes) = (0u32, 0u64);
+                let mut marker: Option<String> = None;
+                let mut pages = crate::services::Pages::default();
+                loop {
+                    let lp = c
+                        .list_parts(b, &u.key, &u.upload_id, marker.as_deref())
+                        .await?;
+                    parts += lp.part.len() as u32;
+                    bytes += lp.part.iter().map(|p| p.size).sum::<u64>();
+                    if !lp.is_truncated || lp.next_part_number_marker.is_none() {
+                        break;
+                    }
+                    marker = lp.next_part_number_marker;
+                    pages.next(&marker)?;
+                }
+                Ok(UploadRow {
+                    key: u.key,
+                    upload_id: u.upload_id,
+                    initiated: u.initiated,
+                    age_days: None,
+                    parts,
+                    bytes,
+                    storage_class: u.storage_class,
+                    cost_so_far: 0.0,
+                    cost_per_month: 0.0,
+                    stale: false,
+                    parts_error: None,
+                })
+            }
+        })
+        .buffer_unordered(crate::config::CONCURRENCY)
+        .collect()
+        .await;
+    rows.into_iter().collect()
+}
+
 /// Whether the uploads a dry run listed (`plan`) are still what it showed,
 /// against the uploads the bucket holds `now`: each one there, with the
 /// parts and bytes it had. One that is gone (completed, aborted elsewhere)

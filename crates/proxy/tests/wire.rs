@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use reqlog::RequestLog;
 use s3raw::sigv4::{self, SignInput};
 use s3raw::{ClientConfig, Credentials, S3Client, StaticProvider};
-use sonde_proxy::{Proxy, ProxyConfig};
+use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -154,6 +154,10 @@ async fn store() -> (String, Arc<Mutex<Vec<Seen>>>) {
 }
 
 async fn setup() -> (Proxy, RequestLog, String, Arc<Mutex<Vec<Seen>>>) {
+    setup_under(Policy::Allow).await
+}
+
+async fn setup_under(policy: Policy) -> (Proxy, RequestLog, String, Arc<Mutex<Vec<Seen>>>) {
     let (url, seen) = store().await;
     let cfg = ClientConfig::new("target", &url, "eu-west-1").unwrap();
     let target = S3Client::new(
@@ -167,9 +171,16 @@ async fn setup() -> (Proxy, RequestLog, String, Arc<Mutex<Vec<Seen>>>) {
     )
     .unwrap();
     let log = RequestLog::default();
-    let proxy = Proxy::start(target, log.clone(), ProxyConfig::default())
-        .await
-        .unwrap();
+    let proxy = Proxy::start(
+        target,
+        log.clone(),
+        ProxyConfig {
+            policy,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     (proxy, log, url, seen)
 }
 
@@ -177,39 +188,57 @@ async fn setup() -> (Proxy, RequestLog, String, Arc<Mutex<Vec<Seen>>>) {
 /// the keys the proxy gave (over the path as written, as an SDK signs), to
 /// the Host `host`; a PUT carries one byte.
 async fn send(proxy: &Proxy, host: &str, method: &str, target: &str) -> String {
+    let body: &[u8] = if method == "PUT" { b"x" } else { b"" };
+    send_with(proxy, host, method, target, "UNSIGNED-PAYLOAD", &[], body).await
+}
+
+/// [`send`], with the payload hash `sha`, `extra` headers (unsigned, as
+/// written) and `body`.
+async fn send_with(
+    proxy: &Proxy,
+    host: &str,
+    method: &str,
+    target: &str,
+    sha: &str,
+    extra: &[(&str, String)],
+    body: &[u8],
+) -> String {
     let (key, secret) = proxy.client_keys();
     let now = Utc::now();
     let date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let headers = vec![
         ("host".to_string(), host.to_string()),
-        (
-            "x-amz-content-sha256".to_string(),
-            "UNSIGNED-PAYLOAD".into(),
-        ),
+        ("x-amz-content-sha256".to_string(), sha.to_string()),
         ("x-amz-date".to_string(), date.clone()),
     ];
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let sig = sigv4::sign(
         &SignInput {
             method,
-            canonical_uri: target,
-            query: &[],
+            canonical_uri: path,
+            query: &sonde_proxy::parse_query(Some(query)),
             headers: &headers,
-            payload_hash: "UNSIGNED-PAYLOAD",
+            payload_hash: sha,
             region: "us-east-1",
             service: "s3",
             time: now,
         },
         &Credentials::new(key, secret, None),
     );
-    let body = if method == "PUT" { "x" } else { "" };
-    let req = format!(
-        "{method} {target} HTTP/1.1\r\nhost: {host}\r\nx-amz-date: {date}\r\nx-amz-content-sha256: UNSIGNED-PAYLOAD\r\nauthorization: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+    let mut req = format!(
+        "{method} {target} HTTP/1.1\r\nhost: {host}\r\nx-amz-date: {date}\r\nx-amz-content-sha256: {sha}\r\nauthorization: {}\r\ncontent-length: {}\r\nconnection: close\r\n",
         sig.authorization(key),
         body.len()
     );
+    for (k, v) in extra {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    let mut req = req.into_bytes();
+    req.extend_from_slice(body);
     let exchange = async {
         let mut s = TcpStream::connect(proxy.addr()).await.unwrap();
-        s.write_all(req.as_bytes()).await.unwrap();
+        s.write_all(&req).await.unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).await.unwrap();
         out
@@ -347,4 +376,154 @@ async fn a_key_written_its_own_way_keeps_its_query() {
     let got = seen.lock().last().cloned().unwrap();
     assert_eq!(got.target, "/data/a%2Fb/../c?versionId=v%201%2F%2B");
     verify(&got).unwrap();
+}
+
+/// Under no-delete, a key that is not UTF-8 (`%FF`) and the key of text
+/// its record reads as (`%25FF`, the three characters `%FF`) are two keys:
+/// what the run made of one is not the other's to delete. Before 34.1 a
+/// create of either let the other be deleted.
+#[tokio::test]
+async fn a_key_of_bytes_and_the_text_its_record_reads_as_are_two_keys_to_no_delete() {
+    let (proxy, _log, _url, seen) = setup_under(Policy::NoDelete).await;
+    let host = proxy.addr().to_string();
+    let create = [("if-none-match", "*".to_string())];
+    let send = |method, target, extra| {
+        let body: &[u8] = if method == "PUT" { b"x" } else { b"" };
+        send_with(
+            &proxy,
+            &host,
+            method,
+            target,
+            "UNSIGNED-PAYLOAD",
+            extra,
+            body,
+        )
+    };
+    for (made, other) in [("/data/%FF", "/data/%25FF"), ("/data/%25FE", "/data/%FE")] {
+        let answer = send("PUT", made, &create).await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{made}: {answer}");
+        let sent = seen.lock().len();
+        let answer = send("DELETE", other, &[]).await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{other}: {answer}");
+        assert!(answer.contains("no-delete"), "{answer}");
+        assert_eq!(
+            seen.lock().len(),
+            sent,
+            "{other}: no delete reached the store"
+        );
+    }
+    // a key of text the run created is its own, as before
+    let answer = send("DELETE", "/data/%25FE", &[]).await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+}
+
+/// A signed `aws-chunked` body read whole (a control document) sends on as
+/// headers only the checksums its `x-amz-trailer` names: a trailer that sets
+/// a governance retention aside, or names a header sonde sets, is never
+/// judged as a header is, and goes nowhere. Before 34.1 every trailer went
+/// on, `x-amz-bypass-governance-retention` signed with the store's keys.
+#[tokio::test]
+async fn a_trailer_of_a_body_read_whole_cannot_carry_a_header_past_no_delete() {
+    let (proxy, _log, _url, seen) = setup_under(Policy::NoDelete).await;
+    let host = proxy.addr().to_string();
+    let sha = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER";
+    let sig = "0".repeat(64);
+    let framed = |doc: &str, trailers: &str| {
+        format!(
+            "{:x};chunk-signature={sig}\r\n{doc}\r\n0;chunk-signature={sig}\r\n{trailers}x-amz-trailer-signature:{sig}\r\n\r\n",
+            doc.len()
+        )
+        .into_bytes()
+    };
+    let smuggled = "x-amz-checksum-crc32:AAAAAA==\r\nx-amz-bypass-governance-retention:true\r\nhost:elsewhere.example\r\ncontent-length:999\r\nx-amz-meta-extra:1\r\n";
+    let headers = |doc: &str, named: &str| {
+        vec![
+            ("content-encoding", "aws-chunked".to_string()),
+            ("x-amz-decoded-content-length", doc.len().to_string()),
+            ("x-amz-trailer", named.to_string()),
+        ]
+    };
+    // what the run makes, for a batch of deletes of its own
+    let create = [("if-none-match", "*".to_string())];
+    let answer = send_with(
+        &proxy,
+        &host,
+        "PUT",
+        "/data/mine",
+        "UNSIGNED-PAYLOAD",
+        &create,
+        b"x",
+    )
+    .await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    let retention = "<Retention><Mode>GOVERNANCE</Mode></Retention>";
+    let batch = "<Delete><Object><Key>mine</Key></Object></Delete>";
+    for (target, doc, named) in [
+        ("/data/old?retention", retention, "x-amz-checksum-crc32"),
+        // named, and still no checksum: not sent on
+        (
+            "/data/old?retention",
+            retention,
+            "x-amz-checksum-crc32,x-amz-bypass-governance-retention,host",
+        ),
+        ("/data?delete", batch, "x-amz-checksum-crc32"),
+    ] {
+        let method = if target.ends_with("delete") {
+            "POST"
+        } else {
+            "PUT"
+        };
+        let body = framed(doc, smuggled);
+        let answer = send_with(
+            &proxy,
+            &host,
+            method,
+            target,
+            sha,
+            &headers(doc, named),
+            &body,
+        )
+        .await;
+        assert!(
+            answer.starts_with("HTTP/1.1 200"),
+            "{target} {named}: {answer}"
+        );
+        let got = seen.lock().last().cloned().expect("it reached the store");
+        let sub = target.split('?').nth(1).unwrap();
+        assert!(got.target.contains(sub), "{}", got.target);
+        assert_eq!(
+            got.header("x-amz-bypass-governance-retention"),
+            "",
+            "{target}: {got:?}"
+        );
+        assert_eq!(got.header("x-amz-meta-extra"), "", "{target}: {got:?}");
+        assert_eq!(
+            got.header("x-amz-checksum-crc32"),
+            "AAAAAA==",
+            "{target}: {got:?}"
+        );
+        assert_eq!(
+            got.header("content-length"),
+            doc.len().to_string(),
+            "{got:?}"
+        );
+        assert!(!got.header("host").contains("elsewhere"), "{got:?}");
+        verify(&got).unwrap_or_else(|e| panic!("{target}: {e}"));
+    }
+    // a checksum it names and does not send is a body not as said
+    let sent = seen.lock().len();
+    let body = framed(retention, "");
+    let answer = send_with(
+        &proxy,
+        &host,
+        "PUT",
+        "/data/old?retention",
+        sha,
+        &headers(retention, "x-amz-checksum-crc32"),
+        &body,
+    )
+    .await;
+    assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+    assert!(answer.contains("<Code>InvalidRequest</Code>"), "{answer}");
+    assert_eq!(seen.lock().len(), sent, "it did not reach the store");
 }

@@ -92,6 +92,7 @@ async fn browse_mpu_versions_du() {
         .unwrap();
         let id = mpu::scan(s, &t.name, &b, "");
         let r: mpu::MpuReport = serde_json::from_value(s.jobs().wait(&id).await.unwrap()).unwrap();
+        let scanned = r.uploads.clone();
         assert_eq!(r.total_uploads, 1, "{}", t.name);
         assert_eq!(r.uploads[0].bytes, 5 * 1024 * 1024);
         assert_eq!(r.lifecycle.status, mpu::LifecycleStatus::Missing);
@@ -106,9 +107,10 @@ async fn browse_mpu_versions_du() {
         assert!(r.noncurrent.objects >= 2, "{}: {r:?}", t.name);
         assert!(r.delete_markers >= 1);
 
-        // abort through the guard, then lifecycle
-        // (one upload: a plain confirm, nothing typed)
-        let plan = mpu::plan_abort(s, &t.name, &b, &r_uploads(s, &t.name, &b).await);
+        // abort through the guard, then lifecycle, from the rows the scan
+        // showed, as the app's are (one upload: a plain confirm, nothing
+        // typed); held to what the bucket holds when it runs
+        let plan = mpu::plan_abort(s, &t.name, &b, &scanned);
         assert!(!plan.typed);
         let o = exec::execute(s, &plan.id, "").await.unwrap();
         assert_eq!(o.succeeded, 1);
@@ -134,27 +136,6 @@ async fn browse_mpu_versions_du() {
         assert_eq!(audit.iter().filter(|e| e.stage.is_some()).count(), 3);
         cleanup(&c, &b).await;
     }
-}
-
-async fn r_uploads(s: &sonde_core::Sonde, ep: &str, b: &str) -> Vec<mpu::UploadRow> {
-    let c = s.client(ep).unwrap();
-    let l = c.list_multipart_uploads(b, None, None, None).await.unwrap();
-    l.upload
-        .into_iter()
-        .map(|u| mpu::UploadRow {
-            key: u.key,
-            upload_id: u.upload_id,
-            initiated: u.initiated,
-            age_days: None,
-            parts: 1,
-            bytes: 0,
-            storage_class: None,
-            cost_so_far: 0.0,
-            cost_per_month: 0.0,
-            stale: false,
-            parts_error: None,
-        })
-        .collect()
 }
 
 pub async fn cleanup(c: &s3raw::S3Client, b: &str) {

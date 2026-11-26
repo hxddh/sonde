@@ -243,9 +243,10 @@ workflow_file() {
 
 # The run the latest earlier run of this workflow kept on the base
 # branch (a pull request's) or on this branch (a push); for a pull request
-# with none, its merge-base recorded here ([merge_base]); nothing when there
-# is none (sonde.toml's `[check] baseline` then applies). `none` (no baseline
-# at all, `check --baseline none`) and another input are passed on as they are.
+# with none, its merge-base recorded here ([merge_base]); when there is
+# none, `auto` (no baseline yet: a first run passes), or nothing when
+# sonde.toml's `[check] baseline` applies. `none` (no baseline at all,
+# `check --baseline none`) and another input are passed on as they are.
 baseline() {
   case "${SONDE_BASELINE:-auto}" in
     auto) ;;
@@ -297,9 +298,39 @@ baseline() {
       return
     fi
     warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact, and its merge-base could not be recorded ($WHY); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
+    none_found
     return
   fi
   warn "no baseline: no $event run of $workflow on $base kept the artifact $artifact (none yet, or it expired); this run is held to its budget (and to sonde.toml's baseline, if it names one)"
+  none_found
+}
+
+# No baseline found: `auto` (no baseline yet, which a first run passes),
+# unless sonde.toml names one, which then applies.
+none_found() {
+  toml_names_baseline || out baseline auto
+}
+
+# Whether the project's sonde.toml (`config`, else found from here up) has
+# a `baseline` in its `[check]`.
+toml_names_baseline() {
+  local file="${SONDE_CONFIG:-}" dir="$PWD"
+  while [ -z "$file" ]; do
+    if [ -f "$dir/sonde.toml" ]; then
+      file="$dir/sonde.toml"
+    elif [ "$dir" = / ] || [ -z "$dir" ]; then
+      return 1
+    else
+      dir="$(dirname "$dir")"
+    fi
+  done
+  [ -f "$file" ] || return 1
+  awk '
+    { sub(/\r$/, "") }
+    /^[ \t]*\[/ { t = $0; sub(/#.*/, "", t); gsub(/[][ \t]/, "", t); next }
+    t == "check" && /^[ \t]*baseline[ \t]*=/ { found = 1 }
+    END { exit !found }
+  ' "$file"
 }
 
 # `sonde check`'s flags, as the step's inputs give them, in ARGS.

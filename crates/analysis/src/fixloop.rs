@@ -1153,8 +1153,10 @@ pub fn noise_ms(program: &Program, created: &str, not: &str) -> Option<f64> {
 ///   allows a timing over its baseline on one run's word
 ///   ([`crate::program::timing_room`] of their median: a tenth and 50 ms).
 ///   Two runs a millisecond apart say little of the third.
-/// - Three: 1.64 × their range, never under half that room.
-/// - Four or more: 1.35, 1.19, 1.09 × their range, alone.
+/// - Three or more: 1.64, 1.35, 1.19, 1.09 × their range, never under
+///   half that room. More runs say the spread more surely, never that it
+///   is less than three said it might be: a program's runs alike to the
+///   millisecond are not a band of nothing.
 pub fn spread_ms(times: &[f64]) -> Option<f64> {
     /// The mean range of a normal sample of 2..=6, in deviations.
     const RANGE_OF: [f64; 5] = [1.128, 1.693, 2.059, 2.326, 2.534];
@@ -1170,11 +1172,7 @@ pub fn spread_ms(times: &[f64]) -> Option<f64> {
     let band = TWO_RUNS * range / RANGE_OF[n.min(RANGE_OF.len() + 1) - 2];
     let median = (sorted[(n - 1) / 2] + sorted[n / 2]) / 2.0;
     let room = crate::program::timing_room(median, crate::program::DEFAULT_TOLERANCE);
-    let least = match n {
-        2 => room,
-        3 => room / 2.0,
-        _ => 0.0,
-    };
+    let least = if n == 2 { room } else { room / 2.0 };
     Some((band.max(least) * 10.0).round() / 10.0)
 }
 

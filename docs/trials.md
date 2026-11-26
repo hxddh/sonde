@@ -176,8 +176,9 @@ CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*
 requests show; sonde does not read data back.
 
 **What a run leaves** is read from its requests, too: each key followed to the last change the store made (a write
-sent twice leaves what it leaves sent once), then read without the runs' names and without what changes from run to
-run (a UUID, a date, a number), and counted. Two runs of a table writer leave the same objects though no key of one
+sent twice leaves what it leaves sent once; a rename moves it; a delete of one version, or one sonde refused on a
+lost race, takes nothing away), then read without the runs' names (however the program spells them: `lost-answer`,
+`lost_answer`, `LostAnswer`) and without what changes from run to run (a UUID, a date, a number), and counted. Two runs of a table writer leave the same objects though no key of one
 is a key of the other. It says which objects stand, never what is in them (a size and an ETag differ between runs
 that did the same), and only a kind of object wholly missing is held against a run: one part more or fewer of many
 is what a writer that flushes by the clock does.
@@ -253,7 +254,7 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 - With scenarios here, `--trial` runs those; `--fault flaky-wal` runs one.
 - A status fault: 400–599 with at most one code, letters and digits (`SlowDown`). `delay`: `200ms` or `2s`, up to 3600 s.
 - Checked before anything runs; configuration errors (64): an `on` name no request can have (`PutObjekt`);
-  `[[scenarios]]` or any unknown key; a built-in name or `clean`; a duplicate name; an extra word (`503 Slow Down`);
+  `[[scenarios]]` or any unknown key; a built-in name, `clean` or a part of it (`lean`, `a`); a duplicate name; an extra word (`503 Slow Down`);
   a `[program]` with an empty `name` or `runs`, or one without the other.
 
 ## Limits
