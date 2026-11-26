@@ -2,6 +2,143 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [33.0.0] - 2026-11-26
+
+A hardening release. A run's file from someone else is believed about nothing it could abuse: it starts no command
+unasked, reads no file outside its folder, and steers no copied command. A trial cannot write a commit twice or run
+over shared data unasked, `no-delete` protects what stood before the run, the fix code sonde prints is compiled, and
+a terminal's `--yes` confirms the plan its dry run showed.
+
+### Changed
+
+What breaks, and why this is a major:
+
+- **`run --trial` refuses a writing program whose runs would share one place** (exit 77, after the clean run and
+  before any fault): put `{trial}` in a path, read `SONDE_TRIAL`, or pass the new `--same-place`. A program that
+  reads `SONDE_TRIAL` is held to the keys naming its run. The app asks the same. The demo store is exempt.
+- **`bucket abort-uploads --yes` and `bucket lifecycle --yes` run the plan their dry run kept** (10 minutes, once,
+  mode 0600 in the data folder), and nothing without one: exit 77. Run the dry run first; `--plan ID` holds `--yes`
+  to one dry run. A bucket changed since (a listed upload gone or written to, another lifecycle configuration) is
+  left untouched, exit 77; an upload begun since is left and said.
+- **`no-delete` protects what stood before the run**: overwriting an object no longer makes it deletable; only keys
+  proven created in the run are (a conditional create, a 404 seen first, a version id). It also refuses bucket and
+  foreign-object ACLs, the public access block, ownership controls, turning a legal hold off and bypassing governance
+  retention.
+- **`lost-race` no longer sends the write it answers 412**: a writer that re-reads its log commits once instead of
+  twice, and the next number is held until the lost one stands. A trial that makes more commits in a table's log
+  than the clean run is `broke`; an error after a failed write no longer counts as its retry.
+- **Figures redefined in `-f json`**: `atOnce.savesMs` is what the requests a diagnosis leaves save, not all of
+  them; `time.transferMs` is each request's part of the waiting, never latencies added up; small reads packed into
+  shards save their round trips, not the time their bytes took to move; `noiseMs` is the band two runs differ
+  within (from the range of up to five runs alike, two or three runs never under what `check` allows), and a move
+  of the band or less is `withinNoise`.
+- **A finding's count of 100 or more is as much within a hundredth**, in the fix loop and `[check.findings]`;
+  smaller counts stay exact.
+- **Identity rules 6**: a finding about its bucket with objects in several buckets names each
+  (`obs.small|data,logs`) and stays one finding as buckets come and go; `…|/` entries in `sonde.toml` still match,
+  and single-bucket identities are unchanged.
+- **Probes**: a conditional-write probe (and `express.append`) stays **fail** when data was written or deleted
+  against its condition, even if another step answered 501. `version.id-format` passes any unique, URL-ready
+  version id (AWS ids with `-`, UUIDs, numbers); the shape is a note and no longer exit 2. A URL's port no longer
+  makes an endpoint MinIO or Ceph (an endpoint added without a vendor at `:9000` is `other`).
+- An `aws-chunked` upload is held to the payload length it said: one cut short, never ended or longer than said is
+  answered 400 (`IncompleteBody`, `InvalidRequest`, `RequestTimeout`) and the store keeps no object of it.
+- A key reaches the store byte for byte as the program wrote it (`a%2Fb`, `%FF`, `a//b`, `.` and `..`), signed as
+  the store reads it; a key that is not UTF-8 is no longer recorded or sent as another key.
+- Exit 77 is "refused before anything was changed"; exit 70 also covers a change made whose outcome the audit log
+  could not take (said on stderr, and in the app).
+- Run again on a run that does not say where it ran runs in the home folder.
+
+### Added
+
+- `sonde run --same-place`; `--plan ID` on `bucket abort-uploads` and `bucket lifecycle`.
+- A run says how it was recorded (`pathStyle`, `caFile`, `tls`, `policy` in its header, each optional), and
+  `sonde show`'s `verify` says `--path-style`, `--ca-file`, `--tls` and `--policy` again.
+- RustFS is a vendor (`rustfs`); a probe run names the store that answered (by its `Server` header or error body).
+- Programs on the AWS SDK for Rust get fixes in its own API (`fix.sdk` `rust-aws`).
+- Paimon snapshots and schemas and Hudi timelines are commit logs for `lost-race`.
+- `sonde layout` reads Iceberg v3 deletion vectors (one Puffin file counted once, deleted rows taken from the live
+  records) and the statistics files the metadata lists.
+- "Copy as aws cli" and "Copy as curl" are written for the shell they are pasted into: sh, PowerShell on Windows,
+  cmd.exe through the bridge.
+
+### Fixed
+
+- A run opened from a file, a drop or a link starts nothing on Run again or Try under faults until its exact
+  command and folder, shown whole, are confirmed; the app's bridge refuses otherwise.
+- A command is never shown with what it runs hidden: `TOKEN="$(…)"` is shown whole, and control, line-break and
+  text-direction characters are written as `⟨U+…⟩`.
+- `sonde show` reads a caller's line of code only from program source inside the folder the run ran in (no
+  absolute paths, `..`, links out, settings files, devices or network paths).
+- A copied command cannot be steered by a run's values: built as an argv, each value one argument that is never an
+  option, only `http`/`https` URLs, control and BiDi characters left out.
+- A run's file redacts whatever it is given to write: an imported HAR's error bodies and presign parameters are
+  masked as a recording's are. Redacted too: `x-amz-s3session-token`, `<StringToSign>`, a session's
+  `<SessionToken>`, `<SecretAccessKey>` and `<AccessKeyId>`.
+- A failing `credential_process` is reported by its exit status, never by what it printed; a recorded program's
+  `500 SondeCredentials` and its run say no more. The DuckDB CLI's init file is created with mode 0600.
+- `sonde share --redact` turns ids made of digits (account ids, IP addresses, grouped numbers) into tokens and no
+  longer names the compared run's file.
+- A replay aborts every unfinished multipart upload under its prefix, not only the first 1,000. Probe cleanup
+  always lists objects as well as versions, page by page. A listing whose store hands the same marker back ends
+  instead of running for ever.
+- The fix code sonde prints is checked as code in every language (parsed everywhere; compiled against each SDK in
+  CI): Java `fromString`, Go's cache and cancelled context, JS trailing newline and unread bodies, listings' later
+  pages, an upload's parts numbered from 1 and completed with each part's ETag, `object_store`'s `.into()`.
+- A key or range the program writes after reading it gets a cache that drops its copy on each write, not
+  `@lru_cache` or a map kept for the run.
+- Two tables of one format written at once are each their own commits in `show`. A Parquet file under a `data/`
+  folder is no longer taken for Iceberg's by its path.
+- `sonde layout` on SlateDB: SSTs kept by a checkpoint whose manifest is older than the newest 500 are no longer
+  orphans; when that manifest cannot be read, orphans are said unknown.
+- `sonde import FILE|FOLDER` reads its source as a stream (544 MiB of CloudTrail text in 18 MiB of memory); `show`,
+  `check` and the import's summary no longer hold the recorded program's output.
+- A request body that stops part way is answered after the idle limit instead of being waited for.
+- The schemas describe fields the outputs already wrote (`bucket size` `byMonth`, `runs` `unreadable`, `show`
+  `since.unsaved`, a trial verdict's figures, `check`'s `change`, a layout's `issues`), and the schema test reads
+  every `-f json` output as closed, both ways.
+- `run --listen` takes Ctrl-C from the moment it says so.
+- The GitHub Action: an output holds any value (a newline starts no output of its own), a glob in `run` is expanded
+  without `eval`, only a run that succeeded is a baseline, and a run whose program failed is not kept as one.
+- The packaged desktop app is stripped of symbols. `LICENSE` is the Apache-2.0 text as published.
+
+### 中文
+
+一次加固版本。来自他人的运行文件不再被轻信：未经确认不启动命令，不读取其文件夹之外的文件，也左右不了复制出的命令。试运行不会重复提交，也不会未经同意在共享数据上运行；`no-delete` 保护运行之前已有的对象；sonde 打印的修复代码经过编译检查；终端里的 `--yes` 只确认其试运行展示过的计划。
+
+- 变更（不兼容）：`run --trial` 拒绝每次运行都写同一位置的写入型程序（退出码 77，在正常运行之后、任何故障之前）：在路径中加入 `{trial}`、读取 `SONDE_TRIAL`，或使用新的 `--same-place`。读取 `SONDE_TRIAL` 的程序只能写带有本次运行名的键。应用内同样需要确认；演示存储除外。
+- 变更（不兼容）：`bucket abort-uploads --yes` 与 `bucket lifecycle --yes` 只执行其试运行保存的计划（10 分钟内、仅一次、数据目录中权限 0600），未先试运行则拒绝：退出码 77。`--plan ID` 使 `--yes` 只确认指定的那次试运行。试运行后桶有变化则不作任何更改，退出码 77；其后新开始的上传保持不动并予以说明。
+- 变更（不兼容）：`no-delete` 保护运行之前已有的对象：覆盖已有对象不再使它可被删除，只有能证明是本次运行创建的键才可以（条件创建、先见到 404、带版本号）。还拒绝存储桶和他人对象的 ACL、公共访问阻止、所有权控制、关闭合法保留以及绕过治理保留。
+- 变更：`lost-race` 不再把它答复 412 的写入发给存储：重新读取日志的写入者只提交一次；在丢失的编号存在之前，下一个编号会被挡住。表日志里的提交比正常运行多时判为 broke；失败写入之后的错误不再算作它的重试。
+- 变更：`-f json` 中重新定义的数字：`atOnce.savesMs` 只算诊断留下的请求；`time.transferMs` 按各请求分摊到的等待时间计算；小对象合并成分片节省的是往返时间；`noiseMs` 是两次运行之间的差异带，变化不超过该带即 `withinNoise`。
+- 变更：发现项的计数达到 100 及以上时，相差不超过百分之一视为不变；较小的计数仍按精确值比较。
+- 变更：标识规则 6：涉及多个存储桶的发现项在标识中列出每个桶（`obs.small|data,logs`），桶增减时仍是同一发现项；`sonde.toml` 中原有的 `…|/` 条目仍然匹配，单桶标识不变。
+- 变更：探测：条件写入探测（以及 `express.append`）在数据被违反条件写入或删除时保持 **fail**，即使另一步返回 501。`version.id-format` 接受任何唯一且可直接用于 URL 的版本 ID，格式只作说明，不再导致退出码 2。URL 的端口不再把端点判为 MinIO 或 Ceph。
+- 变更：`aws-chunked` 上传须与其声明的有效载荷长度一致：被截断、未结束或超出声明长度的请求返回 400，存储端不会留下对象。
+- 变更：键按程序写出的字节原样到达存储端（`a%2Fb`、`%FF`、`a//b`、`.` 与 `..`）；非 UTF-8 的键不再被记录或发送成另一个键。
+- 变更：退出码 77 表示“在任何更改之前被拒绝”；退出码 70 也包括更改已完成但审计日志未能写入结果。对未记录运行目录的运行执行“再次运行”时，在主目录中运行。
+- 新增：`sonde run --same-place`；`bucket abort-uploads` 与 `bucket lifecycle` 的 `--plan ID`。
+- 新增：运行文件记下其录制方式（`pathStyle`、`caFile`、`tls`、`policy`），`sonde show` 的 `verify` 会重新给出相应选项。
+- 新增：RustFS 成为独立厂商（`rustfs`）；探测结果以实际应答的存储命名。使用 AWS SDK for Rust 的程序得到其自身 API 的修复（`rust-aws`）。Paimon 的 snapshot、schema 和 Hudi 的 timeline 是 `lost-race` 的提交日志。
+- 新增：`sonde layout` 能读取 Iceberg v3 的删除向量以及元数据列出的统计文件。“复制为 aws cli”和“复制为 curl”按所粘贴的 shell 书写（sh；Windows 上为 PowerShell）。
+- 修复：从文件、拖放或链接打开的运行，在“再次运行”或“在故障下试运行”时，须先完整显示并确认其确切命令和文件夹才会启动；否则应用的桥接层拒绝执行。
+- 修复：显示命令时不再隐藏它会执行的内容：`TOKEN="$(…)"` 完整显示，控制字符、换行和文字方向字符写作 `⟨U+…⟩`。
+- 修复：`sonde show` 只从运行所在文件夹内的程序源文件读取调用处的代码行。
+- 修复：复制出的命令不再受运行记录中值的摆布：先构造 argv，每个值是一个绝不会被当作选项的参数，只接受 `http`/`https` URL，控制字符与双向控制字符被去掉。
+- 修复：运行文件对写入的任何记录都会脱敏：导入的 HAR 与录制时一样被遮蔽；新增脱敏 `x-amz-s3session-token`、`<StringToSign>` 及会话的令牌与密钥。
+- 修复：`credential_process` 失败时只报告退出状态，不再包含其输出。DuckDB CLI 的 init 文件以 0600 权限创建。
+- 修复：`sonde share --redact` 将由数字组成的标识（账号 ID、IP 地址）替换为令牌，并且不再显示对比运行的文件名。
+- 修复：重放会中止其前缀下所有未完成的分段上传，而不只是前 1,000 个；探测清理总是同时列出对象和版本并逐页处理；存储重复返回同一分页标记时列举会结束。
+- 修复：sonde 打印的修复代码在每种语言中都作为代码检查（处处解析，CI 中对各 SDK 编译）：Java `fromString`、Go 的缓存与被取消的 context、JS 的行尾换行与未读响应体、列表的后续分页、分片从 1 编号并带上每个分片的 ETag。
+- 修复：程序读取后又自己写入的键或范围，其修复是每次写入即丢弃副本的缓存，而不是整个运行期间保留的 `@lru_cache` 或 map。
+- 修复：同时写入的两张同格式的表在 `show` 中各自成为自己的提交；`data/` 目录下的 Parquet 文件不再仅凭路径被当作 Iceberg 的数据文件。
+- 修复：`sonde layout` 对 SlateDB：由早于最新 500 个 manifest 的检查点保留的 SST 不再被报为孤儿文件。
+- 修复：`sonde import FILE|FOLDER` 以流的方式读取来源（544 MiB 文本只需 18 MiB 内存）；`show`、`check` 不再把被记录程序的输出保存在内存中。
+- 修复：中途停止发送的请求体在空闲超时后即得到应答，不再无限等待。
+- 修复：JSON Schema 补全了输出中已有的字段，schema 测试以封闭方式双向校验每个 `-f json` 输出。
+- 修复：`run --listen` 从它说明之时起就能响应 Ctrl-C。
+- 修复：GitHub Action：输出可包含任意值，`run` 中的通配符不经 `eval` 展开，只有成功的运行才作为基线。打包的桌面应用去除了符号表；`LICENSE` 恢复为 Apache-2.0 原文。
+
 ## [32.0.0] - 2026-11-25
 
 sonde moves to Native Shell 0.7.0: closing its window quits it on every platform, asking first only while something

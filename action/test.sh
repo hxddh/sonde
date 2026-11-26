@@ -107,7 +107,7 @@ is "install @v19 with 19.0: the newest 19.0.x" "$(fetched v19 19.0)" download/v1
 is "install @v19.3 (a prerelease alone) fails before downloading" "$(fetched v19.3)" ""
 is "it says so" "$(grep -c 'no release of sonde 19.3 found' "$t/said")" 1
 is "install with a version that is none fails before downloading" "$(fetched v19 19.x)" ""
-is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (32.0.0), a major (32)' "$t/said")" 1
+is "it says what a version is" "$(grep -c 'SONDE_VERSION=19.x: a version (33.0.0), a major (33)' "$t/said")" 1
 is "install of a major with no release fails before downloading" "$(fetched v7)" ""
 # a branch, a commit, a local checkout: the newest release of its own major, never `latest`
 is "install @main of 19.1.0: the newest 19.x" "$(fetched main)" download/v19.2.10
