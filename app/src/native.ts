@@ -91,7 +91,8 @@ export const api = {
     keyHistory: async (path: string, bucket: string, key: string) => (await Runs.keyHistory(path, bucket, key)) as T.KeyRequest[],
     /** One request in full. Off the interface's thread (a large run's is read from its file). */
     record: async (path: string, id: number) => (await Runs.record(path, id)) as T.RequestRecord | null,
-    copy: (path: string, id: number, kind: "cli" | "curl") => Runs.copy(path, id, kind) as string | null,
+    /** A request as a command, written for a shell: this platform's unless one is named. */
+    copy: (path: string, id: number, kind: "cli" | "curl", shell: "platform" | "sh" | "powershell" | "cmd" = "platform") => Runs.copy(path, id, kind, shell) as string | null,
     start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Runs.start(endpoint, policy)) as T.RecordingView,
     current: () => Runs.current() as T.RecordingView | null,
     /** Stops the recording begun with no program: its run's path once the file is whole. */

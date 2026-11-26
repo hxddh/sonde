@@ -1771,13 +1771,22 @@ impl Runs {
         .map_err(err_msg)?
     }
 
-    /// A run's record as `aws s3api` (`cli`) or unsigned curl (`curl`).
-    pub fn copy(path: String, id: f64, kind: String) -> Result<Option<String>, String> {
+    /// A run's record as `aws s3api` (`cli`) or unsigned curl (`curl`),
+    /// written for `shell` (`sh`, `powershell`, `cmd`; `platform`: this
+    /// platform's).
+    pub fn copy(
+        path: String,
+        id: f64,
+        kind: String,
+        shell: String,
+    ) -> Result<Option<String>, String> {
+        let shell = reqlog::copy::Shell::named(&shell)
+            .ok_or_else(|| format!("no shell {shell}: sh, powershell or cmd"))?;
         Ok(full_record(&path, id as u64)?.map(|r| {
             if kind == "curl" {
-                reqlog::copy::as_curl(&r)
+                reqlog::copy::as_curl(&r, shell)
             } else {
-                reqlog::copy::as_aws_cli(&r)
+                reqlog::copy::as_aws_cli(&r, shell)
             }
         }))
     }
@@ -3446,10 +3455,21 @@ mod tests {
         let full = Runs::record(trial.clone(), 1.0).await.unwrap();
         assert_eq!(full["injected"], "slowdown");
         assert!(
-            Runs::copy(trial.clone(), 1.0, "curl".into())
+            Runs::copy(trial.clone(), 1.0, "curl".into(), "platform".into())
                 .unwrap()
                 .is_some()
         );
+        // each shell its own command; a name that is no shell's is refused
+        let cmd = Runs::copy(trial.clone(), 1.0, "curl".into(), "cmd".into())
+            .unwrap()
+            .unwrap();
+        // (these records have no URL: nothing to copy, said as that shell's comment)
+        assert!(cmd.starts_with("rem sonde: not copied"), "{cmd}");
+        let cli = Runs::copy(trial.clone(), 1.0, "cli".into(), "powershell".into())
+            .unwrap()
+            .unwrap();
+        assert!(cli.starts_with("aws.exe s3api "), "{cli}");
+        assert!(Runs::copy(trial.clone(), 1.0, "curl".into(), "fish".into()).is_err());
         let lines = Runs::log_lines(trial.clone()).await.unwrap();
         assert!(lines.to_string().contains("trial output"), "{lines}");
         // a clean run without verdicts says nothing of trials
