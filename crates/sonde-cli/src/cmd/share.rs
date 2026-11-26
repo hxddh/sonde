@@ -65,6 +65,24 @@ async fn baseline_of(
     Ok(found.map(|p| (p, None)))
 }
 
+/// How the page names the run it is compared with: as `check` names a run
+/// (its file and when it was recorded); redacted, when only. A file's name
+/// is its user's words, and `--redact` is for a page sent outside.
+fn compared_name(
+    file: &std::path::Path,
+    header: &sonde_analysis::run::RunHeader,
+    redact: bool,
+) -> String {
+    let named = super::check::run_line(file, Some(header));
+    if !redact {
+        return named;
+    }
+    match named.split_once(" · ") {
+        Some((_, recorded)) => format!("{} · {recorded}", sonde_analysis::report::ANOTHER_RUN),
+        None => sonde_analysis::report::ANOTHER_RUN.to_string(),
+    }
+}
+
 pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     if a.files.len() == 2 && a.baseline.is_some() {
         return Err(super::usage("two runs, or --baseline: not both"));
@@ -117,7 +135,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         }
         Some((path, _)) => {
             let mut before = super::runs::read(path, keep)?;
-            let name = super::check::run_line(path, Some(&before.header));
+            let name = compared_name(path, &before.header, a.redact);
             if a.redact {
                 // both together: their names become the same tokens
                 sonde_analysis::report::redact_all(&mut [&mut before, &mut run]);
@@ -160,4 +178,29 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         out.display()
     );
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 33.0's review: a redacted comparison still named the baseline's file.
+    #[test]
+    fn a_redacted_page_does_not_name_the_file_it_is_compared_with() {
+        let file = std::path::Path::new("/home/alice/acme-payroll/acct-123456789012.sonde");
+        let header = sonde_analysis::run::RunHeader::new("prod", "https://s3", "r", None);
+        let shown = compared_name(file, &header, false);
+        assert!(
+            shown.starts_with("run acct-123456789012.sonde · recorded "),
+            "{shown}"
+        );
+        let redacted = compared_name(file, &header, true);
+        assert!(
+            redacted.starts_with("another run · recorded 2"),
+            "{redacted}"
+        );
+        for name in ["123456789012", "acct", "alice", "acme", "sonde"] {
+            assert!(!redacted.contains(name), "{name} in {redacted}");
+        }
+    }
 }

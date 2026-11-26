@@ -1005,8 +1005,22 @@ impl DuckdbInit {
         // (the port: one file a recording)
         let port = endpoint.rsplit(':').next().unwrap_or("0");
         let path = dir.join(format!("init-{port}.sql"));
-        std::fs::write(&path, sql).ok()?;
-        Some(Self(path))
+        Self::write_private(path, &sql).ok()
+    }
+
+    /// The file made new and the owner's alone (0600) from its first byte:
+    /// it holds what `~/.duckdbrc` holds, a `CREATE SECRET` among it. One
+    /// left by a run that died is removed, never written through.
+    fn write_private(path: PathBuf, sql: &str) -> std::io::Result<Self> {
+        use std::io::Write;
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+        let mut file = reqlog::private::create_new(&path)?;
+        let init = Self(path);
+        file.write_all(sql.as_bytes())?;
+        Ok(init)
     }
 }
 
@@ -1144,6 +1158,29 @@ fn no_requests(command: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 33.0's review: the init file (a copy of `~/.duckdbrc`, where a
+    /// `CREATE SECRET` is kept) was written with the umask's permissions.
+    #[cfg(unix)]
+    #[test]
+    fn duckdbs_init_file_is_the_owners_alone_and_goes_with_the_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("init-1.sql");
+        // one a run that died left, readable by all: not written through
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let init =
+            DuckdbInit::write_private(path.clone(), "CREATE SECRET (KEY_ID 'k');\n").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "CREATE SECRET (KEY_ID 'k');\n"
+        );
+        drop(init);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn nothing_reached_names_the_programs_own_way_first() {

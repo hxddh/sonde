@@ -106,6 +106,29 @@ const PLAIN_QUERY: &[&str] = &[
     "select-type",
 ];
 
+/// The name a redacted page gives the run it is compared with: its file's
+/// name is the user's own words (a customer, a ticket, an account).
+pub const ANOTHER_RUN: &str = "another run";
+
+/// Whether a name made of digits says where in a layout or when, not who:
+/// a number of at most 8 digits (a year, a day, `20260102`, a small
+/// count), a counter padded with zeros to 16 digits or more (a log's
+/// `00000000000000000010`), or a date with what follows it in twos
+/// (`2026-01-02`, `2026_01_02_15`). Any other is taken for an id: an
+/// account's 12 digits, an address (`10.1.2.3`), a card's or a person's
+/// number in groups (`1234-5678`, `123-45-6789`).
+fn plain_number(name: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if digits(name) {
+        return name.len() <= 8 || (name.len() >= 16 && name.starts_with("00"));
+    }
+    let parts: Vec<&str> = name.split(['-', '_']).collect();
+    (2..=6).contains(&parts.len())
+        && parts[0].len() == 4
+        && parts.iter().all(|p| digits(p))
+        && parts[1..].iter().all(|p| p.len() == 2)
+}
+
 struct Redactor {
     salt: u64,
 }
@@ -121,9 +144,8 @@ impl Redactor {
     fn segment(&self, seg: &str) -> String {
         if seg.is_empty()
             || STRUCTURAL.contains(&seg)
-            || seg
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '_')
+            || seg.chars().all(|c| c == '.' || c == '-' || c == '_')
+            || plain_number(seg)
         {
             return seg.to_string();
         }
@@ -133,7 +155,7 @@ impl Redactor {
                 if !stem.is_empty() && FILE_TYPES.contains(&ext.to_ascii_lowercase().as_str()) =>
             {
                 // a numbered file keeps its number: 00000000000000000010.json
-                if stem.chars().all(|c| c.is_ascii_digit()) {
+                if plain_number(stem) {
                     seg.to_string()
                 } else {
                     format!("{}.{ext}", self.token(stem))
@@ -153,7 +175,8 @@ impl Redactor {
 
 /// Makes a run safe to hand on: bucket names and every key segment
 /// become tokens (the same name, the same token, within this run; the
-/// layout's own names and file types are kept), and headers, bodies,
+/// layout's own names, file types and the numbers that are no one's id
+/// ([`plain_number`]) are kept), and headers, bodies,
 /// request ids, URLs, the program's output and its arguments are dropped.
 pub fn redact(s: &mut RunFile) {
     redact_all(&mut [s]);
@@ -334,6 +357,72 @@ mod tests {
             assert!(!doc.contains(secret), "{secret} leaked: {doc}");
         }
         assert!(doc.contains("\"list-type\",\"2\""));
+    }
+
+    /// 33.0's review: a segment of digits, dots and dashes was kept as the
+    /// layout's own, so an account id, an address or a person's number in a
+    /// key reached the page.
+    #[test]
+    fn an_id_made_of_digits_does_not_survive_redaction() {
+        let ids = [
+            "123456789012",
+            "10.1.2.3",
+            "550-12-3456",
+            "4111-1111-1111-1111",
+            "1234-5678",
+            "0f8fad5b-d9cb-469f-a165-70867728950e",
+            "555_010_9999",
+            "1650000000123",
+        ];
+        let mut s = run();
+        let like = s.records[0].clone();
+        s.records.clear();
+        let mut add = |key: String, prefix: Option<String>| {
+            let mut r = like.clone();
+            r.id = s.records.len() as u64 + 1;
+            r.key = Some(key.into());
+            if let Some(p) = prefix {
+                r.kind = "ListObjectsV2".into();
+                r.lists_mut().query = vec![("prefix".into(), p.into())];
+            }
+            s.records.push(r);
+        };
+        for id in ids {
+            add(
+                format!("AWSLogs/{id}/CloudTrail/2026/01/02/{id}_x.json"),
+                None,
+            );
+            add(format!("hosts/{id}"), None);
+            add(format!("by-id/{id}.json"), None);
+            add("list".into(), Some(format!("accounts/{id}/")));
+        }
+        // what says when and where in a layout, kept
+        add("t/_delta_log/00000000000000000010.json".into(), None);
+        add("logs/2026/01/02/2026-01-02-15/part-7.parquet".into(), None);
+        add("days/20260102/2026_01_02.csv".into(), None);
+        let kept = s.records.len() - 3;
+        redact(&mut s);
+        let doc =
+            serde_json::to_string(&crate::share::run_json(&s, &RequestPrices::default())).unwrap();
+        let mut page = Vec::new();
+        // (a build without the viewer refuses the page: the document is what it holds)
+        let page =
+            match crate::share::write_page(&s, None, &RequestPrices::default(), None, &mut page) {
+                Ok(()) => String::from_utf8_lossy(&page).into_owned(),
+                Err(_) => String::new(),
+            };
+        for id in ids {
+            assert!(!doc.contains(id), "{id} leaked");
+            assert!(!page.contains(id), "{id} leaked into the page");
+        }
+        let key = |i: usize| s.records[kept + i].key.as_deref().unwrap().to_string();
+        assert!(
+            key(0).ends_with("/_delta_log/00000000000000000010.json"),
+            "{}",
+            key(0)
+        );
+        assert!(key(1).contains("/2026/01/02/2026-01-02-15/"), "{}", key(1));
+        assert_eq!(key(2).split_once('/').unwrap().1, "20260102/2026_01_02.csv");
     }
 
     #[test]

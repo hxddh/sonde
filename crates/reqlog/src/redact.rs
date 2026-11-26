@@ -4,18 +4,23 @@
 //! - `Authorization`: the signature is replaced, the access key id shortened
 //!   to its first four and last two characters; the scope and the signed
 //!   header list stay (they are what one diagnoses);
-//! - `x-amz-security-token`, the SSE-C key headers, `Cookie`,
-//!   `Proxy-Authorization`, `x-amz-copy-source-server-side-encryption-customer-key`;
+//! - `x-amz-security-token`, `x-amz-s3session-token` (S3 Express), the
+//!   SSE-C key headers, `Cookie`, `Proxy-Authorization`,
+//!   `x-amz-copy-source-server-side-encryption-customer-key`;
 //! - presign query parameters: `X-Amz-Signature`, `X-Amz-Security-Token`,
 //!   `X-Amz-Credential` (its key id), SigV2's `Signature` and `AWSAccessKeyId`;
-//! - the same names when they appear inside text, in any case (error bodies
-//!   echo `<StringToSign>`, `<SignatureProvided>`, `<AWSAccessKeyId>`), and
-//!   `<CanonicalRequest>` (it holds signed headers' values) whole.
+//! - the same names when they appear inside text, in any case, and what an
+//!   error body echoes of a signature: `<SignatureProvided>`,
+//!   `<StringToSign>` and `<CanonicalRequest>` (it holds signed headers'
+//!   values) with their `…Bytes` twins whole, `<AWSAccessKeyId>` shortened;
+//!   a session's credentials (`<SessionToken>`, `<SecretAccessKey>`,
+//!   `<AccessKeyId>`).
 
 pub const MASK: &str = "«redacted»";
 
 const SECRET_HEADERS: &[&str] = &[
     "x-amz-security-token",
+    "x-amz-s3session-token",
     "x-amz-server-side-encryption-customer-key",
     "x-amz-copy-source-server-side-encryption-customer-key",
     "cookie",
@@ -24,7 +29,12 @@ const SECRET_HEADERS: &[&str] = &[
     "x-amz-content-sha256-secret",
 ];
 
-const SECRET_QUERY: &[&str] = &["x-amz-signature", "x-amz-security-token", "signature"];
+const SECRET_QUERY: &[&str] = &[
+    "x-amz-signature",
+    "x-amz-security-token",
+    "x-amz-s3session-token",
+    "signature",
+];
 
 /// Shortens an access key id: `AKIAIOSFODNN7EXAMPLE` → `AKIA…LE`.
 pub fn mask_key_id(id: &str) -> String {
@@ -47,6 +57,27 @@ pub fn redact_header(name: &str, value: &str) -> String {
         return MASK.to_string();
     }
     value.to_string()
+}
+
+/// Whether [`redact_header`] would leave the value as it is, without
+/// making it: what a record already redacted is asked on its way to a file.
+pub fn header_is_redacted(name: &str, value: &str) -> bool {
+    if name.eq_ignore_ascii_case("authorization") {
+        return value.contains(MASK);
+    }
+    !SECRET_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)) || value == MASK
+}
+
+/// Whether [`redact_query_value`] would leave the value as it is.
+pub fn query_value_is_redacted(name: &str, value: &str) -> bool {
+    if SECRET_QUERY.iter().any(|q| name.eq_ignore_ascii_case(q)) {
+        return value == MASK;
+    }
+    if name.eq_ignore_ascii_case("x-amz-credential") || name.eq_ignore_ascii_case("awsaccesskeyid")
+    {
+        return redact_query_value(name, value) == value;
+    }
+    true
 }
 
 /// `AWS4-HMAC-SHA256 Credential=AKID/20150830/us-east-1/s3/aws4_request,
@@ -149,16 +180,21 @@ pub fn redact_text(text: &str) -> String {
     let mut out = text.to_string();
     for tag in [
         "SignatureProvided",
+        "StringToSign",
         "StringToSignBytes",
         "CanonicalRequest",
         "CanonicalRequestBytes",
         "Signature",
         "SecurityToken",
+        "SessionToken",
+        "SecretAccessKey",
         "Token",
     ] {
         out = replace_element(&out, tag, |_| MASK.to_string());
     }
-    out = replace_element(&out, "AWSAccessKeyId", mask_key_id);
+    for tag in ["AWSAccessKeyId", "AccessKeyId"] {
+        out = replace_element(&out, tag, mask_key_id);
+    }
     redact_parameters(&out)
 }
 
@@ -325,6 +361,9 @@ mod tests {
             "f0e8bdb8",
             "ASIAIOSFODNN7EXAMPLE",
             "50 55 54 0a",
+            // the string to sign, as its bytes beside it
+            "7344ae5b7ee6c3e7",
+            "41 57 53 34",
         ] {
             assert!(!r.contains(secret), "{secret} in {r}");
         }
@@ -388,6 +427,100 @@ mod tests {
             "{got}"
         );
         assert!(got.starts_with("error sending request for url (https://h/b/k?"));
+    }
+
+    /// 33.0's review: S3 Express signs with a session's token in a header
+    /// of its own, and `CreateSession` answers with the session's keys.
+    #[test]
+    fn an_express_sessions_token_and_keys() {
+        assert_eq!(redact_header("x-amz-s3session-token", "AgAAAsecret"), MASK);
+        assert_eq!(redact_header("X-Amz-S3session-Token", "AgAAAsecret"), MASK);
+        let url = redact_url(
+            "https://b--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/k?X-Amz-S3session-Token=AgAAAsecret&X-Amz-Expires=9",
+        );
+        assert!(
+            !url.contains("AgAAAsecret") && url.contains("X-Amz-Expires=9"),
+            "{url}"
+        );
+        let body = "<CreateSessionResult><Credentials><SessionToken>AgAAAsecret</SessionToken><SecretAccessKey>wJalrXUtnFEMI</SecretAccessKey><AccessKeyId>ASIAIOSFODNN7EXAMPLE</AccessKeyId><Expiration>2026-01-01T00:00:00Z</Expiration></Credentials></CreateSessionResult>";
+        let r = redact_text(body);
+        for secret in ["AgAAAsecret", "wJalrXUtnFEMI", "ASIAIOSFODNN7EXAMPLE"] {
+            assert!(!r.contains(secret), "{secret} in {r}");
+        }
+        assert!(
+            r.contains("<Expiration>2026-01-01T00:00:00Z</Expiration>"),
+            "{r}"
+        );
+        assert_eq!(redact_text(&r), r, "idempotent");
+        let r = redact_text(
+            "x-amz-s3session-token:AgAAAsecret\nhost:h\n\nGET /?x-amz-s3session-token=AgAAAsecret&a=1",
+        );
+        assert!(!r.contains("=AgAAAsecret"), "{r}");
+    }
+
+    /// What a record's way into a file asks ([`crate::Record::is_redacted`])
+    /// is what redacting it again would find.
+    #[test]
+    fn a_record_says_it_is_redacted_when_redacting_it_changes_nothing() {
+        use crate::{Header, Record};
+        let mut records = vec![Record::default()];
+        for (name, value) in [
+            ("Authorization", AUTH),
+            ("authorization", "Bearer abc"),
+            ("x-amz-security-token", "T"),
+            ("X-Amz-S3session-Token", "T"),
+            ("Cookie", "a=b"),
+            ("range", "bytes=0-1"),
+            ("x-amz-server-side-encryption-customer-key-MD5", "md5"),
+        ] {
+            let mut r = Record::default();
+            r.lists_mut().request_headers =
+                vec![Header::new("host", "h"), Header::new(name, value)];
+            records.push(r.clone());
+            let mut r = Record::default();
+            r.lists_mut().response_headers = vec![Header::new(name, value)];
+            records.push(r);
+        }
+        for (name, value) in [
+            ("X-Amz-Signature", "abc"),
+            ("x-amz-security-token", "abc"),
+            ("Signature", "abc"),
+            (
+                "X-Amz-Credential",
+                "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request",
+            ),
+            ("AWSAccessKeyId", "AKIAIOSFODNN7EXAMPLE"),
+            ("prefix", "a/"),
+        ] {
+            let mut r = Record::default();
+            r.lists_mut().query = vec![(name.into(), value.into())];
+            records.push(r);
+        }
+        for url in [
+            "https://h/b/k",
+            "https://h/b/k?versionId=1",
+            "https://h/b/k?X-Amz-Signature=abc&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2Fs",
+        ] {
+            let mut r = Record::default();
+            r.rare_mut().url = url.into();
+            records.push(r);
+        }
+        for text in ["<Error><Code>NoSuchKey</Code></Error>", MISMATCH, "plain"] {
+            let mut r = Record::default();
+            r.rare_mut().error_body = Some(text.into());
+            records.push(r.clone());
+            r.rare_mut().request_body = Some(text.into());
+            r.rare_mut().transport_error = Some(format!("url (https://h/k?Signature={text})"));
+            records.push(r);
+        }
+        let mut secret = 0;
+        for r in records {
+            let redacted = r.clone().redacted();
+            assert_eq!(r.is_redacted(), redacted == r, "{r:?}");
+            assert!(redacted.is_redacted(), "{redacted:?}");
+            secret += usize::from(!r.is_redacted());
+        }
+        assert!(secret >= 15, "{secret}");
     }
 
     #[test]

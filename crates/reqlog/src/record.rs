@@ -676,6 +676,37 @@ impl Record {
         self
     }
 
+    /// Whether [`Record::redacted`] would change nothing. Asked of every
+    /// record on its way to a file ([`crate::Sink`]), so a header or a
+    /// query value that holds no secret costs a comparison of names; only
+    /// a record with a body or an error to read is redacted to find out.
+    pub fn is_redacted(&self) -> bool {
+        use crate::redact::{header_is_redacted, query_value_is_redacted, redact_url};
+        if !self
+            .query()
+            .iter()
+            .all(|(k, v)| query_value_is_redacted(k, v))
+            || !self
+                .request_headers()
+                .iter()
+                .chain(self.response_headers())
+                .all(|h| header_is_redacted(&h.name, &h.value))
+        {
+            return false;
+        }
+        match self.rare.as_deref() {
+            None => true,
+            Some(x)
+                if x.error_body.is_some()
+                    || x.transport_error.is_some()
+                    || x.request_body.is_some() =>
+            {
+                self.clone().redacted() == *self
+            }
+            Some(x) => !x.url.contains('?') || redact_url(&x.url) == x.url,
+        }
+    }
+
     pub fn header(&self, name: &str) -> Option<&str> {
         self.response_headers()
             .iter()
