@@ -184,6 +184,9 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
   are skipped and counted.
 - CloudTrail keeps upload id, part, listing page and version; HAR keeps headers (secrets masked).
 - A 404 `NoSuchBucket` is an error; a missing key is a lookup.
+- A file or folder is read as a stream and written as it is read: a CloudTrail file or a HAR of several GiB takes
+  some tens of MiB to import ([performance](dev/performance.md#import)), and disk beside the run for its requests
+  until it is written.
 
 | Source | Times | Who sent it | SDK |
 |---|---|---|---|

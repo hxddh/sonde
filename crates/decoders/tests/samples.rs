@@ -691,7 +691,8 @@ fn slatedb_with_an_old_checkpoint() -> (decoders::MemSource, String) {
     }
     mem.put(&format!("db/compacted/{replaced}.sst"), vec![0u8; 64], None);
     mem.put("db/manifest/00000000000000000012.manifest", old, None);
-    for id in 13..=612u64 {
+    // (past what the decoder reads: manifest 12 is then older than all it decodes)
+    for id in 13..=12 + decoders::slatedb::MAX_MANIFESTS as u64 + 100 {
         mem.put(
             &format!("db/manifest/{id:020}.manifest"),
             newer.clone(),
@@ -707,7 +708,6 @@ fn slatedb_with_an_old_checkpoint() -> (decoders::MemSource, String) {
 #[tokio::test]
 async fn slatedb_ssts_of_an_old_checkpoint_are_not_orphans() {
     let (mem, kept_only) = slatedb_with_an_old_checkpoint();
-    assert!(612 - 12 > decoders::slatedb::MAX_MANIFESTS);
     let state = |l: &decoders::Layout, sst: &str| {
         l.tables[0]
             .rows

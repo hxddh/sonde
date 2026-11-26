@@ -487,9 +487,10 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
 }
 
 /// A run just made (`import`): its summary and findings on stderr, as
-/// `run` says its own; stdout is for what was asked (`show` reads it).
+/// `run` says its own; stdout is for what was asked (`show` reads it). Read
+/// as `show` reads it: for what it amounts to, not whole.
 pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
-    let run = super::runs::read(file, sonde_analysis::run::Keep::All)?;
+    let run = super::runs::read(file, sonde_analysis::run::Keep::Analysis)?;
     let mut analysis = Analysis::of(&run, &request_prices_for(s, &run.header.endpoint));
     sonde_analysis::program::mark_expected(
         &mut analysis.observations,

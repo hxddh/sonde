@@ -1,0 +1,11 @@
+79a5 lake [06/Feb/2026:00:00:40 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL3 REST.GET.BUCKET - "GET /lake?list-type=2&prefix=t%2F HTTP/1.1" 200 - 812 - 25 24 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPLE REST.GET.OBJECT t/part-00.parquet "GET /lake/t/part-00.parquet HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL2 REST.HEAD.OBJECT t/missing "HEAD /lake/t/missing HTTP/1.1" 404 NoSuchKey 0 - 3 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL4 REST.PUT.OBJECT t/part-01.parquet "PUT /lake/t/part-01.parquet HTTP/1.1" 200 - - 8192 40 22 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:39 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXCOPY1 REST.COPY.OBJECT_GET t/part-01.parquet "-" 200 - - 8192 - - "-" "-" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:39 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXCOPY1 REST.COPY.OBJECT t/kept/part-01.parquet "PUT /lake/t/kept/part-01.parquet HTTP/1.1" 200 - 234 8192 31 30 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:39 +0000] - AmazonS3 3E57427F3EXPIRE1 S3.EXPIRE.OBJECT t/old.parquet "-" - - - 2048 - - "-" "-" - - - - - - - -
+79a5 lake [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL5 REST.GET.OBJECT t/part-00.parquet "GET /lake/t/part-00.parquet HTTP/1.1" 503 SlowDown 0 - 40 30 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+79a5 lake [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL6 REST.GET.OBJECT t/caf%C3%A9.parquet "GET /lake/t/caf%C3%A9.parquet HTTP/1.1" - - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
+
+79a5 lake [06/Feb/2026:00:00:42 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL7 REST.GET.OBJ

@@ -10,6 +10,9 @@ use serde_json::Value;
 
 use crate::run::{RunFile, RunHeader};
 
+mod stream;
+pub use stream::{Saved, Sealed, Spool};
+
 /// Where imported traffic came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -201,7 +204,7 @@ impl Parts {
         }
         // (stable: requests of one moment stay in the log's order)
         records.sort_by_key(|r| r.time);
-        let whole_seconds = spread_seconds(&mut records);
+        let whole_seconds = spread_seconds(&mut records, |r| &mut r.time);
         // where the requests went, when the source says: the store's host
         // (the file's name otherwise, which is all there is)
         let endpoint = self
@@ -240,19 +243,26 @@ impl Parts {
 
 /// A log whose times are whole seconds says a second's requests all began
 /// at once: they are spread evenly over their second, in the log's order
-/// (records sorted by time, the order kept within one). Returns whether the
-/// times were to the second (two requests or more, none with a fraction).
-fn spread_seconds(records: &mut [Record]) -> bool {
-    let whole = records.len() >= 2 && records.iter().all(|r| r.time.timestamp_subsec_nanos() == 0);
+/// (records sorted by time, the order kept within one; `time` is where a
+/// record's is). Returns whether the times were to the second (two requests
+/// or more, none with a fraction).
+fn spread_seconds<T>(records: &mut [T], time: fn(&mut T) -> &mut DateTime<Utc>) -> bool {
+    let whole = records.len() >= 2
+        && records
+            .iter_mut()
+            .all(|r| time(r).timestamp_subsec_nanos() == 0);
     if !whole {
         return false;
     }
     let mut i = 0;
     while i < records.len() {
-        let second = records[i].time;
-        let n = records[i..].iter().take_while(|r| r.time == second).count();
+        let second = *time(&mut records[i]);
+        let mut n = 1;
+        while i + n < records.len() && *time(&mut records[i + n]) == second {
+            n += 1;
+        }
         for (k, r) in records[i..i + n].iter_mut().enumerate() {
-            r.time = second + chrono::Duration::microseconds((k as i64 * 1_000_000) / n as i64);
+            *time(r) = second + chrono::Duration::microseconds((k as i64 * 1_000_000) / n as i64);
         }
         i += n;
     }
@@ -291,6 +301,47 @@ pub struct ImportedDir {
 /// not of the first file's source is left out and named; hidden files are
 /// passed over.
 pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, String> {
+    let files = files_under(dir)?;
+    let mut parts = Parts::default();
+    let (mut read, mut left_out) = (0, Vec::new());
+    for path in &files {
+        // one file in memory at a time
+        let added = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| text_of(&bytes))
+            .and_then(|text| parts.add(&text));
+        match added {
+            Ok(()) => read += 1,
+            Err(why) => left_out.push((
+                path.strip_prefix(dir)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned(),
+                why,
+            )),
+        }
+    }
+    if read == 0 {
+        return Err(none_among(files.len()));
+    }
+    Ok(ImportedDir {
+        imported: parts.finish(name)?,
+        files: read,
+        left_out,
+    })
+}
+
+/// What a folder of no source's files is refused with.
+fn none_among(files: usize) -> String {
+    format!(
+        "no S3 server access log, CloudTrail file or HAR among its {files} file{}",
+        if files == 1 { "" } else { "s" }
+    )
+}
+
+/// The files under `dir` that an import of it reads, in the order of their
+/// names: an error when there are none.
+fn files_under(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -318,37 +369,7 @@ pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, Stri
     if files.is_empty() {
         return Err(format!("{EMPTY}: no files in this folder"));
     }
-    let mut parts = Parts::default();
-    let (mut read, mut left_out) = (0, Vec::new());
-    for path in &files {
-        // one file in memory at a time
-        let added = std::fs::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| text_of(&bytes))
-            .and_then(|text| parts.add(&text));
-        match added {
-            Ok(()) => read += 1,
-            Err(why) => left_out.push((
-                path.strip_prefix(dir)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .into_owned(),
-                why,
-            )),
-        }
-    }
-    if read == 0 {
-        return Err(format!(
-            "no S3 server access log, CloudTrail file or HAR among its {} file{}",
-            files.len(),
-            if files.len() == 1 { "" } else { "s" }
-        ));
-    }
-    Ok(ImportedDir {
-        imported: parts.finish(name)?,
-        files: read,
-        left_out,
-    })
+    Ok(files)
 }
 
 fn decode(s: &str) -> String {
@@ -634,6 +655,17 @@ fn cloudtrail(
             })
             .collect(),
     };
+    Ok(trail_events(events, malformed, other, hosts))
+}
+
+/// CloudTrail events as requests ([`cloudtrail`]): one that does not read
+/// is counted in `malformed`, another service's in `other`.
+fn trail_events(
+    events: Vec<Value>,
+    malformed: &mut usize,
+    other: &mut usize,
+    hosts: &mut std::collections::BTreeMap<String, usize>,
+) -> Vec<Record> {
     let mut out = Vec::new();
     for e in events {
         if e["eventSource"].as_str() != Some("s3.amazonaws.com") {
@@ -711,7 +743,7 @@ fn cloudtrail(
         }
         out.push(r);
     }
-    Ok(out)
+    out
 }
 
 /// The bucket a virtual-hosted host names: the labels before a store's own
@@ -755,6 +787,17 @@ fn har(
     let entries = v["log"]["entries"]
         .as_array()
         .ok_or("a HAR without log.entries")?;
+    Ok(har_entries(entries, malformed, other_hosts, hosts))
+}
+
+/// A HAR's entries as requests ([`har`]): another host's is counted in
+/// `other_hosts`, one of S3's that does not say when in `malformed`.
+fn har_entries(
+    entries: &[Value],
+    malformed: &mut usize,
+    other_hosts: &mut usize,
+    hosts: &mut std::collections::BTreeMap<String, usize>,
+) -> Vec<Record> {
     let mut out = Vec::new();
     for e in entries {
         let req = &e["request"];
@@ -911,7 +954,7 @@ fn har(
         }
         out.push(r);
     }
-    Ok(out)
+    out
 }
 
 /// Writes an imported run as a `.sonde` file, compressed as a finished
