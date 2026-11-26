@@ -81,10 +81,44 @@ pub fn left_where<'a>(
 ) -> Left {
     let mut in_time: Vec<&Record> = records.into_iter().collect();
     in_time.sort_by_key(|r| (r.time, r.id));
-    // each key as the run wrote it, and whether it stands; a key first
-    // touched by a delete stood before the run
-    let mut stands: BTreeMap<(&str, String), bool> = BTreeMap::new();
-    let mut before: std::collections::BTreeSet<(&str, String)> = Default::default();
+    let read = |key: &str| {
+        let mut key = key.to_string();
+        for name in names.iter().filter(|n| !n.is_empty()) {
+            key = key.replace(name, "{trial}");
+        }
+        crate::profile::stable(&key)
+    };
+    // Each key the run changed, by a hash of its name (a run of a million
+    // writes keeps sixteen bytes a key, not the keys): how it reads
+    // ([`crate::profile::stable`], kept once per reading), whether it
+    // stands, and whether its first change was a delete (it stood before).
+    struct Key {
+        reads: u32,
+        stands: bool,
+        before: bool,
+    }
+    let mut keys: std::collections::HashMap<u64, Key> = Default::default();
+    let mut readings: Vec<(String, String)> = Vec::new();
+    let mut numbered: std::collections::HashMap<(String, String), u32> = Default::default();
+    let mut change = |bucket: &str, key: &str, stands: bool| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (bucket, key).hash(&mut h);
+        keys.entry(h.finish())
+            .and_modify(|k| k.stands = stands)
+            .or_insert_with(|| {
+                let reading = (bucket.to_string(), read(key));
+                let reads = *numbered.entry(reading.clone()).or_insert_with(|| {
+                    readings.push(reading);
+                    readings.len() as u32 - 1
+                });
+                Key {
+                    reads,
+                    stands,
+                    before: !stands,
+                }
+            });
+    };
     let mut unknown = false;
     for r in in_time {
         if !made(r) {
@@ -95,21 +129,15 @@ pub fn left_where<'a>(
         };
         match (r.kind.as_str(), r.key.as_deref()) {
             ("PutObject" | "CopyObject" | "CompleteMultipartUpload", Some(key)) => {
-                stands.insert((bucket, key.to_string()), true);
+                change(bucket, key, true);
             }
-            ("DeleteObject", Some(key)) => {
-                if stands.insert((bucket, key.to_string()), false).is_none() {
-                    before.insert((bucket, key.to_string()));
-                }
-            }
+            ("DeleteObject", Some(key)) => change(bucket, key, false),
             ("DeleteObjects", _) => {
                 let rare = r.rare();
                 match rare.request_body.as_deref() {
                     Some(doc) if !rare.request_body_truncated => {
                         for (key, _version) in reqlog::deleted_objects(doc) {
-                            if stands.insert((bucket, key.clone()), false).is_none() {
-                                before.insert((bucket, key));
-                            }
+                            change(bucket, &key, false);
                         }
                     }
                     _ => unknown = true,
@@ -118,20 +146,14 @@ pub fn left_where<'a>(
             _ => {}
         }
     }
-    let read = |key: &str| {
-        let mut key = key.to_string();
-        for name in names.iter().filter(|n| !n.is_empty()) {
-            key = key.replace(name, "{trial}");
-        }
-        crate::profile::stable(&key)
-    };
     let mut objects: BTreeMap<(String, String), usize> = BTreeMap::new();
     let mut removed: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for ((bucket, key), there) in &stands {
-        if *there {
-            *objects.entry((bucket.to_string(), read(key))).or_default() += 1;
-        } else if before.contains(&(*bucket, key.clone())) {
-            *removed.entry((bucket.to_string(), read(key))).or_default() += 1;
+    for k in keys.values() {
+        let reading = &readings[k.reads as usize];
+        if k.stands {
+            *objects.entry(reading.clone()).or_default() += 1;
+        } else if k.before {
+            *removed.entry(reading.clone()).or_default() += 1;
         }
     }
     Left {

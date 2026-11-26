@@ -337,6 +337,39 @@ pub(super) fn moved(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
 
 /// Why what moved between two runs is not counted as a fix (the command
 /// changed, the workload grew): said before the figures.
+/// How a run differs from the run before in what it leaves in the store,
+/// said only when it does: `leaves 6 objects fewer than the run before, 1 of
+/// a kind it no longer writes (b/out/_SUCCESS)`. Which objects stand, not
+/// what is in them.
+pub(super) fn left_line(l: &sonde_analysis::profile::LeftChange) -> String {
+    let objects = |n: usize| {
+        format!(
+            "{} object{}",
+            sonde_fmt::count(n as u64),
+            if n == 1 { "" } else { "s" }
+        )
+    };
+    let mut parts = Vec::new();
+    if l.fewer > 0 {
+        let mut t = format!("{} fewer", objects(l.fewer));
+        if l.absent > 0 {
+            t.push_str(&format!(
+                ", {} of a kind it no longer writes",
+                sonde_fmt::count(l.absent as u64)
+            ));
+        }
+        parts.push(t);
+    }
+    if l.more > 0 {
+        parts.push(format!("{} more", objects(l.more)));
+    }
+    let mut t = format!("leaves {} than the run before", parts.join(" and "));
+    if let Some(k) = &l.key {
+        t.push_str(&format!(" ({k})"));
+    }
+    t
+}
+
 pub(super) fn uncounted_line(why: &str) -> String {
     format!("{why}: what moved is not counted as a fix")
 }
@@ -453,6 +486,9 @@ pub(super) fn since_lines(
         out.push(paint(&format!("  {}", uncounted_line(&why)), "33", color));
     }
     out.push(format!("  {}", figures_line(c)));
+    if let Some(l) = &c.left {
+        out.push(paint(&format!("  {}", left_line(l)), "33", color));
+    }
     if asked {
         out.extend(kinds_moved(c));
     }
@@ -668,6 +704,24 @@ pub(super) fn history_of(s: &Sonde, path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use sonde_analysis::fixloop::Saving;
+
+    #[test]
+    fn what_a_run_leaves_otherwise_than_the_run_before_is_said_in_a_line() {
+        let left = |fewer, more, absent, key: Option<&str>| sonde_analysis::profile::LeftChange {
+            fewer,
+            more,
+            absent,
+            key: key.map(Into::into),
+        };
+        assert_eq!(
+            left_line(&left(2, 0, 1, Some("b/out/_SUCCESS"))),
+            "leaves 2 objects fewer, 1 of a kind it no longer writes than the run before (b/out/_SUCCESS)"
+        );
+        assert_eq!(
+            left_line(&left(1, 1500, 0, None)),
+            "leaves 1 object fewer and 1,500 objects more than the run before"
+        );
+    }
 
     #[test]
     fn a_figure_that_did_not_move_says_no_change_not_plus_zero_percent() {

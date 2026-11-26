@@ -1929,6 +1929,32 @@ pub struct RunChange {
     /// The busiest prefixes of either run, each run's requests to them: where
     /// the change happened.
     pub prefixes: Vec<PrefixChange>,
+    /// How the later run differs from the earlier in what it leaves in the
+    /// store ([`crate::left`]): there only when it differs, between two
+    /// runs of one program with the same command. Which objects stand, not
+    /// what is in them; a fix that packs small files into fewer leaves
+    /// fewer on purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<LeftChange>,
+}
+
+/// What a run leaves in the store that the run before did not, and the
+/// other way ([`crate::left::Difference`]).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftChange {
+    /// Objects the run before leaves and this run does not.
+    pub fewer: usize,
+    /// Objects this run leaves and the run before does not.
+    pub more: usize,
+    /// Of the fewer, those of a kind this run leaves none of: an output it
+    /// no longer writes at all.
+    pub absent: usize,
+    /// One of them (an absent one first, else a fewer, else a more), its
+    /// bucket and key read without what changes from run to run
+    /// (`b/out/part-{n}.json`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// A workload that changed between two runs that asked of `(a, b)`
@@ -1968,6 +1994,7 @@ impl RunChange {
     pub fn of_programs(mut self, a: Option<&str>, b: Option<&str>) -> Self {
         self.same_program = a.is_some() && a == b;
         if !self.same_program {
+            self.left = None;
             self.resolved.clear();
             self.appeared.clear();
             self.findings.clear();
@@ -1980,6 +2007,9 @@ impl RunChange {
     /// then counts no saving.
     pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
         self.command_changed = crate::program::command_change(a, b);
+        if self.command_changed.is_some() {
+            self.left = None;
+        }
         if self.command_changed.is_none() {
             self.workload_changed = workload_changed(self.objects, self.freed);
         }
@@ -2719,6 +2749,8 @@ pub struct Run {
     /// ([`Run::measure`]), and whether that was counted.
     pub counts: HashMap<String, usize>,
     pub measured: bool,
+    /// What it leaves in the store ([`crate::left`]).
+    pub left: crate::left::Left,
 }
 
 impl Run {
@@ -2852,6 +2884,7 @@ impl Run {
             error_classes,
             counts: HashMap::new(),
             measured: false,
+            left: crate::left::left(records, &[]),
         }
     }
 
@@ -3037,6 +3070,12 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         noise_ms: None,
         within_noise: false,
         waiting_known: true,
+        left: b.left.against(&a.left).map(|d| LeftChange {
+            fewer: d.missing,
+            more: d.extra,
+            absent: d.absent,
+            key: d.an_absent.or(d.a_missing).or(d.an_extra),
+        }),
     }
 }
 

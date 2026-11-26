@@ -260,6 +260,13 @@ moved is a finding of the change, `obs.errors|500 InternalError`, new, more, les
 
 A program whose command changed between the two runs (beyond a trial's place; `sh -c X` and `bash -c X` are `X`) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix. So does a workload that grew by half or more with the same command (`the workload grew (objects 120 → 402, 3.4×)`, `workloadChanged`), or shrank by a third or more (`the workload shrank`), judged by the objects asked of (each key, each prefix listed), less the objects the earlier run's findings fixed did away with (small files written as fewer, small reads packed into a shard; not a finding still there, less): a fix that read all 400 files, not 30, or 30 files, not 400, is not counted; the same files read in fewer requests, or written as fewer files, is.
 
+**What the run leaves**: when the run leaves other objects in the store than the run before (the same command), a
+line says so (`leaves 2 objects fewer, 1 of a kind it no longer writes than the run before (b/out/_SUCCESS)`,
+`since.change.left` in JSON), and nothing when it leaves the same. Each key is followed to its last change and read
+without what changes from run to run, as a trial reads it ([trials](trials.md#how-results-are-read)): which objects
+stand, never what is in them. A fix that writes small files as fewer leaves fewer on purpose; one that reads
+differently should leave the same.
+
 **Time and noise**: the run's wall time is said once, on the `since` line (`time 4.51 s → 3.64 s (-19%)`), never as a
 finding's saving. A program's runs vary: its runs before this one alike in command and findings (no fix between
 them, up to 5; a count of 100 or more alike by its first two digits) say by how much (`its runs vary by 120 ms`, `noiseMs`
