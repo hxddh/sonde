@@ -332,7 +332,16 @@ impl RunWriter {
 }
 
 impl Sink for RunWriter {
+    /// The one way a request gets into a run's file, whoever made the
+    /// record (the recording, a replay, an importer): never unredacted.
     fn write(&self, record: &Record) {
+        let redacted;
+        let record = if record.is_redacted() {
+            record
+        } else {
+            redacted = record.clone().redacted();
+            &redacted
+        };
         let mut out = self.out.lock();
         if !out.line(record) {
             out.lost += 1;

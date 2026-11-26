@@ -1402,6 +1402,33 @@ fn xml_text(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// What a recorded program is told, and its run keeps, when sonde has no
+/// credentials for the store: that, and how a `credential_process` ended.
+/// Never the source's own words: a process's output, a token file's path
+/// or an STS answer is not the program's to read.
+fn credentials_failure(endpoint_id: &str, error: &str) -> String {
+    let ended = error
+        .split("credential_process exited with ")
+        .nth(1)
+        .and_then(|rest| {
+            ["exit status: ", "exit code: ", "signal: "]
+                .iter()
+                .find_map(|kind| {
+                    let code: String = rest
+                        .strip_prefix(kind)?
+                        .chars()
+                        .take_while(|c| c.is_ascii_hexdigit() || *c == 'x')
+                        .take(12)
+                        .collect();
+                    (!code.is_empty()).then(|| format!(" (credential_process: {kind}{code})"))
+                })
+        })
+        .unwrap_or_default();
+    format!(
+        "sonde has no credentials for {endpoint_id}{ended}: `sonde endpoints test {endpoint_id}` says why"
+    )
+}
+
 fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{}</Code><Message>{}</Message><RequestId>sonde-proxy</RequestId></Error>",
@@ -2006,7 +2033,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         Ok(None) => {}
         Err(e) => {
-            let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
+            let msg = credentials_failure(&cfg.endpoint_id, &e.message);
             record.rare_mut().transport_error = Some(msg.clone());
             held.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));

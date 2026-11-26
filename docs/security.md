@@ -12,8 +12,11 @@ destructive actions are gated, and a recorded program is limited by a policy.
   (`credentials: "keep"` keeps static keys without reading them).
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
   parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)), before anything stores or
-  shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no
-  signature.
+  shows it: runs, HAR/JSON exports, probe reports and fixtures hold only redacted records. A run's file redacts
+  again what it is given to write, so an imported HAR or log is held to the same. "Copy as curl" has no signature.
+- A source of credentials that fails says how, not what it printed: a `credential_process`'s exit status, never its
+  output. A recorded program is answered `500 SondeCredentials` naming the endpoint (and that exit status) only, and
+  the run keeps the same.
 - `config.toml` is written with mode 0600 (its temporary file is created so).
 
 ## Network
@@ -32,7 +35,8 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
 - On Unix, files holding a program's traffic are `0600` regardless of umask: runs, each runs folder's
-  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`.
+  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`. So is the init file a
+  recorded DuckDB CLI is given (a copy of `~/.duckdbrc`, made new with that mode and removed with the run).
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
   `//host/share`).
@@ -81,10 +85,28 @@ you would without sonde.
 - The Runs pane's code change runs `git diff` and `git show` in the run's folder with commits checked as hex and
   fsmonitor off, so a shared run cannot make it run anything else.
 
+## Copied commands
+
+A run's file can come from anyone, and "Copy as aws cli" and "Copy as curl" put its values on a command line. A
+copied command runs the one tool with the request's values as values, whatever they hold (`reqlog::copy`):
+
+- Written for one shell, each value quoted by its rules: POSIX `sh` (fish reads it the same), on Windows PowerShell
+  (`curl.exe`, `aws.exe`). The app copies for the platform's; `reqlog::copy` also writes for cmd.exe's prompt.
+- No value is an option: `aws` gets `--name=value`, curl its URL after `--` with globbing off (`-g`). A value `aws`
+  would read from a file or fetch (`file://`, `fileb://`, `http://`, `https://`) goes in `--cli-input-json`.
+- A URL is `http` or `https`, written again without a password, and a method is a method's name: a request
+  whose are not is not copied, and a comment says why. A header whose name is not a header's name is left out.
+- Control characters and BiDi controls are left out of every value (a comment says the command is not exact), and
+  no comment holds a value.
+- PowerShell before 7.3 hands a program an argument with a `"` (or a `\` at its end) as something else: a command
+  holding one runs only where `$PSNativeCommandArgumentPassing` is `Standard` or `Windows`, and says so elsewhere.
+
 ## Shared runs
 
 `sonde share` writes one HTML file: the viewer and the computed document, holding only what the run's file holds (`--redact`:
-bucket and key names as tokens; headers, bodies, URLs, output and arguments dropped). It fetches nothing and runs no
+bucket and key names as tokens, an id made of digits among them (an account's 12, an address, a number in groups;
+numbers of up to 8 digits, dates and zero-padded counters are the layout's and stay); headers, bodies, URLs, output
+and arguments dropped; the run it is compared with named by its time, not its file). It fetches nothing and runs no
 server.
 The command it shows hides variables set before the program, options that name a secret (`--token …`,
 `--password=…`) and URL passwords (`https://me:…@host`).

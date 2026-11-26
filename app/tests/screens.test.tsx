@@ -16,7 +16,8 @@ test("a run's request in the inspector: details, copy as curl without a signatur
   await app.waitUntil(() => (app.clipboard() ?? "").includes("UNSIGNED"));
   expect(app.clipboard()).not.toContain("Signature=");
   await app.press("id:copy-cli");
-  await app.waitUntil(() => (app.clipboard() ?? "").startsWith("aws s3api"));
+  // (its own line: a comment may come before it; aws.exe where the shell is PowerShell)
+  await app.waitUntil(() => /(^|\n)aws(\.exe)? s3api /.test(app.clipboard() ?? ""));
   // sonde's own requests are no list of their own: Activity is its jobs and its changes, a panel from the View
   // menu, ⌘⇧A or the palette (the toolbar has no button for it while nothing is at work)
   expect(app.shows("id:activity-open")).toBe(false);
