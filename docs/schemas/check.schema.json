@@ -46,7 +46,7 @@
         },
         "findings": {
           "type": "array",
-          "description": "The run's findings `[check.findings]` does not know, or knows with a smaller count: what fails the `findings` row. Judged by counts alone, never by a share of the run.",
+          "description": "The run's findings `[check.findings]` does not know, or knows with a smaller count: what fails the `findings` row. Judged by counts alone, never by a share of the run: to the unit under 100, past a hundredth of the known count from there (33.0: before, to the unit at any size). An entry names a finding about several buckets by any bucket of it.",
           "items": {
             "type": "object",
             "properties": {

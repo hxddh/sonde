@@ -2291,10 +2291,11 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_new_again() {
     );
     assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
     // the run's time said once, for the run: the two runs before it took
-    // 397 ms apart, so what it moved by is not told from that
+    // 397 ms apart (two runs that far apart differ within 2.46 times that),
+    // so what it moved by is not told from that
     assert!(
         third.contains("since the run before (etl-2-again) · time ")
-            && third.contains(" · its runs vary by 397 ms: within noise"),
+            && third.contains(" · its runs vary by 975 ms: within noise"),
         "{third}"
     );
     assert!(

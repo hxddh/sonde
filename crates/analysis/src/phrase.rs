@@ -54,6 +54,19 @@ impl std::ops::Index<&str> for Args {
     }
 }
 
+impl Args {
+    /// Sets argument `name`, in its place among the names.
+    fn set(&mut self, name: &'static str, value: Text) {
+        match self.0.iter_mut().find(|(have, _)| *have == name) {
+            Some(slot) => slot.1 = value,
+            None => {
+                let at = self.0.partition_point(|(have, _)| *have < name);
+                self.0.insert(at, (name, value));
+            }
+        }
+    }
+}
+
 impl<V: Into<Text>> FromIterator<(&'static str, V)> for Args {
     /// A name given twice keeps its last value, as a map would.
     fn from_iter<I: IntoIterator<Item = (&'static str, V)>>(pairs: I) -> Self {
@@ -133,6 +146,14 @@ fn fill<'a>(template: &str, arg: impl Fn(&str) -> Option<&'a str>) -> String {
 }
 
 impl Phrase {
+    /// The phrase with one more argument (or another value for one it has):
+    /// one its template may not say, read beside it (a finding's buckets,
+    /// [`crate::profile::finding_identity`]).
+    pub fn with(mut self, name: &'static str, value: impl Into<Text>) -> Self {
+        self.args.set(name, value.into());
+        self
+    }
+
     /// The phrase in English.
     pub fn en(&self) -> String {
         fill(template(self.key), |name| self.args.get(name).map(|t| &**t))

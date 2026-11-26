@@ -183,7 +183,7 @@ fn init_project(
     let grow = 1.0 + tolerance / 100.0;
     let max_requests = (run.requests as f64 * grow).ceil() as u64;
     // whole figures a person reads and edits
-    let waiting = (run.waiting_ms * grow + sonde_analysis::program::WAITING_SLACK_MS).ceil();
+    let waiting = sonde_analysis::program::timing_limit(run.waiting_ms, tolerance / 100.0).ceil();
     let (known, wrong) = sonde_analysis::program::known_of(findings);
     let mut text = vec![
         "# sonde check: what a run of this program may use against S3.".to_string(),

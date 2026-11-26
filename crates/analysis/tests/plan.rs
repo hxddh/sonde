@@ -306,3 +306,53 @@ fn the_requests_sent_at_once_beside_a_change_are_those_it_leaves() {
     assert_eq!(rest.args["n"], "40", "{rest:?}");
     assert_eq!(d.at_once.as_ref().unwrap().requests, 40);
 }
+
+/// 33.0: the requests sent at once beside a change were counted after the
+/// change took its own away (40 of 80), their saving before: 40 GETs of 5 ms
+/// were said to save the 3.4 s that sending the 40 slow HEADs at once would.
+#[test]
+fn sending_the_requests_a_change_leaves_at_once_saves_their_part_alone() {
+    let mut rs = Vec::new();
+    let mut at = 0;
+    for i in 0..40 {
+        let key = format!("in/{i}.csv");
+        for (op, ms) in [("HeadObject", 100.0), ("GetObject", 5.0)] {
+            rs.push(rec(rs.len() as u64 + 1, at, ms, op, &key));
+            at += (ms as i64 + 1) * 1000;
+        }
+    }
+    let a = analysed(&rs);
+    let d = &a.diagnoses[0];
+    let serial = &a.observations[d.serial.expect("its requests one after another")];
+    let at_once = d.at_once.as_ref().expect("the rest at once");
+    assert_eq!(at_once.requests, 40);
+    // the 40 GETs left wait 200 ms in all: 200 of the 4,200 ms the finding's
+    // 80 requests wait, and that part of what it saves
+    let part = serial.saves_ms * 200.0 / 4200.0;
+    assert!(
+        (at_once.saves_ms - part).abs() < 0.1,
+        "{at_once:?} of {}",
+        serial.saves_ms
+    );
+    assert!(at_once.saves_ms > 0.0 && at_once.saves_ms <= 200.0);
+    // a chain no other finding takes from saves its whole figure
+    let alone: Vec<Record> = (0..80)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64 * 31_000,
+                30.0,
+                "GetObject",
+                &format!("in/{i}.csv"),
+            )
+        })
+        .collect();
+    let a = analysed(&alone);
+    let d = a
+        .diagnoses
+        .iter()
+        .find(|d| d.at_once.is_some())
+        .expect("requests one after another");
+    let serial = &a.observations[d.findings[0]];
+    assert_eq!(d.at_once.as_ref().unwrap().saves_ms, serial.saves_ms);
+}
