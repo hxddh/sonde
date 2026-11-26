@@ -295,8 +295,8 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                 println!("\ndry run ({kept}): to abort them, run again with --yes");
                 return Ok(4);
             };
-            // each upload it listed, as it listed it: else nothing is aborted
-            mpu::as_planned(&plan, &chosen)?;
+            // each upload it listed, as it listed it, else nothing is aborted:
+            // [`exec::run`] reads them again before the first request
             print_items(&plan);
             let unlisted = chosen
                 .iter()

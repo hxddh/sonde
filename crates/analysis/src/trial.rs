@@ -349,6 +349,16 @@ fn lost_race(r: &Record) -> bool {
     faulted(r) && r.status == Some(412) && is_write(r) && condition_of(r).is_some()
 }
 
+/// Whether `r` left its mark in what a trial's run leaves
+/// ([`crate::left::left_where`]): the store made it, or it is a write sonde
+/// answered 412 in the store's place, which the program was right to take
+/// as there. Not a delete so refused: it took nothing away, and the object
+/// stands.
+fn left_made(r: &Record) -> bool {
+    crate::left::made(r)
+        || (lost_race(r) && !matches!(r.kind.as_str(), "DeleteObject" | "DeleteObjects"))
+}
+
 /// The program got the store's own answer, and not one that asks for
 /// another attempt ([`retryable`]): a 404, a 412 or a 501 is an answer, a
 /// 503 or a 400 RequestTimeout is not.
@@ -1186,7 +1196,7 @@ pub fn judge(
     // its requests say: a program that went on without writing it
     // (a write sonde answered 412 in the store's place is in no store by
     // sonde's doing: what the program made of it is the races' to judge)
-    let absent = crate::left::left_where(run, &names, |r| crate::left::made(r) || lost_race(r))
+    let absent = crate::left::left_where(run, &names, left_made)
         .against(&crate::left::left(clean, &names))
         .filter(|d| d.absent > 0)
         .map(|d| (d.absent, d.an_absent.unwrap_or_default()));
@@ -3588,6 +3598,34 @@ mod tests {
             (0, Standing::Broke),
             "{}",
             t.line()
+        );
+    }
+
+    #[test]
+    fn a_delete_refused_on_a_lost_race_leaves_the_object_standing() {
+        let delete = |id, at_ms, status| {
+            let mut r = rec(id, at_ms, "DELETE", "DeleteObject", "out/a", status);
+            r.lists_mut()
+                .request_headers
+                .push(Header::new("If-Match", "\"e1\""));
+            r
+        };
+        let refused = race(delete(2, 10, 412), None);
+        assert!(lost_race(&refused) && !left_made(&refused));
+        // a write so refused is taken as made, as before
+        let mut write = race(put(2, 10, "out/b", 412), None);
+        write
+            .lists_mut()
+            .request_headers
+            .push(Header::new("If-Match", "\"e1\""));
+        assert!(left_made(&write));
+        // the clean run's object stands in the run: none of it is absent
+        let names = ["lost-race", CLEAN];
+        let clean = crate::left::left(&[put(1, 0, "out/a", 200)], &names);
+        let run = [put(1, 0, "out/a", 200), refused];
+        assert_eq!(
+            crate::left::left_where(&run, &names, left_made).against(&clean),
+            None
         );
     }
 

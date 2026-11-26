@@ -29,4 +29,8 @@ printf '%s' '<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http
   > corpus/s3_xml/list
 printf '%s' '<Error><Code>SlowDown</Code><Message>Please reduce your request rate.</Message><RequestId>3E57</RequestId></Error>' \
   > corpus/s3_xml/error
+# (a first byte, how the body is cut in pieces, then a signed body with a trailer)
+seed chunked
+{ printf '\007'; printf '5;chunk-signature=%064d\r\nhello\r\n0;chunk-signature=%064d\r\nx-amz-checksum-crc32:AAAAAA==\r\nx-amz-trailer-signature:%064d\r\n\r\n' 0 0 0; } \
+  > corpus/chunked/trailer
 for d in corpus/*; do echo "$d: $(ls "$d" | wc -l) seeds"; done

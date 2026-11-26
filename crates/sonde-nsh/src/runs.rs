@@ -188,20 +188,44 @@ fn run_policy(asked: Option<Policy>, dir: Option<&Path>) -> Result<Policy, Strin
     })
 }
 
-/// A file's text: a finished run (or a log) is gzip, read for what it
-/// holds rather than its compressed bytes; bytes as a run is read (a
-/// torn last character is a torn line).
-fn file_text(bytes: &[u8]) -> std::io::Result<String> {
-    if bytes.starts_with(&[0x1f, 0x8b]) {
-        let out = sonde_analysis::import::gunzip(bytes, sonde_analysis::import::GUNZIP_LIMIT)?;
-        return Ok(String::from_utf8_lossy(&out).into_owned());
+/// A file's content as a stream: a finished run (or a log) is gzip, read
+/// for what it holds rather than its compressed bytes, to
+/// [`sonde_analysis::run::MAX_TEXT`] (a few bytes of gzip can say they are
+/// any size); never the file whole.
+fn content_of(path: &Path) -> std::io::Result<Box<dyn std::io::Read>> {
+    use std::io::{BufRead, Read};
+    let mut f = std::io::BufReader::with_capacity(1 << 16, std::fs::File::open(path)?);
+    if !f.fill_buf()?.starts_with(&[0x1f, 0x8b]) {
+        return Ok(Box::new(f));
     }
-    Ok(String::from_utf8_lossy(bytes).into_owned())
+    struct Capped<R>(R, u64);
+    impl<R: Read> Read for Capped<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.0.read(buf)?;
+            self.1 = self.1.checked_sub(n as u64).ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "it holds more than {} GiB",
+                    sonde_analysis::run::MAX_TEXT >> 30
+                ))
+            })?;
+            Ok(n)
+        }
+    }
+    Ok(Box::new(Capped(
+        flate2::bufread::MultiGzDecoder::new(f),
+        sonde_analysis::run::MAX_TEXT,
+    )))
 }
 
 /// FNV-1a, 64 bits: which file a run was made from.
 fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+    fnv1a_more(0xcbf2_9ce4_8422_2325, bytes)
+}
+
+/// [`fnv1a`] of what came before (`h`), then `bytes`: the same digest a
+/// piece at a time.
+fn fnv1a_more(h: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(h, |h, b| {
         (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
@@ -653,29 +677,11 @@ enum Origin {
     Elsewhere,
 }
 
-/// [`Origin`] of the run at `path`, for the runs directory `dir`. Decided
-/// from where the file really is (links followed) and from what the
-/// folder's index says was imported, never from anything in the file, which
-/// whoever made it wrote: only a regular `.sonde` file directly in `dir`
-/// that is no import was recorded here. (A trial's run, in `trials/`, is
-/// not a run to start again.)
+/// [`Origin`] of the run at `path`, for the runs directory `dir`: decided
+/// from where the file is and the folder's index, never from the file
+/// ([`sonde_analysis::index::recorded_in`], which `sonde show` asks too).
 fn origin_in(dir: &Path, path: &Path) -> Origin {
-    let (Ok(file), Ok(dir)) = (path.canonicalize(), dir.canonicalize()) else {
-        return Origin::Elsewhere;
-    };
-    let name = file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let inside = file.parent() == Some(dir.as_path()) && name.ends_with(".sonde") && file.is_file();
-    let imported = || {
-        sonde_analysis::index::of(&dir)
-            .folder
-            .imports
-            .values()
-            .any(|n| *n == name)
-    };
-    if inside && !imported() {
+    if sonde_analysis::index::recorded_in(dir, path) {
         Origin::Recorded
     } else {
         Origin::Elsewhere
@@ -756,6 +762,93 @@ fn again_in(
 /// there: a file that could not be marked is not kept, so no copy of
 /// someone else's run is ever taken for one recorded here ([`origin_in`]).
 fn import_in(dir: &Path, name: &str, text: &str) -> Result<String, String> {
+    // the same file opened again is the run it made, not a copy
+    let digest = format!("{:016x}", fnv1a(text.as_bytes()));
+    keep_import(dir, name, &digest, |path, stem| {
+        // production traffic: an access log, CloudTrail events, a HAR
+        if sonde_analysis::import::detect(text).is_some() {
+            sonde_analysis::import::import(text, stem)
+                .and_then(|(_, run)| sonde_analysis::import::save(&run, path).map_err(err_msg))
+        } else {
+            reqlog::private::write(path, text)
+                .map_err(err_msg)
+                .and_then(|()| {
+                    RunFile::open(path)
+                        .map(|_| ())
+                        .map_err(|e| format!("{name}: {e}"))
+                })
+        }
+    })
+}
+
+/// Adds the file at `from` to the runs directory `dir` as [`import_in`]
+/// adds its text, read as a stream however large: a log through the
+/// import's spool (as `sonde import` reads one), a run copied as it is
+/// read. Its digest, the imports index's key, is of its content as
+/// [`import_in`] takes it, summed as it is read.
+fn import_file_in(dir: &Path, from: &Path) -> Result<String, String> {
+    use std::io::{Read, Write};
+    let said = |e: &dyn std::fmt::Display| format!("{}: {e}", from.display());
+    // what the file is, by its first characters, and its digest
+    let mut head = Vec::new();
+    let mut digest = fnv1a(b"");
+    {
+        let mut content = content_of(from).map_err(|e| said(&e))?;
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let n = match content.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(said(&e)),
+            };
+            digest = fnv1a_more(digest, &buf[..n]);
+            if head.len() < HEAD {
+                head.extend_from_slice(&buf[..n.min(HEAD - head.len())]);
+            }
+        }
+    }
+    let name = from
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let digest = format!("{digest:016x}");
+    let log = sonde_analysis::import::detect(&String::from_utf8_lossy(&head)).is_some();
+    keep_import(dir, &name, &digest, |path, stem| {
+        if log {
+            // production traffic: spilled beside the run to be, never held
+            let mut spool = sonde_analysis::import::Spool::create(dir).map_err(err_msg)?;
+            spool.add_file(from)?;
+            spool.seal(stem)?.save(path).map(|_| ()).map_err(err_msg)
+        } else {
+            let mut content = content_of(from).map_err(|e| said(&e))?;
+            let mut out = std::io::BufWriter::new(reqlog::private::create(path).map_err(err_msg)?);
+            std::io::copy(&mut content, &mut out)
+                .and_then(|_| out.flush())
+                .map_err(|e| said(&e))?;
+            drop(out);
+            RunFile::open(path)
+                .map(|_| ())
+                .map_err(|e| format!("{name}: {e}"))
+        }
+    })
+}
+
+/// The most of a file's start [`import_file_in`] reads to say what it is:
+/// enough for [`sonde_analysis::import::detect`].
+const HEAD: usize = 1 << 16;
+
+/// Keeps an import named `name` whose content has `digest` in the runs
+/// directory `dir`: the run that content made before when there is one,
+/// else a new file that `write` writes (given its path and the name's
+/// stem), marked as an import in the folder's index before it is written
+/// and removed with the mark when it cannot be.
+fn keep_import(
+    dir: &Path,
+    name: &str,
+    digest: &str,
+    write: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(err_msg)?;
     let stem: String = Path::new(name)
         .file_stem()
@@ -775,12 +868,10 @@ fn import_in(dir: &Path, name: &str, text: &str) -> Result<String, String> {
     } else {
         stem
     };
-    // the same file opened again is the run it made, not a copy
-    let digest = format!("{:016x}", fnv1a(text.as_bytes()));
     if let Some(p) = sonde_analysis::index::of(dir)
         .folder
         .imports
-        .get(&digest)
+        .get(digest)
         .map(|n| dir.join(n))
         .filter(|p| p.is_file())
     {
@@ -794,26 +885,16 @@ fn import_in(dir: &Path, name: &str, text: &str) -> Result<String, String> {
     let mark = |to: Option<String>| {
         sonde_analysis::index::update(dir, |_| {
             (
-                vec![(digest.clone(), sonde_analysis::index::Change::Import(to))],
+                vec![(
+                    digest.to_string(),
+                    sonde_analysis::index::Change::Import(to),
+                )],
                 (),
             )
         })
     };
     mark(Some(kept)).map_err(|e| err_msg(format!("{name}: not opened: {e}")))?;
-    // production traffic: an access log, CloudTrail events, a HAR
-    let written = if sonde_analysis::import::detect(text).is_some() {
-        sonde_analysis::import::import(text, &stem)
-            .and_then(|(_, run)| sonde_analysis::import::save(&run, &path).map_err(err_msg))
-    } else {
-        reqlog::private::write(&path, text)
-            .map_err(err_msg)
-            .and_then(|()| {
-                RunFile::open(&path)
-                    .map(|_| ())
-                    .map_err(|e| format!("{name}: {e}"))
-            })
-    };
-    if let Err(e) = written {
+    if let Err(e) = write(&path, &stem) {
         let _ = std::fs::remove_file(&path);
         let _ = mark(None);
         return Err(e);
@@ -1441,10 +1522,9 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     let cwd = b
         .cwd
         .ok_or_else(|| err_msg("the run's folder is not known"))?;
-    let dir = PathBuf::from(&cwd);
-    if !dir.is_dir() {
-        return Err(err_msg(format!("{cwd} is not there")));
-    }
+    // (a folder on another machine, or a device's, is not looked at)
+    let dir = sonde_analysis::code::local_dir(Path::new(&cwd))
+        .ok_or_else(|| err_msg(format!("{cwd} is not there")))?;
     let git = |args: &[&str]| -> Result<String, String> {
         let o = std::process::Command::new("git")
             .arg("-C")
@@ -1478,6 +1558,9 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     let obs =
         sonde_analysis::episode::observations_of(&s.header, &s.records, &episodes(&s.records));
     let rel = |file: &str| -> String {
+        if !sonde_analysis::code::local_file(file) {
+            return file.replace('\\', "/");
+        }
         let full = dir.join(file);
         let full = full.canonicalize().unwrap_or(full);
         let r = PathBuf::from(&root);
@@ -1685,14 +1768,7 @@ fn import_file(path: &str) -> Result<String, String> {
     if let Ok((own, _)) = own_run(path) {
         return Ok(own.to_string_lossy().into_owned());
     }
-    let p = Path::new(path);
-    let bytes = std::fs::read(p).map_err(|e| format!("{path}: {e}"))?;
-    let text = file_text(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    let name = p
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    Runs::import(name, text)
+    import_file_in(&sonde().paths().runs(), Path::new(path))
 }
 
 /// Recorded runs and the live recording, as TSX calls them.
@@ -2042,10 +2118,13 @@ impl Runs {
     /// `{ maxErrors, maxWaitingMs }`, each null where it gives
     /// none; null for a run with no folder or a project with no budget.
     pub fn budget(path: String) -> JsonValue {
-        let Some(dir) = header_of(Path::new(&path)).and_then(|h| h.cwd) else {
+        let Some(dir) = header_of(Path::new(&path))
+            .and_then(|h| h.cwd)
+            .and_then(|d| sonde_analysis::code::local_dir(Path::new(&d)))
+        else {
             return JsonValue::Null;
         };
-        match project_budget(Path::new(&dir)) {
+        match project_budget(&dir) {
             Some((errors, waiting)) => {
                 json!({ "maxErrors": errors, "maxWaitingMs": waiting })
             }
@@ -3182,9 +3261,75 @@ mod tests {
         sonde_analysis::run::compress(&path).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.starts_with(&[0x1f, 0x8b]));
-        let text = file_text(&bytes).unwrap();
-        assert!(text.starts_with("{\"format\":\"sonde-run\""), "{text}");
-        assert_eq!(file_text(b"plain").unwrap(), "plain");
+        let text = |p: &Path| {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut content_of(p).unwrap(), &mut t).unwrap();
+            t
+        };
+        assert!(
+            text(&path).starts_with("{\"format\":\"sonde-run\""),
+            "{}",
+            text(&path)
+        );
+        let plain = dir.path().join("plain");
+        std::fs::write(&plain, "plain").unwrap();
+        assert_eq!(text(&plain), "plain");
+    }
+
+    /// A file opened in the app is read as a stream, as `sonde import`
+    /// reads one, and is the same import as its text dropped on the app: a
+    /// run (gzip as a finished one is) and a log of traffic alike.
+    #[test]
+    fn a_file_opened_is_streamed_and_is_the_import_its_text_is() {
+        use reqlog::Sink;
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("runs");
+        let other = tempfile::tempdir().unwrap();
+        // a finished run from elsewhere
+        let run = other.path().join("ci.sonde");
+        let w = RunWriter::create(&run, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
+        w.write(&reqlog::Record {
+            id: 1,
+            kind: "GetObject".into(),
+            ..Default::default()
+        });
+        drop(w);
+        sonde_analysis::run::compress(&run).unwrap();
+        let kept = import_file_in(&dir, &run).unwrap();
+        assert_eq!(RunFile::open(Path::new(&kept)).unwrap().records.len(), 1);
+        assert_eq!(origin_in(&dir, Path::new(&kept)), Origin::Elsewhere);
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut content_of(&run).unwrap(), &mut text).unwrap();
+        assert_eq!(import_in(&dir, "ci.sonde", &text).unwrap(), kept);
+        assert_eq!(import_file_in(&dir, &run).unwrap(), kept);
+        // a server access log, gzip as S3 delivers logs
+        let line = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
+        let text = line.repeat(30);
+        let log = other.path().join("access.log");
+        let mut gz = flate2::write::GzEncoder::new(
+            std::fs::File::create(&log).unwrap(),
+            flate2::Compression::default(),
+        );
+        gz.write_all(text.as_bytes()).unwrap();
+        gz.finish().unwrap();
+        let kept = import_file_in(&dir, &log).unwrap();
+        assert_ne!(kept, import_file_in(&dir, &run).unwrap());
+        let imported = RunFile::open(Path::new(&kept)).unwrap();
+        assert_eq!(imported.records.len(), 30);
+        assert_eq!(origin_in(&dir, Path::new(&kept)), Origin::Elsewhere);
+        assert_eq!(import_in(&dir, "access.log", &text).unwrap(), kept);
+        // nothing of the spool is left beside the runs
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".part"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        // a file that is neither is not kept, nor marked
+        let junk = other.path().join("junk.txt");
+        std::fs::write(&junk, "hello").unwrap();
+        assert!(import_file_in(&dir, &junk).is_err());
+        assert_eq!(sonde_analysis::index::of(&dir).folder.imports.len(), 2);
     }
 
     #[test]
@@ -3598,6 +3743,9 @@ mod tests {
         w.write(&rec(2, "GET", "GetObject", None));
         w.write_log("clean output\n");
         w.flush().unwrap();
+        // (the folder's index is there, as a recording's is: what says
+        // which of its files are imports)
+        sonde_analysis::index::set(&clean, sonde_analysis::index::Change::Title(None));
         let trial = dir
             .join("trials")
             .join("20260101-000000-job.slowdown.sonde");
@@ -3805,6 +3953,10 @@ mod tests {
             origin_in(other.path(), Path::new(&recorded)),
             Origin::Elsewhere
         );
+        // the index lost, nothing says which were imported: every file is from elsewhere
+        std::fs::remove_file(dir.join(sonde_analysis::index::FILE)).unwrap();
+        assert_eq!(origin_in(&dir, Path::new(&recorded)), Origin::Elsewhere);
+        assert_eq!(origin_in(&dir, Path::new(&copy)), Origin::Elsewhere);
     }
 
     /// The command of a run from elsewhere is not started by Run again or a

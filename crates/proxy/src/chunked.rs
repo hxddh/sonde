@@ -81,7 +81,8 @@ impl Decoder {
         buf.drain(..at);
         self.held = buf;
         read?;
-        if self.held.len() > LINE_MAX && matches!(self.state, State::Head | State::Trailers) {
+        // (a line of LINE_MAX may be held with its CR, its LF to come)
+        if self.held.len() > LINE_MAX + 1 && matches!(self.state, State::Head | State::Trailers) {
             return Err("aws-chunked: a line without CRLF".into());
         }
         Ok(())
@@ -128,6 +129,10 @@ impl Decoder {
                     let Some(end) = rest.windows(2).position(|w| w == b"\r\n") else {
                         return Ok(());
                     };
+                    // as long a line is refused whole as in pieces
+                    if end > LINE_MAX {
+                        return Err("aws-chunked: a line without CRLF".into());
+                    }
                     let line = &rest[..end];
                     *at += end + 2;
                     if self.state == State::Trailers {
@@ -368,6 +373,30 @@ mod tests {
         assert_eq!(d.decoded, 5);
         assert!(d.finish().is_err());
         assert!(d.measure(b"zz\r\n").is_err());
+    }
+
+    /// A line past [`LINE_MAX`] is refused whether it comes whole or in
+    /// pieces, and one of `LINE_MAX` read either way: the fuzzer's
+    /// (`fuzz/fuzz_targets/chunked.rs`) first find.
+    #[test]
+    fn a_long_line_reads_the_same_whole_and_in_pieces() {
+        for (n, ok) in [
+            (LINE_MAX, true),
+            (LINE_MAX + 1, false),
+            (LINE_MAX * 2, false),
+        ] {
+            let body = format!("0;{}\r\n\r\n", "x".repeat(n - 2)).into_bytes();
+            assert_eq!(decode(&body).is_ok(), ok, "whole, {n}");
+            for piece in [1, 7, 4096] {
+                let mut d = Decoder::default();
+                let mut out = Vec::new();
+                let read = body
+                    .chunks(piece)
+                    .try_for_each(|p| d.feed(p, &mut out))
+                    .and_then(|()| d.finish());
+                assert_eq!(read.is_ok(), ok, "in pieces of {piece}, {n}");
+            }
+        }
     }
 
     #[test]

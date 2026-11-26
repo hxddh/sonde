@@ -186,6 +186,26 @@ fn iceberg_data_name(name: &str) -> bool {
     number(parts.next()) && number(parts.next()) && parts.next().is_some()
 }
 
+/// The version an Iceberg metadata file's name starts with: a run of at
+/// least five digits and a dash (`00003-<uuid>`). A name that is a UUID
+/// alone carries none, even when its first group is all digits.
+fn iceberg_version(stem: &str) -> Option<u64> {
+    let (n, rest) = stem.split_once('-')?;
+    (n.len() >= 5 && n.bytes().all(|b| b.is_ascii_digit()) && !rest.is_empty() && !is_uuid(stem))
+        .then(|| n.parse().ok())
+        .flatten()
+}
+
+/// `8-4-4-4-12` hex digits, the way a UUID is written.
+fn is_uuid(s: &str) -> bool {
+    let groups: Vec<&str> = s.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(g, n)| g.len() == n && g.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// A data file as Delta's writers (and Spark's) name it:
 /// `part-<n>-<uuid>[-c000 | .c000][.snappy].parquet`.
 fn delta_data_name(name: &str) -> bool {
@@ -284,7 +304,7 @@ pub fn part_of(key: &str) -> Option<Part> {
                 let v = s
                     .strip_prefix('v')
                     .and_then(|n| n.parse().ok())
-                    .or_else(|| s.split('-').next().and_then(|n| n.parse().ok()));
+                    .or_else(|| iceberg_version(s));
                 Some(Part::IcebergMetadata(v))
             } else if name == "version-hint.text" {
                 Some(Part::IcebergVersionHint)
@@ -408,5 +428,40 @@ mod tests {
         assert!(!may_be_data("logs/2026/a.json") && !may_be_data("out/a.parquet"));
         assert_eq!(data_of(Format::Delta), Some(Part::DeltaData));
         assert_eq!(data_of(Format::Lance), None);
+    }
+
+    /// An Iceberg metadata file's version is the number its name starts
+    /// with (`00003-<uuid>`) or `v<n>`; a name that is a UUID alone has
+    /// none, even when the UUID's first group is all digits.
+    #[test]
+    fn an_iceberg_metadata_files_version_is_its_number_not_its_uuid() {
+        let v = |name: &str| match part_of(&format!("t/metadata/{name}")) {
+            Some(Part::IcebergMetadata(v)) => v,
+            other => panic!("{name}: {other:?}"),
+        };
+        assert_eq!(
+            v("00003-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab.metadata.json"),
+            Some(3)
+        );
+        assert_eq!(
+            v("00000123-6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab.metadata.json"),
+            Some(123)
+        );
+        assert_eq!(v("v7.metadata.json"), Some(7));
+        assert_eq!(
+            v("12345678-aaaa-bbbb-cccc-0123456789ab.metadata.json"),
+            None
+        );
+        assert_eq!(
+            v("6c5e0a1b-1f2e-4d3c-8b7a-0123456789ab.metadata.json"),
+            None
+        );
+        assert_eq!(v("0003-x.metadata.json"), None);
+        assert_eq!(
+            crate::fault::commit_slot(Some(
+                "t/metadata/12345678-aaaa-bbbb-cccc-0123456789ab.metadata.json"
+            )),
+            None
+        );
     }
 }

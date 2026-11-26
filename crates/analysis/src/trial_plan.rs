@@ -108,8 +108,12 @@ pub fn of(s: &RunFile) -> Result<Plan, String> {
         return Err("no trial: the run sent no requests to fail".into());
     }
     let cwd = s.header.cwd.clone();
-    let project = match &cwd {
-        Some(d) => project_scenarios(Path::new(d))?,
+    // (a folder on another machine, or none here, names no scenarios)
+    let project = match cwd
+        .as_deref()
+        .and_then(|d| crate::code::local_dir(Path::new(d)))
+    {
+        Some(d) => project_scenarios(&d)?,
         None => Vec::new(),
     };
     let own = !project.is_empty();

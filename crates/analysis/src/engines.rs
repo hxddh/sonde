@@ -574,11 +574,12 @@ fn names_key(line: &str, key: &str) -> bool {
 }
 
 /// Fills in where each finding's setting is set, in the folder its program
-/// ran in.
+/// ran in, when that is a folder of this machine ([`crate::code::local_dir`]).
 pub fn locate_all(findings: &mut [crate::episode::Observation], cwd: Option<&str>) {
-    let Some(cwd) = cwd.map(Path::new).filter(|p| p.is_dir()) else {
+    let Some(cwd) = cwd.and_then(|d| crate::code::local_dir(Path::new(d))) else {
         return;
     };
+    let cwd = cwd.as_path();
     for o in findings {
         for f in &mut o.fixes {
             if let Some(s) = &mut f.setting

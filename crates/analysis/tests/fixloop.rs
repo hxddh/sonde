@@ -1156,20 +1156,35 @@ fn two_or_three_runs_alike_are_not_a_band_of_nothing() {
     let c = fourth.change.as_ref().unwrap();
     assert!((c.noise_ms.unwrap() - 41.75).abs() < 0.06, "{c:#?}");
     assert!(c.within_noise, "{c:#?}");
-    // four before (335, 335, 346, 335 ms): their spread alone, 1.35 × 11 ms
-    let fifth = ran(dir.path(), 5, &hot_every(12, 32), Some(0));
+    // four before (335, 335, 346, 335 ms): 1.35 × 11 ms is 15 ms, and more
+    // runs never narrow the band under three's floor (half the room)
+    let fifth = ran(dir.path(), 5, &hot_every(12, 34), Some(0));
     let c = fifth.change.as_ref().unwrap();
-    assert_eq!(c.wall_ms, (335.0, 357.0));
-    assert_eq!(c.noise_ms, Some(14.8));
+    assert_eq!(c.wall_ms, (335.0, 379.0));
+    assert!((c.noise_ms.unwrap() - 41.75).abs() < 0.06, "{c:#?}");
     assert!(!c.within_noise, "{c:#?}");
     // the estimate itself: in any order, and none of one run
     assert_eq!(fixloop::spread_ms(&[]), None);
     assert_eq!(fixloop::spread_ms(&[335.0]), None);
     assert_eq!(
         fixloop::spread_ms(&[346.0, 335.0, 335.0, 335.0]),
-        Some(14.8)
+        Some(41.8)
+    );
+    // past the floor, the range alone
+    assert_eq!(
+        fixloop::spread_ms(&[300.0, 335.0, 335.0, 335.0]),
+        Some(47.1)
     );
     assert_eq!(fixloop::spread_ms(&[1000.0, 3000.0]), Some(4914.6));
+    // a program of 10 s: more runs never narrow the band under three's floor
+    let three = fixloop::spread_ms(&[10_000.0, 10_010.0, 10_000.0]).unwrap();
+    let four = fixloop::spread_ms(&[10_000.0, 10_010.0, 10_000.0, 10_000.0]).unwrap();
+    assert_eq!(three, 525.0);
+    assert!(four >= three, "{four} under {three}");
+    // runs alike to the millisecond are not a band of nothing
+    for n in 3..=5 {
+        assert_eq!(fixloop::spread_ms(&vec![335.0; n]), Some(41.8), "{n} runs");
+    }
 }
 
 /// 28.0's eval: 6 polls of `_READY` under the 1% a finding needs in a run of

@@ -309,7 +309,14 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             use serde_json::{Value, json};
             use std::io::Write;
             let prof = &analysis.profile;
-            let cwd = run.header.cwd.as_deref().map(Path::new);
+            // a caller's line is read only for a run recorded here: a file
+            // from elsewhere names its folder and its callers itself
+            let cwd = run
+                .header
+                .cwd
+                .as_deref()
+                .map(Path::new)
+                .filter(|_| sonde_analysis::index::recorded_in(&s.paths().runs(), &file));
             let out = crate::output::JsonWriter::new(std::io::BufWriter::with_capacity(
                 1 << 16,
                 crate::output::Stdout,
@@ -596,9 +603,9 @@ fn finding_json(o: &sonde_analysis::episode::Observation, cwd: Option<&Path>) ->
 }
 
 /// A finding's callers, each with its line of code read from the folder the
-/// program ran in (`cwd`), when the file is program source inside it: the
-/// run names both, and may be someone else's
-/// ([`sonde_analysis::code::line`]).
+/// program ran in (`cwd`, none for a run not recorded here), when the file
+/// is program source inside it: the run names both, and may be someone
+/// else's ([`sonde_analysis::code::line`]).
 fn callers_json(
     o: &sonde_analysis::episode::Observation,
     cwd: Option<&Path>,
@@ -721,7 +728,8 @@ fn policy_arg(header: &sonde_analysis::run::RunHeader) -> Option<String> {
     let own = header
         .cwd
         .as_deref()
-        .and_then(|d| sonde_analysis::project::find(Path::new(d)))
+        .and_then(|d| sonde_analysis::code::local_dir(Path::new(d)))
+        .and_then(|d| sonde_analysis::project::find(&d))
         .and_then(|f| sonde_analysis::project::read(&f).ok())
         .and_then(|p| p.policy)
         .unwrap_or(sonde_proxy::Policy::Allow);

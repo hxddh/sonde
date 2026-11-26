@@ -1,6 +1,6 @@
 # Fuzz targets for what sonde reads from others: the layout decoders, the log
-# importers, S3's XML and a run's lines. Not a member of the workspace
-# (it needs nightly and cargo-fuzz):
+# importers, S3's XML, a run's lines and a program's aws-chunked bodies. Not
+# a member of the workspace (it needs nightly and cargo-fuzz):
 #
 #   fuzz/seeds.sh                      # each target's corpus from the samples
 #   cargo +nightly fuzz run <target> fuzz/corpus/<target> -- -max_total_time=60
@@ -23,6 +23,7 @@ futures = "0.3"
 decoders = { path = "../crates/decoders" }
 s3raw = { path = "../crates/s3raw" }
 sonde-analysis = { path = "../crates/analysis" }
+sonde-proxy = { path = "../crates/proxy" }
 
 # a workspace of its own: the repository's does not build it
 [workspace]
@@ -97,6 +98,13 @@ bench = false
 [[bin]]
 name = "run_lines"
 path = "fuzz_targets/run_lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunked"
+path = "fuzz_targets/chunked.rs"
 test = false
 doc = false
 bench = false

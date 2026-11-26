@@ -869,7 +869,10 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
         {
             keep(&mut named, h.created, &p, &key);
         }
-        let cwd = h.cwd.as_deref().map(PathBuf::from);
+        let cwd = h
+            .cwd
+            .as_deref()
+            .and_then(|d| sonde_analysis::code::local_dir(Path::new(d)));
         let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
         if cwd.is_some() && cwd == here {
             keep(&mut local, h.created, &p, &key);

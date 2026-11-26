@@ -125,7 +125,10 @@ fn of_project(h: &RunHeader, project: &Path, name: Option<&str>) -> bool {
             let root = project
                 .parent()
                 .map(|d| d.canonicalize().unwrap_or(d.into()));
-            let cwd = h.cwd.as_deref().map(PathBuf::from);
+            let cwd = h
+                .cwd
+                .as_deref()
+                .and_then(|d| sonde_analysis::code::local_dir(Path::new(d)));
             let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
             matches!((root, cwd), (Some(r), Some(c)) if c.starts_with(&r))
         }
@@ -140,8 +143,7 @@ pub(super) fn expect_of(h: &RunHeader) -> std::collections::BTreeMap<String, Str
     let from = h
         .cwd
         .as_deref()
-        .map(PathBuf::from)
-        .filter(|d| d.is_dir())
+        .and_then(|d| sonde_analysis::code::local_dir(Path::new(d)))
         .or_else(|| std::env::current_dir().ok());
     let Some(Ok(Some(p))) = from.map(|d| sonde_analysis::project::of(&d)) else {
         return Default::default();
@@ -367,15 +369,20 @@ fn since_line(s: &sonde_analysis::program::Since) -> Option<String> {
 
 /// A code place's file as the repository has it: the program ran in `cwd`
 /// (perhaps a folder of the repository), annotations name files from its root.
+/// A folder that is not this machine's ([`sonde_analysis::code::local_dir`])
+/// is not looked into: git is not run there, and the place stays as written.
 fn repo_path(cwd: Option<&str>, file: &str) -> String {
-    let Some(cwd) = cwd else {
+    let Some(cwd) = cwd
+        .and_then(|d| sonde_analysis::code::local_dir(Path::new(d)))
+        .filter(|_| sonde_analysis::code::local_file(file))
+    else {
         return file.to_string();
     };
-    let full = Path::new(cwd).join(file);
+    let full = cwd.join(file);
     let root = std::process::Command::new("git")
         .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--show-toplevel"])
+        .arg(&cwd)
+        .args(["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"])
         .stderr(std::process::Stdio::null())
         .output()
         .ok()

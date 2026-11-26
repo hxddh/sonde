@@ -581,6 +581,19 @@ pub fn project_scenario(
                 .into(),
         );
     }
+    // a run's name is read out of the keys it writes in any case, its words
+    // joined by -, _ or nothing: one that is part of `clean` would be read
+    // out of the clean run's name too
+    let word: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if !word.is_empty() && "clean".contains(&word) {
+        return Err(format!(
+            "scenario {name}: that is part of clean, the name of the run without faults; give this one another name"
+        ));
+    }
     // a scenario of the project's is run in a built-in one's place
     // wherever it is named: one name, one meaning
     if scenario(name).is_some() {
@@ -1419,6 +1432,9 @@ mod tests {
         assert_eq!(made("lag", "delay 2s", &[]).unwrap().rules[0].times, 0);
         for (name, fault, on, says) in [
             ("clean", "500", &[][..], "the run without faults"),
+            ("lean", "500", &[], "part of clean"),
+            ("Clean", "500", &[], "part of clean"),
+            ("le-an", "500", &[], "part of clean"),
             ("slowdown", "500", &[], "one of sonde's own"),
             ("a b", "500", &[], "letters, digits"),
             ("x", "503 Slow Down", &[], "one word too many"),
@@ -1427,8 +1443,8 @@ mod tests {
             let e = made(name, fault, on).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
-        let twice = project_scenarios([made("a", "500", &[]), made("a", "503", &[])]);
-        assert_eq!(twice.unwrap_err(), "scenario a: named twice");
+        let twice = project_scenarios([made("b", "500", &[]), made("b", "503", &[])]);
+        assert_eq!(twice.unwrap_err(), "scenario b: named twice");
     }
 
     #[test]

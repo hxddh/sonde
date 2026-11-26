@@ -25,6 +25,8 @@ chrono.workspace = true
 parking_lot.workspace = true
 portable-pty = "0.9"
 anyhow.workspace = true
+# a run or a log opened from a file is read as a stream (gzip as it is)
+flate2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # a running program's process group is ended whole

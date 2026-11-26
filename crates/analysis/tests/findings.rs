@@ -613,6 +613,13 @@ fn diagnoses_are_ranked_by_the_time_they_save() {
     // the money of the writes is under a cent: not said
     let small = a.diagnoses.iter().find(|d| head(d) == "obs.small").unwrap();
     assert!(!small.saving_text.contains("USD"), "{}", small.saving_text);
+    // packed, the same bytes are uploaded still: only the round trips go
+    let small = a
+        .observations
+        .iter()
+        .find(|o| o.kind == "obs.small")
+        .unwrap();
+    assert!(small.keeps_bytes);
 }
 
 /// The time account: the program's own time, the round trips, and on the

@@ -2,6 +2,55 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [34.1.0] - 2026-11-26
+
+What a run's file, a request's trailer or a mask claims is no longer taken on its word, and the GitHub Action's
+first run passes. Fixes where documented behaviour did not hold; no command, flag, field or exit code is new.
+
+### Fixed
+
+- **`no-delete` holds against an aws-chunked trailer**: a trailer of a body read whole went on to the store as a
+  header the policy never saw (`x-amz-bypass-governance-retention`), signed. Only the checksums `x-amz-trailer` names
+  go on now. A signed aws-chunked body that says 0 bytes has its framing read before anything is sent: one cut short
+  or longer than said makes no object. A key that is not UTF-8 is never one the run made (its record reads as the
+  text `%FF` would).
+- **Redaction does not take a mask for proof**: a value holding `…` (a metadata value echoed in a
+  `SignatureDoesNotMatch` body, beside a session token), or an `Authorization` holding `«redacted»` beside its
+  signature, was kept whole. A run's file is redacted again as it is written.
+- **A run's folder is used only when it is one on this machine**: a share, a device or NT path (`\\host\share`,
+  `\\?\GLOBALROOT`) in a run's file is never listed, read or given to git (Windows reached the host when a run was
+  opened). `show -f json` reads callers' lines (`code`) only for a run recorded here, and a runs folder whose index
+  is lost or unreadable holds no run the app starts unasked. The demo's *Apply and run again* plays the demo's own
+  job, for a run recorded here only.
+- **The app aborts only uploads as planned**, as `bucket abort-uploads --yes` does, and imports a file as a stream,
+  as `sonde import` does.
+- **A trial reads what a run leaves however the program spells the run's name** (`lost_answer`, `LostAnswer`),
+  never `clean` as a shorter name in it; a rename moves an object; a delete of one version, or one sonde refused on a
+  lost race, takes nothing away. Each had read an output as never written (broke). A project scenario that is part
+  of `clean` (`lean`) is refused (exit 64). An Iceberg metadata file named by a UUID alone is no commit.
+- **`noiseMs` keeps half of `check`'s room at three runs and more**: a fourth run narrowed a 10 s program's band
+  from 525 to 40 ms, and runs alike gave 0. Small files' saving (`obs.small`) counts round trips, as small reads' does.
+- **Iceberg**: position-delete rows are not live records, and *Data files* counts data files only.
+- **Copied commands**: one longer than cmd.exe reads in one line (8191 characters) is not copied for cmd, which
+  would run what is left of it; copy it for PowerShell.
+- **The GitHub Action's first run** (a new repository or branch, a tag's release) failed with exit 64 before it
+  could keep the run the next one compares with: with no baseline found it now checks with `--baseline auto`,
+  unless `sonde.toml`'s `[check]` names one. Outputs are read as GitHub reads them with CRLF too.
+
+### 中文
+
+不再轻信运行文件、请求 trailer 或掩码自己的说法，GitHub Action 的首次运行也能通过。均为修复文档承诺未兑现之处；没有新增命令、选项、字段或退出码。
+
+- 修复：`no-delete` 不再被 aws-chunked 的 trailer 绕过：整体读取的请求体的 trailer 曾作为请求头（如 `x-amz-bypass-governance-retention`）未经策略检查、带签名地发往存储；现在只转发 `x-amz-trailer` 声明的校验和。声明 0 字节的带签名 aws-chunked 请求体会先校验分块格式再发送：被截断或超长的不会生成对象。非 UTF-8 的键不再算作本次运行创建的对象。
+- 修复：脱敏不再把掩码当作已脱敏的证明：含 `…` 的值（如 `SignatureDoesNotMatch` 回显的元数据旁边的会话令牌）、签名旁带有 `«redacted»` 的 `Authorization` 曾被原样保留。运行文件写入时会再次脱敏。
+- 修复：运行文件中的工作目录只有在本机时才会使用：共享路径、设备或 NT 路径（`\\host\share`、`\\?\GLOBALROOT`）不会被列出、读取或交给 git（Windows 上打开运行时曾会连接该主机）。`show -f json` 只为本机录制的运行读取调用处源码（`code`）；运行目录的索引丢失或不可读时，应用不会不经确认启动其中任何运行。演示的「应用并再次运行」只运行演示自己的作业，且只对本机录制的运行提供。
+- 修复：应用只中止与计划一致的分片上传（与 `bucket abort-uploads --yes` 相同），并以流式方式导入文件（与 `sonde import` 相同）。
+- 修复：试验读取运行留下的对象时，无论程序如何拼写运行名（`lost_answer`、`LostAnswer`）都能识别，也不再把 `clean` 当作其中更短的名字；重命名会移动对象；删除某个版本、或被 sonde 以竞态失败拒绝的删除，不会移除对象。此前这些情况会把输出误判为从未写入（broke）。属于 `clean` 一部分的项目场景名（如 `lean`）会被拒绝（退出码 64）。仅以 UUID 命名的 Iceberg 元数据文件不再被当作提交。
+- 修复：三次及以上运行时 `noiseMs` 至少保留 `check` 余量的一半：此前第四次运行会让 10 秒程序的噪声带从 525 ms 缩到 40 ms，完全相同的运行得到 0。小文件的节省（`obs.small`）与小读取一样只计往返时间。
+- 修复：Iceberg 的位置删除行不再计入存活记录，「数据文件」只统计数据文件。
+- 修复：复制命令时，超过 cmd.exe 单行上限（8191 字符）的命令不再生成 cmd 版本（cmd 会执行被截断后的剩余部分）；请复制 PowerShell 版本。
+- 修复：GitHub Action 的首次运行（新仓库、新分支、tag 触发的发布）曾在保存下次比较所需的运行之前以退出码 64 失败；现在找不到基线时会以 `--baseline auto` 检查，除非 `sonde.toml` 的 `[check]` 指定了基线。读取输出时也像 GitHub 一样处理 CRLF。
+
 ## [34.0.0] - 2026-11-26
 
 sonde reads what a run leaves in the store, not only what its requests show: a trial holds a run to it, and `show`
