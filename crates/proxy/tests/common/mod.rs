@@ -105,7 +105,11 @@ async fn serve(
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let (parts, body) = req.into_parts();
-    let body = body.collect().await.unwrap().to_bytes().to_vec();
+    // a request whose body stops before its end made nothing
+    let Ok(body) = body.collect().await else {
+        return Ok(err(400, "IncompleteBody"));
+    };
+    let body = body.to_bytes().to_vec();
     let host = parts
         .headers
         .get("host")

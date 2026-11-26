@@ -334,6 +334,8 @@ async fn begin(
         header = header.ran_in(dir);
     }
     header.name = program;
+    // what the program is let do, for the run to say (`sonde show`'s verify)
+    header.policy = Some(policy.name().into());
     if let Some(u) = &under {
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());

@@ -112,22 +112,31 @@ committer settings; empty `…/` directory markers are reported with their delet
 
 ## How a request is handled
 
-1. Bucket and key from the path (`/bucket/key`); the query decoded as is (`+` stays).
+1. Bucket and key from the path (`/bucket/key`), each `%XX` its byte (`a%2Fb` is the key `a/b`; bytes that are not
+   UTF-8 are recorded as `%XX`); the query decoded as is (`+` stays).
 2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys, over header values in UTF-8
    (`x-amz-meta-name: café`, as sent). Else `403 SignatureDoesNotMatch`, recorded as refused, never forwarded.
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
-   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
-   (`a/../b`, a key of its own in S3) are forwarded as sent.
-5. Re-signed (SigV4) for the real endpoint, in the bucket's region: a redirect that names another
+   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`.
+5. The key goes on as the program wrote it, byte for byte: an encoded slash (`a%2Fb`), `%25`, `+`, bytes that are
+   not UTF-8 (`%FF`), empty segments (`a//b`) and `.` and `..` segments (`a/../b`, a key of its own in S3) reach the
+   store as sent, path-style or virtual-hosted. Re-signed (SigV4) for the real endpoint, over the path as a store
+   reads it (decoded, then encoded once), in the bucket's region: a redirect that names another
    (`x-amz-bucket-region`, as AWS answers for a bucket elsewhere) is kept for the bucket, a request with no body is
-   sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through, except: signed `aws-chunked`
-   (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
-   checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
-   `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged.
-6. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
-7. The response streams back unchanged; an error body's first 64 KiB is kept on the record.
+   sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through:
+   signed `aws-chunked` (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) decoded as it arrives and sent unsigned (its
+   trailing checksum carried in an unsigned `aws-chunked` body; with a trailer sonde does not know, or as a control
+   document, read whole, up to 1 GiB, and sent with its SHA-256); `STREAMING-UNSIGNED-PAYLOAD-TRAILER` unchanged; a
+   body without a length is buffered (S3 needs `Content-Length`).
+6. A body is held to what its headers said. An `aws-chunked` payload shorter than `x-amz-decoded-content-length`, a
+   body cut before its last chunk or its `Content-Length`, or a program gone part way gets `400 IncompleteBody`; a
+   payload longer than said, or framing that does not read, `400 InvalidRequest`; a body that stops for the idle
+   limit (60 s), `400 RequestTimeout`. The store is not sent the body's last bytes before it has ended as said, so
+   it keeps no object of such an upload; the record says why (`transportError`).
+7. A presigned URL with the recording's key is re-signed with headers (`x-sonde-note` on the record).
+8. The response streams back unchanged; an error body's first 64 KiB is kept on the record.
 
 A record holds the program's headers (signatures redacted), the URL sonde sent to, status, bytes each way, request
 ids, the error body, **latency** (the whole exchange, until the body is through or the program stops reading) and
@@ -283,7 +292,9 @@ grouped differences, what the program relies on, the cost on each store, and bot
 - S3 Express One Zone (directory buckets, `<name>--<zone>--x-s3`): `CreateSession` and every request to one get
   `501 NotImplemented`, never forwarded, whatever the policy.
 - One target endpoint per run.
-- No overall time limit per exchange; 60 s without a byte cuts it. Connecting gives up after 10 s.
+- No overall time limit per exchange; 60 s without a byte cuts it (a request body that stops is answered
+  `400 RequestTimeout`, an answer that stops `502`). Connecting gives up after 10 s.
 - `run` waits up to 5 s at exit for requests in flight.
 - Replay is sequential: concurrency and timing are not reproduced.
-- Signed `aws-chunked` and length-less bodies are read whole: up to 1 GiB each, 2 GiB at once (more waits).
+- Length-less bodies, and signed `aws-chunked` ones with a trailer sonde does not know, are read whole: up to 1 GiB
+  each, 2 GiB at once (more waits).

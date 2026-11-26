@@ -111,7 +111,8 @@ fn verify(req: &http::request::Parts, body_hash: &str) -> Result<(), String> {
     let sig = sigv4::sign(
         &SignInput {
             method: req.method.as_str(),
-            canonical_uri: req.uri.path(),
+            // as a store makes it: the path decoded, then encoded once
+            canonical_uri: &sigv4::canonical_uri(req.uri.path()),
             query: &query,
             headers: &headers,
             payload_hash: payload,
@@ -1494,16 +1495,17 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
     assert_eq!(app.send_raw(get).await.unwrap().status, 200);
 }
 
-/// S3 keeps `a/../g1` as a key of its own: the proxy sends it as written,
-/// never as `g1`, which the HTTP client's URL library would make of it.
+/// S3 keeps `a/../g1` as a key of its own: the proxy sends it as written
+/// (byte for byte, an encoded dot as it was encoded), never as `g1`, which
+/// the HTTP client's URL library would make of it.
 #[tokio::test]
 async fn a_key_with_a_dot_segment_is_forwarded_as_sent_and_never_reaches_another_key() {
     let (proxy, _app, log, up) = setup(Policy::Allow).await;
     for (path, sent) in [
-        ("/data/a/../g1", "/data/a/%2E%2E/g1"),
-        ("/data/a/./g1", "/data/a/%2E/g1"),
-        ("/data/a/%2e%2e/g1", "/data/a/%2E%2E/g1"),
-        ("/data/..", "/data/%2E%2E"),
+        ("/data/a/../g1", "/data/a/../g1"),
+        ("/data/a/./g1", "/data/a/./g1"),
+        ("/data/a/%2e%2e/g1", "/data/a/%2e%2e/g1"),
+        ("/data/..", "/data/.."),
     ] {
         for method in ["PUT", "GET", "DELETE"] {
             let answer = raw(&proxy, method, path).await;

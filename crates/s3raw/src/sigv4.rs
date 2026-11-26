@@ -34,6 +34,40 @@ pub fn uri_encode(input: &str, keep_slash: bool) -> String {
     out
 }
 
+/// The canonical URI of a path as it is on the wire, as an S3 store makes
+/// it: each `%XX` read as its byte (any byte, UTF-8 or not), then every
+/// byte outside the unreserved set written `%XX` once, `/` kept (an encoded
+/// `%2F` is a slash to the store). Nothing is folded: `.`, `..` and empty
+/// segments stay. A path an SDK wrote is its own canonical URI; one written
+/// otherwise (`a%2Fb`, `a+b`, `%e6`) is signed as the store will read it and
+/// can still be sent as it came.
+pub fn canonical_uri(raw_path: &str) -> String {
+    let raw = raw_path.as_bytes();
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let mut out = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        let (b, n) = match raw[i] {
+            b'%' => match (
+                raw.get(i + 1).copied().and_then(hex),
+                raw.get(i + 2).copied().and_then(hex),
+            ) {
+                (Some(h), Some(l)) => (h << 4 | l, 3),
+                _ => (b'%', 1),
+            },
+            b => (b, 1),
+        };
+        i += n;
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
@@ -600,5 +634,33 @@ mod tests {
             canonical_query(&h(&[("b", "2"), ("a", "x y"), ("a", "1")])),
             "a=1&a=x%20y&b=2"
         );
+    }
+
+    /// A path is signed as the store reads it, whatever way it was written:
+    /// one an SDK wrote is itself, and nothing in it is folded or lost.
+    #[test]
+    fn a_wire_path_is_signed_as_the_store_reads_it() {
+        for same in [
+            "/",
+            "/b/",
+            "/b/a%20b/c%2Bd",
+            "/b/%25",
+            "/b/%FF%FE",
+            "/b/a//b/",
+            "/b/a/../k/./",
+            "/b/%E6%97%A5%E6%9C%AC",
+        ] {
+            assert_eq!(canonical_uri(same), same);
+        }
+        // written otherwise: an encoded slash is a slash, a plus is a plus,
+        // hex in either case, a dot written %2E, a % that starts no escape
+        assert_eq!(canonical_uri("/b/a%2Fb"), "/b/a/b");
+        assert_eq!(canonical_uri("/b/a+b(1)"), "/b/a%2Bb%281%29");
+        assert_eq!(canonical_uri("/b/%e6%97%a5%ff"), "/b/%E6%97%A5%FF");
+        assert_eq!(canonical_uri("/b/a/%2e%2E/k"), "/b/a/../k");
+        assert_eq!(canonical_uri("/b/100%/%zz%4"), "/b/100%25/%25zz%254");
+        // what `uri_encode` makes of a key is what is read back from it
+        let key = "日本/x+y=z %~";
+        assert_eq!(canonical_uri(&uri_encode(key, true)), uri_encode(key, true));
     }
 }

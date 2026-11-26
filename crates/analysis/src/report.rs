@@ -175,6 +175,7 @@ fn redact_with(s: &mut RunFile, r: &Redactor) {
     s.header.endpoint = "endpoint".into();
     s.header.region = String::new();
     s.header.cwd = None;
+    s.header.ca_file = None;
     // the commit says which change; a branch's name may say whose
     if let Some(g) = &mut s.header.git {
         g.branch = None;
