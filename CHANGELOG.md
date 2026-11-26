@@ -2,7 +2,10 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [34.0.0] - 2026-11-26
+
+sonde reads what a run leaves in the store, not only what its requests show: a trial holds a run to it, and `show`
+says when a run leaves other objects than the run before. No command, flag or screen is new.
 
 ### Changed
 
@@ -16,6 +19,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - The demo's fixed job writes its export where the job always wrote it.
 
 ### 中文
+
+sonde 不仅看请求，也看一次运行在存储中留下了什么：试验据此判定，`show` 在前后两次运行留下的对象不同时会说明。没有新增命令、选项或界面。
 
 - 变更：试验不仅看请求，也看运行在存储中留下了什么：正常运行会留下、而本次运行一个也没写的输出，且退出码与正常运行相同，判为 **broke**（*正常运行会留下的 2 个对象没有写入*）。放弃读取、跳过输出并以 0 退出的程序此前只判为 *degraded*。
 - 变更：当一次运行在存储中留下的对象与上一次不同时，`show` 会说明（JSON 中为 `since.change.left`），相同时不说：只改变读取方式的修复不应改变写入的内容。演示中修复后的作业把导出写在原来的位置。
