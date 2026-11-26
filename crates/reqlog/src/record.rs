@@ -591,6 +591,8 @@ impl KeyCounter {
 
 /// Largest error body kept on a record.
 pub const MAX_ERROR_BODY: usize = 64 * 1024;
+/// What ends an error body cut at [`MAX_ERROR_BODY`].
+pub const TRUNCATED: &str = "\n… (truncated)";
 /// Largest control body kept on a record.
 pub const MAX_REQUEST_BODY: usize = 256 * 1024;
 
@@ -659,7 +661,7 @@ impl Record {
             }
             *body = crate::redact::redact_text(body);
             if cut {
-                body.push_str("\n… (truncated)");
+                body.push_str(TRUNCATED);
             }
         }
         if let Some(e) = &mut x.transport_error {

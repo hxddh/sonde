@@ -32,6 +32,7 @@ python3 scripts/check-readme-images.py   # docs/images are the tour's approved l
 (cd app && nsh build App.tsx 2>&1 | tee build.log; ! grep -E "^warn" build.log)   # no warnings
 # unit
 cargo test --workspace --locked
+SONDE_FIXES_STRICT=1 cargo test -p sonde-analysis --test fix_code   # CI's fixes job: every fix compiled, none skipped (tools/fix-check)
 python3 scripts/gen-probe-docs.py --check   # docs/probes.md is what the catalog makes
 # ui
 bash scripts/ui-tests.sh                 # the app's tests, headless, with data folders of their own

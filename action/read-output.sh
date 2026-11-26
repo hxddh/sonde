@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # An output's value, read from a GITHUB_OUTPUT file as GitHub reads it:
 # `name<<delimiter`, the value's lines, the delimiter (what sonde-action.sh
-# writes), or `name=value` on a line. The last one written, when written twice.
+# writes), or `name=value` on a line, ended LF or CRLF. The last one written,
+# when written twice.
 #
 #   read-output.sh NAME FILE
 set -euo pipefail
 [ $# -eq 2 ] || { echo "usage: $0 NAME FILE" >&2; exit 64; }
 awk -v name="$1" '
+  # (a line ended CRLF is read as GitHub reads it: without the CR)
+  { sub(/\r$/, "") }
   delim != "" {
     if ($0 == delim) { delim = ""; if (cur == name) { value = held; found = 1 } }
     else if (cur == name) held = held (n++ ? "\n" : "") $0

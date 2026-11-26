@@ -147,16 +147,28 @@ is "baseline from the base branch's run that has it" "$(output baseline)" "$t/ru
 is "it says which run" "$(grep -c 'actions/runs/22' "$t/said")" 1
 is "of this workflow, on the base branch" "$(grep -c -- '--workflow ci.yml --branch main' "$t/gh.log")" 1
 FAKE_SHOW=65 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
-is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" ""
+is "a run an earlier sonde wrote is not a baseline" "$(output baseline)" auto
 is "it says why" "$(grep -c 'not one this sonde reads' "$t/said")" 1
 # a run that failed (its program, its check, the build) is never a baseline
 FAKE_FAILED_RUNS="33" FAKE_RUNS="11 22" FAKE_HAS=33 step baseline >"$t/said"
-is "a failed run's artifact is not the baseline" "$(output baseline)" ""
+is "a failed run's artifact is not the baseline" "$(output baseline)" auto
 is "only runs that succeeded are asked for" "$(grep -c -- '--status success' "$t/gh.log")" "$(grep -c '^gh run list' "$t/gh.log")"
 is "the run is kept as a baseline only when the program succeeded" "$(awk '/^    - name: Keep the run/ { on = 1; next } /^    - name:/ { on = 0 } on && /if: steps.record.outputs.exit == .0./ { print 1 }' "$here/../action.yml")" 1
 FAKE_RUNS="11" step baseline >"$t/said"
-is "none kept: nothing passed (sonde.toml's baseline then applies)" "$(output baseline)" ""
+is "none kept: auto (no baseline yet, which a first run passes)" "$(output baseline)" auto
 is "none kept: a warning" "$(grep -c '^::warning title=sonde::no baseline' "$t/said")" 1
+# sonde.toml naming a baseline: nothing passed, so it applies
+mkdir -p "$t/proj/sub" && printf '[program]\nname = "x"\n\n[check]  # the gate\r\nbaseline = "base.sonde"\r\n' >"$t/proj/sonde.toml"
+(cd "$t/proj/sub" && FAKE_RUNS="11" step baseline >/dev/null)
+is "none kept, sonde.toml names one: nothing passed" "$(output baseline)" ""
+printf '[check]\nmax-requests = 10\n[other]\nbaseline = "x"\n' >"$t/proj/sonde.toml"
+(cd "$t/proj/sub" && FAKE_RUNS="11" step baseline >/dev/null)
+is "a baseline outside [check] is not its" "$(output baseline)" auto
+SONDE_CONFIG="$t/proj/named.toml" FAKE_RUNS="11" step baseline >/dev/null
+is "config names no file there: auto" "$(output baseline)" auto
+printf '[check]\nbaseline = "auto"\n' >"$t/proj/named.toml"
+SONDE_CONFIG="$t/proj/named.toml" FAKE_RUNS="11" step baseline >/dev/null
+is "the config input's sonde.toml is the one read" "$(output baseline)" ""
 is "it says why no merge-base was recorded" "$(grep -c 'its merge-base could not be recorded (not a git checkout)' "$t/said")" 1
 is "and nothing was run" "$([ -f "$t/sonde.pwd" ] && echo ran || echo none)" none
 
@@ -189,10 +201,10 @@ is "in a folder of its own, not the run's (never its run before)" "$(dirname "$(
 SONDE_RUN="python3 etl.py" SONDE_SETUP='echo "$PWD" >"$FAKE/setup.pwd"' FAKE_RUNS="" step baseline >/dev/null
 is "setup runs first, in the same folder" "$(cat "$t/setup.pwd")" "$(cat "$t/sonde.pwd")"
 SONDE_RUN="python3 etl.py" SONDE_SETUP="false" step baseline >"$t/said"
-is "setup failed: held to its budget" "$(output baseline)" ""
+is "setup failed: held to its budget" "$(output baseline)" auto
 is "it says why" "$(grep -c 'could not be recorded (setup failed in the merge-base.s checkout)' "$t/said")" 1
 SONDE_RUN="python3 etl.py" FAKE_RUN_EXIT=3 step baseline >"$t/said"
-is "its program failed: held to its budget" "$(output baseline)" ""
+is "its program failed: held to its budget" "$(output baseline)" auto
 is "it says why, and what to set" "$(grep -c "the merge-base's program exited 3: .*the setup input" "$t/said")" 1
 # a push is no pull request: no merge-base
 GITHUB_BASE_REF="" GITHUB_REF_NAME=main SONDE_RUN="python3 etl.py" step baseline >"$t/said"
@@ -300,6 +312,10 @@ printf 'baseline=/tmp/old.sonde\nfile<<EOT\na=b\nEOT\nbaseline=/tmp/b.sonde\n' >
 is "an output written name=value is read" "$(bash "$here/read-output.sh" baseline "$t/out.forms")" /tmp/b.sonde
 is "a value with = in it, in the delimiter form, is no output of its own" "$(bash "$here/read-output.sh" a "$t/out.forms")" ""
 is "and is read as it was written" "$(bash "$here/read-output.sh" file "$t/out.forms")" "a=b"
+printf 'a<<EOF\r\nhello\r\nEOF\r\nb=val\r\nc<<EOF\r\nx\nEOF\n' >"$t/out.crlf"
+is "a CRLF line is read without its CR" "$(bash "$here/read-output.sh" b "$t/out.crlf" | od -An -c | tr -d ' ')" 'val\n'
+is "a CRLF delimiter form" "$(bash "$here/read-output.sh" a "$t/out.crlf")" hello
+is "a delimiter ended LF after one ended CRLF" "$(bash "$here/read-output.sh" c "$t/out.crlf")" x
 # the workflow that runs the steps against a release reads their outputs the same way, never by a pattern of its own
 is "action-live.yml reads outputs with read-output.sh" "$(grep -c "sed -n 's/^[a-z]*=//p'" "$here/../.github/workflows/action-live.yml")" 0
 

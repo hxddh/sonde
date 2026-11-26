@@ -38,6 +38,10 @@ const SECRET_QUERY: &[&str] = &[
 
 /// Shortens an access key id: `AKIAIOSFODNN7EXAMPLE` → `AKIA…LE`.
 pub fn mask_key_id(id: &str) -> String {
+    // (a mask is masked as it is: redacting twice changes nothing)
+    if id == MASK {
+        return MASK.to_string();
+    }
     let chars: Vec<char> = id.chars().collect();
     if chars.len() <= 6 {
         return MASK.to_string();
@@ -63,7 +67,8 @@ pub fn redact_header(name: &str, value: &str) -> String {
 /// making it: what a record already redacted is asked on its way to a file.
 pub fn header_is_redacted(name: &str, value: &str) -> bool {
     if name.eq_ignore_ascii_case("authorization") {
-        return value.contains(MASK);
+        // a mask somewhere in it is no proof the signature is gone
+        return redact_authorization(value) == value;
     }
     !SECRET_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)) || value == MASK
 }
@@ -83,10 +88,8 @@ pub fn query_value_is_redacted(name: &str, value: &str) -> bool {
 /// `AWS4-HMAC-SHA256 Credential=AKID/20150830/us-east-1/s3/aws4_request,
 /// SignedHeaders=host;x-amz-date, Signature=abc` keeps everything but the
 /// signature and most of the key id. Unknown schemes are masked whole.
+/// Redacting what it made changes nothing: each part keeps its own mask.
 pub fn redact_authorization(value: &str) -> String {
-    if value.contains(MASK) {
-        return value.to_string();
-    }
     let Some((scheme, rest)) = value.split_once(' ') else {
         return MASK.to_string();
     };
@@ -247,15 +250,17 @@ fn replace_element(text: &str, tag: &str, f: impl Fn(&str) -> String) -> String 
         let Some(end) = after.find(&close) else {
             // cut open: nothing after it is known not to be the secret
             // (what is there already is a mask, perhaps itself cut)
-            out.push_str(if after.starts_with('«') { after } else { MASK });
+            // (a record's body cut at its limit ends with its mark)
+            let kept = after
+                .strip_suffix(crate::record::TRUNCATED)
+                .unwrap_or(after);
+            out.push_str(if MASK.starts_with(kept) { after } else { MASK });
             return out;
         };
         let inner = &after[..end];
-        if inner == MASK || inner.contains('…') {
-            out.push_str(inner);
-        } else {
-            out.push_str(&f(inner));
-        }
+        // (each `f` leaves its own mask as it is: a `…` in a value is no
+        // proof it was redacted, a metadata value may hold one)
+        out.push_str(&f(inner));
         out.push_str(&close);
         rest = &after[end + close.len()..];
     }
@@ -527,5 +532,41 @@ mod tests {
     fn short_key_ids() {
         assert_eq!(mask_key_id("abc"), MASK);
         assert_eq!(mask_key_id("minioadmin"), "mini…in");
+    }
+
+    #[test]
+    fn an_ellipsis_in_a_value_is_no_mask() {
+        // a metadata value with `…`, signed, echoed in a canonical request
+        let body = "<Error><CanonicalRequest>PUT\n/k\n\nx-amz-meta-note:to be continued…\nx-amz-security-token:FQoGSECRET\n</CanonicalRequest><SessionToken>FQoG…realtoken</SessionToken><SecretAccessKey>wJalr…XUtn</SecretAccessKey><AccessKeyId>AKIA…XAMPLEKEY</AccessKeyId></Error>";
+        let red = redact_text(body);
+        for secret in ["FQoGSECRET", "realtoken", "XUtn", "XAMPLEKEY"] {
+            assert!(!red.contains(secret), "{secret}: {red}");
+        }
+        assert_eq!(redact_text(&red), red);
+    }
+
+    #[test]
+    fn a_mask_in_an_authorization_is_no_proof() {
+        let value = format!("{AUTH}, X={MASK}");
+        assert!(!header_is_redacted("Authorization", &value));
+        let red = redact_header("Authorization", &value);
+        assert!(!red.contains("f0e8bdb8"), "{red}");
+        assert!(header_is_redacted("Authorization", &red));
+        for v in [
+            AUTH,
+            "AWS AKIAIOSFODNN7EXAMPLE:sig",
+            "Bearer tok",
+            "tok",
+            MASK,
+        ] {
+            let once = redact_authorization(v);
+            assert_eq!(redact_authorization(&once), once, "{v}");
+        }
+    }
+
+    #[test]
+    fn an_element_cut_open_keeps_only_a_mask() {
+        assert_eq!(redact_text("<Token>«redac"), "<Token>«redac");
+        assert_eq!(redact_text("<Token>«secret"), format!("<Token>{MASK}"));
     }
 }
