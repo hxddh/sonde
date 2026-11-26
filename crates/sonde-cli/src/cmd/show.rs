@@ -689,7 +689,8 @@ fn code_line(cwd: Option<&Path>, file: &str, line: u32) -> Option<String> {
 
 /// The command that records the program again, to see a fix work: as it
 /// was run (`sonde run --url URL -- python3 etl.py`, `-e NAME`, `--demo`,
-/// in the folder it ran in), and a run written with `-o` written beside it
+/// in the folder it ran in, under the policy and with the TLS it was
+/// recorded with), and a run written with `-o` written beside it
 /// again under the next name (`footer1.sonde`, then `footer2.sonde`). None
 /// for a run that is no program's (an import, a replay).
 fn verify_command(
@@ -715,6 +716,10 @@ fn verify_command(
             sonde_analysis::program::shell_join(&[n.into()])
         ));
     }
+    args.extend(policy_arg(header));
+    if header.tls {
+        args.push("--tls".into());
+    }
     if let Some(out) = next_beside(s, path) {
         args.push(format!(
             "-o {}",
@@ -723,6 +728,23 @@ fn verify_command(
     }
     args.push(format!("-- {command}"));
     Some(args.join(" "))
+}
+
+/// `--policy P` for a run recorded under a policy `sonde run` would not
+/// choose by itself in the folder it ran in (`[record] policy` of its
+/// sonde.toml, else allow): recorded again without it, the program would be
+/// let do more, or less. None for a run that does not say (before 33.0), or
+/// names no policy sonde has.
+fn policy_arg(header: &sonde_analysis::run::RunHeader) -> Option<String> {
+    let recorded = sonde_proxy::Policy::named(header.policy.as_deref()?)?;
+    let own = header
+        .cwd
+        .as_deref()
+        .and_then(|d| sonde_analysis::project::find(Path::new(d)))
+        .and_then(|f| sonde_analysis::project::read(&f).ok())
+        .and_then(|p| p.policy)
+        .unwrap_or(sonde_proxy::Policy::Allow);
+    (recorded != own).then(|| format!("--policy {}", recorded.name()))
 }
 
 /// Where a run written with `-o` (outside the runs folder) is written

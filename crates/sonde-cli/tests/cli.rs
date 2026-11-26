@@ -3540,6 +3540,174 @@ fn prune_keeps_a_run_still_being_recorded() {
     assert!(!live.exists(), "{}", stdout(&o));
 }
 
+/// 33.0: `verify` of a run recorded with `--path-style`, `--ca-file`,
+/// `--tls` or `--policy` left them out, so the command it gave failed
+/// against a custom endpoint or recorded under other rules. The run says
+/// how it was recorded (a file's path, never a credential), `verify` says
+/// it again, quoted for a shell, and the command it gives records the same.
+#[test]
+#[cfg(unix)]
+fn verify_says_the_store_and_the_rules_a_run_was_recorded_with() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().canonicalize().unwrap();
+    let newest = |n: usize| {
+        let mut runs: Vec<_> = std::fs::read_dir(dir.join("data/runs"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
+            .collect();
+        assert_eq!(runs.len(), n, "{runs:?}");
+        runs.sort_by_key(|p| std::fs::metadata(p).unwrap().modified().unwrap());
+        runs.pop().unwrap()
+    };
+    let header = |run: &Path| -> serde_json::Value {
+        let o = sonde(&dir, &["show", run.to_str().unwrap(), "-f", "json"]);
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        // (the file is gzipped once finished: its first line, as written)
+        let text = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("gzip -dc \"$0\" 2>/dev/null | head -n 1 || head -n 1 \"$0\"")
+            .arg(run)
+            .output()
+            .unwrap();
+        let line = String::from_utf8_lossy(&text.stdout).into_owned();
+        let mut h: serde_json::Value = serde_json::from_str(&line).unwrap();
+        h["verify"] =
+            serde_json::from_str::<serde_json::Value>(&stdout(&o)).unwrap()["verify"].clone();
+        h
+    };
+    // (the program sends nothing: the endpoint is never called)
+    let record = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .current_dir(&dir)
+            .env("SONDE_CONFIG_DIR", dir.join("config"))
+            .env("SONDE_DATA_DIR", dir.join("data"))
+            .no_aws(&dir)
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {}", stderr(&o));
+    };
+
+    // a plain run says only its policy, and its verify is as it was
+    record(&["--url", "http://127.0.0.1:9", "run", "--tls", "--", "true"]);
+    let h = header(&newest(1));
+    assert_eq!(
+        h["verify"],
+        "sonde run --url http://127.0.0.1:9/ --tls -- true"
+    );
+    assert_eq!((&h["tls"], &h["policy"]), (&true.into(), &"allow".into()));
+    assert!(
+        h.get("pathStyle").is_none() && h.get("caFile").is_none(),
+        "{h}"
+    );
+
+    // a store of its own: path-style, an authority in a file (the
+    // certificate the first run made), under a policy
+    let ca = dir.join("my ca.pem");
+    std::fs::copy(dir.join("data/tls/ca.pem"), &ca).unwrap();
+    record(&[
+        "--url",
+        "http://127.0.0.1:9",
+        "--path-style",
+        "--ca-file",
+        "my ca.pem",
+        "run",
+        "--policy",
+        "no-delete",
+        "--tls",
+        "--",
+        "true",
+    ]);
+    let h = header(&newest(2));
+    let verify = h["verify"].as_str().unwrap().to_string();
+    assert_eq!(
+        verify,
+        format!(
+            "sonde run --url http://127.0.0.1:9/ --path-style --ca-file '{}' --policy no-delete --tls -- true",
+            ca.display()
+        )
+    );
+    assert_eq!(
+        (&h["pathStyle"], &h["caFile"], &h["tls"], &h["policy"]),
+        (
+            &true.into(),
+            &ca.to_str().unwrap().into(),
+            &true.into(),
+            &"no-delete".into()
+        )
+    );
+    // nothing of a credential, whatever was in the environment
+    let said = h.to_string().to_ascii_lowercase();
+    assert!(!said.contains("secret") && !said.contains("akid"), "{h}");
+
+    // the command it gives, run by a shell, records the same again
+    let again = verify.replacen("sonde", env!("CARGO_BIN_EXE_sonde"), 1);
+    let o = Command::new("sh")
+        .arg("-c")
+        .arg(&again)
+        .current_dir(&dir)
+        .env("SONDE_CONFIG_DIR", dir.join("config"))
+        .env("SONDE_DATA_DIR", dir.join("data"))
+        .no_aws(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{again}: {}", stderr(&o));
+    let third = header(&newest(3));
+    for field in ["pathStyle", "caFile", "tls", "policy", "verify", "url"] {
+        assert_eq!(third[field], h[field], "{field}");
+    }
+
+    // a policy the folder's sonde.toml gives is not said again; one that
+    // differs from it is, `allow` too
+    std::fs::write(dir.join("sonde.toml"), "[record]\npolicy = \"read-only\"\n").unwrap();
+    record(&["--url", "http://127.0.0.1:9", "run", "--", "true"]);
+    let h = header(&newest(4));
+    assert_eq!(h["policy"], "read-only");
+    assert_eq!(h["verify"], "sonde run --url http://127.0.0.1:9/ -- true");
+    record(&[
+        "--url",
+        "http://127.0.0.1:9",
+        "run",
+        "--policy",
+        "allow",
+        "--",
+        "true",
+    ]);
+    assert_eq!(
+        header(&newest(5))["verify"],
+        "sonde run --url http://127.0.0.1:9/ --policy allow -- true"
+    );
+    std::fs::remove_file(dir.join("sonde.toml")).unwrap();
+
+    // a run written before 33.0 says none of it, and its verify is as before;
+    // a policy no sonde has is not passed on to a shell
+    let first_line = |extra: &str| {
+        format!(
+            "{{\"format\":\"sonde-run\",\"version\":2,\"created\":\"2026-11-12T10:00:00Z\",\"endpoint\":\"adhoc\",\"url\":\"http://127.0.0.1:9/\",\"region\":\"us-east-1\",\"command\":\"true\"{extra}}}\n"
+        )
+    };
+    for (extra, verify) in [
+        ("", "sonde run --url http://127.0.0.1:9/ -- true"),
+        (
+            ",\"policy\":\"allow; rm -rf ~\",\"caFile\":\"a b;c\"",
+            "sonde run --url http://127.0.0.1:9/ --ca-file 'a b;c' -- true",
+        ),
+    ] {
+        let file = dir.join("old.sonde");
+        std::fs::write(&file, first_line(extra)).unwrap();
+        let o = sonde(&dir, &["show", file.to_str().unwrap(), "-f", "json"]);
+        let j: serde_json::Value = serde_json::from_str(&stdout(&o)).unwrap();
+        // (written outside the runs folder: `-o` beside it)
+        let beside = dir.join("old-2.sonde");
+        assert_eq!(
+            j["verify"].as_str().unwrap(),
+            verify.replace(" -- ", &format!(" -o {} -- ", beside.display()))
+        );
+    }
+}
+
 /// 29.0's eval: `verify` of a run written with `-o` did not write it beside
 /// it again, and a run without `-o` after runs with it had `since: null`:
 /// a program's runs are found the same way with `-o` or without.

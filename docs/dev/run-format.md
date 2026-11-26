@@ -37,6 +37,13 @@ it. This page is its contract ([contract.md](../contract.md)); `crates/analysis/
 | `scenario` | optional | A trial's fault scenario. |
 | `trialOf` | optional | The file name of the clean run a trial is of. |
 | `wholeSeconds` | optional | `true`: request times are to the second (an imported log), spread over it. |
+| `pathStyle` | optional | `true`: a store named for the run alone (`--url`) was reached path-style (`--path-style`). Since 33.0. |
+| `caFile` | optional | The file of that store's own authorities (`--ca-file`): its path, absolute, never its content. Since 33.0. |
+| `tls` | optional | `true`: the program was served TLS (`--tls`, `[record] tls`). Since 33.0. |
+| `policy` | optional | The [policy](../recording.md#what-a-recorded-program-may-do) it was recorded under: `allow`, `no-delete` or `read-only`. Since 33.0. |
+
+The last four say how the run was recorded, for `sonde show`'s `verify` to say it again; a run without them (one
+written before 33.0) is read as before. No header field holds a credential.
 
 ## A record
 
@@ -49,12 +56,12 @@ One HTTP exchange, redacted before writing: signatures, keys and tokens are mask
 | `endpoint` | required | The endpoint's id. |
 | `kind` | required | The S3 call, as the API reference spells it (`PutObject`, `ListObjectsV2`), or `Unknown`. Format 1 named it `operation`. |
 | `method` | required | The HTTP method. |
-| `url` | required | The URL as sent, signatures masked; may be empty (an import, a lean reading). |
+| `url` | required | The URL as sent, signatures masked; may be empty (an import, a lean reading). A recording's holds the key as the program wrote it (`a%2Fb`). |
 | `query` | required | `[[name, value], …]`, decoded, masked like the URL. |
 | `latencyMs` | required | From the request's arrival to the response's end, in ms (a number). |
 | `retries` | required | Attempts before this one, as the client said. |
 | `requestHeaders`, `responseHeaders` | required | `[{ "name", "value" }, …]`, names in the case they were sent. |
-| `bucket`, `key` | optional, null | The bucket and the key. |
+| `bucket`, `key` | optional, null | The bucket and the key, decoded (`a%2Fb` is `a/b`); a recorded key's bytes that are not UTF-8 stay `%XX`. |
 | `status` | optional, null | The HTTP status; null when no answer came. |
 | `requestId`, `hostId` | optional, null | The store's ids. |
 | `requestBytes`, `responseBytes` | optional, null | Body sizes, when known: the bytes that went, for a body cut or left unread. |

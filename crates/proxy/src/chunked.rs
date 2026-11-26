@@ -38,6 +38,9 @@ pub struct Decoder {
     /// CRLF or a trailing line (data is passed on as it comes).
     held: Vec<u8>,
     state: State,
+    /// The payload's bytes read so far: what `x-amz-decoded-content-length`
+    /// said they would come to, once the body has ended.
+    pub decoded: u64,
     /// The trailing headers (lower-case, without the trailer signature),
     /// once the body has ended.
     pub trailers: Vec<(String, String)>,
@@ -61,10 +64,20 @@ const LINE_MAX: usize = 8 << 10;
 impl Decoder {
     /// Reads `input`, appending the payload in it to `out`.
     pub fn feed(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
+        self.take(input, Some(out))
+    }
+
+    /// Reads `input` for its framing alone: the payload in it is counted
+    /// ([`Decoder::decoded`]) and not kept (a body that goes on as sent).
+    pub fn measure(&mut self, input: &[u8]) -> Result<(), String> {
+        self.take(input, None)
+    }
+
+    fn take(&mut self, input: &[u8], mut out: Option<&mut Vec<u8>>) -> Result<(), String> {
         let mut buf = std::mem::take(&mut self.held);
         buf.extend_from_slice(input);
         let mut at = 0;
-        let read = self.read(&buf, &mut at, out);
+        let read = self.read(&buf, &mut at, &mut out);
         buf.drain(..at);
         self.held = buf;
         read?;
@@ -75,7 +88,12 @@ impl Decoder {
     }
 
     /// Reads `buf` from `at` as far as it goes, moving `at` past what is read.
-    fn read(&mut self, buf: &[u8], at: &mut usize, out: &mut Vec<u8>) -> Result<(), String> {
+    fn read(
+        &mut self,
+        buf: &[u8],
+        at: &mut usize,
+        out: &mut Option<&mut Vec<u8>>,
+    ) -> Result<(), String> {
         loop {
             let rest = &buf[*at..];
             match self.state {
@@ -85,7 +103,10 @@ impl Decoder {
                     if n == 0 {
                         return Ok(());
                     }
-                    out.extend_from_slice(&rest[..n]);
+                    if let Some(out) = out {
+                        out.extend_from_slice(&rest[..n]);
+                    }
+                    self.decoded += n as u64;
                     *at += n;
                     self.state = if n == left {
                         State::DataEnd
@@ -322,6 +343,31 @@ mod tests {
         assert_eq!(checksum_len("x-amz-checksum-xxhash128"), Some(24));
         assert_eq!(checksum_len("x-amz-checksum-sha512"), Some(88));
         assert_eq!(checksum_len("x-amz-meta-other"), None);
+    }
+
+    /// A body measured is read as one decoded, and its payload counted
+    /// either way: what its headers said it would come to is checked
+    /// against it.
+    #[test]
+    fn a_body_measured_counts_the_payload_it_does_not_keep() {
+        let body = b"5\r\nhello\r\n6;chunk-signature=x\r\n world\r\n0\r\nx-amz-checksum-crc32:AAAAAA==\r\n\r\n";
+        for piece in [1, 4, body.len()] {
+            let (mut kept, mut measured) = (Decoder::default(), Decoder::default());
+            let mut out = Vec::new();
+            for p in body.chunks(piece) {
+                kept.feed(p, &mut out).unwrap();
+                measured.measure(p).unwrap();
+            }
+            assert_eq!((kept.decoded, measured.decoded), (11, 11));
+            assert!(kept.finish().is_ok() && measured.finish().is_ok());
+            assert_eq!(kept.trailers, measured.trailers);
+        }
+        // cut before its last chunk: counted as far as it went, not ended
+        let mut d = Decoder::default();
+        d.measure(b"5\r\nhello\r\n").unwrap();
+        assert_eq!(d.decoded, 5);
+        assert!(d.finish().is_err());
+        assert!(d.measure(b"zz\r\n").is_err());
     }
 
     #[test]

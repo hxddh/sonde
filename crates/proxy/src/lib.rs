@@ -28,9 +28,9 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use chrono::Utc;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full, Limited, StreamBody};
+use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -1107,17 +1107,56 @@ fn decode(s: &str) -> String {
         .into_owned()
 }
 
+/// A key as the path names it: each `%XX` its byte, and nothing else
+/// changed (`+` is a plus, `%2F` a slash of the key). Bytes that are not
+/// UTF-8 text stay as written (`%FF`): no other key is named in their place.
+fn decode_key(s: &str) -> String {
+    let bytes: Vec<u8> = percent_encoding::percent_decode_str(s).collect();
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        out.push_str(chunk.valid());
+        for b in chunk.invalid() {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Bucket and key from the Host header and the path. `<bucket>.localhost`
 /// hosts are virtual-hosted style; anything else is path style.
 pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) {
+    let (bucket, key) = split_target(host, path);
+    (
+        bucket.map(|b| match b {
+            Ok(host) => host,
+            Err(segment) => decode(segment),
+        }),
+        key.map(decode_key),
+    )
+}
+
+/// The key of a request as its path has it, undecoded: what is sent on to
+/// the store, byte for byte ([`s3raw::S3Client::address_raw`]).
+pub fn raw_key<'a>(host: &str, path: &'a str) -> Option<&'a str> {
+    split_target(host, path).1
+}
+
+/// Where a path names the bucket and the key: the bucket the Host names
+/// (`Ok`) or the path's first segment as written (`Err`), and the rest as
+/// written.
+#[allow(clippy::type_complexity)]
+fn split_target<'a>(
+    host: &str,
+    path: &'a str,
+) -> (Option<Result<String, &'a str>>, Option<&'a str>) {
     let rest = path.strip_prefix('/').unwrap_or(path);
-    let non_empty = |s: &str| (!s.is_empty()).then(|| decode(s));
+    let non_empty = |s: &'a str| (!s.is_empty()).then_some(s);
     if let Some(bucket) = host_bucket(host) {
-        return (Some(bucket), non_empty(rest));
+        return (Some(Ok(bucket)), non_empty(rest));
     }
     match rest.split_once('/') {
-        Some((b, k)) => (non_empty(b), non_empty(k)),
-        None => (non_empty(rest), None),
+        Some((b, k)) => (non_empty(b).map(Err), non_empty(k)),
+        None => (non_empty(rest).map(Err), None),
     }
 }
 
@@ -1265,8 +1304,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .and_then(|b| shared.regions.lock().get(b).cloned())
         .unwrap_or_else(|| cfg.region.clone());
     let endpoint = in_region(&cfg.endpoint, &cfg.region, &region);
-    let (origin, path, upstream_host) =
-        client.address(&endpoint, bucket.as_deref(), key.as_deref());
+    // the key goes on as the program wrote it, byte for byte (`a%2Fb`,
+    // `%FF`, `a//b`): decoded and encoded again it could name another key.
+    // It is signed as the store reads it.
+    let raw_key = raw_key(&host, parts.uri.path());
+    let (origin, path, upstream_host) = client.address_raw(&endpoint, bucket.as_deref(), raw_key);
+    let canonical = sigv4::canonical_uri(&path);
     let qs = sigv4::canonical_query(&query);
     let url = if qs.is_empty() {
         format!("{origin}{path}")
@@ -1399,6 +1442,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
     let streaming_sig = chunked::is_signed_streaming(&content_sha);
+    // what an aws-chunked body says its payload comes to: held to it
+    let declared: Option<u64> = header_value(&parts.headers, "x-amz-decoded-content-length")
+        .parse()
+        .ok();
+    let unsigned_chunks = content_sha == sigv4::STREAMING_UNSIGNED_TRAILER;
+    // no time for the whole exchange (a large body takes what it takes), only
+    // for one that has stopped moving
+    let idle = cfg.timeout;
     // a signed aws-chunked body is decoded as it arrives, unless it is a
     // control document (read whole, kept) or its length cannot be told the
     // store before it ends
@@ -1408,14 +1459,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a body read whole waits its turn in the buffering budget, held until
     // the request is answered
     let _budget = if (streaming_sig && streamed.is_none()) || (has_body && length.is_none()) {
-        let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
-            .parse()
-            .ok()
-            .or(length);
         shared
             .buffered
             .clone()
-            .acquire_many_owned(buffer_share(&shared.cfg, declared))
+            .acquire_many_owned(buffer_share(&shared.cfg, declared.or(length)))
             .await
             .ok()
     } else {
@@ -1437,10 +1484,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         } else {
             1 << 20
         };
-        let taken = body.take().expect("not read yet");
-        match Limited::new(taken, limit).collect().await {
-            Ok(c) => {
-                let raw = c.to_bytes();
+        match whole(None, body.take(), limit, idle).await {
+            Ok(raw) => {
                 // the document itself, not its transfer framing
                 // (kept now: a request sonde answers itself has it too)
                 let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
@@ -1463,10 +1508,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 early = Some(raw);
             }
             Err(e) => {
-                let msg = format!("sonde could not read the request body: {e}");
+                let msg = e.message();
                 record.rare_mut().transport_error = Some(msg.clone());
                 shared.log.push(record);
-                return Ok(xml_error(400, "IncompleteBody", &msg));
+                return Ok(xml_error(400, e.code, &msg));
             }
         }
     }
@@ -1583,10 +1628,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
-    // no time for the whole exchange (a large body takes what it takes), only
-    // for one that has stopped moving
-    let idle = cfg.timeout;
     let moved = Moved::default();
+    // what becomes of the program's body on its way: a body that is not the
+    // one its headers said fails the request as the program's own mistake
+    let upload = Upload::default();
     // the payload's bytes, when the body sent is framed otherwise
     let mut payload_len = None;
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
@@ -1596,17 +1641,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             plan.forward(&mut out);
             (
                 plan.payload_hash().to_string(),
-                plan.body(incoming, moved.clone()),
+                plan.body(incoming, moved.clone(), upload.clone()),
                 Some(plan.sent_len()),
             )
         } else if streaming_sig {
-            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer, idle).await {
                 Ok(raw) => raw,
                 Err(e) => {
-                    let msg = format!("sonde could not read the request body: {e}");
+                    let msg = e.message();
                     record.rare_mut().transport_error = Some(msg.clone());
                     held.push(record);
-                    return Ok(xml_error(400, "IncompleteBody", &msg));
+                    return Ok(xml_error(400, e.code, &msg));
                 }
             };
             let decoded = match chunked::decode(&raw) {
@@ -1617,6 +1662,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
             };
+            // the payload it said it had, no less and no more
+            if let Err(e) = BodyError::length(declared, decoded.payload.len() as u64) {
+                let msg = e.message();
+                record.rare_mut().transport_error = Some(msg.clone());
+                held.push(record);
+                return Ok(xml_error(400, e.code, &msg));
+            }
             out.retain(|(k, _)| {
                 let k = k.to_ascii_lowercase();
                 k != "x-amz-decoded-content-length" && k != "x-amz-trailer"
@@ -1661,38 +1713,57 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // a control document (DeleteObjects, a lifecycle rule): small,
                 // kept on the record so the request can be replayed
                 Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
-                    match whole(early.take(), body.take(), 1 << 20).await {
+                    let read = whole(early.take(), body.take(), 1 << 20, idle)
+                        .await
+                        .and_then(|raw| {
+                            // unsigned aws-chunked: the payload it said it had
+                            if unsigned_chunks && declared.is_some() {
+                                let d = chunked::decode(&raw).map_err(BodyError::framing)?;
+                                BodyError::length(declared, d.payload.len() as u64)?;
+                            }
+                            Ok(raw)
+                        });
+                    match read {
                         Ok(raw) => {
                             record.rare_mut().request_body =
                                 Some(String::from_utf8_lossy(&raw).into_owned());
                             (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
-                            let msg = format!("sonde could not read the request body: {e}");
+                            let msg = e.message();
                             record.rare_mut().transport_error = Some(msg.clone());
                             held.push(record);
-                            return Ok(xml_error(400, "IncompleteBody", &msg));
+                            return Ok(xml_error(400, e.code, &msg));
                         }
                     }
                 }
                 Some(n) => {
-                    let moved = moved.clone();
-                    let stream = body
-                        .take()
-                        .expect("a body not read early is still here")
-                        .into_data_stream()
-                        .inspect_ok(move |_| moved.touch());
-                    (hash, reqwest::Body::wrap_stream(stream), Some(n))
+                    // as sent; an unsigned aws-chunked body's payload is
+                    // measured as it goes, against what it said
+                    let framing = match declared {
+                        Some(declared) if unsigned_chunks => Framing::Measured {
+                            decoder: chunked::Decoder::default(),
+                            declared,
+                        },
+                        _ => Framing::Plain,
+                    };
+                    let incoming = body.take().expect("a body not read early is still here");
+                    (
+                        hash,
+                        client_body(incoming, moved.clone(), upload.clone(), framing),
+                        Some(n),
+                    )
                 }
                 None => {
                     // chunked transfer without a length: S3 wants one
-                    let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+                    let read = whole(early.take(), body.take(), shared.cfg.max_buffer, idle).await;
+                    let raw = match read {
                         Ok(raw) => raw,
                         Err(e) => {
-                            let msg = format!("sonde could not read the request body: {e}");
+                            let msg = e.message();
                             record.rare_mut().transport_error = Some(msg.clone());
                             held.push(record);
-                            return Ok(xml_error(400, "IncompleteBody", &msg));
+                            return Ok(xml_error(400, e.code, &msg));
                         }
                     };
                     let n = raw.len() as u64;
@@ -1706,10 +1777,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         };
     // an unsigned aws-chunked body goes as sent: its payload is what it says
-    if content_sha == "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
-        payload_len = header_value(&parts.headers, "x-amz-decoded-content-length")
-            .parse()
-            .ok();
+    if unsigned_chunks {
+        payload_len = declared;
     }
     record.request_bytes = payload_len.or(sent_len).into();
     held.keep(&record);
@@ -1727,7 +1796,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             sigv4::sign_headers(
                 &mut out,
                 &method,
-                &path,
+                &canonical,
                 &query,
                 &payload_hash,
                 &region,
@@ -1751,9 +1820,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         out.push(("content-length".into(), n.to_string()));
     }
-    // a key with a `.` or `..` segment goes as written: the HTTP client's
-    // URL library would fold it into another key
-    let as_is = key.as_deref().is_some_and(s3raw::has_dot_segment);
+    // a path the HTTP client's URL library would write otherwise (a `.` or
+    // `..` segment folded into another key, a `\` or `|` encoded) goes as
+    // written, on a connection of its own
+    let as_is = reqwest::Url::parse(&url).map_or(true, |u| u.path() != path);
     let send = async {
         if as_is {
             return asis::send(
@@ -1785,7 +1855,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     moved.touch();
     let sent = tokio::select! {
         r = send => r,
-        _ = moved.quiet_for(idle) => Err(stalled(idle)),
+        _ = moved.quiet_for(idle) => {
+            // the store waits for a body the program has stopped sending
+            if upload.waiting() {
+                upload.fail(BodyError::quiet(idle));
+            }
+            Err(stalled(idle))
+        }
     };
     let mut sent = sent;
     // the bucket is in another region (AWS says which): kept for the
@@ -1804,7 +1880,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             && let Some(creds) = &signed_with
         {
             let endpoint = in_region(&cfg.endpoint, &cfg.region, &moved_to);
-            let (origin, path, host) = client.address(&endpoint, Some(b), key.as_deref());
+            let (origin, path, host) = client.address_raw(&endpoint, Some(b), raw_key);
             let url = if qs.is_empty() {
                 format!("{origin}{path}")
             } else {
@@ -1819,7 +1895,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             sigv4::sign_headers(
                 &mut again,
                 &method,
-                &path,
+                &sigv4::canonical_uri(&path),
                 &query,
                 &payload_hash,
                 &moved_to,
@@ -1847,6 +1923,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let resp = match sent {
         Ok(r) => r,
         Err(msg) => {
+            // the program's own body failed the request (cut, stalled, not
+            // the length it said): its mistake, answered as S3 answers it.
+            // The store saw the request stop before its end, and kept nothing.
+            if let Some(e) = upload.failed() {
+                let msg = e.message();
+                record.rare_mut().transport_error = Some(msg.clone());
+                held.push(record);
+                return Ok(xml_error(400, e.code, &msg));
+            }
             record.rare_mut().transport_error = Some(msg.clone());
             held.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
@@ -2288,21 +2373,313 @@ fn cut_short(
 }
 
 /// A request body whole: the one read early, or the one still to read
-/// (`limit` bytes at most).
+/// (`limit` bytes at most, and never `idle` without a byte: a program that
+/// stops sending is answered, not waited for).
 async fn whole(
     early: Option<Bytes>,
     body: Option<Incoming>,
     limit: usize,
-) -> Result<Bytes, String> {
-    match (early, body) {
-        (Some(raw), _) => Ok(raw),
-        (None, Some(body)) => Limited::new(body, limit)
-            .collect()
-            .await
-            .map(|c| c.to_bytes())
-            .map_err(|e| e.to_string()),
-        (None, None) => Ok(Bytes::new()),
+    idle: std::time::Duration,
+) -> Result<Bytes, BodyError> {
+    let mut body = match (early, body) {
+        (Some(raw), _) => return Ok(raw),
+        (None, Some(body)) => body,
+        (None, None) => return Ok(Bytes::new()),
+    };
+    let mut raw = bytes::BytesMut::new();
+    loop {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Err(_) => return Err(BodyError::quiet(idle)),
+            Ok(None) => return Ok(raw.freeze()),
+            Ok(Some(Err(e))) => return Err(BodyError::cut(&e)),
+            Ok(Some(Ok(frame))) => {
+                let Ok(data) = frame.into_data() else {
+                    continue;
+                };
+                if raw.len() + data.len() > limit {
+                    return Err(BodyError {
+                        code: "IncompleteBody",
+                        why: "length limit exceeded".into(),
+                    });
+                }
+                raw.extend_from_slice(&data);
+            }
+        }
     }
+}
+
+/// Why a request's body is not the one its headers said: S3's error code
+/// for it, and the reason.
+#[derive(Debug, Clone)]
+struct BodyError {
+    code: &'static str,
+    why: String,
+}
+
+impl BodyError {
+    /// What the program is answered, and its record says.
+    fn message(&self) -> String {
+        format!("sonde could not read the request body: {}", self.why)
+    }
+
+    /// The connection gave no more of it (the program went, or closed it).
+    fn cut(e: &dyn std::error::Error) -> BodyError {
+        let mut why = e.to_string();
+        let mut src = e.source();
+        while let Some(s) = src {
+            why.push_str(": ");
+            why.push_str(&s.to_string());
+            src = s.source();
+        }
+        BodyError {
+            code: "IncompleteBody",
+            why,
+        }
+    }
+
+    /// The program sent none of it for the idle limit.
+    fn quiet(idle: std::time::Duration) -> BodyError {
+        BodyError {
+            code: "RequestTimeout",
+            why: format!(
+                "the program sent no more of it for {} s",
+                idle.as_secs_f64()
+            ),
+        }
+    }
+
+    /// Its `aws-chunked` framing does not read.
+    fn framing(why: String) -> BodyError {
+        BodyError {
+            code: "InvalidRequest",
+            why,
+        }
+    }
+
+    /// Its `aws-chunked` framing stops before its end.
+    fn unfinished(why: String) -> BodyError {
+        BodyError {
+            code: "IncompleteBody",
+            why,
+        }
+    }
+
+    /// A payload of `got` bytes that was said to be `declared`
+    /// (`x-amz-decoded-content-length`): fewer is a body cut short, more is
+    /// not the request that was signed.
+    fn length(declared: Option<u64>, got: u64) -> Result<(), BodyError> {
+        match declared {
+            Some(d) if got < d => Err(BodyError {
+                code: "IncompleteBody",
+                why: format!(
+                    "its payload is {got} bytes, fewer than the {d} x-amz-decoded-content-length said"
+                ),
+            }),
+            Some(d) if got > d => Err(BodyError::longer(d)),
+            _ => Ok(()),
+        }
+    }
+
+    fn longer(declared: u64) -> BodyError {
+        BodyError {
+            code: "InvalidRequest",
+            why: format!(
+                "its payload is more than the {declared} bytes x-amz-decoded-content-length said"
+            ),
+        }
+    }
+}
+
+/// What becomes of a request's body while it is sent on: whether the
+/// program is being waited for, and how the body failed, if it did. The
+/// handler reads it when the exchange with the store fails, to tell the
+/// program's mistake from the store's.
+#[derive(Clone, Default)]
+struct Upload(Arc<parking_lot::Mutex<(bool, Option<BodyError>)>>);
+
+impl Upload {
+    fn wait(&self, waiting: bool) {
+        self.0.lock().0 = waiting;
+    }
+
+    /// Whether the next piece of the body is being waited for.
+    fn waiting(&self) -> bool {
+        self.0.lock().0
+    }
+
+    fn fail(&self, e: BodyError) {
+        self.0.lock().1.get_or_insert(e);
+    }
+
+    fn failed(&self) -> Option<BodyError> {
+        self.0.lock().1.clone()
+    }
+}
+
+/// How a body sent on as it arrives is read on its way.
+enum Framing {
+    /// As sent: its `Content-Length` is all it says of itself.
+    Plain,
+    /// An unsigned `aws-chunked` body, sent as it is: its payload is
+    /// measured against the length it said.
+    Measured {
+        decoder: chunked::Decoder,
+        declared: u64,
+    },
+    /// A signed `aws-chunked` body, decoded ([`Streamed`]): its payload
+    /// sent as it is, or framed again with the trailers `named`.
+    Decoded {
+        decoder: chunked::Decoder,
+        declared: u64,
+        encoder: Option<chunked::Encoder>,
+        named: Vec<(String, usize)>,
+    },
+}
+
+impl Framing {
+    /// What of `piece` goes on, once it has been read.
+    fn take(&mut self, piece: Bytes) -> Result<Bytes, BodyError> {
+        match self {
+            Framing::Plain => Ok(piece),
+            Framing::Measured { decoder, declared } => {
+                decoder.measure(&piece).map_err(BodyError::framing)?;
+                if decoder.decoded > *declared {
+                    return Err(BodyError::longer(*declared));
+                }
+                Ok(piece)
+            }
+            Framing::Decoded {
+                decoder,
+                declared,
+                encoder,
+                ..
+            } => {
+                let mut out = Vec::new();
+                decoder.feed(&piece, &mut out).map_err(BodyError::framing)?;
+                if decoder.decoded > *declared {
+                    return Err(BodyError::longer(*declared));
+                }
+                if let Some(e) = encoder {
+                    out = e.push(&out);
+                }
+                Ok(Bytes::from(out))
+            }
+        }
+    }
+
+    /// The body has ended: whether it ended where it said it would, and
+    /// what is still to send (a body framed again: its last chunk and
+    /// trailers).
+    fn end(&mut self) -> Result<Vec<u8>, BodyError> {
+        match self {
+            Framing::Plain => Ok(Vec::new()),
+            Framing::Measured { decoder, declared } => {
+                decoder.finish().map_err(BodyError::unfinished)?;
+                BodyError::length(Some(*declared), decoder.decoded)?;
+                Ok(Vec::new())
+            }
+            Framing::Decoded {
+                decoder,
+                declared,
+                encoder,
+                named,
+            } => {
+                decoder.finish().map_err(BodyError::unfinished)?;
+                BodyError::length(Some(*declared), decoder.decoded)?;
+                let Some(e) = encoder else {
+                    return Ok(Vec::new());
+                };
+                // the trailers named, in their order, each as long as said
+                let mut trailers = Vec::new();
+                for (name, len) in named.iter() {
+                    match decoder.trailers.iter().find(|(k, _)| k == name) {
+                        Some((_, v)) if v.len() == *len => trailers.push((name.clone(), v.clone())),
+                        _ => {
+                            return Err(BodyError::framing(format!(
+                                "aws-chunked: no trailer {name} of its length"
+                            )));
+                        }
+                    }
+                }
+                Ok(e.finish(&trailers))
+            }
+        }
+    }
+}
+
+/// The program's body, sent on to the store a piece at a time as it
+/// arrives. An `aws-chunked` body is held to the payload length it said:
+/// its last piece is kept back until the body has ended as it should, so a
+/// body cut short, never ended, or longer than said fails the request
+/// before the store has all of it, and no object is made of it. Why it
+/// failed is left in `upload`.
+fn client_body(
+    incoming: Incoming,
+    moved: Moved,
+    upload: Upload,
+    framing: Framing,
+) -> reqwest::Body {
+    struct At {
+        from: http_body_util::BodyDataStream<Incoming>,
+        framing: Framing,
+        /// The last piece read, not sent yet.
+        held: Option<Bytes>,
+        done: bool,
+    }
+    let at = At {
+        from: incoming.into_data_stream(),
+        framing,
+        held: None,
+        done: false,
+    };
+    let pieces = futures::stream::unfold(at, move |mut at| {
+        let (moved, upload) = (moved.clone(), upload.clone());
+        async move {
+            if at.done {
+                return None;
+            }
+            let failed = |mut at: At, e: BodyError| {
+                at.done = true;
+                let io = std::io::Error::new(std::io::ErrorKind::InvalidData, e.why.clone());
+                upload.fail(e);
+                Some((Err(io), at))
+            };
+            loop {
+                upload.wait(true);
+                let next = at.from.next().await;
+                upload.wait(false);
+                match next {
+                    Some(Ok(piece)) => {
+                        moved.touch();
+                        let out = match at.framing.take(piece) {
+                            Ok(out) => out,
+                            Err(e) => return failed(at, e),
+                        };
+                        if matches!(at.framing, Framing::Plain) {
+                            return Some((Ok(out), at));
+                        }
+                        if !out.is_empty()
+                            && let Some(before) = at.held.replace(out)
+                        {
+                            return Some((Ok(before), at));
+                        }
+                    }
+                    Some(Err(e)) => return failed(at, BodyError::cut(&e)),
+                    None => {
+                        let tail = match at.framing.end() {
+                            Ok(tail) => tail,
+                            Err(e) => return failed(at, e),
+                        };
+                        at.done = true;
+                        let mut last = bytes::BytesMut::from(at.held.take().unwrap_or_default());
+                        last.extend_from_slice(&tail);
+                        return (!last.is_empty()).then(|| (Ok(last.freeze()), at));
+                    }
+                }
+            }
+        }
+    });
+    reqwest::Body::wrap_stream(pieces)
 }
 
 /// A signed `aws-chunked` body sent on as it arrives: its chunks'
@@ -2376,83 +2753,17 @@ impl Streamed {
     }
 
     /// The body sent: decoded (and framed again) a piece at a time. A body
-    /// that is not aws-chunked, or whose trailers are not the ones named,
-    /// fails the request (the store has not been told all of it).
-    fn body(&self, incoming: Incoming, moved: Moved) -> reqwest::Body {
-        struct At {
-            from: http_body_util::BodyDataStream<Incoming>,
-            decoder: chunked::Decoder,
-            encoder: Option<chunked::Encoder>,
-            named: Vec<(String, usize)>,
-            done: bool,
-        }
-        let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
-        let at = At {
-            from: incoming.into_data_stream(),
+    /// that is not aws-chunked, whose payload is not the length said, or
+    /// whose trailers are not the ones named, fails the request (the store
+    /// has not been told all of it).
+    fn body(&self, incoming: Incoming, moved: Moved, upload: Upload) -> reqwest::Body {
+        let framing = Framing::Decoded {
             decoder: chunked::Decoder::default(),
+            declared: self.decoded,
             encoder: (!self.trailers.is_empty()).then(|| chunked::Encoder::new(RECHUNK)),
             named: self.trailers.clone(),
-            done: false,
         };
-        let pieces = futures::stream::unfold(at, move |mut at| {
-            let moved = moved.clone();
-            async move {
-                if at.done {
-                    return None;
-                }
-                loop {
-                    let mut out = Vec::new();
-                    match at.from.next().await {
-                        Some(Ok(piece)) => {
-                            moved.touch();
-                            if let Err(e) = at.decoder.feed(&piece, &mut out) {
-                                at.done = true;
-                                return Some((Err(bad(e)), at));
-                            }
-                            if let Some(e) = &mut at.encoder {
-                                out = e.push(&out);
-                            }
-                            if !out.is_empty() {
-                                return Some((Ok(Bytes::from(out)), at));
-                            }
-                        }
-                        Some(Err(e)) => {
-                            at.done = true;
-                            return Some((Err(std::io::Error::other(e)), at));
-                        }
-                        None => {
-                            at.done = true;
-                            if let Err(e) = at.decoder.finish() {
-                                return Some((Err(bad(e)), at));
-                            }
-                            let Some(e) = &mut at.encoder else {
-                                return None;
-                            };
-                            // the trailers named, in their order, each as long as said
-                            let mut trailers = Vec::new();
-                            for (name, len) in &at.named {
-                                match at.decoder.trailers.iter().find(|(k, _)| k == name) {
-                                    Some((_, v)) if v.len() == *len => {
-                                        trailers.push((name.clone(), v.clone()))
-                                    }
-                                    _ => {
-                                        return Some((
-                                            Err(bad(format!(
-                                                "aws-chunked: no trailer {name} of its length"
-                                            ))),
-                                            at,
-                                        ));
-                                    }
-                                }
-                            }
-                            let tail = e.finish(&trailers);
-                            return Some((Ok(Bytes::from(tail)), at));
-                        }
-                    }
-                }
-            }
-        });
-        reqwest::Body::wrap_stream(pieces)
+        client_body(incoming, moved, upload, framing)
     }
 }
 
@@ -2710,6 +3021,33 @@ mod tests {
             );
             assert!(!empty_first_segment(host, "//key"), "{host}");
         }
+    }
+
+    /// The key a path names, and the key as it goes on: `%2F` is a slash of
+    /// the key and stays `%2F` on the wire; bytes that are no UTF-8 name no
+    /// other key (33.0: `%FF` was read as U+FFFD, and sent on as that).
+    #[test]
+    fn a_key_is_read_from_its_path_and_kept_as_written() {
+        for (host, path, key, raw) in [
+            ("127.0.0.1:9000", "/b/a%2Fb", "a/b", "a%2Fb"),
+            ("127.0.0.1:9000", "/b/%FF%fe", "%FF%FE", "%FF%fe"),
+            (
+                "127.0.0.1:9000",
+                "/b/caf%C3%A9%E9",
+                "café%E9",
+                "caf%C3%A9%E9",
+            ),
+            ("127.0.0.1:9000", "/b/100%25+x", "100%+x", "100%25+x"),
+            ("127.0.0.1:9000", "/b//a//", "/a//", "/a//"),
+            ("data.localhost:9000", "//a/../b", "/a/../b", "/a/../b"),
+        ] {
+            let (_, k) = parse_target(host, path);
+            assert_eq!(k.as_deref(), Some(key), "{path}");
+            assert_eq!(raw_key(host, path), Some(raw), "{path}");
+        }
+        assert_eq!(raw_key("127.0.0.1:9000", "/b/"), None);
+        assert_eq!(raw_key("127.0.0.1:9000", "/b"), None);
+        assert_eq!(raw_key("data.localhost", "/"), None);
     }
 
     #[test]

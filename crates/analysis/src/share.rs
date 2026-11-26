@@ -247,8 +247,9 @@ pub fn write_run_json(
     // say) never reaches it
     let mut header = s.header.clone();
     header.command = header.command.as_deref().map(crate::program::scrub_command);
-    // the folder names this machine's user
+    // the folder names this machine's user, and so may a file's path
     header.cwd = None;
+    header.ca_file = None;
     // the findings as the app shows a run's: its plan of diagnoses, ranked by the time they save, and where the
     // program's time went
     let summary = summarize(&s.records);
@@ -650,6 +651,10 @@ mod tests {
                 scenario: None,
                 trial_of: None,
                 whole_seconds: false,
+                path_style: false,
+                ca_file: None,
+                tls: false,
+                policy: None,
             },
             records: vec![],
             logs: vec![],

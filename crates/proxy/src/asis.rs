@@ -1,10 +1,12 @@
-//! A request whose key has a `.` or `..` segment, sent as it is.
+//! A request whose path the HTTP client would not send as written, sent as
+//! it is.
 //!
-//! The URL library under the HTTP client folds such segments (`a/../b` is
-//! sent as `b`, `%2E%2E` too), so the store would read another key than the
-//! one the program named and sonde signed. S3 keeps `a/../b` as a key of its
-//! own. These requests go on a connection of their own, HTTP/1.1, with the
-//! path written as signed: rare enough that no pool is kept for them.
+//! The URL library under the HTTP client folds `.` and `..` segments
+//! (`a/../b` is sent as `b`, `%2E%2E` too) and writes some bytes its own way
+//! (`\` as `/`, `|` as `%7C`), so the store would read another key than the
+//! one the program named. S3 keeps `a/../b` as a key of its own. These
+//! requests go on a connection of their own, HTTP/1.1, with the path as the
+//! program wrote it: rare enough that no pool is kept for them.
 
 use std::sync::Arc;
 

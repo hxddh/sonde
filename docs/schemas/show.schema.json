@@ -93,7 +93,7 @@
         "string",
         "null"
       ],
-      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), as it was recorded (its store, policy and TLS), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
