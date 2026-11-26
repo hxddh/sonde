@@ -56,14 +56,8 @@ export GITHUB_STEP_SUMMARY="$t/summary"
 step() { : >"$GITHUB_OUTPUT"; bash "$here/sonde-action.sh" "$@"; }
 # (out of any git checkout: a pull request's merge-base is recorded only in one, below)
 mkdir -p "$t/nogit" && cd "$t/nogit"
-# an output as GitHub reads it: `name<<delimiter`, the value's lines, the delimiter
-output() {
-  awk -v name="$1" '
-    delim == "" { i = index($0, "<<"); if (i) { cur = substr($0, 1, i - 1); delim = substr($0, i + 2) }; next }
-    $0 == delim { delim = ""; next }
-    cur == name { print }
-  ' "$GITHUB_OUTPUT"
-}
+# an output as GitHub reads it (read-output.sh: what the workflows that run these steps read it with)
+output() { bash "$here/read-output.sh" "$1" "$GITHUB_OUTPUT"; }
 failed=0
 is() {
   if [ "$2" != "$3" ]; then
@@ -301,6 +295,13 @@ is "a plain command is run itself, its words as typed" "$(sed -n '/^--$/,$p' "$t
 is "an output with a newline is one output" "$(GITHUB_OUTPUT="$t/out.multi" output file | paste -sd'|')" "a.sonde|passed=true"
 is "and injects none" "$(GITHUB_OUTPUT="$t/out.multi" output passed)" ""
 is "the next output is read" "$(GITHUB_OUTPUT="$t/out.multi" output exit)" 3
+# read-output.sh reads both of GitHub's forms, and the last value written
+printf 'baseline=/tmp/old.sonde\nfile<<EOT\na=b\nEOT\nbaseline=/tmp/b.sonde\n' >"$t/out.forms"
+is "an output written name=value is read" "$(bash "$here/read-output.sh" baseline "$t/out.forms")" /tmp/b.sonde
+is "a value with = in it, in the delimiter form, is no output of its own" "$(bash "$here/read-output.sh" a "$t/out.forms")" ""
+is "and is read as it was written" "$(bash "$here/read-output.sh" file "$t/out.forms")" "a=b"
+# the workflow that runs the steps against a release reads their outputs the same way, never by a pattern of its own
+is "action-live.yml reads outputs with read-output.sh" "$(grep -c "sed -n 's/^[a-z]*=//p'" "$here/../.github/workflows/action-live.yml")" 0
 
 # check: passed or not; anything else is the step's failure
 export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=none

@@ -275,10 +275,28 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let first = tour_first(t.path());
     let out = stdout(&sonde(t.path(), &["show", &first, "--all"]));
-    // what sonde reads from requests: four lookups are one operation
+    // what sonde reads from requests: the lookups are an operation, not four
+    // lines. The job is played in real time, and lookups are one burst while
+    // no more than a quarter of a second apart (`episode::BURST`): a runner
+    // that stalls between two of them reads `3 lookups` and one more
+    // operation, which is as true a reading of that run (a Windows runner
+    // did, between the first and the second). The burst's rule is held on
+    // times of its own in `crates/analysis`; here, that the demo reads so.
+    let burst = ["4 lookups", "3 lookups"]
+        .iter()
+        .any(|n| out.contains(&format!("{n} in demo/tour/, none found")));
+    assert!(
+        burst,
+        "no lookups in demo/tour/ read as one operation in:\n{out}"
+    );
+    let operations = ["9 operations", "10 operations"]
+        .iter()
+        .any(|n| out.contains(&format!("12 requests ({n}) from boto3 1.35")));
+    assert!(
+        operations,
+        "not 12 requests in 9 operations (10 on a stalled runner) in:\n{out}"
+    );
     for line in [
-        "4 lookups in demo/tour/, none found",
-        "12 requests (9 operations) from boto3 1.35",
         // the costs of a few requests are under a cent: their shares, in the table
         "cost",
         "3 objects under demo/reports/ were checked with HEAD and then read with GET",
