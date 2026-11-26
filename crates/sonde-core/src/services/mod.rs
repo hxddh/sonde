@@ -84,6 +84,28 @@ pub(crate) mod tests {
         (dir, s)
     }
 
+    /// `S3Client::list_all` on a store whose every page names the same
+    /// next page: an error, not a listing asked for ever.
+    #[tokio::test]
+    async fn a_token_handed_back_again_ends_list_all() {
+        let (_dir, s) = store(|_| {
+            "<ListBucketResult><IsTruncated>true</IsTruncated>\
+             <NextContinuationToken>t</NextContinuationToken>\
+             <Contents><Key>k</Key><Size>1</Size></Contents></ListBucketResult>"
+                .into()
+        })
+        .await;
+        let c = s.client("e").unwrap();
+        let listed = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            c.list_all("b", "", usize::MAX),
+        )
+        .await
+        .expect("the listing ended");
+        let e = listed.unwrap_err();
+        assert!(e.message.contains("again"), "{e}");
+    }
+
     #[test]
     fn a_marker_handed_back_again_ends_the_listing() {
         let mut p = super::Pages::default();
