@@ -79,6 +79,30 @@
         ]
       }
     },
+    "byMonth": {
+      "type": "array",
+      "description": "The bytes by the month they were last written (`LastModified`), the oldest first; versions without a date are left out.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "`YYYY-MM`."
+          },
+          "objects": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "month",
+          "objects",
+          "bytes"
+        ]
+      }
+    },
     "findings": {
       "type": "array",
       "items": {

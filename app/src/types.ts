@@ -261,6 +261,8 @@ export interface Outcome {
   succeeded: number;
   failed: number;
   errors: SondeError[];
+  /** why the outcome is not in the audit log, when it could not be written (the change itself was made) */
+  auditError?: string;
 }
 
 export interface VersionEntry {

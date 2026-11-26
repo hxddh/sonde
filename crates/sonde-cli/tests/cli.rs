@@ -3769,3 +3769,382 @@ fn a_run_written_elsewhere_is_in_its_programs_history_and_verify_writes_beside_i
     let previous = j["since"]["previous"].as_str().unwrap_or_default();
     assert!(previous.ends_with("job1.sonde"), "{}", j["since"]);
 }
+
+/// The demo's store on a port of its own, for as long as the test runs, and
+/// a client to change it behind sonde's back.
+struct Store {
+    rt: tokio::runtime::Runtime,
+    url: String,
+    client: s3raw::S3Client,
+    _server: sonde_core::demo::DemoServer,
+    _dir: tempfile::TempDir,
+}
+
+impl Store {
+    fn start() -> Store {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let server = rt.block_on(sonde_core::demo::start()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_core::Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap();
+        let mut e = sonde_core::EndpointConfig::new(
+            "d",
+            "d",
+            &server.url(),
+            "us-east-1",
+            sonde_core::Vendor::Other,
+        );
+        e.path_style = true;
+        e.credentials = sonde_core::CredentialSource::Static {
+            access_key_id: "AKIADEMODEMODEMO0000".into(),
+            secret_access_key: "demo".into(),
+        };
+        s.add_transient_endpoint(e).unwrap();
+        Store {
+            url: server.url(),
+            client: s.client("d").unwrap(),
+            rt,
+            _server: server,
+            _dir: dir,
+        }
+    }
+
+    /// `sonde bucket <args>` on this store's `demo` bucket.
+    fn bucket(&self, dirs: &Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(["--url", &self.url, "--path-style", "bucket"])
+            .args(args)
+            .args(["-b", "demo"])
+            .env("SONDE_CONFIG_DIR", dirs.join("config"))
+            .env("SONDE_DATA_DIR", dirs.join("data"))
+            .no_aws(dirs)
+            .env("AWS_ACCESS_KEY_ID", "AKIADEMODEMODEMO0000")
+            .env("AWS_SECRET_ACCESS_KEY", "demo")
+            .output()
+            .unwrap()
+    }
+
+    /// The ids of the uploads the bucket holds, sorted.
+    fn uploads(&self, dirs: &Path) -> Vec<String> {
+        let o = self.bucket(dirs, &["uploads", "-f", "json"]);
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        let mut ids: Vec<String> = v["uploads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|u| u["uploadId"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn lifecycle(&self) -> Option<String> {
+        self.rt.block_on(self.client.lifecycle_raw("demo")).unwrap()
+    }
+}
+
+/// The lines of the audit log.
+fn audit(dirs: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dirs.join("data/audit.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// The plans kept in the data folder.
+fn plans(dirs: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dirs.join("data/plans"))
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default()
+}
+
+/// 32.0's `--yes` scanned again and ran what it found then: with no dry run
+/// before it, it aborted uploads nobody had been shown.
+#[test]
+fn yes_runs_the_plan_its_dry_run_kept_once_and_nothing_without_one() {
+    let t = tempfile::tempdir().unwrap();
+    let store = Store::start();
+    let all = ["upload-new", "upload-old-1", "upload-old-2"];
+    assert_eq!(store.uploads(t.path()), all);
+    // no dry run: refused before anything is sent, and it says what to do
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(stderr(&o).contains("without --yes first"), "{}", stderr(&o));
+    assert_eq!(store.uploads(t.path()), all);
+    assert!(audit(t.path()).is_empty());
+    // the dry run: what it would abort, and the plan it keeps
+    let o = store.bucket(t.path(), &["abort-uploads"]);
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    let said = stdout(&o);
+    assert!(
+        said.contains("upload-old-1") && said.contains("upload-old-2"),
+        "{said}"
+    );
+    assert!(!said.contains("upload-new"), "{said}");
+    let kept = plans(t.path());
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    let plan: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&kept[0]).unwrap()).unwrap();
+    let id = plan["plan"]["id"].as_str().unwrap();
+    assert!(
+        said.contains(&format!("dry run (plan {id}, kept until ")),
+        "{said}"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&kept[0]).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    // another command's --yes is not this plan's: its prefix, its option
+    for other in [
+        &["abort-uploads", "--yes", "-p", "videos/"][..],
+        &["abort-uploads", "--yes", "--older-than-days", "30"],
+        &["abort-uploads", "--yes", "--plan", "0000"],
+        &["lifecycle", "--yes"],
+    ] {
+        let o = store.bucket(t.path(), other);
+        assert_eq!(o.status.code(), Some(77), "{other:?}: {}", stderr(&o));
+    }
+    assert_eq!(store.uploads(t.path()), all);
+    assert_eq!(plans(t.path()), kept);
+    // --plan without --yes confirms nothing
+    let o = store.bucket(t.path(), &["abort-uploads", "--plan", id]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    // its own --yes: once
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes", "--plan", id]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("aborted 2, failed 0"), "{}", stdout(&o));
+    assert_eq!(store.uploads(t.path()), ["upload-new"]);
+    assert!(plans(t.path()).is_empty());
+    let log = audit(t.path());
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert_eq!(log[0]["plan"], id);
+    assert_eq!(log[0]["stage"], "started");
+    assert_eq!(log[1]["succeeded"], 2);
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert_eq!(audit(t.path()).len(), 2);
+    // a dry run that lists nothing, confirmed: nothing to do, and no error
+    // (a script runs the two one after the other)
+    let o = store.bucket(t.path(), &["abort-uploads"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("nothing to abort"), "{}", stdout(&o));
+    assert_eq!(store.uploads(t.path()), ["upload-new"]);
+    assert_eq!(audit(t.path()).len(), 2);
+}
+
+/// What changed in the bucket between a dry run and its `--yes` (32.0 ran
+/// on whatever was there): an upload gone or written to refuses the plan,
+/// exit 77, and nothing is aborted; one begun since is not the plan's.
+#[test]
+fn a_bucket_changed_since_the_dry_run_is_not_touched() {
+    use s3raw::{Body, S3Request};
+    let t = tempfile::tempdir().unwrap();
+    let store = Store::start();
+    let all = ["upload-new", "upload-old-1", "upload-old-2"];
+    let dry = |args: &[&str]| {
+        let o = store.bucket(t.path(), args);
+        assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    };
+    // a part arrives in a listed upload: it is in use
+    dry(&["abort-uploads"]);
+    let part = S3Request::new("UploadPart", http::Method::PUT)
+        .bucket("demo")
+        .key("videos/raw-0042.mov")
+        .query("partNumber", "2")
+        .query("uploadId", "upload-old-2")
+        .body(Body::from("more"));
+    store.rt.block_on(store.client.send_raw(part)).unwrap();
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    let why = stderr(&o);
+    assert!(why.contains("changed since the dry run"), "{why}");
+    assert!(
+        why.contains("videos/raw-0042.mov (upload-old-2) is now 2 parts"),
+        "{why}"
+    );
+    assert!(why.contains("nothing was aborted"), "{why}");
+    assert_eq!(store.uploads(t.path()), all);
+    assert!(audit(t.path()).is_empty());
+    // the refused plan is spent: the dry run again
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(stderr(&o).contains("without --yes first"), "{}", stderr(&o));
+    // a listed upload aborted elsewhere: the other is left too
+    dry(&["abort-uploads"]);
+    store
+        .rt
+        .block_on(store.client.abort_multipart_upload(
+            "demo",
+            "backups/db-2026-08-12.tar.zst",
+            "upload-old-1",
+        ))
+        .unwrap();
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("(upload-old-1) is gone"),
+        "{}",
+        stderr(&o)
+    );
+    assert_eq!(store.uploads(t.path()), ["upload-new", "upload-old-2"]);
+    assert!(audit(t.path()).is_empty());
+    // an upload begun since the dry run was not shown: it is left, said so,
+    // and what was shown is aborted
+    dry(&["abort-uploads", "--older-than-days=-1"]);
+    let begun = S3Request::new("CreateMultipartUpload", http::Method::POST)
+        .bucket("demo")
+        .key("since")
+        .query("uploads", "");
+    store.rt.block_on(store.client.send_raw(begun)).unwrap();
+    let o = store.bucket(
+        t.path(),
+        &["abort-uploads", "--older-than-days=-1", "--yes"],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("aborted 2, failed 0"), "{}", stdout(&o));
+    assert!(
+        stderr(&o)
+            .contains("1 more upload older than -1 days now, not in the dry run: left as it is"),
+        "{}",
+        stderr(&o)
+    );
+    let left = store.uploads(t.path());
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(!all.contains(&left[0].as_str()), "{left:?}");
+
+    // a lifecycle: the document the dry run showed, over the one it read
+    assert_eq!(store.lifecycle(), None);
+    let o = store.bucket(t.path(), &["lifecycle", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    dry(&["lifecycle", "-p", "tmp/"]);
+    let theirs = "<LifecycleConfiguration><Rule><ID>theirs</ID><Filter><Prefix>logs/</Prefix>\
+                  </Filter><Status>Enabled</Status><Expiration><Days>30</Days></Expiration>\
+                  </Rule></LifecycleConfiguration>";
+    store
+        .rt
+        .block_on(store.client.put_lifecycle("demo", theirs))
+        .unwrap();
+    // (another number of days is another command: its dry run was never made)
+    let o = store.bucket(
+        t.path(),
+        &["lifecycle", "-p", "tmp/", "--days", "3", "--yes"],
+    );
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(stderr(&o).contains("without --yes first"), "{}", stderr(&o));
+    let o = store.bucket(t.path(), &["lifecycle", "-p", "tmp/", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("changed since the plan"),
+        "{}",
+        stderr(&o)
+    );
+    let now = store.lifecycle().unwrap();
+    assert!(now.ends_with(theirs) && !now.contains("tmp/"), "{now}");
+    assert_eq!(audit(t.path()).len(), 2, "only the uploads' run");
+    // planned again it keeps their rule, and runs once
+    dry(&["lifecycle", "-p", "tmp/"]);
+    let o = store.bucket(t.path(), &["lifecycle", "-p", "tmp/", "--yes"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("applied"), "{}", stdout(&o));
+    let now = store.lifecycle().unwrap();
+    assert!(now.contains("theirs") && now.contains("tmp/"), "{now}");
+    let o = store.bucket(t.path(), &["lifecycle", "-p", "tmp/", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert_eq!(store.lifecycle().unwrap(), now);
+}
+
+/// A dry run made more than ten minutes ago confirms nothing (the plan's
+/// own time, set back here: no waiting).
+#[test]
+fn a_dry_run_older_than_ten_minutes_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let store = Store::start();
+    let o = store.bucket(t.path(), &["abort-uploads"]);
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    let kept = plans(t.path());
+    let mut plan: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&kept[0]).unwrap()).unwrap();
+    let made: chrono::DateTime<chrono::Utc> =
+        serde_json::from_value(plan["plan"]["created"].clone()).unwrap();
+    plan["plan"]["created"] = serde_json::to_value(made - chrono::Duration::seconds(601)).unwrap();
+    std::fs::write(&kept[0], serde_json::to_vec(&plan).unwrap()).unwrap();
+    let o = store.bucket(t.path(), &["abort-uploads", "--yes"]);
+    assert_eq!(o.status.code(), Some(77), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("older than 10 minutes"),
+        "{}",
+        stderr(&o)
+    );
+    assert_eq!(store.uploads(t.path()).len(), 3);
+    assert!(audit(t.path()).is_empty());
+    assert!(plans(t.path()).is_empty());
+}
+
+/// 32.0 logged an outcome the audit log could not take where a terminal
+/// never shows it, and exited 0: it is said on stderr, exit 70.
+#[test]
+fn an_outcome_the_audit_log_could_not_take_is_said_on_stderr() {
+    use std::io::{Read, Write};
+    let t = tempfile::tempdir().unwrap();
+    // a store with no lifecycle that takes one; as the PUT arrives (the
+    // run's `started` line is written by then) a folder is put where the
+    // log is
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let log = t.path().join("data/audit.jsonl");
+    let at = log.clone();
+    std::thread::spawn(move || {
+        for c in l.incoming() {
+            let Ok(mut c) = c else { break };
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                match c.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => seen.extend_from_slice(&buf[..n]),
+                }
+            }
+            let answer: &[u8] = if seen.starts_with(b"PUT") {
+                let started = std::fs::read_to_string(&at).unwrap();
+                assert!(started.contains("\"started\""), "{started}");
+                std::fs::remove_file(&at).unwrap();
+                std::fs::create_dir(&at).unwrap();
+                b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            } else {
+                b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            };
+            let _ = c.write_all(answer);
+        }
+    });
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(["--url", &url, "--path-style", "bucket", "lifecycle"])
+            .args(["-b", "b"])
+            .args(args)
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .no_aws(t.path())
+            .env("AWS_ACCESS_KEY_ID", "k")
+            .env("AWS_SECRET_ACCESS_KEY", "s")
+            .output()
+            .unwrap()
+    };
+    let o = run(&[]);
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    let o = run(&["--yes"]);
+    assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
+    assert!(stdout(&o).contains("applied"), "{}", stdout(&o));
+    let said = stderr(&o);
+    assert!(
+        said.contains(
+            "warning: the change was made, but its outcome could not be written to the audit log"
+        ),
+        "{said}"
+    );
+    assert!(said.contains("audit.jsonl"), "{said}");
+    assert!(log.is_dir());
+}

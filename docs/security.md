@@ -35,8 +35,9 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
 - On Unix, files holding a program's traffic are `0600` regardless of umask: runs, each runs folder's
-  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`. So is the init file a
-  recorded DuckDB CLI is given (a copy of `~/.duckdbrc`, made new with that mode and removed with the run).
+  `.index.jsonl` (all that is kept beside them), `bucket size`'s cache, `audit.jsonl`, a dry run's plan
+  (`plans/`, made so). So is the init file a recorded DuckDB CLI is given (a copy of `~/.duckdbrc`, made new with
+  that mode and removed with the run).
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
   `//host/share`).
@@ -51,12 +52,22 @@ never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
 2. It runs only with `--yes` (in the app, its confirmation: the count or bucket name typed for more than 100 items
-   or a lifecycle, a plain confirm below), built again then: what it changes is what the dry run would list at
-   that moment.
-3. Plans expire after 10 minutes and run once. A lifecycle plan is refused when the bucket's configuration changed
-   since it was made (a PUT replaces it whole): plan it again.
-4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
-   be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
+   or a lifecycle, a plain confirm below), and what runs is that plan, never one made again from what the store
+   holds by then. The app keeps it in its process; a terminal's dry run keeps it in `<data>/plans/` for the `--yes`
+   of the same command (endpoint and its URL, bucket, prefix, `--older-than-days` or `--days`), which is refused
+   (exit 77) when there is none: no `--yes` runs without its dry run, and no flag skips it.
+   `--plan ID` holds `--yes` to the dry run that printed that id.
+3. Plans expire after 10 minutes and run once: a terminal's is taken out of its folder (a rename) before anything
+   is sent, so of two `--yes` at once one runs it.
+4. The store is read again before the first change, and a difference refuses the whole plan (exit 77, nothing
+   changed; plan it again): an upload the dry run listed that is gone or has changed (a part since: it is in use),
+   a lifecycle configuration that is not the one the dry run read (a PUT replaces it whole). What the dry run did
+   not show is never touched: an upload begun since is left, and said. S3 has no conditional abort or lifecycle
+   PUT, so a change between that reading and the request itself is not seen.
+5. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
+   be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors). An
+   outcome that cannot be written is said (stderr and exit 70 in a terminal, a notice in the app): its
+   `started` line stands alone.
 
 Probes write too (under `sonde-probe/` in the scratch bucket):
 

@@ -5,11 +5,17 @@ use s3raw::S3Error;
 use serde_json::json;
 
 use crate::Sonde;
-use crate::guard::{Action, AuditEntry, Outcome};
+use crate::guard::{Action, AuditEntry, Outcome, Plan};
 
 /// Runs plan `id` if `confirmation` matches.
 pub async fn execute(s: &Sonde, id: &str, confirmation: &str) -> Result<Outcome, S3Error> {
     let plan = s.guard().take(id, confirmation)?;
+    run(s, plan).await
+}
+
+/// Runs a plan already taken from the guard ([`crate::Guard::take`], or a
+/// terminal's [`crate::Guard::take_saved`]): it is no longer there to run again.
+pub async fn run(s: &Sonde, plan: Plan) -> Result<Outcome, S3Error> {
     let c = s.client(&plan.endpoint)?;
     // a lifecycle PUT replaces the whole configuration, made from the one
     // read at plan time: if it changed since, what changed would be lost
@@ -121,8 +127,10 @@ pub async fn execute(s: &Sonde, id: &str, confirmation: &str) -> Result<Outcome,
     entry.failed = out.failed;
     entry.errors = out.errors.iter().map(|e| e.to_string()).collect();
     entry.request_ids = request_ids;
+    // what was done is done: the caller says that its record is not whole
     if let Err(e) = s.guard().audit(&entry) {
         tracing::error!("audit log: {e}");
+        out.audit_error = Some(format!("{}: {e}", s.paths().audit_log().display()));
     }
     Ok(out)
 }
@@ -185,6 +193,52 @@ mod tests {
         assert_eq!(log[1].stage.as_deref(), Some("started"));
         assert_eq!(log[1].targets, vec!["k@v"]);
         assert_eq!((log[0].stage.as_deref(), log[0].failed), (None, 1));
+    }
+
+    /// 32.0 logged it where a terminal never looks, and the app not at all:
+    /// the outcome that could not be written is said in the outcome itself.
+    #[tokio::test]
+    async fn an_outcome_the_audit_log_could_not_take_is_said() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        // a store that, as the request arrives (after `started` is written),
+        // puts a folder where the log is
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let log = s.paths().audit_log();
+        let started = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+        let seen = started.clone();
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf).await;
+                if log.is_file() {
+                    *seen.lock() = std::fs::read_to_string(&log).unwrap();
+                    std::fs::remove_file(&log).unwrap();
+                    std::fs::create_dir(&log).unwrap();
+                }
+                let _ = c
+                    .write_all(b"HTTP/1.1 204 No Content\r\nx-amz-request-id: R1\r\nconnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        let mut e = crate::EndpointConfig::new("e", "e", &url, "us-east-1", crate::Vendor::Other);
+        e.credentials = crate::CredentialSource::Anonymous;
+        e.path_style = true;
+        s.add_transient_endpoint(e).unwrap();
+        let item = PlanItem::new("k", Some("v".into()), None, vec![]);
+        let plan = s
+            .guard()
+            .plan(Action::DeleteVersions, "e", "b", vec![item], None, None);
+        let out = execute(&s, &plan.id, &plan.confirm).await.unwrap();
+        assert_eq!((out.succeeded, out.failed), (1, 0));
+        assert!(started.lock().contains("\"started\""), "{}", started.lock());
+        let why = out.audit_error.expect("said");
+        assert!(why.contains("audit.jsonl"), "{why}");
+        // and an outcome that was written says nothing of it
+        let v = serde_json::to_value(Outcome::default()).unwrap();
+        assert!(v.get("auditError").is_none(), "{v}");
     }
 
     /// A lifecycle PUT replaces the whole configuration: a rule added

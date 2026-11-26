@@ -740,6 +740,7 @@
  "versions.reading": "正在读取此键的历史…",
  "versions.restoreOpen": "恢复…",
  "confirm.firstError": "首个原因：%{reason}",
+ "confirm.notAudited": "已完成，但结果未能写入审计日志",
  "signal.rate": "速率",
  "signal.errors": "错误",
  "signal.latency": "延迟 · 中位数",
