@@ -30,8 +30,8 @@ let clock: ReturnType<typeof setInterval> | undefined;
 
 /** Tries `path`'s program (`command`) under `scenarios` (each as asked: `slowdown:3`), the program limited by
  * `policy`: its verdicts fill the run's History as they come; ended, they are kept there. At work as a program is
- * (one at a time, the toolbar's pill, Stop in the palette). */
-export function startTrial(path: string, command: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy) {
+ * (one at a time, the toolbar's pill, Stop in the palette). `samePlace`: asked for though every run writes to one place. */
+export function startTrial(path: string, command: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy, samePlace = false) {
   if (running() || !scenarios.length) return;
   const started = Date.now();
   batch(() => (running.set({ kind: "trial", command, path }), liveTrial.set({ path, steps: trialSteps(scenarios), started, ended: null }), trialNow.set(started)));
@@ -43,7 +43,7 @@ export function startTrial(path: string, command: string, scenarios: { name: str
     running.set(null);
   };
   api.runs
-    .trial(path, asked, policy, 100, 30, (e) => {
+    .trial(path, asked, policy, samePlace, 100, 30, (e) => {
       const l = liveTrial();
       if (l?.path === path) liveTrial.set({ ...l, steps: foldTrial(l.steps, e) });
       // a verdict as it arrives, told to a screen reader: the pane's text alone changes in silence
@@ -114,11 +114,14 @@ export function TrialDialog(props: {
   // what the program may do while tried: no deletes unless changed here (a trial's own
   // faults could push a program down a path it would not take)
   const limit = signal<Policy>("no-delete");
+  // every run would write where this run wrote: not tried until that is asked for here
+  const samePlace = signal(false);
+  const held = () => !!the()?.confirmPlace && !samePlace();
   const start = () => {
     const list = chosen();
     const p = the();
-    if (!p || !list.length || running()) return;
-    startTrial(props.path, p.command, list, list.map(asked), limit());
+    if (!p || !list.length || running() || held()) return;
+    startTrial(props.path, p.command, list, list.map(asked), limit(), !!p.confirmPlace && samePlace());
     props.onClose();
     props.onStarted?.();
   };
@@ -178,6 +181,10 @@ export function TrialDialog(props: {
             <If when={p().sharesPlace}>
               <Notice testID="trial-shares" tone="warn" text={t("trial.sharesPlace")} />
             </If>
+            {/* on a store of the user's it is not started until this is ticked: the refusal `sonde run --trial` gives without --same-place */}
+            <If when={p().confirmPlace}>
+              <Check testID="trial-same-place" label={t("trial.samePlace")} checked={samePlace()} onChange={(on) => samePlace.set(on)} />
+            </If>
             <If when={!!running()}>
               <Notice tone="info" text={t("trial.busy")} />
             </If>
@@ -188,7 +195,7 @@ export function TrialDialog(props: {
         {/* refused, the footer's primary is Close */}
         <Button variant={refused() ? "primary" : "ghost"} label={refused() ? t("common.close") : t("common.cancel")} onPress={props.onClose} testID="trial-close" />
         <If when={the()}>
-          <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running()} onPress={start} testID="trial-start" />
+          <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running() || held()} onPress={start} testID="trial-start" />
         </If>
       </Actions>
     </Modal>

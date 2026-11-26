@@ -50,10 +50,12 @@ pub enum Policy {
     /// Everything: a program does with its data what it would without sonde.
     #[default]
     Allow,
-    /// Nothing that removes data: deletes, aborts, lifecycle rules, bucket
-    /// policies, versioning suspended, but for what the recording made
-    /// itself ([`Made`]). Writes go through, over an object or not. A
-    /// trial's default.
+    /// Nothing that removes data or what guards it ([`no_delete`]):
+    /// deletes, aborts, lifecycle rules, bucket policies and ACLs, the
+    /// public access block, versioning suspended, a legal hold lifted, a
+    /// retention bypassed, but for what the recording made itself
+    /// ([`Made`]). Writes go through, over an object or not. A trial's
+    /// default.
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,
@@ -93,12 +95,14 @@ impl Policy {
         query: &[(String, String)],
     ) -> Option<&'static str> {
         let q = |n: &str| query.iter().any(|(k, _)| k == n);
-        // a bucket policy can deny its owner the bucket
-        let removes = op::is_destructive(op)
-            || method == "DELETE"
-            || (method == "POST" && q("delete"))
-            || (method == "PUT" && (q("lifecycle") || q("policy")))
-            || (op == "Unknown" && method != "GET" && method != "HEAD");
+        let read = method == "GET" || method == "HEAD";
+        // by the table, and by the method and the query whatever the name
+        // (a bucket policy can deny its owner the bucket)
+        let removes = !read
+            && (matches!(no_delete(op), NoDelete::Refused | NoDelete::Own)
+                || method == "DELETE"
+                || (method == "POST" && q("delete"))
+                || (method == "PUT" && (q("lifecycle") || q("policy"))));
         match self {
             Policy::Allow => None,
             Policy::NoDelete if removes => Some("no-delete"),
@@ -108,23 +112,109 @@ impl Policy {
     }
 
     /// Why a request is refused for what its document says, once it is
-    /// read: versioning anything but enabled (or a document not read) under
-    /// no-delete. A suspended bucket's next write replaces the version it
-    /// would keep.
+    /// read: under no-delete, versioning anything but enabled and a legal
+    /// hold anything but on (or a document not read). A suspended bucket's
+    /// next write replaces the version it would keep; a hold lifted leaves
+    /// its version to be deleted.
     pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
+        let keeps = match op {
+            "PutBucketVersioning" => keeps_versions,
+            "PutObjectLegalHold" => keeps_hold,
+            _ => return None,
+        };
+        (self == Policy::NoDelete && !body.is_some_and(keeps)).then_some("no-delete")
+    }
+
+    /// Why a request is refused for a header it carries: under no-delete,
+    /// one that asks the store to set a governance retention aside
+    /// (`x-amz-bypass-governance-retention`), on a delete or on a shorter
+    /// retention, of the recording's own objects too. Without it the store
+    /// itself lets a retention only grow.
+    pub fn refuses_headers(self, headers: &[(String, String)]) -> Option<&'static str> {
         (self == Policy::NoDelete
-            && op == "PutBucketVersioning"
-            && !body.is_some_and(keeps_versions))
+            && headers.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case("x-amz-bypass-governance-retention")
+                    && !v.trim().eq_ignore_ascii_case("false")
+            }))
         .then_some("no-delete")
     }
 }
 
-/// Whether a PutBucketVersioning document, read as an XML reader reads it,
-/// leaves versioning on: `VersioningConfiguration` (the S3 namespace its
-/// only attribute) holding at most one `Status`, `Enabled`, and one
-/// `MfaDelete`, `Enabled` or `Disabled`, as plain text. Anything else
-/// (entities, comments, CDATA, prefixes, another encoding) is not.
-fn keeps_versions(doc: &str) -> bool {
+/// What no-delete does with a write ([`no_delete`]). A read (GET, HEAD) is
+/// never refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoDelete {
+    /// Goes through: it removes nothing and lifts no guard.
+    Passes,
+    /// Refused, whatever it names.
+    Refused,
+    /// Refused, but on what the recording made itself ([`Made::may_remove`]).
+    Own,
+    /// Goes through when its document reads as keeping what is there
+    /// ([`Policy::refuses_document`]).
+    Document,
+}
+
+/// The table no-delete goes by: every operation [`op::classify`] names, and
+/// `Refused` for a name it does not hold (a write sonde cannot name). Data
+/// is removed by a delete, an abort, a rename and a lifecycle rule; what
+/// guards it is lifted by a bucket policy, an ACL, the public access block,
+/// ownership controls, versioning suspended and a legal hold turned off.
+pub fn no_delete(op: &str) -> NoDelete {
+    use NoDelete::*;
+    match op {
+        "PutObject"
+        | "CopyObject"
+        | "CreateMultipartUpload"
+        | "UploadPart"
+        | "UploadPartCopy"
+        | "CompleteMultipartUpload"
+        | "PutObjectTagging"
+        // without the bypass header ([`Policy::refuses_headers`]) the store
+        // lets a retention only grow
+        | "PutObjectRetention"
+        | "RestoreObject"
+        | "SelectObjectContent"
+        // re-encrypting keeps every byte
+        | "UpdateObjectEncryption"
+        | "CreateBucket"
+        | "PutBucketCors"
+        | "PutBucketTagging"
+        | "PutBucketEncryption"
+        | "PutObjectLockConfiguration"
+        | "PutBucketNotificationConfiguration"
+        | "PutBucketReplication"
+        | "PutBucketWebsite"
+        | "PutBucketLogging"
+        | "PutBucketAccelerateConfiguration"
+        | "PutBucketRequestPayment"
+        | "PutBucketAnalyticsConfiguration"
+        | "PutBucketMetricsConfiguration"
+        | "PutBucketInventoryConfiguration"
+        | "PutBucketIntelligentTieringConfiguration" => Passes,
+        "PutBucketVersioning" | "PutObjectLegalHold" => Document,
+        "DeleteObject"
+        | "DeleteObjects"
+        | "DeleteBucket"
+        | "AbortMultipartUpload"
+        // who may reach an object: the recording's own to change, like its
+        // own to remove
+        | "PutObjectAcl" => Own,
+        _ if op.starts_with("Get") || op.starts_with("List") || op.starts_with("Head") => Passes,
+        "CreateSession" => Passes,
+        // RenameObject (its source's key goes), PutBucketLifecycleConfiguration,
+        // PutBucketPolicy, PutBucketAcl, PutPublicAccessBlock,
+        // PutBucketOwnershipControls, DeleteObjectTagging, every Delete of a
+        // bucket's setting, and `Unknown`
+        _ => Refused,
+    }
+}
+
+/// The fields of a small S3 document read as an XML reader reads it:
+/// `root` (the S3 namespace its only attribute) holding at most one of each
+/// of `fields`, as plain text. None for anything else (entities, comments,
+/// CDATA, prefixes, another encoding).
+fn plain_fields(doc: &str, root: &str, fields: &[&str]) -> Option<Vec<(String, String)>> {
     use quick_xml::events::Event;
     const NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
     let space = |t: &str| t.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
@@ -135,25 +225,22 @@ fn keeps_versions(doc: &str) -> bool {
     let (mut first, mut rooted) = (true, false);
     loop {
         let Ok(event) = reader.read_event() else {
-            return false;
+            return None;
         };
         match event {
             Event::Decl(_) if first => {}
             Event::Start(e) => {
                 let name = e.name().0.to_string();
                 let fits = match open.len() {
-                    0 => !rooted && name == "VersioningConfiguration",
-                    1 => {
-                        (name == "Status" || name == "MfaDelete")
-                            && !seen.iter().any(|(n, _)| *n == name)
-                    }
+                    0 => !rooted && name == root,
+                    1 => fields.contains(&name.as_str()) && !seen.iter().any(|(n, _)| *n == name),
                     _ => false,
                 };
                 let plain = e.attributes().all(|a| {
                     a.is_ok_and(|a| open.is_empty() && a.key.0 == "xmlns" && a.value == NS)
                 });
                 if !(fits && plain) {
-                    return false;
+                    return None;
                 }
                 rooted = true;
                 if open.len() == 1 {
@@ -166,21 +253,51 @@ fn keeps_versions(doc: &str) -> bool {
             }
             Event::Text(t) if open.len() == 2 => match seen.last_mut() {
                 Some((_, text)) if text.is_empty() => text.push_str(&t),
-                _ => return false,
+                _ => return None,
             },
             Event::Text(t) if space(&t) => {}
-            Event::Eof => {
-                return rooted
-                    && open.is_empty()
-                    && seen.iter().all(|(n, v)| match n.as_str() {
-                        "Status" => v == "Enabled",
-                        _ => v == "Enabled" || v == "Disabled",
-                    });
-            }
-            _ => return false,
+            Event::Eof => return (rooted && open.is_empty()).then_some(seen),
+            _ => return None,
         }
         first = false;
     }
+}
+
+/// Whether a PutBucketVersioning document leaves versioning on:
+/// `VersioningConfiguration` holding at most one `Status`, `Enabled`, and
+/// one `MfaDelete`, `Enabled` or `Disabled` ([`plain_fields`]).
+fn keeps_versions(doc: &str) -> bool {
+    plain_fields(doc, "VersioningConfiguration", &["Status", "MfaDelete"]).is_some_and(|seen| {
+        seen.iter().all(|(n, v)| match n.as_str() {
+            "Status" => v == "Enabled",
+            _ => v == "Enabled" || v == "Disabled",
+        })
+    })
+}
+
+/// Whether a PutObjectLegalHold document leaves the hold on: `LegalHold`
+/// holding one `Status`, `ON` ([`plain_fields`]).
+fn keeps_hold(doc: &str) -> bool {
+    plain_fields(doc, "LegalHold", &["Status"])
+        .is_some_and(|seen| seen.len() == 1 && seen[0].1 == "ON")
+}
+
+/// Whether `text` holds `word` as a whole word: no letter or digit on
+/// either side (`etl-slowdown/state` holds `slowdown`, `slowdowns/x` does
+/// not). How a trial's run is known to be in its own place.
+pub fn has_word(text: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    let part = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
+    text.match_indices(word).any(|(i, _)| {
+        !part(text[..i].chars().next_back()) && !part(text[i + word.len()..].chars().next())
+    })
+}
+
+/// Whether `op` reads an object at its key: answered 404, nothing is there.
+fn reads_object(op: &str) -> bool {
+    matches!(op, "GetObject" | "HeadObject")
 }
 
 /// Whether `op` writes an object whole at its key.
@@ -192,13 +309,25 @@ pub fn writes_object(op: &str) -> bool {
 }
 
 /// What a recording made itself, which no-delete lets it remove: objects
-/// (and their versions) it wrote, uploads it started, buckets it created,
-/// and what is under a trial's own place ([`Made::own_place`]). A program
-/// that writes a temporary file and deletes it, or aborts its own upload,
-/// runs under no-delete as it does anywhere.
+/// it created (and versions it wrote), uploads it started, buckets it
+/// created, and what is under a trial's own place ([`Made::own_place`]).
+///
+/// An object is the recording's when its key held nothing before: the
+/// store answered a create (`If-None-Match: *`) 2xx, or answered 404 for
+/// the key before the write, or keeps versions (the write's answer names
+/// one, so a delete only adds a marker). A write over a key not seen
+/// absent proves nothing: on a bucket without versions it would otherwise
+/// make an object that stood before the run the recording's to delete.
+/// sonde asks the store nothing of its own to know, so a program that
+/// writes a temporary key blindly and deletes it is refused the delete
+/// (its trial's `{trial}` place, or `--policy allow`, lifts that).
 #[derive(Debug, Default)]
 pub struct Made {
     objects: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    /// Keys the store answered 404 for: a write there makes an object.
+    absent: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    /// The word a trial's run writes under ([`Made::keep_to`]).
+    kept_to: parking_lot::Mutex<Option<String>>,
     versions: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
     uploads: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
     buckets: parking_lot::Mutex<std::collections::HashSet<String>>,
@@ -211,22 +340,80 @@ impl Made {
     /// made, as that run could.
     pub fn of(records: &[Record]) -> Made {
         let m = Made::default();
-        for r in records.iter().filter(|r| !r.is_error()) {
+        let mut in_time: Vec<&Record> = records
+            .iter()
+            .filter(|r| r.rare().injected.is_none())
+            .collect();
+        in_time.sort_by_key(|r| (r.time, r.id));
+        for r in in_time {
             let header = |n: &str| {
                 r.response_headers()
                     .iter()
                     .find(|h| h.name.eq_ignore_ascii_case(n))
                     .map(|h| h.value.as_str())
             };
+            let versioned = r.query().iter().any(|(k, _)| k == "versionId");
             match (r.bucket.as_deref(), r.key.as_deref()) {
-                (Some(b), Some(k)) if writes_object(&r.kind) => {
-                    m.object(b, k, header("x-amz-version-id"))
+                (Some(b), Some(k))
+                    if r.status == Some(404) && reads_object(&r.kind) && !versioned =>
+                {
+                    m.missing(b, k)
                 }
+                _ if r.is_error() => {}
+                (Some(b), Some(k)) if writes_object(&r.kind) => m.object(
+                    b,
+                    k,
+                    header("x-amz-version-id"),
+                    fault::condition_of(r) == Some(fault::Condition::Create),
+                ),
                 (Some(b), None) if r.kind == "CreateBucket" => m.bucket(b),
                 _ => {}
             }
         }
         m
+    }
+
+    /// The store answered 404 for `bucket/key`: nothing is there, and a
+    /// write there makes an object of the recording's own.
+    pub fn missing(&self, bucket: &str, key: &str) {
+        self.absent
+            .lock()
+            .insert((bucket.to_string(), key.to_string()));
+    }
+
+    /// A trial's run writes only where `word` stands as a whole word (the
+    /// run's name, which the program put in its keys from `SONDE_TRIAL`):
+    /// what [`Made::strays`] holds each write to.
+    pub fn keep_to(&self, word: Option<&str>) {
+        *self.kept_to.lock() = word.filter(|w| !w.is_empty()).map(str::to_string);
+    }
+
+    /// The word a write strays from, if the run is kept to one
+    /// ([`Made::keep_to`]) and the write names a place without it: its
+    /// bucket and key, each object of a batch of deletes (`document`), the
+    /// bucket alone for a request without a key.
+    pub fn strays(
+        &self,
+        method: &str,
+        op: &str,
+        bucket: Option<&str>,
+        key: Option<&str>,
+        document: Option<&str>,
+    ) -> Option<String> {
+        if method == "GET" || method == "HEAD" {
+            return None;
+        }
+        let word = self.kept_to.lock().clone()?;
+        let b = bucket.unwrap_or("");
+        let within = |key: &str| has_word(&format!("{b}/{key}"), &word);
+        let stays = match (op, key) {
+            (_, Some(k)) => within(k),
+            ("DeleteObjects", None) => document
+                .and_then(reqlog::deleted_objects_strict)
+                .is_some_and(|objects| objects.iter().all(|(k, _)| within(k))),
+            (_, None) => has_word(b, &word),
+        };
+        (!stays).then_some(word)
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
@@ -238,13 +425,18 @@ impl Made {
         }
     }
 
-    /// The recording wrote `bucket/key` (as `version`, when the bucket
-    /// keeps versions): it may delete it.
-    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>) {
-        self.objects
-            .lock()
-            .insert((bucket.to_string(), key.to_string()));
-        if let Some(v) = version.filter(|v| !v.is_empty() && *v != "null") {
+    /// The store answered a write of `bucket/key` 2xx (as `version`, when
+    /// the bucket keeps versions; `created`: sent with `If-None-Match: *`).
+    /// The version is the recording's to delete. The key is when the write
+    /// made it: a create, a key the store had answered 404 for, or a
+    /// bucket that keeps versions (a delete there removes none).
+    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>, created: bool) {
+        let place = (bucket.to_string(), key.to_string());
+        let version = version.filter(|v| !v.is_empty() && *v != "null");
+        if created || version.is_some() || self.absent.lock().contains(&place) {
+            self.objects.lock().insert(place);
+        }
+        if let Some(v) = version {
             self.versions
                 .lock()
                 .insert((bucket.to_string(), key.to_string(), v.to_string()));
@@ -284,7 +476,8 @@ impl Made {
 
     /// Whether a removal no-delete would refuse takes only what this
     /// recording made: an upload it started, an object or version it wrote,
-    /// a bucket it created. A batch of deletes (`document`) goes by each of
+    /// a bucket it created (and so for an object's ACL, changed in
+    /// place). A batch of deletes (`document`) goes by each of
     /// its objects; one that does not read is not the recording's.
     pub fn may_remove(
         &self,
@@ -301,7 +494,9 @@ impl Made {
                     .lock()
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
-            ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
+            ("DeleteObject" | "PutObjectAcl", Some(b), Some(k)) => {
+                self.own_object(b, k, q("versionId"))
+            }
             ("DeleteObjects", Some(b), None) => document
                 .and_then(reqlog::deleted_objects_strict)
                 .is_some_and(|objects| {
@@ -1391,6 +1586,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             return Ok(refuse(&shared, record, msg));
         }
     }
+    if let Some(mode) = shared.cfg.policy.refuses_headers(&app_headers) {
+        let msg = format!(
+            "sonde refused {operation}: it sets a governance retention aside (x-amz-bypass-governance-retention), and the proxy runs in {mode} mode"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
@@ -1492,6 +1693,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         return Ok(refuse(&shared, record, msg));
     }
+    // a trial's run kept to its own place writes nowhere else
+    if let Some(word) = shared.cfg.made.strays(
+        &method,
+        &operation,
+        bucket.as_deref(),
+        key.as_deref(),
+        record.rare().request_body.as_deref(),
+    ) {
+        let msg = format!(
+            "sonde refused {operation}: this run of the trial writes only where its name ({word}) is, and this is elsewhere (--same-place lifts that)"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
 
     // a trial's faults: answered here, delayed, or sent on with the answer
     // to be lost. The record says so, so that no reader blames the store.
@@ -1507,18 +1721,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             headers: &app_headers,
         })
         .map(|v| (f.name.clone(), v))
-    });
-    // a write that loses its race without being sent on is answered as any
-    // error in the store's place is
-    let fault = fault.map(|(name, v)| match v {
-        fault::Verdict::LoseRace { forward: false, .. } => (
-            name,
-            fault::Verdict::Answer {
-                status: 412,
-                code: "PreconditionFailed".into(),
-            },
-        ),
-        v => (name, v),
     });
     match fault {
         Some((name, fault::Verdict::Answer { status, code })) => {
@@ -1554,10 +1756,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Some((name, fault::Verdict::LoseAnswer)) => {
             record.rare_mut().injected = Some(name);
             after = After::LoseAnswer;
-        }
-        Some((name, fault::Verdict::LoseRace { met, .. })) => {
-            record.rare_mut().injected = Some(name);
-            after = After::LoseRace(met);
         }
         Some((name, fault::Verdict::CutBody { met })) => {
             record.rare_mut().injected = Some(name);
@@ -1859,6 +2057,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     s3raw::fill_ids(&mut record, &headers);
     record.lists_mut().response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
     held.keep(&record);
+    let created = fault::condition(app_headers.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        == Some(fault::Condition::Create);
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1867,7 +2067,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case("x-amz-version-id"))
             .map(|(_, v)| v.as_str());
-        shared.cfg.made.object(b, k, version);
+        shared.cfg.made.object(b, k, version, created);
+    }
+    if status.as_u16() == 404
+        && reads_object(&operation)
+        && !query.iter().any(|(k, _)| k == "versionId")
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+    {
+        shared.cfg.made.missing(b, k);
     }
     if status.is_success()
         && operation == "CreateBucket"
@@ -1884,29 +2091,27 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         f.wrote(&operation, bucket.as_deref(), key.as_deref());
     }
-    match &after {
-        After::LoseRace(met) if !status.is_success() => {
-            // the store refused the write itself: its answer, not sonde's
-            if let Some(f) = faults {
-                f.unmeet(met);
-            }
-            record.rare_mut().injected = None;
-            after = After::Forward;
-        }
-        After::CutBody(met) => {
-            let whole = resp.content_length();
-            match whole.and_then(fault::cut_at) {
-                Some(at) if status.is_success() => cut = whole.map(|n| (at, n)),
-                _ => {
-                    if let Some(f) = faults {
-                        f.unmeet(met);
-                    }
-                    record.rare_mut().injected = None;
-                    after = After::Forward;
+    // an object the store shows to be there: read or written, or a create
+    // it refused itself
+    if let Some(f) = faults
+        && key.is_some()
+        && ((status.is_success() && (reads_object(&operation) || writes_object(&operation)))
+            || (status.as_u16() == 412 && created))
+    {
+        f.stands(bucket.as_deref(), key.as_deref());
+    }
+    if let After::CutBody(met) = &after {
+        let whole = resp.content_length();
+        match whole.and_then(fault::cut_at) {
+            Some(at) if status.is_success() => cut = whole.map(|n| (at, n)),
+            _ => {
+                if let Some(f) = faults {
+                    f.unmeet(met);
                 }
+                record.rare_mut().injected = None;
+                after = After::Forward;
             }
         }
-        _ => {}
     }
     let plain = !headers
         .iter()
@@ -1975,31 +2180,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.rare_mut().injected = None;
         after = After::Forward;
     }
-    if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
+    if after == After::LoseAnswer {
         // the store acted; the program is told it failed
         // (its body read and let go piece by piece: a lost GET of a large
         // object is not held in memory to be thrown away)
         drain(resp, idle).await;
         let name = record.rare().injected.clone().unwrap_or_default();
-        let (told, code, msg) = if after == After::LoseAnswer {
-            (
-                500,
-                "InternalError",
-                format!(
-                    "sonde lost the store's answer ({}) on purpose (scenario {name})",
-                    status.as_u16()
-                ),
-            )
-        } else {
-            (
-                412,
-                "PreconditionFailed",
-                format!(
-                    "sonde answered that the write lost its race, on purpose (scenario {name}); the store made it ({})",
-                    status.as_u16()
-                ),
-            )
-        };
+        let (told, code, msg) = (
+            500,
+            "InternalError",
+            format!(
+                "sonde lost the store's answer ({}) on purpose (scenario {name})",
+                status.as_u16()
+            ),
+        );
         record
             .lists_mut()
             .response_headers
@@ -2145,8 +2339,6 @@ enum After {
     Forward,
     /// The answer is replaced by a 500.
     LoseAnswer,
-    /// A write the store made is answered 412.
-    LoseRace(fault::Met),
     /// The answer's body stops part way.
     CutBody(fault::Met),
     /// The listing leaves out keys this run wrote.
@@ -2848,7 +3040,7 @@ mod budget_tests {
         assert!(removes("data", "tclean/x") && removes("data", "tclean"));
         assert!(!removes("data", "tcleanup/x"));
         assert!(removes("b", "etl-slowdown/k") && !removes("c", "etl-slowdown/k"));
-        m.object("data", "tmp/part", None);
+        m.object("data", "tmp/part", None, true);
         assert!(removes("data", "tmp/part") && !removes("data", "tmp/other"));
     }
 
@@ -2857,8 +3049,8 @@ mod budget_tests {
     #[test]
     fn a_batch_is_the_recordings_only_as_an_xml_reader_reads_it() {
         let m = Made::default();
-        m.object("b", "mine", None);
-        m.object("b", "a&b", None);
+        m.object("b", "mine", None, true);
+        m.object("b", "a&b", None, true);
         let removes = |doc: &str| m.may_remove("DeleteObjects", Some("b"), None, &[], Some(doc));
         let ns = r#"xmlns="http://s3.amazonaws.com/doc/2006-03-01/""#;
         // what clients send

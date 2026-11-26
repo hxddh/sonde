@@ -11,7 +11,7 @@
 //! | 64 | usage error |
 //! | 65 | a run (or another file given to read) is not what it should be |
 //! | 70 | the operation failed (connection, credentials, permissions) |
-//! | 77 | refused by sonde before anything was sent (an endpoint it protects, a plan changed since its dry run) |
+//! | 77 | refused by sonde before anything was sent (an endpoint it protects, a plan changed since its dry run; a trial whose runs would write to one place) |
 
 // std's, but a closed pipe ends the output, not the command: `sonde check |
 // head` keeps check's exit code ([`output::Stdout`]); and a key's control
