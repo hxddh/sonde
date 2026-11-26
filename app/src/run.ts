@@ -7,9 +7,9 @@
 import { announce, batch, effect, lifecycle, Notifications, platform, signal } from "nsh";
 import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
-import { api } from "./native";
+import { api, asError } from "./native";
 import { area, go, notify, openRun, report, runsChanged, shownRun, wasRead } from "./store";
-import type { RunResult } from "./types";
+import type { Confirmed, RunEvent, RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/runview";
 import type { Policy } from "./ui/runparts";
@@ -180,13 +180,22 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
   }
 }
 
-/** Runs a run's command again, on its endpoint, where it ran before (when the run says): change the program, then
- * its new run (the newest, shown as it goes) says what the change did since the run before. */
-export function runAgain(cmd: string, endpoint: string, dir?: string | null) {
+/** A run to run again: its file (Rust reads the command there), and for a run from elsewhere the user's yes to its
+ * command and folder (`confirmed`) and who asks for one where there is none (`onAsk`). */
+export interface Again {
+  path: string;
+  confirmed: Confirmed | null;
+  onAsk?: (ask: Confirmed) => void;
+}
+
+/** Runs a run's command again, on its endpoint, where it ran before: change the program, then its new run (the
+ * newest, shown as it goes) says what the change did since the run before. The run is named by its file: what
+ * runs is read from it in Rust, and a run sonde did not record here starts nothing until the user has confirmed
+ * its exact command and folder (`again.onAsk` is told what to ask about). `cmd`, `endpoint` and `dir` are the
+ * run's, for what the app says while it is at work. */
+export function runAgain(again: Again, cmd: string, endpoint: string, dir?: string | null) {
   if (running() || !cmd.trim()) return;
-  command.set(cmd);
-  if (dir) cwd.set(dir);
-  start(cmd, endpoint);
+  void launch("program", cmd, endpoint, dir ?? null, again);
 }
 
 /** A run asked for while another program runs: said, with its Stop (one program at a time). */
@@ -204,18 +213,23 @@ export function start(cmd: string, endpoint: string): boolean {
 
 /** Runs `cmd` (a program, or the demo's job) on `endpoint` in `dir`, recorded: the run is the newest in the list,
  * open there as it goes. Its result once it has ended; null when it did not start (said). */
-export async function launch(kind: "program" | "demo", cmd: string, endpoint: string, dir: string | null): Promise<RunResult | null> {
+export async function launch(kind: "program" | "demo", cmd: string, endpoint: string, dir: string | null, again?: Again): Promise<RunResult | null> {
   askToNotify();
   if (running()) return (busy(), null);
   // at work from the press: a second press starts nothing
   running.set({ kind, command: cmd, path: null });
   killed = false;
   try {
-    const r = await api.runs.run(cmd, dir, endpoint, "allow", size.cols, size.rows, (e) => {
+    const onEvent = (e: RunEvent) => {
       if ("started" in e) {
         // the run before stays said until this one has begun
         buffer = "";
         batch(() => {
+          // a run's command again is the newest command, once it has started (never one not yet confirmed)
+          if (again) {
+            command.set(cmd);
+            if (dir) cwd.set(dir);
+          }
           lastRun.set(null);
           startedAt.set(Date.now());
           running.set({ kind, command: cmd, path: e.started.path });
@@ -235,7 +249,9 @@ export async function launch(kind: "program" | "demo", cmd: string, endpoint: st
         }
         for (const l of listeners) l(e.data);
       }
-    });
+    };
+    // a run again is named by its file: Rust reads what runs there, and holds a run from elsewhere to the user's yes
+    const r = again ? await api.runs.runAgain(again.path, size.cols, size.rows, again.confirmed, onEvent) : await api.runs.run(cmd, dir, endpoint, "allow", size.cols, size.rows, onEvent);
     batch(() => {
       running.set(null);
       lastRun.set({ ...r, command: cmd, killed, endpoint });
@@ -246,7 +262,10 @@ export async function launch(kind: "program" | "demo", cmd: string, endpoint: st
     return r;
   } catch (e) {
     running.set(null);
-    report(e);
+    // a run from elsewhere, not confirmed (or not this command): asked about, with what Rust says would run
+    const err = asError(e);
+    if (again?.onAsk && err.kind === "confirm" && typeof err.command === "string") again.onAsk({ command: err.command, cwd: err.cwd ?? null });
+    else report(e);
     return null;
   }
 }

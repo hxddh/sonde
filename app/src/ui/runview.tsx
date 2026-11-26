@@ -18,9 +18,9 @@ import { Icon } from "./icon";
 import { titleCells, BARE_TABLE, Badge, Button, Card, CARD, Choice, Disclosure, Dot, EMPHASIS, SELECTED, DOT, TONE, type Tone, Empty, fitColumns, FIT_PADDING, Heading, ICON, KeyValue, ListRow, Path, popupMenu, Pressable, ROW, rowHeight, Strong, Tip, Title, TYPE, SIZES, WIDTH, COLUMN, TEXT } from "./kit";
 import { rememberedSize } from "./sizes";
 
-import { commandLine } from "../command";
+import { commandLine, exactText, ranCommand } from "../command";
 
-export { commandLine, programOf, ranCommand, scrubCommand } from "../command";
+export { commandLine, exactText, programOf, ranCommand, scrubCommand } from "../command";
 export { RunList, tellApart } from "./runlist";
 
 export { clock };
@@ -183,7 +183,8 @@ export function RunHeader(props: { view: RunView; /** its commands, at the title
     <View class="gap-2">
       <View class="flex-row items-center gap-3">
         <View selectable class="min-w-0 flex-1" tooltip={<Tip text={runMeta(props.view)} />}>
-          <Title command={command() ? commandLine(command()!) : props.view.header.endpoint} />
+          {/* a run from elsewhere, beside its Run again: the command whole, nothing of it hidden */}
+          <Title command={command() ? (props.view.external && ranCommand(command()) ? `$ ${exactText(command()!.trim())}` : commandLine(command()!)) : props.view.header.endpoint} />
         </View>
         {props.actions?.()}
       </View>

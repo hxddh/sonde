@@ -43,6 +43,11 @@ destructive actions are gated, and a recorded program is limited by a policy.
   `//host/share`).
 - A code location in a run opens only a source or text file (allow-listed extensions) inside the folder it ran
   in; anything else is shown in the file manager; a network path opens nothing.
+- `sonde show -f json` reads a caller's line (`code`) by the same rule (one implementation, `sonde-analysis::code`),
+  and from program source only: the file must be a regular file inside the folder the run ran in, links followed,
+  never a settings or data file, a device or a network path. A run names that folder and its callers itself, so a
+  run from someone else can have no other file read out (`/etc/passwd`, `../../.aws/credentials`, a link out of the
+  tree); what it can still name is a line of source under a folder of its choosing.
 
 ## One safety model
 
@@ -111,6 +116,26 @@ copied command runs the one tool with the request's values as values, whatever t
   no comment holds a value.
 - PowerShell before 7.3 hands a program an argument with a `"` (or a `\` at its end) as something else: a command
   holding one runs only where `$PSNativeCommandArgumentPassing` is `Standard` or `Windows`, and says so elsewhere.
+
+## Runs from elsewhere
+
+A run's file holds a command and the folder it ran in, and the app's Run again and Try under faults start them. A
+file anyone can send is not believed about either.
+
+- Whether a run is sonde's own is decided in Rust, from where its file is and never from what it says: only a run
+  recorded into the runs folder is. A file opened, dropped, picked or linked to (`sonde://open`) is kept there as a
+  copy and marked as an import in the folder's index before it is written; it, and a run written elsewhere (`-o`),
+  are from elsewhere. (A file put in the runs folder by hand is taken for a recording.)
+- Of a run from elsewhere nothing starts until a dialog has shown the command and the folder exactly as they would
+  run and the user has said yes: no value hidden, nothing cut, and every character that would not show as itself
+  (a line break, a control or escape character, one that turns the text's direction, one of no width) written as
+  `⟨U+202E⟩`. Its title in the app is the command whole, too.
+- The bridge holds the interface to it. `Runs.runAgain` is given the run, not a command (Rust reads the command
+  from the file), and it and `Runs.trial` refuse a run from elsewhere unless the call carries the command and folder
+  the user confirmed, equal to the character to what would run.
+- Where a command is only read (lists, titles, a shared page) values that may be secrets are hidden (`TOKEN=…`),
+  but never one the shell runs a command to make (`TOKEN="$(…)"` is shown whole), and what would not show as itself
+  is written out there as well.
 
 ## Shared runs
 

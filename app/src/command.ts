@@ -2,6 +2,12 @@
 // every secret hidden, and whether the user ran it at all (not sonde's own
 // "replay of …"). No interface here: the app, the shared page and the
 // tests read commands through these.
+//
+// Two ways to show one. `scrubCommand` is for reading: lists, titles,
+// tooltips, a shared page; it hides values that may be secrets. `exactText`
+// is for what is about to run (a confirmation, a trial's plan): every
+// character, hidden ones written out, nothing folded away. A command beside
+// the button that starts it is shown the second way.
 
 import { t } from "./i18n";
 
@@ -49,12 +55,73 @@ function shellWords(command: string): string[] {
 
 const SEPARATOR = new Set([";", "&&", "||", "|", "&"]);
 
+/** Whether a code point draws nothing, moves or reorders the text around it, or passes for a plain space: control
+ * characters (a newline, an escape that starts a terminal sequence), the bidirectional controls that make text read
+ * in another order than it is in, zero-width and other invisible characters, spaces that are no shell space, and
+ * halves of a pair on their own. */
+function unseen(c: number): boolean {
+  return (
+    c < 0x20 ||
+    (c >= 0x7f && c <= 0xa0) ||
+    c === 0xad ||
+    c === 0x61c ||
+    c === 0x115f ||
+    c === 0x1160 ||
+    c === 0x1680 ||
+    (c >= 0x180b && c <= 0x180f) ||
+    (c >= 0x2000 && c <= 0x200f) ||
+    (c >= 0x2028 && c <= 0x202f) ||
+    (c >= 0x205f && c <= 0x206f) ||
+    c === 0x3000 ||
+    c === 0x3164 ||
+    (c >= 0xd800 && c <= 0xdfff) ||
+    (c >= 0xfe00 && c <= 0xfe0f) ||
+    c === 0xfeff ||
+    c === 0xffa0 ||
+    (c >= 0xfff9 && c <= 0xfffb) ||
+    (c >= 0x1d173 && c <= 0x1d17a) ||
+    (c >= 0xe0000 && c <= 0xe0fff)
+  );
+}
+
+/** `text` with every character that would not show as itself written out as its code point (`⟨U+202E⟩`, a newline
+ * `⟨U+000A⟩`), and the rest as it is: nothing is drawn in another order, on another line or not at all, so what
+ * is read is what is there. Nothing else is changed or hidden. */
+export function exactText(text: string): string {
+  let out = "";
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    out += unseen(c) ? `⟨U+${c.toString(16).toUpperCase().padStart(4, "0")}⟩` : ch;
+  }
+  return out;
+}
+
+/** Whether a shell runs something to make this value: a command or process substitution (`$(…)`, backticks,
+ * `<(…)`) outside single quotes. Such a value is code, not a secret. */
+function runsCode(value: string): boolean {
+  let quote: string | null = null;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (c === "\\") i++;
+    else if (c === '"') quote = quote ? null : '"';
+    else if (c === "'" && !quote) quote = "'";
+    else if (c === "`" || ((c === "$" || c === "<" || c === ">") && value[i + 1] === "(")) return true;
+  }
+  return false;
+}
+
 /** A word with any secret in it hidden: a variable's value, an option that
  * names a secret (`--password=…`), and both inside a quoted command given
- * to a shell (`sh -c 'KEY=… python x.py'`). */
+ * to a shell (`sh -c 'KEY=… python x.py'`). A value the shell runs
+ * something to make (`TOKEN="$(curl … | sh)"`) is kept whole: hiding it
+ * would hide a command. */
 function scrubWord(word: string): string {
   const eq = word.indexOf("=");
-  if (eq > 0) {
+  if (eq > 0 && !runsCode(word.slice(eq + 1))) {
     const name = word.slice(0, eq);
     if (ASSIGNMENT.test(word)) return `${name}=…`;
     if (name.startsWith("-") && /secret|password|passwd|token|key|credential/i.test(name)) return `${name}=…`;
@@ -80,12 +147,14 @@ export function commandLine(command: string): string {
 }
 
 /** The command with the value of every variable it sets hidden
- * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole, the rest as typed: what
- * a list, a tooltip or a notification shows. */
+ * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole, the rest as typed, and
+ * what would not show as itself written out ([`exactText`]): what a list, a
+ * tooltip or a notification shows. Never what stands beside the button that
+ * runs the command: that is `exactText` of all of it. */
 export function scrubCommand(command: string): string {
   let out = "";
   let i = 0;
-  const text = command.trim();
+  const text = exactText(command.trim());
   while (i < text.length) {
     // a word starts here: an assignment's value runs to the word's end, quotes included
     if (/\s/.test(text[i]) || ";|&".includes(text[i])) {

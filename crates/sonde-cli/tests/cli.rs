@@ -4148,3 +4148,117 @@ fn an_outcome_the_audit_log_could_not_take_is_said_on_stderr() {
     assert!(said.contains("audit.jsonl"), "{said}");
     assert!(log.is_dir());
 }
+
+/// A run from someone else names the folder it ran in and the file and line
+/// of each caller: `show` reads a line of code only from program source
+/// inside that folder. A caller that names a file elsewhere (by its whole
+/// path, by `..`, through a link), or one that is no source, has no line of
+/// it in any output.
+#[test]
+fn show_reads_a_callers_line_only_from_source_inside_the_folder_the_run_ran_in() {
+    use std::io::Read;
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    // the tour's first run: its finding has callers in export.py
+    let recorded = t
+        .path()
+        .join("data/runs")
+        .join(format!("{}.sonde", tour_first(t.path())));
+    let mut text = String::new();
+    flate2::read::MultiGzDecoder::new(std::fs::File::open(&recorded).unwrap())
+        .read_to_string(&mut text)
+        .unwrap();
+    assert!(text.contains("export.py:"), "the tour's callers");
+    let root = t.path().canonicalize().unwrap();
+    let project = root.join("project");
+    std::fs::create_dir_all(project.join("etl")).unwrap();
+    // every line says which file it is of
+    let lines = |mark: &str| -> String { (1..=400).map(|n| format!("{mark} {n}\n")).collect() };
+    std::fs::write(project.join("etl/export.py"), lines("INSIDE-LINE")).unwrap();
+    std::fs::write(project.join("settings.json"), lines("SECRET-SETTINGS")).unwrap();
+    std::fs::write(project.join("credentials"), lines("SECRET-BARE")).unwrap();
+    std::fs::write(root.join("passwd"), lines("SECRET-ABSOLUTE")).unwrap();
+    std::fs::write(root.join("outside.py"), lines("SECRET-OUTSIDE")).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("outside.py"), project.join("link.py")).unwrap();
+        std::os::unix::fs::symlink(&root, project.join("up")).unwrap();
+    }
+    // the run as someone crafted it: it ran in `cwd`, its callers in `file`
+    let crafted = |name: &str, cwd: &Path, file: &str| -> String {
+        let (header, records) = text.split_once('\n').unwrap();
+        let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
+        header["cwd"] = cwd.to_str().unwrap().into();
+        let file = serde_json::to_string(file).unwrap();
+        let records = records.replace("export.py:", &format!("{}:", file.trim_matches('"')));
+        let path = root.join(name);
+        std::fs::write(&path, format!("{header}\n{records}")).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let outputs = |run: &str| -> String {
+        [
+            vec!["show", run, "-f", "json"],
+            vec!["show", run, "--all", "-f", "json"],
+            vec!["show", run, "--requests", "-f", "json"],
+            vec!["show", run],
+            vec!["show", run, "--all"],
+            vec!["show", run, "--by", "caller"],
+        ]
+        .iter()
+        .map(|args| {
+            let o = sonde(t.path(), args);
+            assert_eq!(o.status.code(), Some(0), "{args:?}: {}", stderr(&o));
+            stdout(&o) + &stderr(&o)
+        })
+        .collect()
+    };
+    let first_place = |run: &str| -> serde_json::Value {
+        let j: serde_json::Value =
+            serde_json::from_str(&stdout(&sonde(t.path(), &["show", run, "-f", "json"]))).unwrap();
+        j["diagnoses"][0]["at"][0].clone()
+    };
+    // source inside the folder: its line is read, as before
+    let inside = crafted("inside.sonde", &project, "etl/export.py");
+    let at = first_place(&inside);
+    assert_eq!(at["file"], "etl/export.py", "{at}");
+    assert_eq!(
+        at["code"].as_str(),
+        Some(format!("INSIDE-LINE {}", at["line"]).as_str()),
+        "{at}"
+    );
+    assert!(outputs(&inside).contains("INSIDE-LINE"));
+    let whole = |p: &str| root.join(p).to_string_lossy().into_owned();
+    let mut elsewhere = vec![
+        // by its whole path (as /etc/passwd would be named), a source file too
+        ("absolute.sonde", whole("passwd")),
+        ("absolute-source.sonde", whole("outside.py")),
+        // out of the folder by `..`
+        ("dotdot.sonde", "../outside.py".to_string()),
+        ("dotdot-deep.sonde", "etl/../../passwd".to_string()),
+        // inside, but no program source
+        ("settings.sonde", "settings.json".to_string()),
+        ("bare.sonde", "credentials".to_string()),
+        // another machine's, a device
+        ("remote.sonde", "//host/share/x.py".to_string()),
+        ("device.sonde", "/dev/zero".to_string()),
+    ];
+    if cfg!(unix) {
+        // a link out of the folder: to a file, and to a folder above
+        elsewhere.push(("link.sonde", "link.py".to_string()));
+        elsewhere.push(("link-up.sonde", "up/outside.py".to_string()));
+    }
+    for (name, file) in elsewhere {
+        let run = crafted(name, &project, &file);
+        let all = outputs(&run);
+        assert!(!all.contains("SECRET-"), "{file}: {all}");
+        // the place is still said, as the run says it; only no line is read
+        let at = first_place(&run);
+        assert_eq!(at["file"], file.as_str(), "{at}");
+        assert!(at.get("code").is_none(), "{file}: {at}");
+    }
+    // a run that says it ran in the whole disk holds every file: none is read
+    let disk = root.ancestors().last().unwrap();
+    let run = crafted("disk.sonde", disk, &whole("outside.py"));
+    let all = outputs(&run);
+    assert!(!all.contains("SECRET-"), "{all}");
+}

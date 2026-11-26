@@ -13,9 +13,10 @@ import { running, stop } from "../run";
 import type { Policy } from "./runparts";
 import { report, runsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, type TrialStep, trialSteps } from "../trials";
-import type { TrialPlan } from "../types";
+import type { Confirmed, TrialPlan } from "../types";
 import { Actions, Button, Card, Check, Labeled, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Prose, Row, Title, TEXT } from "./kit";
-import { scrubCommand } from "./runview";
+import { ExactCommand } from "./external";
+import { exactText } from "./runview";
 
 /** The trial under way, or the one that just ended, on the run it tries: its scenarios as they go
  * (followed on that run's History), when it started and ended. One at a time, as a program is. */
@@ -30,8 +31,10 @@ let clock: ReturnType<typeof setInterval> | undefined;
 
 /** Tries `path`'s program (`command`) under `scenarios` (each as asked: `slowdown:3`), the program limited by
  * `policy`: its verdicts fill the run's History as they come; ended, they are kept there. At work as a program is
- * (one at a time, the toolbar's pill, Stop in the palette). `samePlace`: asked for though every run writes to one place. */
-export function startTrial(path: string, command: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy, samePlace = false) {
+ * (one at a time, the toolbar's pill, Stop in the palette). `samePlace`: asked for though every run writes to one place.
+ * `confirmed`: for a run from elsewhere, the command and folder the dialog showed whole, which starting it there
+ * says yes to (Rust refuses its trial without). */
+export function startTrial(path: string, command: string, scenarios: { name: string; about: string }[], asked: string[], policy: Policy, samePlace = false, confirmed: Confirmed | null = null) {
   if (running() || !scenarios.length) return;
   const started = Date.now();
   batch(() => (running.set({ kind: "trial", command, path }), liveTrial.set({ path, steps: trialSteps(scenarios), started, ended: null }), trialNow.set(started)));
@@ -43,7 +46,7 @@ export function startTrial(path: string, command: string, scenarios: { name: str
     running.set(null);
   };
   api.runs
-    .trial(path, asked, policy, samePlace, 100, 30, (e) => {
+    .trial(path, asked, policy, samePlace, 100, 30, confirmed, (e) => {
       const l = liveTrial();
       if (l?.path === path) liveTrial.set({ ...l, steps: foldTrial(l.steps, e) });
       // a verdict as it arrives, told to a screen reader: the pane's text alone changes in silence
@@ -121,7 +124,8 @@ export function TrialDialog(props: {
     const list = chosen();
     const p = the();
     if (!p || !list.length || running() || held()) return;
-    startTrial(props.path, p.command, list, list.map(asked), limit(), !!p.confirmPlace && samePlace());
+    // a run from elsewhere: Start is the yes to the command and folder shown above it, whole
+    startTrial(props.path, p.command, list, list.map(asked), limit(), !!p.confirmPlace && samePlace(), p.external ? { command: p.command, cwd: p.cwd } : null);
     props.onClose();
     props.onStarted?.();
   };
@@ -143,8 +147,14 @@ export function TrialDialog(props: {
           // what will run, how hard each scenario presses, what the program may do
           <ModalBody testID="trial-plan">
             <Muted>{t("trial.dialogHint")}</Muted>
-            {/* the command on one line, cut in its middle */}
-            <Path path={`$ ${scrubCommand(p().command)}`} />
+            {/* what will run, as it will run (nothing of it hidden: it stands over the button that starts it): on one
+                line, cut in its middle; of a run from elsewhere whole, with its folder, and said to be someone else's */}
+            <If when={p().external} else={<Path path={`$ ${exactText(p().command)}`} />}>
+              <View class="gap-3">
+                <Notice testID="trial-external" tone="warn" text={t("external.trial")} />
+                <ExactCommand command={p().command} cwd={p().cwd} />
+              </View>
+            </If>
             <Card pad="none">
               <Each of={p().scenarios} key={(s) => s.name}>
                 {(s, i) => (

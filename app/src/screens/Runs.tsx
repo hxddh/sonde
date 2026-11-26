@@ -32,6 +32,8 @@ import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/runview";
 import { HistoryPane, scenarioLabel } from "../ui/history";
 import { TrialDialog, trialsKept } from "../ui/trial";
+import { ConfirmRunDialog } from "../ui/external";
+import type { Confirmed } from "../types";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GROUP_BY, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
@@ -77,6 +79,8 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   const compareWith = signal<string | null>(null);
   const replaying = signal(false);
   const tryingFaults = signal(false);
+  // a run from elsewhere, asked to run again: its command and folder, asked about before anything starts
+  const askAgain = signal<Confirmed | null>(null);
   // Group by: each operation, or the operations split by a dimension
   const groupBy = signal<GroupBy>("none");
   // a signal pressed in the header: the Time pane, on its chart
@@ -559,6 +563,14 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
     );
   };
 
+  // the run's command again; `confirmed`: the user's yes to it, for a run from elsewhere (Rust starts nothing of one
+  // without, and says what to ask about: asked then, whatever this view took the run for)
+  const again = async (confirmed: Confirmed | null) => {
+    const h = view()?.header;
+    if (!h?.command) return;
+    if (!endpoints().some((e) => e.id === h.endpoint) && !(await startDemo())) return;
+    runAgain({ path: props.path, confirmed, onAsk: (ask) => askAgain.set(ask) }, h.command, h.endpoint, h.cwd);
+  };
   const actions = () => (
     <View class="flex-row items-center gap-2">
       {/* the program running now: Stop, its one primary */}
@@ -575,12 +587,13 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
           variant={applying() || running() ? "outline" : "primary"}
           icon="play"
           label={t("runs.runAgain")}
-          onPress={async () => {
+          onPress={() => {
             // one program at a time: a press while another runs says so, with its Stop
             if (running()) return busy();
             const h = view()!.header;
-            if (!endpoints().some((e) => e.id === h.endpoint) && !(await startDemo())) return;
-            runAgain(h.command!, h.endpoint, h.cwd);
+            // a run sonde did not record here: its command is someone else's, read whole and confirmed first
+            if (view()!.external) return askAgain.set({ command: h.command!, cwd: h.cwd ?? null });
+            void again(null);
           }}
           testID="run-again"
         />
@@ -724,6 +737,20 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
               </View>
             )}
           </If>
+        )}
+      </If>
+      <If when={askAgain()}>
+        {(ask) => (
+          <ConfirmRunDialog
+            ask={ask()}
+            endpoint={view()?.header.endpoint}
+            onClose={() => askAgain.set(null)}
+            onConfirm={() => {
+              const yes = ask();
+              askAgain.set(null);
+              void again(yes);
+            }}
+          />
         )}
       </If>
       <If when={tryingFaults()}>
