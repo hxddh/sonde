@@ -131,6 +131,8 @@ pub async fn run_endpoint(
     })?;
     let mut results = Vec::new();
     let mut server = None;
+    // the store's own word for what it is, where its answers give one
+    let mut answered: Option<sonde_core::Vendor> = None;
     // what cleanup could not remove, for the result, the job and the audit log
     let mut leftovers: Vec<String> = Vec::new();
     let mut cancelled = false;
@@ -187,7 +189,6 @@ pub async fn run_endpoint(
             for l in &left {
                 j.observe(said_text(l));
             }
-            record_fixture(cfg.vendor.id(), &meta.id, j.verdict, &steps);
             let exchanges = s
                 .log()
                 .list(
@@ -205,6 +206,18 @@ pub async fn run_endpoint(
                     .iter()
                     .find_map(|r| r.header("server").map(String::from));
             }
+            if answered.is_none() {
+                answered = sonde_core::Vendor::from_answer(
+                    server.as_deref(),
+                    steps.0.iter().map(|s| s.body.as_str()),
+                );
+            }
+            record_fixture(
+                answered.unwrap_or(cfg.vendor).id(),
+                &meta.id,
+                j.verdict,
+                &steps,
+            );
             ProbeResult {
                 id: meta.id.clone(),
                 category: meta.category,
@@ -272,7 +285,8 @@ pub async fn run_endpoint(
         id: run_id,
         endpoint: endpoint.into(),
         endpoint_name: cfg.name.clone(),
-        vendor: cfg.vendor.id().into(),
+        // what answered, before what the endpoint was set up as
+        vendor: answered.unwrap_or(cfg.vendor).id().into(),
         server,
         started,
         finished: Utc::now().to_rfc3339(),
@@ -601,6 +615,8 @@ mod tests {
         page: std::sync::atomic::AtomicUsize,
         /// every page is the first, and said to be truncated
         same_page: AtomicBool,
+        /// the `Server` header of every answer
+        server: Mutex<Option<String>>,
         /// deletes that named no version where there are versions (each
         /// would add a delete marker)
         plain_deletes: std::sync::atomic::AtomicUsize,
@@ -785,7 +801,10 @@ mod tests {
                                 "<Version><Key>{k}</Key><VersionId>v1</VersionId></Version>"
                             ));
                         }
-                        (200, format!("<ListVersionsResult>{rows}</ListVersionsResult>"))
+                        (
+                            200,
+                            format!("<ListVersionsResult>{rows}</ListVersionsResult>"),
+                        )
                     }
                 },
                 ("GET", false) => {
@@ -815,8 +834,12 @@ mod tests {
             } else {
                 body
             };
+            let server = match &*fake.server.lock() {
+                Some(s) => format!("server: {s}\r\n"),
+                None => String::new(),
+            };
             let reply = format!(
-                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\netag: \"e\"\r\n\r\n{body}",
+                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\n{server}etag: \"e\"\r\n\r\n{body}",
                 body.len()
             );
             if c.write_all(reply.as_bytes()).await.is_err() {
@@ -1045,12 +1068,10 @@ mod tests {
             let c = s.client("fake").unwrap();
             put_keys(&c, 5).await;
             fake.deny_delete.store(deny, Ordering::SeqCst);
-            let left = tokio::time::timeout(
-                Duration::from_secs(60),
-                cleanup(&c, "scratch", "p/", &[]),
-            )
-            .await
-            .expect("the cleanup ended");
+            let left =
+                tokio::time::timeout(Duration::from_secs(60), cleanup(&c, "scratch", "p/", &[]))
+                    .await
+                    .expect("the cleanup ended");
             if deny {
                 // the page it was shown, counted once
                 assert_eq!(left.len(), 1, "{left:?}");
@@ -1059,6 +1080,26 @@ mod tests {
                 assert_eq!(left, [] as [&str; 0]);
                 assert!(fake.keys.lock().is_empty(), "{versions:?}");
             }
+        }
+    }
+
+    /// The endpoint is set up as `other` (a URL names no vendor): the run
+    /// is of the store that answered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_names_the_store_that_answered() {
+        for (server, vendor) in [(Some("RustFS/1.0.0"), "rustfs"), (None, "other")] {
+            let fake = Arc::new(Fake::default());
+            *fake.server.lock() = server.map(String::from);
+            let dir = tempfile::tempdir().unwrap();
+            let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+            let id = spawn(&s, "fake", one_probe());
+            let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&id))
+                .await
+                .expect("the job ended")
+                .unwrap();
+            let run: Run = serde_json::from_value(v).unwrap();
+            assert_eq!(run.vendor, vendor);
+            assert_eq!(run.server.as_deref(), server);
         }
     }
 

@@ -269,9 +269,9 @@ async fn serve(
                 .filter(|(_, (b, k, _))| *b == bucket && k.starts_with(&prefix))
                 .map(|(id, (_, k, _))| (k, id))
                 .filter(|(k, id)| {
-                    after
-                        .as_ref()
-                        .is_none_or(|(km, um)| (k.as_str(), id.as_str()) > (km.as_str(), um.as_str()))
+                    after.as_ref().is_none_or(|(km, um)| {
+                        (k.as_str(), id.as_str()) > (km.as_str(), um.as_str())
+                    })
                 })
                 .collect();
             all.sort();
