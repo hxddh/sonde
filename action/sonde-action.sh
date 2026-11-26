@@ -9,7 +9,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sonde"
 mkdir -p "$work"
 
-out() { echo "$1=$2" >>"${GITHUB_OUTPUT:-/dev/null}"; }
+# An output, whatever its value holds: GitHub's `name<<delimiter` form, the
+# delimiter one no value has (a `name=value` line ends at the value's first
+# newline, and what follows it would be read as outputs of its own).
+out() {
+  local delim="sonde_${RANDOM}${RANDOM}${RANDOM}"
+  while [[ "$2" == *"$delim"* ]]; do delim="sonde_${RANDOM}${RANDOM}${RANDOM}"; done
+  printf '%s<<%s\n%s\n%s\n' "$1" "$delim" "$2" "$delim" >>"${GITHUB_OUTPUT:-/dev/null}"
+}
 note() { echo "::notice title=sonde::$*"; }
 warn() { echo "::warning title=sonde::$*"; }
 fail() {
@@ -56,44 +63,80 @@ install() {
 # The words of $1 in WORDS, split as a shell splits them, with no shell:
 # blanks part words, '…' and "…" keep theirs (in "…", \ escapes " \ $ `),
 # \ escapes one character; nothing is run or expanded. Fails on an open
-# quote. GLOB is 1 when an unquoted *, ?, [, { or a leading ~ would have
-# been expanded by a shell.
+# quote. For what a shell would have expanded: PATTERNS has each word as a
+# glob pattern (its quoted and escaped characters escaped) and GLOBS whether
+# it has an unquoted *, ? or [; GLOB is 1 when any has; SHELL_WORDS is 1
+# when only a shell says what a word is (an unquoted {, a leading ~).
 split_words() {
-  local s="$1" c q="" w="" have=0 i
+  local s="$1" c q="" w="" p="" g=0 have=0 i
   WORDS=()
+  PATTERNS=()
+  GLOBS=()
   GLOB=0
+  SHELL_WORDS=0
+  # a character kept as itself in the word's pattern
+  lit() {
+    case "$1" in '*' | '?' | '[' | ']' | "\\") p+="\\$1" ;; *) p+="$1" ;; esac
+  }
+  word() {
+    WORDS+=("$w")
+    PATTERNS+=("$p")
+    GLOBS+=("$g")
+    w="" && p="" && g=0 && have=0
+  }
   for ((i = 0; i < ${#s}; i++)); do
     c="${s:i:1}"
     if [ "$q" = "'" ]; then
-      if [ "$c" = "'" ]; then q=""; else w+="$c"; fi
+      if [ "$c" = "'" ]; then q=""; else w+="$c" && lit "$c"; fi
     elif [ "$q" = '"' ]; then
       case "$c" in
         '"') q="" ;;
         "\\")
           case "${s:i+1:1}" in
-            '"' | "\\" | '$' | '`') w+="${s:i+1:1}" && i=$((i + 1)) ;;
-            *) w+="$c" ;;
+            '"' | "\\" | '$' | '`') w+="${s:i+1:1}" && lit "${s:i+1:1}" && i=$((i + 1)) ;;
+            *) w+="$c" && lit "$c" ;;
           esac
           ;;
-        *) w+="$c" ;;
+        *) w+="$c" && lit "$c" ;;
       esac
     else
       case "$c" in
         "'" | '"') q="$c" && have=1 ;;
-        "\\") w+="${s:i+1:1}" && i=$((i + 1)) && have=1 ;;
-        ' ' | $'\t' | $'\n')
-          [ "$have" = 0 ] || WORDS+=("$w")
-          w="" && have=0
-          ;;
+        "\\") w+="${s:i+1:1}" && lit "${s:i+1:1}" && i=$((i + 1)) && have=1 ;;
+        ' ' | $'\t' | $'\n') [ "$have" = 0 ] || word ;;
         *)
-          case "$c" in '*' | '?' | '[' | '{') GLOB=1 ;; '~') [ "$have" = 1 ] || GLOB=1 ;; esac
-          w+="$c" && have=1
+          case "$c" in
+            '*' | '?' | '[') g=1 && GLOB=1 ;;
+            '{') SHELL_WORDS=1 ;;
+            '~') [ "$have" = 1 ] || SHELL_WORDS=1 ;;
+          esac
+          w+="$c" && p+="$c" && have=1
           ;;
       esac
     fi
   done
   [ -z "$q" ] || return 1
-  [ "$have" = 0 ] || WORDS+=("$w")
+  [ "$have" = 0 ] || word
+}
+
+# WORDS with each unquoted glob expanded as a shell expands it (the files it
+# names, sorted; the word as typed when it names none), in EXPANDED. No word
+# is read as shell again: a file's name, or a word like `[0]=x`, is one
+# argument whatever it holds.
+expand_globs() {
+  local i f
+  EXPANDED=()
+  for ((i = 0; i < ${#WORDS[@]}; i++)); do
+    if [ "${GLOBS[i]}" = 1 ]; then
+      local found=()
+      while IFS= read -r f; do found+=("$f"); done < <(compgen -G "${PATTERNS[i]}" | LC_ALL=C sort)
+      if [ "${#found[@]}" -gt 0 ]; then
+        EXPANDED+=("${found[@]}")
+        continue
+      fi
+    fi
+    EXPANDED+=("${WORDS[i]}")
+  done
 }
 
 # `sonde run -o FILE` of the program, as the inputs give it, in this
@@ -111,13 +154,16 @@ run_to() {
     *[\;\&\|\<\>\(\)\$\`]* | *$'\n'* | cd\ *) cmd=(bash -c "$SONDE_RUN") ;;
     *)
       split_words "$SONDE_RUN" || fail "run: a quote is not closed: $SONDE_RUN"
-      if [ "$GLOB" = 0 ]; then
+      if [ "$SHELL_WORDS" = 1 ]; then
+        # braces and ~ are the shell's to expand: bash's, as typed
+        cmd=(bash -c "$SONDE_RUN")
+      elif [ "$GLOB" = 0 ]; then
         cmd=("${WORDS[@]}")
       else
-        # a glob (data/*.csv) expands as the shell's would, and the program
-        # is still run itself; nothing here can run a command: the case
-        # above sent ; & | < > ( ) $ ` and newlines to bash
-        eval "cmd=($SONDE_RUN)"
+        # a glob (data/*.csv) expands to the files it names, and the program
+        # is still run itself; the command's text is never given to eval
+        expand_globs
+        cmd=("${EXPANDED[@]}")
       fi
       ;;
   esac
@@ -218,8 +264,10 @@ baseline() {
   [ -n "$base" ] || fail "no branch to take a baseline from (GITHUB_BASE_REF, GITHUB_REF_NAME)"
   local workflow ids id dir="$work/baseline"
   workflow="$(workflow_file)"
+  # only a run that succeeded: one whose program or check failed is no
+  # measure of the branch (a broken main would hold every pull request to it)
   ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --branch "$base" \
-    --event "$event" --status completed --limit 6 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+    --event "$event" --status success --limit 6 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
   for id in $ids; do
     # (a push's own run is not its baseline)
     [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
