@@ -48,7 +48,7 @@ The contract starts at 19.0 (D-138). A break comes only in a major, in the major
 
 | Release | Changes |
 |---|---|
-| **Major** (`33.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
+| **Major** (`34.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new run format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
 | **Minor** (`24.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
 | **Patch** (`24.0.2`) | fixes where documented behaviour did not hold |
 

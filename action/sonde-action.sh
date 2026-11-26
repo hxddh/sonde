@@ -35,8 +35,8 @@ install() {
   fi
   local ref="${GITHUB_ACTION_REF:-}"
   if [[ "$ref" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+(-[0-9A-Za-z.]+)?)?)?$ ]]; then
-    # a release's tag (v33.0.0) is that release; a major's (v33) the newest
-    # of it, a major and minor (v33.0) the newest of that (install.sh)
+    # a release's tag (v34.0.0) is that release; a major's (v34) the newest
+    # of it, a major and minor (v34.0) the newest of that (install.sh)
     [ -n "$version" ] || version="${ref#v}"
   else
     # a branch, a commit or a local checkout (`uses: ./`): its scripts are
@@ -44,7 +44,7 @@ install() {
     # major, never with whatever release is the newest
     local own major
     own="$(sed -n 's/^version = "\([0-9][^"]*\)"$/\1/p' "$here/../Cargo.toml" 2>/dev/null | head -n 1)"
-    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (33, 33.0.0)"
+    [ -n "$own" ] || fail "no version in the action's Cargo.toml: set the version input (34, 34.0.0)"
     major="${own%%.*}"
     case "$version" in
       latest) fail "version: latest with the action at ${ref:-a local checkout} (sonde $own's scripts): latest may be of another major; set version: $major, or use the action at a release's tag (@v$major)" ;;
