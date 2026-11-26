@@ -420,11 +420,29 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     // --- references, GC lag, orphans ---
     let mut kept: BTreeSet<String> = latest.referenced();
     let checkpointed: BTreeSet<u64> = latest.checkpoints.iter().map(|c| c.manifest_id).collect();
-    for (id, _, m) in &decoded {
-        if checkpointed.contains(id) {
+    // a checkpoint keeps its manifest's SSTs however old the manifest is:
+    // one older than those decoded above is read for what it names, and
+    // one that cannot be read leaves the orphans unknown, not found
+    let mut unread: Vec<u64> = vec![];
+    for id in &checkpointed {
+        if let Some((_, _, m)) = decoded.iter().find(|(d, _, _)| d == id) {
             kept.extend(m.referenced());
+            continue;
+        }
+        let read = match manifests.iter().find(|(m, _)| m == id) {
+            Some((_, o)) => match src.get(&o.key, None).await {
+                Ok(bytes) => decode_manifest(&bytes).ok(),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        match read {
+            Some(m) => kept.extend(m.referenced()),
+            None => unread.push(*id),
         }
     }
+    // (a listing cut short says so itself, and names no orphan)
+    let unknown = !unread.is_empty() && !cut;
     let gc_wal: Vec<&&ObjectMeta> = wals
         .iter()
         .filter(|(id, _)| **id <= latest.replay_after_wal_id)
@@ -433,7 +451,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let gc_wal_bytes: u64 = gc_wal.iter().map(|o| o.size).sum();
     let unreferenced: Vec<(&String, &&ObjectMeta)> = compacted
         .iter()
-        .filter(|(n, _)| !cut && !kept.contains(*n))
+        .filter(|(n, _)| !cut && !unknown && !kept.contains(*n))
         .collect();
     let missing: Vec<&String> = kept
         .iter()
@@ -444,6 +462,26 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     for n in &missing {
         l.issues
             .push(issue(Severity::Error, ph!("slate.sst.missing", name = n)));
+    }
+    if unknown {
+        let unnamed: Vec<&&ObjectMeta> = compacted
+            .iter()
+            .filter(|(n, _)| !kept.contains(*n))
+            .map(|(_, o)| o)
+            .collect();
+        l.issues.push(issue(
+            Severity::Warning,
+            ph!(
+                "slate.orphans.unknown",
+                ids = unread
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                n = unnamed.len(),
+                size = human_bytes(unnamed.iter().map(|o| o.size).sum())
+            ),
+        ));
     }
     if !unreferenced.is_empty() {
         l.issues.push(issue(
@@ -530,7 +568,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 "slate.gclag.fact",
                 n = gc_wal.len(),
                 size = human_bytes(gc_wal_bytes),
-                orphans = unreferenced.len(),
+                orphans = if unknown {
+                    "?".to_string()
+                } else {
+                    unreferenced.len().to_string()
+                },
                 manifests = old_manifests
             ),
         ),
@@ -558,6 +600,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             "live"
         } else if kept.contains(n) {
             "checkpoint"
+        } else if unknown {
+            "unknown"
         } else {
             "orphan"
         };

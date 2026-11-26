@@ -2,7 +2,12 @@
 //! manifest lists and manifests (Avro), and the data files they reference.
 //!
 //! Decodes table format versions 1, 2 and 3; any other version is reported
-//! as unknown and not decoded.
+//! as unknown and not decoded. Of version 3: deletion vectors (a manifest
+//! entry naming a blob of a Puffin file by `content_offset` and
+//! `content_size_in_bytes`, its `record_count` the rows it deletes of one
+//! data file) and the `statistics` and `partition-statistics` files the
+//! table metadata lists. Row lineage, variants and encryption keys are not
+//! read: none changes what is in the store.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -100,6 +105,75 @@ pub struct DataFile {
     pub format: String,
     pub records: i64,
     pub bytes: i64,
+    /// A deletion vector (v3): where its blob is in the Puffin file at
+    /// `path`, which other vectors share; `records` is the rows it deletes
+    /// and `bytes` the whole file's size.
+    pub vector: Option<Vector>,
+}
+
+/// A deletion vector's place in its Puffin file, and the data file it is of.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vector {
+    pub offset: i64,
+    pub size: i64,
+    pub of: Option<String>,
+}
+
+impl DataFile {
+    /// What the file holds, as the files' table says it.
+    fn kind(&self) -> &'static str {
+        match (self.content, &self.vector) {
+            (_, Some(_)) => "deletion vector",
+            (0, _) => "data",
+            (1, _) => "position deletes",
+            (2, _) => "equality deletes",
+            _ => "?",
+        }
+    }
+}
+
+/// What a snapshot's files come to. A Puffin file of several deletion
+/// vectors is one file, its bytes counted once; the rows its vectors delete
+/// are not live.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Totals {
+    /// Files: each path once.
+    files: usize,
+    data_files: usize,
+    delete_files: usize,
+    bytes: i64,
+    /// Rows of the data files, less those deletion vectors delete.
+    records: i64,
+    vectors: usize,
+    /// Rows deletion vectors delete.
+    deleted: i64,
+}
+
+impl Totals {
+    fn of(files: &[DataFile]) -> Totals {
+        let mut t = Totals::default();
+        let mut shared: BTreeSet<&str> = BTreeSet::new();
+        for f in files {
+            if f.vector.is_some() {
+                t.vectors += 1;
+                t.deleted += f.records.max(0);
+                // the Puffin file itself, once
+                if !shared.insert(&f.path) {
+                    continue;
+                }
+            }
+            t.files += 1;
+            t.bytes += f.bytes;
+            if f.content == 0 {
+                t.data_files += 1;
+                t.records += f.records;
+            } else {
+                t.delete_files += 1;
+            }
+        }
+        t.records = (t.records - t.deleted).max(0);
+        t
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +185,29 @@ pub struct SnapshotInfo {
     pub manifest_list: Option<String>,
     pub files: Vec<DataFile>,
     pub manifests: usize,
+}
+
+/// A manifest entry's `data_file`. In a v3 manifest a deletion vector is
+/// position deletes (`content` 1) kept as a blob of a Puffin file: it
+/// alone has a `content_offset`.
+fn data_file(df: &Avro) -> DataFile {
+    let content = as_i64(field(df, "content")).unwrap_or(0);
+    let format = as_str(field(df, "file_format")).unwrap_or_default();
+    let offset = as_i64(field(df, "content_offset"));
+    let vector = (content == 1 && (offset.is_some() || format.eq_ignore_ascii_case("puffin")))
+        .then(|| Vector {
+            offset: offset.unwrap_or(0),
+            size: as_i64(field(df, "content_size_in_bytes")).unwrap_or(0),
+            of: as_str(field(df, "referenced_data_file")),
+        });
+    DataFile {
+        path: as_str(field(df, "file_path")).unwrap_or_default(),
+        content,
+        format,
+        records: as_i64(field(df, "record_count")).unwrap_or(0),
+        bytes: as_i64(field(df, "file_size_in_bytes")).unwrap_or(0),
+        vector,
+    }
 }
 
 /// Maps a path in the metadata to a key of the source.
@@ -305,17 +402,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                                 let Some(df) = field(&r, "data_file") else {
                                     continue;
                                 };
-                                files.push((
-                                    status,
-                                    DataFile {
-                                        path: as_str(field(df, "file_path")).unwrap_or_default(),
-                                        content: as_i64(field(df, "content")).unwrap_or(0),
-                                        format: as_str(field(df, "file_format"))
-                                            .unwrap_or_default(),
-                                        records: as_i64(field(df, "record_count")).unwrap_or(0),
-                                        bytes: as_i64(field(df, "file_size_in_bytes")).unwrap_or(0),
-                                    },
-                                ));
+                                files.push((status, data_file(df)));
                             }
                         }
                         Err(e) => l.issues.push(issue(
@@ -341,10 +428,20 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     }
     snaps.sort_by_key(|s| s.time);
 
+    // the statistics files the metadata lists (Puffin; a partition's, any
+    // format): the table's own, wherever its writer put them
+    let statistics: BTreeSet<String> = ["statistics", "partition-statistics"]
+        .iter()
+        .flat_map(|k| meta[*k].as_array().into_iter().flatten())
+        .filter_map(|s| s["statistics-path"].as_str())
+        .map(|p| map.key(p))
+        .collect();
+
     // references, orphans, expiry
     let referenced: BTreeSet<String> = snaps
         .iter()
         .flat_map(|s| s.files.iter().map(|f| map.key(&f.path)))
+        .chain(statistics.iter().cloned())
         .collect();
     let data_objs: Vec<&ObjectMeta> = objects
         .iter()
@@ -364,6 +461,30 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .iter()
         .filter(|k| !cut && !present.contains(k.as_str()))
         .collect();
+    // a deletion vector's blob lies within its Puffin file
+    let size_of: HashMap<&str, u64> = objects.iter().map(|o| (o.key.as_str(), o.size)).collect();
+    for f in snaps
+        .iter()
+        .filter(|s| Some(s.id) == current)
+        .flat_map(|s| &s.files)
+    {
+        let Some(v) = &f.vector else { continue };
+        let key = map.key(&f.path);
+        let within = |size: u64| {
+            v.offset >= 0 && v.size >= 0 && (v.offset as u64).saturating_add(v.size as u64) <= size
+        };
+        if size_of.get(key.as_str()).is_some_and(|size| !within(*size)) {
+            l.issues.push(issue(
+                Severity::Error,
+                ph!(
+                    "iceberg.vector.past",
+                    key = key,
+                    offset = v.offset,
+                    size = v.size
+                ),
+            ));
+        }
+    }
     let now = Utc::now();
     let protected: BTreeSet<i64> = refs.values().copied().chain(current).collect();
     let mut by_age: Vec<&SnapshotInfo> = snaps.iter().collect();
@@ -418,18 +539,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         ));
     }
     let cur = snaps.iter().find(|s| Some(s.id) == current);
-    let live_bytes: i64 = cur
-        .map(|s| s.files.iter().map(|f| f.bytes).sum())
-        .unwrap_or(0);
-    let live_records: i64 = cur
-        .map(|s| {
-            s.files
-                .iter()
-                .filter(|f| f.content == 0)
-                .map(|f| f.records)
-                .sum()
-        })
-        .unwrap_or(0);
+    let live = cur.map(|s| Totals::of(&s.files)).unwrap_or_default();
+    let (live_bytes, live_records) = (live.bytes, live.records);
     l.facts = vec![
         fact("Metadata", meta_key.strip_prefix(root).unwrap_or(&meta_key)),
         fact("Table UUID", meta["table-uuid"].as_str().unwrap_or("—")),
@@ -448,16 +559,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 .collect::<Vec<_>>()
                 .join(", "),
         ),
-        fact(
-            "Live data files",
-            cur.map(|s| s.files.iter().filter(|f| f.content == 0).count())
-                .unwrap_or(0),
-        ),
-        fact(
-            "Live delete files",
-            cur.map(|s| s.files.iter().filter(|f| f.content != 0).count())
-                .unwrap_or(0),
-        ),
+        fact("Live data files", live.data_files),
+        fact("Live delete files", live.delete_files),
         fact("Live records", live_records),
         fact("Live bytes", human_bytes(live_bytes.max(0) as u64)),
         fact(
@@ -493,6 +596,20 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 .count(),
         ),
     ];
+    // what only a v3 table has, said when it has it
+    if live.vectors > 0 {
+        let at = l.facts.iter().position(|f| f.label == "Live records");
+        l.facts.splice(
+            at.unwrap_or(0)..at.unwrap_or(0),
+            [
+                fact("Deletion vectors", live.vectors),
+                fact("Deleted rows", live.deleted),
+            ],
+        );
+    }
+    if !statistics.is_empty() {
+        l.facts.push(fact("Statistics files", statistics.len()));
+    }
     let mut st = Table::new(
         "Snapshots",
         &[
@@ -516,21 +633,22 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         } else {
             "retained".into()
         };
+        let totals = Totals::of(&s.files);
         st.row(vec![
             s.id.to_string(),
             s.parent.map(|p| p.to_string()).unwrap_or_default(),
             time_str(s.time),
             s.operation.clone(),
             s.manifests.to_string(),
-            s.files.len().to_string(),
-            human_bytes(s.files.iter().map(|f| f.bytes).sum::<i64>().max(0) as u64),
+            totals.files.to_string(),
+            human_bytes(totals.bytes.max(0) as u64),
             state,
         ]);
         let mut e = Event::new(
             s.time,
             "snapshot",
             ph!("iceberg.snapshot", id = s.id, op = s.operation),
-            ph!("iceberg.snapshot.detail", n = s.files.len()),
+            ph!("iceberg.snapshot.detail", n = totals.files),
         );
         e.key = s.manifest_list.as_ref().map(|m| map.key(m));
         l.timeline.push(e);
@@ -555,35 +673,28 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                     .strip_prefix(root)
                     .unwrap_or(&f.path)
                     .to_string(),
-                ["data", "position deletes", "equality deletes"]
-                    .get(f.content as usize)
-                    .unwrap_or(&"?")
-                    .to_string(),
+                f.kind().to_string(),
                 f.format.clone(),
                 f.records.to_string(),
-                human_bytes(f.bytes.max(0) as u64),
+                // a deletion vector's own bytes, not its file's
+                human_bytes(f.vector.as_ref().map_or(f.bytes, |v| v.size).max(0) as u64),
             ]);
+        }
+        let totals = Totals::of(&s.files);
+        let mut facts = vec![
+            fact("Snapshot", s.id),
+            fact("Operation", &s.operation),
+            fact("Data files", totals.files),
+            fact("Records", totals.records),
+            fact("Bytes", human_bytes(totals.bytes.max(0) as u64)),
+        ];
+        if totals.vectors > 0 {
+            facts.push(fact("Deleted rows", totals.deleted));
         }
         l.snapshots.push(Snapshot {
             time: s.time,
             label: format!("snapshot {} ({})", s.id, s.operation),
-            facts: vec![
-                fact("Snapshot", s.id),
-                fact("Operation", &s.operation),
-                fact("Data files", s.files.len()),
-                fact(
-                    "Records",
-                    s.files
-                        .iter()
-                        .filter(|f| f.content == 0)
-                        .map(|f| f.records)
-                        .sum::<i64>(),
-                ),
-                fact(
-                    "Bytes",
-                    human_bytes(s.files.iter().map(|f| f.bytes).sum::<i64>().max(0) as u64),
-                ),
-            ],
+            facts,
             tables: vec![files],
         });
     }
@@ -597,7 +708,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         said_current,
         ph!(
             "iceberg.headline.rest",
-            files = cur.map(|s| s.files.len()).unwrap_or(0),
+            files = live.files,
             size = human_bytes(live_bytes.max(0) as u64),
             orphans = orphans.len(),
             expirable = expirable.len()
