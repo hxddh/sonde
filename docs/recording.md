@@ -217,7 +217,9 @@ Each becomes a run, read like a recording; the app opens them too (Open, or drop
 | Hudi | a completed instant (`.hoodie/<instant>.commit`, `.deltacommit`, `.replacecommit`, …, or 1.x `.hoodie/timeline/`); `.requested`, `.inflight`, `.hoodie/.temp/` fold in; base and log files counted |
 | Paimon | `snapshot/snapshot-<n>`, `LATEST`/`EARLIEST`, `schema/schema-<n>`; manifests and `bucket-<n>/` files fold in |
 
-- A format's other requests fold into the next commit point; a completed multipart upload is one write.
+- A format's other requests fold into the next commit point of their own table (its bucket, root and format: two
+  tables written at once are each their own steps); a completed multipart upload is one write.
+- A Parquet file is a table's when the run touched that table's log: its folder's name (`data/`) says nothing.
 - Lookups across numbered files (SlateDB's newest WAL) are their own step.
 - Files with no commit within 2 s are reported as written without one.
 
