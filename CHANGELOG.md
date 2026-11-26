@@ -2,6 +2,19 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Changed
+
+- A trial holds a run to what it leaves in the store, not only to what its requests show: an output the clean run
+  leaves that the run wrote none of, where it exited as the clean run does, is **broke** (*2 objects the clean run
+  leaves were never written*). A program that gives up a read, skips its output and exits 0 was *degraded*.
+  ([trials](docs/trials.md#how-results-are-read): what a run leaves, and what that does not say.)
+
+### 中文
+
+- 变更：试验不仅看请求，也看运行在存储中留下了什么：正常运行会留下、而本次运行一个也没写的输出，且退出码与正常运行相同，判为 **broke**（*正常运行会留下的 2 个对象没有写入*）。放弃读取、跳过输出并以 0 退出的程序此前只判为 *degraded*。
+
 ## [33.0.0] - 2026-11-26
 
 A hardening release. A run's file from someone else is believed about nothing it could abuse: it starts no command

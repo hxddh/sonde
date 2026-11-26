@@ -146,6 +146,7 @@ repeatable; duplicates run once.
 | **N bodies cut: … resumed from the cut, … read again whole** | how each cut download was made good |
 | **fenced** | a SlateDB writer answered 412 that exited non-zero and wrote nothing after; exit not held against it |
 | **N more objects left than the clean run leaves** | after a lost race (degraded) |
+| **N objects the clean run leaves were never written (KEY)** | an output of the clean run that this run wrote none of, where its exit is the clean run's and nothing else said why (broke); KEY is one of them, read as below |
 | **sent again with the same If-Match** | resent with the losing ETag, nothing read between (degraded) |
 | **N creates answered 412 and taken as made** | races on the program's own key, not written over nor created again |
 | **N lost answers not sent again but read back** | see the cases |
@@ -173,6 +174,13 @@ were judged and which were not (refused, met no request).
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
 requests show; sonde does not read data back.
+
+**What a run leaves** is read from its requests, too: each key followed to the last change the store made (a write
+sent twice leaves what it leaves sent once), then read without the runs' names and without what changes from run to
+run (a UUID, a date, a number), and counted. Two runs of a table writer leave the same objects though no key of one
+is a key of the other. It says which objects stand, never what is in them (a size and an ETag differ between runs
+that did the same), and only a kind of object wholly missing is held against a run: one part more or fewer of many
+is what a writer that flushes by the clock does.
 
 **What did not survive is a finding** of the clean run (kind `trial`, identity `trial|<scenario as asked>`; broke
 is a warning, degraded a note), listed under the verdicts, in `show` and `check` with the run's other findings: why
