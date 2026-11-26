@@ -1856,3 +1856,71 @@ fn names_given_a_finding_about_several_buckets_by_older_rules_still_name_it() {
     let ids: Vec<&String> = kept.findings.keys().collect();
     assert_eq!(ids, ["obs.rmw|a", "obs.small|data"]);
 }
+
+fn wrote(id: u64, key: &str) -> Record {
+    let mut r = get(id, key);
+    r.method = "PUT".into();
+    r.kind = "PutObject".into();
+    r
+}
+
+/// What a run leaves in the store is held against the run before, and said
+/// only when it differs: the same outputs under keys that change every run
+/// say nothing; an output no longer written is said, with which.
+#[test]
+fn a_run_that_leaves_other_objects_than_the_run_before_says_so() {
+    let job = |uuid: &str, parts: u64, marker: bool| {
+        let mut rs = hot(30);
+        rs.extend((0..parts).map(|i| wrote(100 + i, &format!("out/part-{i:05}-{uuid}.parquet"))));
+        if marker {
+            rs.push(wrote(200, "out/_SUCCESS"));
+        }
+        rs
+    };
+    let dir = tempfile::tempdir().unwrap();
+    ran(
+        dir.path(),
+        1,
+        &job("3f2504e0-4f89-11d3-9a0c-0305e82c3301", 4, true),
+        Some(0),
+    );
+    // the same job again: other keys, the same objects
+    let again = ran(
+        dir.path(),
+        2,
+        &job("9b2c1d7e-0a3f-4c55-8e21-77aa01bc9f10", 4, true),
+        Some(0),
+    );
+    assert_eq!(again.change.as_ref().unwrap().left, None);
+    // a "fix" that also stopped writing the marker, and one part fewer
+    let after = ran(
+        dir.path(),
+        3,
+        &job("0c1d2e3f-4a5b-4c6d-8e7f-001122334455", 3, false),
+        Some(0),
+    );
+    let left = after
+        .change
+        .as_ref()
+        .unwrap()
+        .left
+        .clone()
+        .expect("it differs");
+    assert_eq!((left.fewer, left.more, left.absent), (2, 0, 1));
+    assert_eq!(left.key.as_deref(), Some("b/out/_SUCCESS"));
+    // and more than before
+    let more = ran(
+        dir.path(),
+        4,
+        &job("aaaaaaaa-4a5b-4c6d-8e7f-001122334455", 5, false),
+        Some(0),
+    );
+    let left = more
+        .change
+        .as_ref()
+        .unwrap()
+        .left
+        .clone()
+        .expect("it differs");
+    assert_eq!((left.fewer, left.more, left.absent), (0, 2, 0));
+}

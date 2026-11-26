@@ -10,10 +10,15 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   leaves that the run wrote none of, where it exited as the clean run does, is **broke** (*2 objects the clean run
   leaves were never written*). A program that gives up a read, skips its output and exits 0 was *degraded*.
   ([trials](docs/trials.md#how-results-are-read): what a run leaves, and what that does not say.)
+- `show` says when a run leaves other objects in the store than the run before (`leaves 2 objects fewer, 1 of a
+  kind it no longer writes than the run before`, `since.change.left` in JSON), and nothing when it leaves the same:
+  a fix that changes how a program reads should not change what it writes.
+- The demo's fixed job writes its export where the job always wrote it.
 
 ### 中文
 
 - 变更：试验不仅看请求，也看运行在存储中留下了什么：正常运行会留下、而本次运行一个也没写的输出，且退出码与正常运行相同，判为 **broke**（*正常运行会留下的 2 个对象没有写入*）。放弃读取、跳过输出并以 0 退出的程序此前只判为 *degraded*。
+- 变更：当一次运行在存储中留下的对象与上一次不同时，`show` 会说明（JSON 中为 `since.change.left`），相同时不说：只改变读取方式的修复不应改变写入的内容。演示中修复后的作业把导出写在原来的位置。
 
 ## [33.0.0] - 2026-11-26
 

@@ -58,7 +58,6 @@ pub fn fixed_job() -> String {
         "        if s3.head_object(Bucket=\"demo\", Key=key):  # @head\n            rows += ",
         "        rows += ",
     )
-    .replace("tour/first", "tour/fixed")
 }
 
 /// Whether `job` is the job fixed (it sends no HEAD before its GETs).
@@ -149,15 +148,11 @@ pub async fn play(
         sent(on("GetObject", http::Method::GET, &k), "@get").await;
     }
     wait(PAUSE).await;
-    // the export, under the run's own place
-    let place = if fixed { "tour/fixed" } else { "tour/first" };
+    // the export, where the job always writes it: its fix changes how it
+    // reads, not what it leaves
     sent(
-        on(
-            "PutObject",
-            http::Method::PUT,
-            &format!("{place}/export.csv"),
-        )
-        .body(Body::from(vec![b'r'; 36 * 1024])),
+        on("PutObject", http::Method::PUT, "tour/first/export.csv")
+            .body(Body::from(vec![b'r'; 36 * 1024])),
         "@put",
     )
     .await;
@@ -168,7 +163,7 @@ pub async fn play(
             S3Request::new("ListObjectsV2", http::Method::GET)
                 .bucket("demo")
                 .query("list-type", "2")
-                .query("prefix", format!("{place}/"))
+                .query("prefix", "tour/first/")
                 .query("max-keys", "2")
                 .query_opt("continuation-token", token.take()),
             "@list",

@@ -1231,6 +1231,8 @@ fn a_run_again_says_only_what_changed() {
     // fixed: what it saved, and nothing of the plan
     let fixed = run("export-fixed.py");
     assert!(fixed.contains("  ✓ fixed  "), "{fixed}");
+    // (the fix changes how the job reads, not what it leaves: nothing is said of that)
+    assert!(!fixed.contains("than the run before"), "{fixed}");
     for not in plan {
         assert!(!fixed.contains(not), "{not:?} in:\n{fixed}");
     }
