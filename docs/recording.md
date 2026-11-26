@@ -150,13 +150,27 @@ sonde's own destructive acts are each a dry run, then `--yes` ([security](securi
 | Policy | Allows | Refuses |
 |---|---|---|
 | `allow` (default) | everything: the program does with its data what it would without sonde | nothing |
-| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning (a versioning document that does not read as plainly `Enabled`), any write sonde cannot name |
+| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags; a retention set or lengthened, a legal hold turned on; turning versioning on; every bucket setting not at right; removing what this recording made, and its ACL (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `RenameObject`; what removes data later or lifts what guards it: `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, `PUT ?acl` (a bucket's, or an object's the recording did not make), `PUT`/`DELETE ?publicAccessBlock`, `PUT ?ownershipControls`, suspending versioning and turning a legal hold off (a document that does not read as plainly `Enabled` / `ON`), any request with `x-amz-bypass-governance-retention` (a delete or a shorter retention, of its own objects too); any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 
-A program may remove what it made in the same recording: abort an upload it started, delete an object or a version
-it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
+A program may remove what it made in the same recording: abort an upload it started, delete an object it made or
+a version it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
 `DeleteObjects` whose every object is such, a bucket it created. A write over an object goes through: with versioning
 on, the store keeps the old version; without it, use `read-only` to keep what is there.
+
+**An object is the recording's when its key held nothing before the write**, as the store's own answers show:
+
+| The store answered | The key is the recording's to delete |
+|---|---|
+| 2xx to a write sent with `If-None-Match: *` | yes: it was created |
+| 404 to a GET or HEAD of the key, then 2xx to a write | yes: nothing was there |
+| 2xx with `x-amz-version-id` (the bucket keeps versions) | yes: a delete adds a marker, and only the version it wrote may be deleted by id |
+| 2xx to any other write | no: on a bucket without versions the key may have stood before the run, and a write over it must not make it deletable |
+
+sonde asks the store nothing of its own to find out (recording adds no request and no wait), so a program that writes
+a temporary key without looking and deletes it is refused the delete under `no-delete`: give the trial its `{trial}`
+place, or `--policy allow`. A store that ignores `If-None-Match` answers 2xx to a create over an object
+([probe](probes.md) `cond.put-if-none-match` tells).
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy` in `sonde.toml`;
 `allow`, or `no-delete` for `--trial` (sonde's own faults could push a program down a path it would

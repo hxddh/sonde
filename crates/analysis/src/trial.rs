@@ -617,6 +617,8 @@ impl<'a> Places<'a> {
 struct Meant {
     /// The ones the store answered: what the program means to get.
     answered: usize,
+    /// Of those, the ones it did (2xx): for a write, what was made.
+    done: usize,
     /// Two of them were in flight at once: several senders.
     concurrent: bool,
     /// The shortest wait between one's end and the next one's start, in ms.
@@ -743,6 +745,7 @@ pub fn judge(
         clean_place.insert(id.clone(), (r.bucket.as_deref(), r.key.as_deref()));
         let m = meant.entry(id).or_default();
         m.answered += answered(r) as usize;
+        m.done += done(r) as usize;
         if let Some(end) = m.last_end {
             let gap = ms_between(end, r.time);
             if gap < 0.0 {
@@ -910,6 +913,15 @@ pub fn judge(
         }
         let read = !is_write(group[owed[0]]);
         let after_last = |i: usize| group[i + 1..].iter().any(|r| answered(r));
+        // a failed write is made good by a write the store made after it, or
+        // (its own answer lost, the store having made it) by any answer: an
+        // error that follows, the policy's refusal or the store's own, makes
+        // nothing good
+        let made_after = |i: usize| {
+            group[i + 1..]
+                .iter()
+                .any(|r| done(r) || (answered(r) && lost_answer(group[i])))
+        };
         let unretried = if read {
             // a read is made good by an answer after it, however many the
             // clean run got: a loop that polls for a fixed time gets fewer
@@ -922,8 +934,19 @@ pub fn judge(
                 // a request the clean run never sent (a key named by the
                 // clock) is meant once, and only an answer after its failure
                 // makes it good
-                0 => 1usize.saturating_sub(after_last(owed[0]) as usize),
-                want => want.saturating_sub(group.iter().filter(|r| answered(r)).count()),
+                0 => 1usize.saturating_sub(made_after(owed[0]) as usize),
+                // answers, and of them the writes made (in the store, were
+                // its answer lost): a write that succeeded before the
+                // failure and an error after it are two answers and one
+                // write, where the clean run made two
+                want => {
+                    let made = group
+                        .iter()
+                        .filter(|r| done(r) || (faulted(r) && lost_answer(r)))
+                        .count();
+                    want.saturating_sub(group.iter().filter(|r| answered(r)).count())
+                        .max(m.map_or(0, |m| m.done).saturating_sub(made))
+                }
             };
             // a failure nothing followed was not sent again, whatever the count
             let last = (owed.last() == Some(&(group.len() - 1))) as usize;
@@ -994,7 +1017,7 @@ pub fn judge(
     // races lost: by commit, not by key. The clean run says how many
     // commits the program means to make in each log.
     let (mut races, mut unrun, mut overwrote, mut blind, mut read_back) = (0, 0, 0, 0, 0);
-    let mut yielded = 0;
+    let (mut yielded, mut doubled) = (0, 0);
     let mut fenced = false;
     let mut at_race: Option<&Record> = None;
     let mut in_time: Vec<&Record> = run.iter().collect();
@@ -1024,19 +1047,21 @@ pub fn judge(
         }
         faults += all.len();
         races += all.len();
-        // a create of a key that is no table's log (a marker, a lock), which
-        // the store made: a 412 says "it is there", and it is. Taking it so
-        // is what such a writer does against a real one; nothing is owed
+        // a create of a key that is no table's log (a marker, a lock): a
+        // 412 says "it is there". Taking it so is what such a writer does
+        // against a real one, and so is creating it again; nothing is owed
         let (yields, lost): (Vec<usize>, Vec<usize>) = all.into_iter().partition(|&i| {
             let r = group[i];
             condition_of(r) == Some(Condition::Create)
-                && lost_answer(r)
                 && !sonde_proxy::fault::is_log(r.key.as_deref())
         });
         for &i in &yields {
             if written_over(group[i]) {
                 overwrote += 1;
                 keep(&mut at_race, group[i]);
+            } else if group[i + 1..].iter().any(|r| done(r)) {
+                retried += 1;
+                attempts = attempts.max(2);
             } else {
                 yielded += 1;
             }
@@ -1046,12 +1071,27 @@ pub fn judge(
         }
         let made = group.iter().filter(|r| done(r)).count();
         let after_first = group[lost[0] + 1..].iter().filter(|r| done(r)).count();
+        // more commits in the log than the clean run makes there, a write
+        // answered 412 that the store holds among them: the program took
+        // its own commit for the one that won and committed again over it
+        let stored = made + lost.iter().filter(|&&i| lost_answer(group[i])).count();
+        let want = won.get(family).copied().unwrap_or(0);
+        if want > 0 && stored > want {
+            doubled += stored - want;
+            keep(&mut at_race, group[lost[0]]);
+        }
         let short = match won.get(family).copied().unwrap_or(0) {
             0 => 1usize.saturating_sub(after_first),
             want => want.saturating_sub(made),
         };
         let unretried = lost.len().min(short);
-        let made_good = lost.len() - unretried;
+        // run again: a commit made after it (a writer that steps on to the
+        // next number, each held and answered 412 in its turn, ran none)
+        let followed = lost
+            .iter()
+            .filter(|&&i| group[i + 1..].iter().any(|r| done(r)))
+            .count();
+        let made_good = (lost.len() - unretried).min(followed);
         retried += made_good;
         // every commit but the lost ones was made: with them in the store,
         // it holds as many as the clean run's
@@ -1419,6 +1459,11 @@ pub fn judge(
         standing.raise(Standing::Broke);
         why.push(said("trial.why.overwrote", overwrote));
     }
+    if doubled > 0 {
+        // whatever its exit says: the table holds its rows twice
+        standing.raise(Standing::Broke);
+        why.push(said("trial.why.doubled", doubled));
+    }
     if stale > 0 && unused == stale && faults == 0 && standing == Standing::Survived {
         // a listing nothing after it turned on: no reading of it to judge
         standing = Standing::Untested;
@@ -1464,7 +1509,12 @@ pub fn judge(
     };
     let blocked = by_policy(run).saturating_sub(by_policy(clean));
     let first_blocked = run.iter().find(|r| sonde_proxy::refused_by_policy(r));
-    if blocked > 0 && matches!(standing, Standing::Broke | Standing::Degraded) {
+    if blocked > 0
+        && matches!(
+            standing,
+            Standing::Broke | Standing::Degraded | Standing::Untested
+        )
+    {
         standing = Standing::Refused;
         let policy = first_blocked
             .and_then(|r| response_header(r, "x-sonde-policy"))
@@ -1491,9 +1541,11 @@ pub fn judge(
         "trial.why.rewrote" | "trial.why.missed" => at_stale,
         "trial.why.lost" | "trial.why.writes" => at_write,
         "trial.why.taken" | "trial.why.holes" => at_cut,
-        "trial.why.orphans" | "trial.why.blind" | "trial.why.unrun" | "trial.why.overwrote" => {
-            at_race
-        }
+        "trial.why.orphans"
+        | "trial.why.blind"
+        | "trial.why.unrun"
+        | "trial.why.overwrote"
+        | "trial.why.doubled" => at_race,
         _ => None,
     };
     let first_reason = why
@@ -2070,11 +2122,14 @@ impl Trial {
         }
         if self.yielded > 0 {
             parts.push(format!(
-                "{} create{} answered 412 and taken as made: the store has {} (sonde let {} through), as the program believes",
+                "{} create{} answered 412 and taken as made, as against a writer that won (none did: sonde sent no write on, and {} in no store)",
                 self.yielded,
                 plural(self.yielded),
-                if self.yielded == 1 { "the key" } else { "the keys" },
-                if self.yielded == 1 { "it" } else { "them" },
+                if self.yielded == 1 {
+                    "the key is"
+                } else {
+                    "the keys are"
+                },
             ));
         }
         if self.fenced {
@@ -3440,22 +3495,33 @@ mod tests {
 
     #[test]
     fn a_marker_created_if_absent_that_takes_a_412_as_made_survives() {
-        // `_SUCCESS` with If-None-Match: *: sonde let it through and said
-        // 412. The program takes that as "it is there", and it is
+        // `_SUCCESS` with If-None-Match: *: sonde said 412 in the store's
+        // place. The program takes that as "it is there", as it would
+        // against a writer that won
         let clean = vec![
             put(1, 0, "out/part-0", 200),
             create(2, 10, "out/_SUCCESS", 200),
         ];
         let run = vec![
             put(1, 0, "out/part-0", 200),
-            race(create(2, 10, "out/_SUCCESS", 412), Some(200)),
+            race(create(2, 10, "out/_SUCCESS", 412), None),
         ];
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Survived, "{}", t.line());
         assert_eq!((t.races, t.yielded, t.not_retryable), (1, 1, 1));
         assert_eq!(
             t.line(),
-            "1 fault, none a retry is owed for · 1 create answered 412 and taken as made: the store has the key (sonde let it through), as the program believes"
+            "1 fault, none a retry is owed for · 1 create answered 412 and taken as made, as against a writer that won (none did: sonde sent no write on, and the key is in no store)"
+        );
+        // a lock asked for again and had: a retry, not a key taken as made
+        let mut again = run.clone();
+        again.push(create(3, 40, "out/_SUCCESS", 200));
+        let t = judge(&lost_race_scenario(), &clean, 0, &again, 0);
+        assert_eq!(
+            (t.standing, t.yielded, t.retried),
+            (Standing::Survived, 0, 1),
+            "{}",
+            t.line()
         );
         // and one that says it failed, though the key is there: its exit
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 1);
@@ -4048,18 +4114,73 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_made_twice_over_a_lost_race_is_broke() {
+        let log = |n: u64| format!("t/_delta_log/{n:020}.json");
+        let clean = vec![
+            put(1, 0, "t/part-1.parquet", 200),
+            create(2, 10, &log(1), 200),
+        ];
+        // as a 32.0 trial ran it: the write told 412 was in the store, and
+        // the writer read the log, found its own commit there, took it for
+        // the one that won and committed its rows again as the next number
+        let run = vec![
+            put(1, 0, "t/part-1.parquet", 200),
+            race(create(2, 10, &log(1), 412), Some(200)),
+            get(3, 20, &log(1), 200),
+            create(4, 45, &log(2), 200),
+        ];
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Broke, "{}", t.line());
+        assert_eq!(
+            t.reasons(),
+            [
+                "1 commit more in the table's log than the clean run makes: what a lost commit wrote was committed twice"
+            ]
+        );
+        assert_eq!(t.at().as_ref().unwrap().key, format!("b/{}", log(1)));
+        // so for a run that makes its two commits and one more
+        let clean2 = vec![create(1, 0, &log(1), 200), create(2, 100, &log(2), 200)];
+        let run2 = vec![
+            race(create(1, 0, &log(1), 412), None),
+            create(2, 30, &log(1), 200),
+            create(3, 100, &log(2), 200),
+            create(4, 130, &log(3), 200),
+        ];
+        let t = judge(&lost_race_scenario(), &clean2, 0, &run2, 0);
+        assert_eq!(t.standing, Standing::Broke, "{}", t.line());
+        // and not for one that makes them once each
+        let t = judge(&lost_race_scenario(), &clean2, 0, &run2[..3], 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        // a writer that steps to the next number unread, each held in its
+        // turn: nothing was run again, whatever followed what
+        let stepped = vec![
+            race(create(1, 0, &log(1), 412), None),
+            race(create(2, 30, &log(2), 412), None),
+            race(create(3, 60, &log(3), 412), None),
+        ];
+        let t = judge(&lost_race_scenario(), &clean2, 0, &stepped, 1);
+        assert_eq!(
+            (t.standing, t.races, t.retried),
+            (Standing::Broke, 3, 0),
+            "{}",
+            t.line()
+        );
+    }
+
+    #[test]
     fn a_lost_race_is_run_again_by_the_next_commit_in_the_log() {
         let log = |n: u64| format!("t/_delta_log/{n:020}.json");
         let clean = vec![
             put(1, 0, "t/part-1.parquet", 200),
             create(2, 10, &log(1), 200),
         ];
-        // told 412, it reads the log and commits the next number
+        // told 412 (its write in no store), it reads the log, finds no
+        // commit there and writes the same number again
         let run = vec![
             put(1, 0, "t/part-1.parquet", 200),
-            race(create(2, 10, &log(1), 412), Some(200)),
-            get(3, 20, &log(1), 200),
-            create(4, 45, &log(2), 200),
+            race(create(2, 10, &log(1), 412), None),
+            get(3, 20, &log(1), 404),
+            create(4, 45, &log(1), 200),
         ];
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Survived, "{}", t.line());
@@ -4092,10 +4213,15 @@ mod tests {
         );
         assert_eq!(t.at().as_ref().unwrap().key, format!("b/{}", log(1)));
         assert_eq!(t.advice().as_ref().unwrap().key, "trial.advice.race");
-        // it reads the key it lost, finds its write there (sonde let it
-        // through) and carries on: the store holds what the clean run's
-        // does, and nothing more
-        let t = judge(&lost_race_scenario(), &clean, 0, &run[..3], 0);
+        // (a 32.0 trial's run, whose lost write the store held) it reads
+        // the key it lost, finds its write there and carries on: the store
+        // holds what the clean run's does, and nothing more
+        let run = [
+            put(1, 0, "t/part-1.parquet", 200),
+            race(create(2, 10, &log(1), 412), Some(200)),
+            get(3, 20, &log(1), 200),
+        ];
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Survived, "{}", t.line());
         assert_eq!((t.read_back, t.retried, t.dropped_writes), (1, 0, 0));
         assert_eq!((t.at().clone(), t.advice().clone()), (None, None));
@@ -4154,6 +4280,56 @@ mod tests {
             "{:?}",
             t.reasons()
         );
+    }
+
+    /// 32.0 read a failed write as sent again whenever the run had as many
+    /// answers for it as the clean run: a write that succeeded before the
+    /// failure and an error after it were two.
+    #[test]
+    fn a_failed_write_is_not_made_good_by_an_error_after_it() {
+        let refusal = |id, at| {
+            let mut r = put(id, at, "state", 403);
+            r.lists_mut()
+                .response_headers
+                .push(Header::new("x-sonde-policy", "no-delete"));
+            r
+        };
+        // the program writes its state twice
+        let clean = vec![put(1, 0, "state", 200), put(2, 100, "state", 200)];
+        for last in [refusal(3, 130), put(3, 130, "state", 403)] {
+            let policy = sonde_proxy::refused_by_policy(&last);
+            let run = vec![
+                put(1, 0, "state", 200),
+                fault(put(2, 100, "state", 503), "slowdown"),
+                last,
+            ];
+            let t = judge(&slowdown(), &clean, 0, &run, 0);
+            // its second write was never made, and it said all was well
+            assert_ne!(t.standing, Standing::Survived, "{}", t.line());
+            assert_eq!((t.retried, t.dropped_writes), (0, 1), "{}", t.line());
+            let want = if policy {
+                Standing::Refused
+            } else {
+                Standing::Broke
+            };
+            assert_eq!(t.standing, want, "{:?}", t.reasons());
+        }
+        // sent again and made: survived, as before
+        let run = vec![
+            put(1, 0, "state", 200),
+            fault(put(2, 100, "state", 503), "slowdown"),
+            put(3, 130, "state", 200),
+        ];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!((t.standing, t.retried), (Standing::Survived, 1));
+        // a key the clean run never wrote: an error after its failure is
+        // no write either
+        let run = vec![
+            fault(put(1, 0, "other", 503), "slowdown"),
+            put(2, 30, "other", 403),
+        ];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!(t.dropped_writes, 1, "{}", t.line());
     }
 
     #[test]

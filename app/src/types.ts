@@ -954,8 +954,11 @@ export interface TrialPlan {
   scenarios: { name: string; about: string; maxTimes?: number | null }[];
   /** The scenarios are sonde.toml's own. */
   project: boolean;
-  /** The command names no `{trial}`: the runs write where the clean run wrote. */
+  /** The run writes, and neither `{trial}` in its command nor `SONDE_TRIAL` in its keys gives each run a place:
+   * the runs would write where the clean run wrote. */
   sharesPlace: boolean;
+  /** And the store is not the demo's: the trial is not run unless that is asked for (`samePlace`). */
+  confirmPlace?: boolean;
   cleanExit: number;
 }
 

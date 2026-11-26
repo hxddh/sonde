@@ -666,13 +666,20 @@ async fn no_delete_lets_a_program_remove_what_it_made_and_nothing_else() {
             .key(k)
     };
     assert_eq!(send(delete("tmp/a")).await, 403);
-    for k in ["tmp/a", "tmp/b"] {
-        let put = S3Request::new("PutObject", http::Method::PUT)
+    // made here: created if absent, or written where the store had said
+    // nothing was
+    let put = |k: &str| {
+        S3Request::new("PutObject", http::Method::PUT)
             .bucket("data")
             .key(k)
-            .body(s3raw::Body::from("x".to_string()));
-        assert_eq!(send(put).await, 200);
-    }
+            .body(s3raw::Body::from("x".to_string()))
+    };
+    assert_eq!(send(put("tmp/a").header("if-none-match", "*")).await, 200);
+    let look = S3Request::new("GetObject", http::Method::GET)
+        .bucket("data")
+        .key("tmp/b");
+    assert_eq!(send(look).await, 404);
+    assert_eq!(send(put("tmp/b")).await, 200);
     assert_eq!(send(delete("tmp/a")).await, 204);
     // a version it did not write is not its own
     assert_eq!(send(delete("tmp/b").query("versionId", "v0")).await, 403);
@@ -1813,7 +1820,7 @@ async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
 }
 
 #[tokio::test]
-async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
+async fn a_lost_race_is_a_412_to_a_write_the_store_never_saw() {
     let (_proxy, app, log, up) = setup_faults("lost-race").await;
     let log_key = |n: u32| format!("t/_delta_log/{n:020}.json");
     let create = |key: &str| put(key).header("if-none-match", "*");
@@ -1822,8 +1829,8 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
         app.send_raw(put("t/part-1.parquet")).await.unwrap().status,
         200
     );
-    // If-None-Match: * — the program's own write goes to the store, and it
-    // is told it lost
+    // If-None-Match: * — the program is told it lost, and its write is in
+    // no store: a retry that reads the log finds no commit of its own
     let r = app.send_raw(create(&log_key(1))).await.unwrap();
     assert_eq!(r.status, 412);
     assert!(
@@ -1831,13 +1838,15 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
         "{}",
         r.text()
     );
-    assert_eq!(up.calls.lock().len(), 2, "the store took the write");
+    assert_eq!(up.calls.lock().len(), 1, "the store never saw it");
     assert!(
-        up.objects
+        !up.objects
             .lock()
             .contains_key(&format!("/data/{}", log_key(1)))
     );
-    // the next number is that commit's retry: not failed again
+    // the same number is that commit's retry: not failed again, and the
+    // log then goes on
+    assert_eq!(app.send_raw(create(&log_key(1))).await.unwrap().status, 200);
     assert_eq!(app.send_raw(create(&log_key(2))).await.unwrap().status, 200);
     // If-Match: answered without the store
     let before = up.calls.lock().len();
@@ -1856,19 +1865,9 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
         assert_eq!(r.status, Some(412));
         assert!(faulted(r));
     }
-    let forwarded = lost
-        .iter()
-        .find(|r| r.key.as_deref() == Some(log_key(1).as_str()))
-        .unwrap();
-    assert_eq!(
-        answer_header(forwarded, "x-sonde-store-status"),
-        Some("200")
-    );
-    let unsent = lost
-        .iter()
-        .find(|r| r.key.as_deref() == Some("pointer"))
-        .unwrap();
-    assert_eq!(answer_header(unsent, "x-sonde-store-status"), None);
+    for unsent in &lost {
+        assert_eq!(answer_header(unsent, "x-sonde-store-status"), None);
+    }
 }
 
 #[tokio::test]

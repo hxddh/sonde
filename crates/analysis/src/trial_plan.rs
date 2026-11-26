@@ -1,8 +1,9 @@
 //! What a trial of a recorded run would try, said before it runs: its
 //! command and folder, the scenarios (the project's own when its
 //! `sonde.toml` names some, else those chosen from what the run did), and
-//! whether every run would write to the same place. The app plans a trial
-//! of a run it shows with it.
+//! whether every run would write to the same place ([`place`]: what `sonde
+//! run --trial` and the app both refuse a trial for, unless told to run it
+//! there). The app plans a trial of a run it shows with it.
 
 use std::path::Path;
 
@@ -19,9 +20,60 @@ pub struct Plan {
     pub scenarios: Vec<Scenario>,
     /// The scenarios are the project's own (`[[scenario]]` in its `sonde.toml`).
     pub project: bool,
-    /// The command names no place of its own for each run
-    /// ([`names_its_place`]): a trial writes where the clean run wrote.
+    /// Where the trial's runs would write ([`place`]).
+    pub place: Place,
+    /// The run writes and nothing gives each run a place of its own
+    /// ([`Place::Shared`]): a trial writes where the clean run wrote.
     pub shares_place: bool,
+}
+
+/// Where the runs of a trial write, as far as the clean run and its
+/// command say: known before any run under a fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// The clean run wrote nothing: there is nothing to write over.
+    Reads,
+    /// The command says each run's place ([`names_its_place`]).
+    Named,
+    /// The command says none, and every write of the clean run was to a
+    /// place with its run's name (`clean`) in it: the program reads
+    /// `SONDE_TRIAL`. A run under a fault is held to the places with its
+    /// own name ([`sonde_proxy::Made::keep_to`]), should that be chance.
+    Seen,
+    /// Neither: every run under a fault would write where the clean run
+    /// wrote. Not tried unless asked to be (`--same-place`).
+    Shared,
+}
+
+/// The name of a trial's clean run: `{trial}` and `SONDE_TRIAL` in it.
+pub const CLEAN: &str = "clean";
+
+/// Where a trial of `command` would write, from what its clean run did
+/// ([`Place`]). A write is a PUT, POST or DELETE, whatever its answer.
+pub fn place(command: &str, clean: &[reqlog::Record]) -> Place {
+    let mut writes = clean
+        .iter()
+        .filter(|r| matches!(r.method.as_str(), "PUT" | "POST" | "DELETE"))
+        .peekable();
+    if writes.peek().is_none() {
+        return Place::Reads;
+    }
+    if names_its_place(command) {
+        return Place::Named;
+    }
+    let held = sonde_proxy::Made::default();
+    held.keep_to(Some(CLEAN));
+    let named = writes.all(|r| {
+        held.strays(
+            &r.method,
+            &r.kind,
+            r.bucket.as_deref(),
+            r.key.as_deref(),
+            r.rare().request_body.as_deref(),
+        )
+        .is_none()
+    });
+    if named { Place::Seen } else { Place::Shared }
 }
 
 /// Whether a command gives each run of a trial a place of its own, as far
@@ -61,8 +113,10 @@ pub fn of(s: &RunFile) -> Result<Plan, String> {
         None => Vec::new(),
     };
     let own = !project.is_empty();
+    let place = place(&command, &s.records);
     Ok(Plan {
-        shares_place: !names_its_place(&command),
+        place,
+        shares_place: place == Place::Shared,
         command,
         cwd,
         scenarios: if own {
@@ -224,9 +278,59 @@ mod tests {
         ] {
             let plan = of(&run(command, None)).unwrap();
             assert!(!plan.shares_place, "{command}");
+            assert_eq!(plan.place, Place::Named);
             // kept as written, to run it again
             assert_eq!(plan.command, command);
         }
+    }
+
+    #[test]
+    fn where_a_trial_would_write_is_read_from_the_clean_runs_writes() {
+        let at = |method: &str, op: &str, key: Option<&str>| reqlog::Record {
+            method: method.into(),
+            kind: op.into(),
+            bucket: Some("b".into()),
+            key: key.map(Into::into),
+            status: Some(200),
+            ..Default::default()
+        };
+        let put = |key: &str| at("PUT", "PutObject", Some(key));
+        let get = at("GET", "GetObject", Some("in/rows"));
+        // it reads only: nothing to write over
+        assert_eq!(
+            place("python job.py", std::slice::from_ref(&get)),
+            Place::Reads
+        );
+        // it writes, and says nothing of where: every run in one place
+        let shared = [get.clone(), put("out/state")];
+        assert_eq!(place("python job.py", &shared), Place::Shared);
+        assert_eq!(place("python job.py {trial}", &shared), Place::Named);
+        // SONDE_TRIAL read by the program: every write names its run
+        let seen = [get.clone(), put("etl-clean/state"), put("etl-clean/out/1")];
+        assert_eq!(place("python job.py", &seen), Place::Seen);
+        // one write elsewhere, a refused one too, and it is shared
+        let mut stray = seen.to_vec();
+        let mut refused = put("state");
+        refused.status = Some(403);
+        stray.push(refused);
+        assert_eq!(place("python job.py", &stray), Place::Shared);
+        // `clean` as part of a word names no run
+        let word = [put("cleaned/state")];
+        assert_eq!(place("python job.py", &word), Place::Shared);
+        // a batch of deletes goes by each of its keys
+        let batch = |keys: &[&str]| {
+            let mut r = at("POST", "DeleteObjects", None);
+            let objects: String = keys
+                .iter()
+                .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+                .collect();
+            r.rare_mut().request_body = Some(format!("<Delete>{objects}</Delete>"));
+            r
+        };
+        let own = [put("etl-clean/a"), batch(&["etl-clean/a"])];
+        assert_eq!(place("python job.py", &own), Place::Seen);
+        let others = [put("etl-clean/a"), batch(&["etl-clean/a", "etl/b"])];
+        assert_eq!(place("python job.py", &others), Place::Shared);
     }
 
     #[test]

@@ -1423,6 +1423,15 @@ fn key_history_of(s: &RunFile, a: &Analysis, bucket: &str, key: &str) -> Vec<Jso
         .collect()
 }
 
+/// Why a trial is not run where every run would write to one place.
+const SHARES_PLACE: &str = "no trial: the program writes, and neither {trial} in its command nor SONDE_TRIAL in its keys gives each run a place of its own (under a fault it would write where this run wrote)";
+
+/// Whether a trial of `clean` would write, run after run, to one place of
+/// a store that is not the demo's (sonde's own, made anew).
+fn shares_place(plan: &sonde_analysis::trial_plan::Plan, clean: &RunFile) -> bool {
+    plan.shares_place && clean.header.endpoint != "demo"
+}
+
 /// Runs a trial of `clean` (the run in `file`, named `of`) under each of
 /// `chosen`, as [`Runs::trial`] says; its verdicts replace the run's
 /// last, and are added to its program's.
@@ -1435,6 +1444,7 @@ async fn try_under(
     plan: &sonde_analysis::trial_plan::Plan,
     chosen: Vec<sonde_proxy::fault::Scenario>,
     policy: &str,
+    same_place: bool,
     cols: f64,
     rows: f64,
     output: &Callback<JsonValue>,
@@ -1470,9 +1480,13 @@ async fn try_under(
             made.own_place(&place);
         }
     }
+    // a program that reads SONDE_TRIAL, as far as its clean run shows: each
+    // run under a fault is held to the keys that name it
+    let held = plan.place == sonde_analysis::trial_plan::Place::Seen && !same_place;
     // a new trial replaces the last one's verdicts and runs
     let mut trying = sonde_analysis::trial::Trying::begin(&file, &clean.header).map_err(err_msg)?;
     for scenario in chosen {
+        made.keep_to(held.then_some(scenario.name.as_str()));
         // stopped between two scenarios: the next does not run
         if TRIAL_STOPPED.load(SeqCst) {
             trying.cancel();
@@ -1866,9 +1880,12 @@ impl Runs {
 
     /// What trying a run's program under faults would run, said before
     /// it runs: `{ command, cwd, scenarios: [{ name, about, maxTimes }], project,
-    /// sharesPlace, cleanExit }`. `project`: the scenarios are the
-    /// `sonde.toml`'s own; `sharesPlace`: the command has no `{trial}` (or
-    /// `SONDE_TRIAL`), so every run writes where the clean run wrote;
+    /// sharesPlace, confirmPlace, cleanExit }`. `project`: the scenarios are
+    /// the `sonde.toml`'s own; `sharesPlace`: the run writes, and neither
+    /// `{trial}` in the command nor `SONDE_TRIAL` in its keys gives each run
+    /// a place, so every run would write where the clean run wrote;
+    /// `confirmPlace`: and the store is not the demo's, so [`Runs::trial`]
+    /// refuses the trial unless told `same_place`;
     /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
     pub fn trial_plan(path: String) -> Result<JsonValue, String> {
         let s = open_run(&path)?;
@@ -1890,6 +1907,7 @@ impl Runs {
                 .collect::<Vec<_>>(),
             "project": plan.project,
             "sharesPlace": plan.shares_place,
+            "confirmPlace": shares_place(&plan, &s),
             "cleanExit": sonde_analysis::index::get(Path::new(&path)).exit,
         }))
     }
@@ -1903,11 +1921,14 @@ impl Runs {
     /// `{ data, scenario }`, then `{ scenario, state: "done", trial }`.
     /// Resolves with `{ path, trials, cancelled }`; [`Runs::kill`]
     /// cancels, and a cancelled trial keeps nothing. The run's earlier
-    /// verdicts are replaced. What the program may do is `policy`'s.
+    /// verdicts are replaced. What the program may do is `policy`'s. A
+    /// trial whose runs would all write to one place (the plan's
+    /// `confirmPlace`) is refused unless `same_place` asks for it.
     pub async fn trial(
         path: String,
         scenarios: Vec<String>,
         policy: String,
+        same_place: bool,
         cols: f64,
         rows: f64,
         #[args(event)] output: Callback<JsonValue>,
@@ -1918,9 +1939,12 @@ impl Runs {
         let plan = sonde_analysis::trial_plan::of(&clean).map_err(err_msg)?;
         let chosen = plan.named(&scenarios).map_err(err_msg)?;
         policy_of(&policy)?;
+        if shares_place(&plan, &clean) && !same_place {
+            return Err(err_msg(SHARES_PLACE));
+        }
         let clean_exit = sonde_analysis::index::get(&file).exit.unwrap_or(0);
         try_under(
-            &file, &of, &clean, clean_exit, &plan, chosen, &policy, cols, rows, &output,
+            &file, &of, &clean, clean_exit, &plan, chosen, &policy, same_place, cols, rows, &output,
         )
         .await
     }
@@ -2842,6 +2866,36 @@ mod tests {
             code_target(top, &format!("{}:1 f", root.join("load.py").display())).unwrap(),
             CodeTarget::Reveal(root.join("load.py"))
         );
+    }
+
+    /// The app's trial is refused as `sonde run --trial` is: a program that
+    /// writes, with no place of its own for each run, on a store that is
+    /// not the demo's.
+    #[test]
+    fn a_trial_whose_runs_would_write_to_one_place_asks_first_off_the_demo_store() {
+        use sonde_analysis::run::RunHeader;
+        let run = |endpoint: &str, command: &str, method: &str| RunFile {
+            header: RunHeader::new(endpoint, "http://s3", "", Some(command.into())),
+            records: vec![reqlog::Record {
+                method: method.into(),
+                kind: "PutObject".into(),
+                bucket: Some("b".into()),
+                key: Some("out/state".into()),
+                status: Some(200),
+                ..Default::default()
+            }],
+            logs: Vec::new(),
+            afresh: false,
+        };
+        let asks = |endpoint: &str, command: &str, method: &str| {
+            let s = run(endpoint, command, method);
+            let plan = sonde_analysis::trial_plan::of(&s).unwrap();
+            shares_place(&plan, &s)
+        };
+        assert!(asks("minio", "python job.py", "PUT"));
+        assert!(!asks("demo", "python job.py", "PUT"));
+        assert!(!asks("minio", "python job.py s3://b/{trial}/", "PUT"));
+        assert!(!asks("minio", "python job.py", "GET"), "it only reads");
     }
 
     #[test]

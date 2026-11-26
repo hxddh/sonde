@@ -128,8 +128,8 @@ export const api = {
     /** What trying a run's program under faults would run, said before it runs; throws with why there is no trial. */
     trialPlan: (path: string) => Runs.trialPlan(path) as T.TrialPlan,
     /** The run's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
-    trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
-      Runs.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
+    trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", samePlace: boolean, cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
+      Runs.trial(path, scenarios, policy, samePlace, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
     /** Its output as timed lines. Off the interface's thread (a run not yet read is read whole). */
     logLines: async (path: string) => (await Runs.logLines(path)) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Runs.replayPlan(path, endpoint),
