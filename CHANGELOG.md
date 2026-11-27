@@ -2,6 +2,28 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [34.1.1] - 2026-11-27
+
+### Fixed
+
+- **A run recorded with `-o` is this machine's again**: 34.1.0 read callers' lines (`diagnoses[].at[].code`) only for
+  runs in the runs folder, so the agent's loop (`run -o before.sonde`, then `show before.sonde -f json`) lost them,
+  and the app took such a run for one from elsewhere. It is this machine's while the file at its path is the one
+  sonde wrote: a copy, another file put there, or a runs folder that lost its index is still from elsewhere.
+- **A trial reads a run's name nowhere inside a UUID, a date or an id** one run writes: a project scenario named like
+  `b` or `ff` read as part of one, and what the run left differed from the clean run's.
+- **`no-delete` keeps what a run made from its records as it does live**: a text key such as `%25FF` (the key `%FF`)
+  made in a trial's clean run is the trial's to remove too.
+- **Small files' saving (`obs.small`) is said as at most**: a PUT's first byte comes once its body is sent, so its
+  upload is part of what is counted (under 64 KiB, a small part). 34.1.0 said it counted round trips alone.
+
+### 中文
+
+- 修复：以 `-o` 录制的运行重新被视为本机录制：34.1.0 只为运行目录中的运行读取调用处源码（`diagnoses[].at[].code`），导致代理工作流（`run -o before.sonde` 再 `show before.sonde -f json`）拿不到源码，桌面应用也把这类运行当作外来文件。现在只要该路径上的文件仍是 sonde 写下的那一份，就视为本机录制；副本、被替换到该路径的文件，或索引丢失的运行目录，仍按外来处理。
+- 修复：试验不再在 UUID、日期或 ID 内部识别运行名：名为 `b`、`ff` 这类的项目场景曾被当作其中一部分，使运行留下的对象与正常运行不一致。
+- 修复：`no-delete` 从记录重建「本次运行创建的对象」时与实时判断一致：试验正常运行中创建的文本键（如 `%25FF`，即键 `%FF`）在试验中也可删除。
+- 修复：小文件的节省时间（`obs.small`）改为说明是上限：PUT 的首字节在请求体发送完之后才返回，因此其中包含上传时间（64 KiB 以下占比很小）。34.1.0 称只计往返时间，有误。
+
 ## [34.1.0] - 2026-11-26
 
 What a run's file, a request's trailer or a mask claims is no longer taken on its word, and the GitHub Action's

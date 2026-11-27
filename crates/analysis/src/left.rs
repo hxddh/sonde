@@ -176,7 +176,9 @@ pub fn left_where<'a>(
 /// names its output after `lost-answer` may write `lost_answer`,
 /// `LostAnswer` or `lostanswer`). Read once from the left, the longest name
 /// first where two start at one place: `clean` is not read as the `lean`
-/// in it.
+/// in it. Never inside what changes from run to run ([`crate::profile::id_spans`]:
+/// a UUID, a date, an id): a scenario `b` is not the `b` of a UUID one run
+/// writes, which would no longer read as a UUID.
 pub fn trial_names(key: &str, names: &[&str]) -> String {
     let words: Vec<Vec<&str>> = names
         .iter()
@@ -206,10 +208,17 @@ pub fn trial_names(key: &str, names: &[&str]) -> String {
         Some(i)
     };
     let bytes = key.as_bytes();
+    let ids = crate::profile::id_spans(key);
+    let in_id = |at: usize, n: usize| ids.iter().any(|r| at < r.end && r.start < at + n);
     let mut out = String::with_capacity(key.len());
     let (mut i, mut from) = (0, 0);
     while i < bytes.len() {
-        match words.iter().filter_map(|w| take(&bytes[i..], w)).max() {
+        let here = words
+            .iter()
+            .filter_map(|w| take(&bytes[i..], w))
+            .filter(|n| !in_id(i, *n))
+            .max();
+        match here {
             Some(n) => {
                 out.push_str(&key[from..i]);
                 out.push_str("{trial}");
@@ -458,6 +467,41 @@ mod tests {
             );
             assert_eq!(tried.against(&clean), None, "{name}");
         }
+    }
+
+    #[test]
+    fn a_name_inside_an_id_is_not_the_runs() {
+        // a scenario `b`, `ff` or `e7`: never the letters of a UUID, a commit
+        // or a date one run writes and the other does not
+        for name in ["b", "ff", "e7", "2024"] {
+            let names = [name, "clean"];
+            for key in [
+                "out/3fb2e7a0-1234-4bcd-9ff0-0123456789ab.parquet",
+                "out/ff00e7b2c9/x",
+                "out/2024-11-26T10:00:00Z.log",
+            ] {
+                assert_eq!(trial_names(key, &names), key, "{name} in {key}");
+            }
+            let clean = left(
+                &[put(
+                    1,
+                    "out/clean/3fb2e7a0-1234-4bcd-9ff0-0123456789ab.parquet",
+                )],
+                &names,
+            );
+            let tried = left(
+                &[put(
+                    1,
+                    &format!("out/{name}/0c4d5a61-8e9f-4a7b-8c1d-fedcba987654.parquet"),
+                )],
+                &names,
+            );
+            assert_eq!(tried.against(&clean), None, "{name}");
+        }
+        // where it stands otherwise, it is the run's, glued to a word too
+        let names = ["lost-answer", "clean"];
+        assert_eq!(trial_names("outLostAnswer.log", &names), "out{trial}.log");
+        assert_eq!(trial_names("runlost_answer/x", &names), "run{trial}/x");
     }
 
     #[test]

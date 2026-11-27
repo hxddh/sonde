@@ -49,8 +49,8 @@ destructive actions are gated, and a recorded program is limited by a policy.
   and from program source only: the file must be a regular file inside the folder the run ran in, links followed,
   never a settings or data file, a device or a network path. A run names that folder and its callers itself, so a
   run from someone else can have no other file read out (`/etc/passwd`, `../../.aws/credentials`, a link out of the
-  tree). Only a run recorded here has its lines read: one from elsewhere (an import, a file opened from anywhere,
-  `-o`) names its folder itself, so `show` says where each caller is and reads nothing.
+  tree). Only a run recorded here ([below](#runs-from-elsewhere), `-o` included) has its lines read: one from elsewhere (an import, a file
+  opened from anywhere) names its folder itself, so `show` says where each caller is and reads nothing.
 - Every use of a run's folder (its project's `sonde.toml`, its engine settings, git, a code change) goes through one
   check (`sonde-analysis::code::local_dir`): a folder on this machine, on Windows a drive's (`C:\…`, `\\?\C:\…`) that
   still is one once resolved. A share (`\\host\share`), a device or NT path (`\\.\`, `\\?\GLOBALROOT`, `\??\`) is never
@@ -129,11 +129,13 @@ copied command runs the one tool with the request's values as values, whatever t
 A run's file holds a command and the folder it ran in, and the app's Run again and Try under faults start them. A
 file anyone can send is not believed about either.
 
-- Whether a run is sonde's own is decided in Rust, from where its file is and never from what it says: only a run
-  recorded into the runs folder is. A file opened, dropped, picked or linked to (`sonde://open`) is kept there as a
-  copy and marked as an import in the folder's index before it is written; it, and a run written elsewhere (`-o`),
-  are from elsewhere. (A file put in the runs folder by hand is taken for a recording while the folder's index is
-  there to say it is no import; with the index lost or unreadable every run there is from elsewhere.)
+- Whether a run is sonde's own is decided in Rust, from where its file is and never from what it says: a run
+  recorded into the runs folder is, and one this sonde recorded elsewhere (`-o`) is while the file at that path is
+  the one it wrote (its SHA-256, kept in the runs folder's index when the run ended). A file opened, dropped, picked
+  or linked to (`sonde://open`) is kept there as a copy and marked as an import in the folder's index before it is
+  written; it, a copy of a run, and another file put at a run's path are from elsewhere. (A file put in the runs
+  folder by hand is taken for a recording while the folder's index is there to say it is no import; with the index
+  lost or unreadable every run is from elsewhere.)
 - Of a run from elsewhere nothing starts until a dialog has shown the command and the folder exactly as they would
   run and the user has said yes: no value hidden, nothing cut, and every character that would not show as itself
   (a line break, a control or escape character, one that turns the text's direction, one of no width) written as

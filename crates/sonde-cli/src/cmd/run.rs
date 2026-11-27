@@ -148,7 +148,20 @@ async fn listen(
     let file = started.path.clone();
     drop(started);
     let _ = sonde_analysis::run::compress(&file);
+    if rec.out.is_some() {
+        note_recorded(s, &file);
+    }
     Ok(0)
+}
+
+/// Keeps that this sonde recorded the finished run `file`, written
+/// elsewhere (`-o`), as the file it is now: `show` reads its callers' lines
+/// and the app starts it again as a run recorded here, while that file is
+/// the one there ([`sonde_analysis::index::recorded_in`]).
+pub(super) fn note_recorded(s: &Sonde, file: &std::path::Path) {
+    if let Some(digest) = sonde_analysis::index::digest_of(file) {
+        sonde_analysis::index::note_recorded(&s.paths().runs(), file, digest);
+    }
 }
 
 /// The signal that asked sonde to stop, once one has: 2 (Ctrl-C) or 15
@@ -940,6 +953,9 @@ async fn run_once(
     let file = started.path.clone();
     drop(started);
     let _ = sonde_analysis::run::compress(&file);
+    if target.is_some() {
+        note_recorded(s, &file);
+    }
     Ok(Ran {
         file,
         code,

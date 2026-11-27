@@ -114,6 +114,9 @@ async fn play(
     drop(app);
     drop(started);
     let _ = sonde_analysis::run::compress(&file);
+    if rec.out.is_some() {
+        super::run::note_recorded(s, &file);
+    }
     Ok(file)
 }
 

@@ -173,7 +173,7 @@ never load half of one.
 
 Each finding is one of these kinds (`kind` in JSON, what `[check] expect` names), with what it saves (requests, time,
 money a month), the line that sent it and the fix. The time a finding saves is its requests' part of the waiting: each
-moment with requests in flight split evenly among them (alone, a request's own time; one of eight at once, an eighth); a poll saves none, its loop waiting as long. Requests whose bytes are read still, in fewer requests (`obs.smallreads`), save their round trips alone: each one's part up to its first byte, not the time its body took to arrive (all of it when the run does not say when the first byte came).
+moment with requests in flight split evenly among them (alone, a request's own time; one of eight at once, an eighth); a poll saves none, its loop waiting as long. Requests whose bytes are read still, in fewer requests (`obs.smallreads`), save their round trips alone: each one's part up to its first byte, not the time its body took to arrive (all of it when the run does not say when the first byte came). Small files written as fewer (`obs.small`) save at most their whole waiting: a PUT's first byte comes once its body is sent, so its upload is not told apart (for objects under 64 KiB, a small part).
 The findings' fix: the [engine's setting](#engine-settings) when an engine sent its
 requests, else the code for the SDK that sent them (boto3, Java, Go, JavaScript, Rust's object_store and AWS SDK;
 each checked as code against its SDK, [tools/fix-check](../tools/fix-check/README.md)):
