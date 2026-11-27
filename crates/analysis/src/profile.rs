@@ -2591,11 +2591,7 @@ pub fn stable(s: &str) -> String {
         }
         let end = word_end(b, i);
         let w = &s[i..end];
-        let has = |f: fn(&u8) -> bool| w.as_bytes().iter().any(f);
-        let hex = !has(|c| !c.is_ascii_hexdigit());
-        if (w.len() >= 6 && hex && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
-            || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
-        {
+        if id_word(w) {
             out.push_str("{id}");
         } else {
             // each run of digits, but one inside a word (`s3out`, `h2o`):
@@ -2621,6 +2617,42 @@ pub fn stable(s: &str) -> String {
         i = end;
     }
     out
+}
+
+/// Whether a word is an id [`stable`] takes out: six or more hex letters
+/// and digits, both (a commit, a short run id), or twenty or more letters
+/// and digits, both.
+fn id_word(w: &str) -> bool {
+    let has = |f: fn(&u8) -> bool| w.as_bytes().iter().any(f);
+    let hex = !has(|c| !c.is_ascii_hexdigit());
+    let mixed = has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic);
+    mixed && ((w.len() >= 6 && hex) || w.len() >= 20)
+}
+
+/// Where `s` holds what changes from run to run as [`stable`] reads it: each
+/// UUID, date and id (not a plain number), as byte ranges. A name read in a
+/// key is never one inside them ([`crate::left::trial_names`]).
+pub fn id_spans(s: &str) -> Vec<std::ops::Range<usize>> {
+    let b = s.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        if let Some(end) = uuid_at(b, i).or_else(|| date_at(b, i).map(|(end, _)| end)) {
+            spans.push(i..end);
+            i = end;
+            continue;
+        }
+        let end = word_end(b, i);
+        if id_word(&s[i..end]) {
+            spans.push(i..end);
+        }
+        i = end;
+    }
+    spans
 }
 
 /// The end of the word (letters and digits) at `i`.

@@ -1237,6 +1237,67 @@ fn show_json_is_lean_and_each_diagnosis_names_what_to_change_and_where() {
     }
 }
 
+/// A run recorded here with `-o` is this machine's, as one in the runs
+/// folder is: `show -f json` reads its callers' lines, the agent's loop
+/// (`run -o before.sonde`, then `show before.sonde`). Only while the file is
+/// the one it wrote: a copy elsewhere, another file put at its path, or a
+/// runs folder that lost its index reads none.
+#[test]
+fn a_run_recorded_with_o_has_its_lines_read_while_it_is_the_file_it_wrote() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    let job = t.path().join("job");
+    let out = t.path().join("out");
+    std::fs::create_dir_all(&job).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::copy(t.path().join("data/tour/export.py"), job.join("job.py")).unwrap();
+    let before = out.join("before.sonde");
+    let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--demo", "-o"])
+        .arg(&before)
+        .arg("--")
+        .arg(env!("CARGO_BIN_EXE_sonde"))
+        .args(["demo-job", "job.py"])
+        .current_dir(&job)
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let code = |file: &Path| -> Option<String> {
+        let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+            t.path(),
+            &["show", file.to_str().unwrap(), "-f", "json"],
+        )))
+        .unwrap();
+        j["diagnoses"][0]["at"][0]["code"]
+            .as_str()
+            .map(str::to_string)
+    };
+    assert!(
+        code(&before).is_some_and(|c| c.contains("head_object")),
+        "its lines"
+    );
+    // a copy of it elsewhere is anyone's
+    let copy = out.join("copy.sonde");
+    std::fs::copy(&before, &copy).unwrap();
+    assert_eq!(code(&copy), None, "a copy");
+    // another file at its path: the same run's text, written again
+    let kept = std::fs::read(&before).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::MultiGzDecoder::new(&kept[..]), &mut text)
+        .unwrap();
+    std::fs::write(&before, text).unwrap();
+    assert_eq!(code(&before), None, "another file at its path");
+    std::fs::write(&before, &kept).unwrap();
+    assert!(code(&before).is_some(), "the file it wrote, back");
+    // no index to say so: no run elsewhere is this machine's
+    let index = t.path().join("data/runs/.index.jsonl");
+    std::fs::rename(&index, t.path().join("index")).unwrap();
+    assert_eq!(code(&before), None, "no index");
+}
+
 /// A program run again says what changed, not its whole plan again: each
 /// finding fixed with what it saved, each still open on a line with its line
 /// of code, a new one in full; `sonde show` has the whole plan.

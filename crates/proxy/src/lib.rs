@@ -353,8 +353,13 @@ impl Made {
                     .map(|h| h.value.as_str())
             };
             let versioned = r.query().iter().any(|(k, _)| k == "versionId");
-            // a record's `%FF` may be a key of bytes or one of text: neither is proven
-            let key = r.key.as_deref().filter(|k| !may_be_bytes(k));
+            // a key as live no-delete knows it ([`made_key`]): text by the
+            // path the record kept (`%25FF` is the text `%FF`, `%FF` no
+            // text); with no path, a record's `%FF` could be either
+            let key = r.key.as_deref().filter(|k| match url_path(&r.rare().url) {
+                Some(path) => text_key(path),
+                None => !may_be_bytes(k),
+            });
             match (r.bucket.as_deref(), key) {
                 (Some(b), Some(k))
                     if r.status == Some(404) && reads_object(&r.kind) && !versioned =>
@@ -1324,6 +1329,14 @@ fn decode_key(s: &str) -> String {
 /// (`%25FF`) has too.
 fn text_key(raw: &str) -> bool {
     std::str::from_utf8(&percent_encoding::percent_decode_str(raw).collect::<Vec<u8>>()).is_ok()
+}
+
+/// The path of a record's URL as it was sent (`/b/%25FF`), without its
+/// query: its bucket and base are ASCII, so it is text where its key is.
+fn url_path(url: &str) -> Option<&str> {
+    let rest = url.split_once("://")?.1;
+    let path = &rest[rest.find('/')?..];
+    Some(path.split_once('?').map_or(path, |(p, _)| p))
 }
 
 /// Whether a key as a record has it could be one that is not text: it
@@ -3271,7 +3284,21 @@ mod tests {
             Made::of(&[r]).may_remove("DeleteObject", Some("data"), Some(key), &[], None)
         };
         assert!(of("tmp/a") && of("100%"));
+        // with no path kept, a record's `%FF` is neither
         assert!(!of("%FF") && !of("caf%E9"));
+        // with its path, as live no-delete reads it: `%25FF` is the text
+        // `%FF`, made; `%FF` is no text, never made
+        let sent = |path: &str, key: &str| {
+            let mut r = create.clone();
+            r.key = Some(key.into());
+            r.rare_mut().url = format!("http://s3.example:9000{path}?x-id=PutObject");
+            Made::of(&[r]).may_remove("DeleteObject", Some("data"), Some(key), &[], None)
+        };
+        assert!(sent("/data/%25FF", "%FF") && sent("/data/caf%25E9", "caf%E9"));
+        assert!(!sent("/data/%FF", "%FF") && !sent("/data/caf%E9", "caf%E9"));
+        assert!(sent("/data/tmp/a", "tmp/a"));
+        assert_eq!(url_path("http://h/b/k?q=1"), Some("/b/k"));
+        assert_eq!(url_path(""), None);
     }
     #[test]
     fn an_injected_error_is_escaped_as_a_refusal_is() {

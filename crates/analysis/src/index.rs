@@ -59,6 +59,10 @@ pub struct Folder {
     /// Runs written elsewhere (`-o`), by their whole path: listed with the
     /// folder's own ([`note_elsewhere`]).
     pub elsewhere: std::collections::BTreeSet<String>,
+    /// Runs this sonde recorded elsewhere (`-o`), by their whole path → the
+    /// SHA-256 of the file it wrote ([`note_recorded`]): what makes such a
+    /// run [`recorded_in`] while the file there is still that one.
+    pub recorded: BTreeMap<String, String>,
 }
 
 /// One line of the index: a change to one run's entry (by its file name),
@@ -90,6 +94,9 @@ pub enum Change {
     /// A run written elsewhere, by its whole path: listed here (true) or
     /// no longer (false).
     Elsewhere(bool),
+    /// A run this sonde recorded elsewhere, by its whole path: the SHA-256
+    /// of the file it wrote; none: forgotten.
+    Recorded(Option<String>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,6 +132,7 @@ fn apply(index: &mut Index, name: &str, change: Change) {
         Change::Verdicts(v) => return keep(&mut f.verdicts, name, v),
         Change::Import(v) => return keep(&mut f.imports, name, v),
         Change::Mark(v) => return keep(&mut f.marks, name, v),
+        Change::Recorded(v) => return keep(&mut f.recorded, name, v),
         Change::Elsewhere(listed) => {
             if listed {
                 f.elsewhere.insert(name.to_string());
@@ -231,11 +239,52 @@ pub fn recorded_in(dir: &Path, run: &Path) -> bool {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let inside = file.parent() == Some(dir.as_path()) && name.ends_with(".sonde") && file.is_file();
-    if !inside {
+    let (index, present) = load(&dir);
+    if !present {
         return false;
     }
-    let (index, present) = load(&dir);
-    present && !index.folder.imports.values().any(|n| *n == name)
+    if inside {
+        return !index.folder.imports.values().any(|n| *n == name);
+    }
+    // written elsewhere (`-o`): this sonde's while the file is the one it
+    // wrote there, by its digest (a file put at that path later is not)
+    let key = file.to_string_lossy();
+    match index.folder.recorded.get(key.as_ref()) {
+        Some(digest) => file.is_file() && digest_of(&file).as_deref() == Some(digest.as_str()),
+        None => false,
+    }
+}
+
+/// The SHA-256 of a file, read as a stream.
+pub fn digest_of(file: &Path) -> Option<String> {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    let mut f = std::fs::File::open(file).ok()?;
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        match std::io::Read::read(&mut f, &mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+    Some(hex::encode(hasher.finalize()))
+}
+
+/// Keeps that this sonde recorded `run` (written elsewhere with `-o`, now
+/// at that path) as the file of SHA-256 `digest`, in the index of the runs
+/// folder `runs`: [`recorded_in`] it while the file there is that one. The
+/// digest is taken of the file as written, before it is put in its place.
+pub fn note_recorded(runs: &Path, run: &Path, digest: String) {
+    let (Ok(file), Ok(dir)) = (run.canonicalize(), runs.canonicalize()) else {
+        return;
+    };
+    if file.parent() == Some(dir.as_path()) {
+        return;
+    }
+    let name = file.to_string_lossy().into_owned();
+    let _ = update(&dir, |_| (vec![(name, Change::Recorded(Some(digest)))], ()));
 }
 
 /// The folder a run is in, and its name there.
@@ -298,6 +347,13 @@ pub fn forget_gone_elsewhere(runs: &Path) {
                 .iter()
                 .filter(|p| !Path::new(p).exists())
                 .map(|p| (p.clone(), Change::Elsewhere(false)))
+                .chain(
+                    now.folder
+                        .recorded
+                        .keys()
+                        .filter(|p| !Path::new(p).exists())
+                        .map(|p| (p.clone(), Change::Recorded(None))),
+                )
                 .collect(),
             (),
         )
@@ -454,6 +510,9 @@ fn compact(dir: &Path, index: &Index) {
     for k in &f.elsewhere {
         push(k, Change::Elsewhere(true));
     }
+    for (k, v) in &f.recorded {
+        push(k, Change::Recorded(Some(v.clone())));
+    }
     if reqlog::private::replace(&file, &out).is_ok() {
         READ.lock().remove(dir);
     }
@@ -499,6 +558,37 @@ mod tests {
             .filter(|n| !n.starts_with('.'))
             .collect();
         assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn a_run_recorded_elsewhere_is_this_machines_while_it_is_the_file_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let runs = dir.path().join("runs");
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&runs).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        let run = out.join("before.sonde");
+        std::fs::write(&run, "the run as written").unwrap();
+        // listed, not yet kept as recorded: a path is no proof
+        note_elsewhere(&runs, &run);
+        assert!(!recorded_in(&runs, &run));
+        note_recorded(&runs, &run, digest_of(&run).unwrap());
+        assert!(recorded_in(&runs, &run));
+        // a copy of it, or another file at its path, is anyone's
+        let copy = out.join("copy.sonde");
+        std::fs::copy(&run, &copy).unwrap();
+        assert!(!recorded_in(&runs, &copy));
+        std::fs::write(&run, "another file").unwrap();
+        assert!(!recorded_in(&runs, &run));
+        std::fs::write(&run, "the run as written").unwrap();
+        assert!(recorded_in(&runs, &run));
+        // kept through a compaction, forgotten once the file is gone
+        compact(&runs, &of(&runs));
+        READ.lock().clear();
+        assert!(recorded_in(&runs, &run));
+        std::fs::remove_file(&run).unwrap();
+        forget_gone_elsewhere(&runs);
+        assert!(of(&runs).folder.recorded.is_empty());
     }
 
     #[test]
