@@ -29,7 +29,7 @@ services:
     ports: ["7480:7480"]
     profiles: ["ceph", "all"]
   rustfs:
-    image: rustfs/rustfs:1.0.5
+    image: rustfs/rustfs:1.0.6
     environment:
       RUSTFS_ACCESS_KEY: rustfsadmin
       RUSTFS_SECRET_KEY: rustfsadmin
