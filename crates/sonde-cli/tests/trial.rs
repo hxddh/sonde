@@ -1730,6 +1730,26 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
         )
         .await;
     assert!(shown.stdout.contains("x-sonde-hidden"), "{}", shown.stdout);
+    // and how many keys it was shown, as every listing's record does
+    let doc: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
+    let names = |r: &serde_json::Value| -> Vec<String> {
+        r["responseHeaders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|h| h["name"].as_str().map(str::to_ascii_lowercase))
+            .collect()
+    };
+    let hiding: Vec<&serde_json::Value> = doc["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| names(r).iter().any(|n| n == "x-sonde-hidden"))
+        .collect();
+    assert!(!hiding.is_empty());
+    for r in hiding {
+        assert!(names(r).iter().any(|n| n == "x-sonde-keys"), "{r:#}");
+    }
     // it lists until it is shown what it wrote
     let o = b
         .run(

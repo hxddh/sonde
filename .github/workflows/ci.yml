@@ -118,12 +118,18 @@ jobs:
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with: { distribution: temurin, java-version: "17", cache: maven, cache-dependency-path: tools/fix-check/java/pom.xml }
       - name: The SDKs the fixes are compiled against (the test itself reaches no network)
+        # a registry that stalls is given up on and asked again, and says why:
+        # Maven waited 5½ minutes on Central and printed only its last error
+        timeout-minutes: 20
+        env:
+          MAVEN_ARGS: -B -ntp -Daether.connector.connectTimeout=20000 -Daether.connector.requestTimeout=60000
         run: |
-          pip install "$(grep '^boto3==' .github/requirements.txt)"
-          (cd tools/fix-check/go && go mod download)
-          (cd tools/fix-check/java && mvn -q dependency:go-offline dependency:build-classpath)
-          (cd tools/fix-check/node && npm ci)
-          (cd tools/fix-check/rust && cargo fetch --locked)
+          retry() { for n in 1 2 3; do "$@" && return; echo "::warning::$* failed (try $n of 3)"; sleep $((n * 20)); done; return 1; }
+          retry pip install "$(grep '^boto3==' .github/requirements.txt)"
+          (cd tools/fix-check/go && retry go mod download)
+          (cd tools/fix-check/java && retry mvn dependency:go-offline dependency:build-classpath)
+          (cd tools/fix-check/node && retry npm ci)
+          (cd tools/fix-check/rust && retry cargo fetch --locked)
       - name: Every fix compiles against its SDK, and does what it says
         env: { SONDE_FIXES_STRICT: "1" }
         run: cargo test --locked -p sonde-analysis --test fix_code -- --nocapture

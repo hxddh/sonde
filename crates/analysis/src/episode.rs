@@ -466,6 +466,16 @@ fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
+/// Whether a listing is a page after the first: it carries, not empty,
+/// where the page before ended (V2's token or `start-after`, ListObjects'
+/// `marker`, ListObjectVersions' `key-marker`). An empty one (`?marker=`)
+/// is a first page, as the store reads it. One rule for every reader.
+pub(crate) fn later_page(r: &Record) -> bool {
+    ["continuation-token", "marker", "start-after", "key-marker"]
+        .iter()
+        .any(|q| query(r, q).is_some_and(|v| !v.is_empty()))
+}
+
 pub(crate) fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
     r.query()
         .iter()
@@ -645,8 +655,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
             let same = listing.last().is_some_and(|l: &&Record| {
                 l.bucket == r.bucket && query(l, "prefix") == query(r, "prefix")
             });
-            let continued =
-                query(r, "continuation-token").is_some() || query(r, "marker").is_some();
+            let continued = later_page(r);
             if same && continued {
                 listing.push(r);
                 continue;
@@ -2217,10 +2226,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     for r in records.iter().filter(|r| {
         // a later page (ListObjectsV2's token, ListObjects' marker) is the
         // same listing going on
-        r.kind.starts_with("ListObjects")
-            && !r.is_error()
-            && query(r, "continuation-token").is_none()
-            && query(r, "marker").is_none_or(str::is_empty)
+        r.kind.starts_with("ListObjects") && !r.is_error() && !later_page(r)
     }) {
         lists
             .entry((
@@ -2533,10 +2539,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let first_pages = |ids: &[u64]| {
             ids.iter()
                 .filter_map(|id| by_id.get(id))
-                .filter(|r| {
-                    query(r, "continuation-token").is_none()
-                        && query(r, "marker").is_none_or(str::is_empty)
-                })
+                .filter(|r| !later_page(r))
                 .count()
         };
         let mut crawled: Vec<(&(&str, &str), &Vec<u64>)> = by_prefix

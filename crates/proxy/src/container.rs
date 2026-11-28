@@ -59,6 +59,50 @@ const TAKES_VALUE: &[&str] = &[
     "--pid",
     "--ipc",
     "--uts",
+    // the rest of `docker run`'s and `podman run`'s options that take one
+    "--annotation",
+    "--blkio-weight",
+    "--blkio-weight-device",
+    "--cgroup-parent",
+    "--cgroupns",
+    "--cpu-period",
+    "--cpu-quota",
+    "--cpu-rt-period",
+    "--cpu-rt-runtime",
+    "--cpuset-mems",
+    "--detach-keys",
+    "--device-cgroup-rule",
+    "--device-read-bps",
+    "--device-read-iops",
+    "--device-write-bps",
+    "--device-write-iops",
+    "--dns-option",
+    "--dns-search",
+    "--domainname",
+    "--group-add",
+    "--health-cmd",
+    "--health-interval",
+    "--health-retries",
+    "--health-start-interval",
+    "--health-start-period",
+    "--health-timeout",
+    "--ip6",
+    "--isolation",
+    "--kernel-memory",
+    "--label-file",
+    "--link",
+    "--link-local-ip",
+    "--mac-address",
+    "--memory-reservation",
+    "--memory-swap",
+    "--memory-swappiness",
+    "--network-alias",
+    "--oom-score-adj",
+    "--pids-limit",
+    "--storage-opt",
+    "--stop-timeout",
+    "--sysctl",
+    "--volume-driver",
 ];
 
 /// Where `run`'s options start in the words after `docker` or `podman`
@@ -205,5 +249,11 @@ mod tests {
         );
         assert_eq!(img("container run -it img").as_deref(), Some("img"));
         assert_eq!(img("ps -a"), None);
+        // a value of an option is no image, whichever option takes it
+        assert_eq!(
+            img("run --pids-limit 100 --memory-swap 1g --sysctl net.x=1 --health-cmd true img")
+                .as_deref(),
+            Some("img")
+        );
     }
 }

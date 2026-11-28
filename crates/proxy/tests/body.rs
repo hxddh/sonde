@@ -485,3 +485,76 @@ async fn a_signed_body_of_no_payload_is_held_to_its_framing() {
     })
     .await;
 }
+
+/// A control document sent as an unsigned `aws-chunked` body is read by
+/// what it holds: kept on the record as the document, and judged so under
+/// `no-delete` (a batch of the run's own keys goes through), while it goes
+/// to the store as it was sent. Before 34.1.2 its framing was the document:
+/// the batch was refused as one that does not read, and the record held
+/// chunk sizes. Bytes after its last chunk are refused.
+#[tokio::test]
+async fn a_control_document_framed_unsigned_is_read_as_the_document_it_holds() {
+    bounded(async {
+        let store = MiniS3::start(true).await;
+        let target = S3Client::new(
+            ClientConfig::new("target", &store.url, "eu-west-1").unwrap(),
+            Arc::new(StaticProvider(Some(Credentials::new(
+                "AKID", "secret", None,
+            )))),
+            RequestLog::default(),
+        )
+        .unwrap();
+        let log = RequestLog::default();
+        let proxy = Proxy::start(
+            target,
+            log.clone(),
+            ProxyConfig {
+                policy: sonde_proxy::Policy::NoDelete,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // the run makes `tmp/made` (a create: proof it is the run's)
+        let extra = [
+            ("content-length", "1".to_string()),
+            ("if-none-match", "*".to_string()),
+        ];
+        let mut req =
+            head(&proxy, "PUT", "/data/tmp/made", "UNSIGNED-PAYLOAD", &extra).into_bytes();
+        req.push(b'x');
+        let answer = exchange(&proxy, &req, Then::Waits).await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        let doc = "<Delete><Object><Key>tmp/made</Key></Object></Delete>";
+        let batch = |body: Vec<u8>| {
+            let extra = [
+                ("content-encoding", "aws-chunked".to_string()),
+                ("x-amz-decoded-content-length", doc.len().to_string()),
+                ("x-amz-trailer", "x-amz-checksum-crc32".to_string()),
+                ("content-length", body.len().to_string()),
+            ];
+            let mut req =
+                head(&proxy, "POST", "/data?delete", UNSIGNED_TRAILER, &extra).into_bytes();
+            req.extend(body);
+            req
+        };
+        let framed_doc = framed(doc.as_bytes(), UNSIGNED_TRAILER, true);
+        let answer = exchange(&proxy, &batch(framed_doc.clone()), Then::Waits).await;
+        assert!(!answer.contains("sonde refused"), "{answer}");
+        assert_eq!(store.sent("POST").len(), 1, "sent on");
+        let r = log
+            .snapshot()
+            .into_iter()
+            .find(|r| r.kind == "DeleteObjects")
+            .unwrap();
+        assert_eq!(r.rare().request_body.as_deref(), Some(doc));
+        // longer than its framing: refused, and not sent
+        let mut more = framed_doc;
+        more.extend(b"<Object><Key>old</Key></Object>");
+        let answer = exchange(&proxy, &batch(more), Then::Waits).await;
+        // (refused before it is sent, as framing or as a document that does not read)
+        assert!(answer.starts_with("HTTP/1.1 4"), "{answer}");
+        assert_eq!(store.sent("POST").len(), 1);
+    })
+    .await;
+}

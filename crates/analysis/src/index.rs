@@ -442,14 +442,7 @@ pub fn update<T>(
             r.present = true;
             r.lines += lines.iter().filter(|b| **b == b'\n').count();
             // mostly stale lines: written again, one line a thing kept
-            let f = &r.index.folder;
-            let things = r.index.runs.len()
-                + f.baselines.len()
-                + f.findings.len()
-                + f.verdicts.len()
-                + f.imports.len()
-                + f.marks.len()
-                + f.elsewhere.len();
+            let things = kept(&r.index);
             if r.lines > 64 && r.lines > 4 * things {
                 let index = r.index.clone();
                 drop(read);
@@ -463,12 +456,98 @@ pub fn update<T>(
     Ok(out)
 }
 
+/// The lines a compacted index holds: one for each thing kept, in the
+/// order [`compact`] writes them.
+fn lines_of(index: &Index) -> Vec<(&str, Change)> {
+    let mut out = Vec::with_capacity(kept(index));
+    for (name, e) in &index.runs {
+        let name = name.as_str();
+        if let Some(c) = &e.counted {
+            out.push((name, Change::Counted(Box::new(c.clone()))));
+        }
+        if let Some(t) = &e.trials {
+            out.push((name, Change::Trials(t.clone())));
+        }
+        if let Some(x) = e.exit {
+            out.push((name, Change::Exit(x)));
+        }
+        if let Some(t) = &e.title {
+            out.push((name, Change::Title(Some(t.clone()))));
+        }
+        if let Some(v) = &e.relies {
+            out.push((name, Change::Relies(v.clone())));
+        }
+    }
+    let f = &index.folder;
+    let some = |v: &Value| Some(v.clone());
+    out.extend(
+        f.baselines
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Baseline(Some(v.clone())))),
+    );
+    out.extend(
+        f.findings
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Findings(some(v)))),
+    );
+    out.extend(
+        f.verdicts
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Verdicts(some(v)))),
+    );
+    out.extend(
+        f.imports
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Import(Some(v.clone())))),
+    );
+    out.extend(
+        f.marks
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Mark(some(v)))),
+    );
+    out.extend(
+        f.elsewhere
+            .iter()
+            .map(|k| (k.as_str(), Change::Elsewhere(true))),
+    );
+    out.extend(
+        f.recorded
+            .iter()
+            .map(|(k, v)| (k.as_str(), Change::Recorded(Some(v.clone())))),
+    );
+    out
+}
+
+/// How many lines [`lines_of`] makes, counted without making them: what a
+/// compacted index of `index` is as long as.
+fn kept(index: &Index) -> usize {
+    let f = &index.folder;
+    index
+        .runs
+        .values()
+        .map(|e| {
+            usize::from(e.counted.is_some())
+                + usize::from(e.trials.is_some())
+                + usize::from(e.exit.is_some())
+                + usize::from(e.title.is_some())
+                + usize::from(e.relies.is_some())
+        })
+        .sum::<usize>()
+        + f.baselines.len()
+        + f.findings.len()
+        + f.verdicts.len()
+        + f.imports.len()
+        + f.marks.len()
+        + f.elsewhere.len()
+        + f.recorded.len()
+}
+
 /// Writes the index again with one line for each thing kept (under the
 /// lock, held by the caller).
 fn compact(dir: &Path, index: &Index) {
     let file = dir.join(FILE);
     let mut out = Vec::new();
-    let mut push = |name: &str, change: Change| {
+    for (name, change) in lines_of(index) {
         if let Ok(l) = serde_json::to_vec(&Line {
             name: name.to_string(),
             change,
@@ -476,42 +555,6 @@ fn compact(dir: &Path, index: &Index) {
             out.extend_from_slice(&l);
             out.push(b'\n');
         }
-    };
-    for (name, e) in &index.runs {
-        if let Some(c) = &e.counted {
-            push(name, Change::Counted(Box::new(c.clone())));
-        }
-        if let Some(t) = &e.trials {
-            push(name, Change::Trials(t.clone()));
-        }
-        if let Some(x) = e.exit {
-            push(name, Change::Exit(x));
-        }
-        if let Some(t) = &e.title {
-            push(name, Change::Title(Some(t.clone())));
-        }
-    }
-    let f = &index.folder;
-    for (k, v) in &f.baselines {
-        push(k, Change::Baseline(Some(v.clone())));
-    }
-    for (k, v) in &f.findings {
-        push(k, Change::Findings(Some(v.clone())));
-    }
-    for (k, v) in &f.verdicts {
-        push(k, Change::Verdicts(Some(v.clone())));
-    }
-    for (k, v) in &f.imports {
-        push(k, Change::Import(Some(v.clone())));
-    }
-    for (k, v) in &f.marks {
-        push(k, Change::Mark(Some(v.clone())));
-    }
-    for k in &f.elsewhere {
-        push(k, Change::Elsewhere(true));
-    }
-    for (k, v) in &f.recorded {
-        push(k, Change::Recorded(Some(v.clone())));
     }
     if reqlog::private::replace(&file, &out).is_ok() {
         READ.lock().remove(dir);
@@ -642,6 +685,58 @@ mod tests {
         assert!(!recorded_in(dir.path(), &own));
         set(&own, Change::Exit(0));
         assert!(recorded_in(dir.path(), &own));
+    }
+
+    /// Compacting keeps all a run has (a replay's reliances too), and only
+    /// an index mostly of stale lines is compacted: one whose runs each
+    /// keep several things is not written again on each change.
+    #[test]
+    fn compaction_keeps_everything_and_comes_only_when_most_lines_are_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(FILE);
+        let lines = || std::fs::read_to_string(&file).unwrap().lines().count();
+        let relies = serde_json::json!([{"relies": "read-after-write", "verdict": "holds"}]);
+        for i in 0..20 {
+            let run = dir.path().join(format!("r{i}.sonde"));
+            set(&run, Change::Counted(Box::new(counted(i))));
+            set(&run, Change::Trials(Vec::new()));
+            set(&run, Change::Exit(0));
+            set(&run, Change::Title(Some(format!("run {i}"))));
+            set(&run, Change::Relies(relies.clone()));
+        }
+        let o = dir.path().join("elsewhere.sonde");
+        update(dir.path(), |_| {
+            (
+                vec![(
+                    o.to_string_lossy().into_owned(),
+                    Change::Recorded(Some("ab".into())),
+                )],
+                (),
+            )
+        })
+        .unwrap();
+        // 101 lines, each of a thing still kept: nothing to compact
+        assert_eq!(lines(), 101);
+        assert_eq!(kept(&of(dir.path())), 101);
+        let a = dir.path().join("r0.sonde");
+        set(&a, Change::Exit(1));
+        assert_eq!(lines(), 102, "written again with one line stale");
+        // stale lines past four in five: compacted to the things kept
+        for i in 0..400 {
+            set(&a, Change::Exit(i));
+        }
+        assert!(lines() < 200, "{}", lines());
+        READ.lock().clear();
+        let index = of(dir.path());
+        assert_eq!(index.runs["r7.sonde"].relies, Some(relies));
+        assert_eq!(index.runs.len(), 20);
+        assert!(
+            index
+                .folder
+                .recorded
+                .contains_key(o.to_string_lossy().as_ref())
+        );
+        assert_eq!(lines_of(&index).len(), kept(&index));
     }
 
     #[test]

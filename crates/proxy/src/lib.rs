@@ -1335,8 +1335,9 @@ fn text_key(raw: &str) -> bool {
 /// query: its bucket and base are ASCII, so it is text where its key is.
 fn url_path(url: &str) -> Option<&str> {
     let rest = url.split_once("://")?.1;
-    let path = &rest[rest.find('/')?..];
-    Some(path.split_once('?').map_or(path, |(p, _)| p))
+    // (a URL with no path has none, whatever its query holds)
+    let rest = rest.split(['?', '#']).next()?;
+    Some(&rest[rest.find('/')?..])
 }
 
 /// Whether a key as a record has it could be one that is not text: it
@@ -1515,6 +1516,18 @@ pub fn refused_by_policy(r: &Record) -> bool {
     r.response_headers()
         .iter()
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-policy"))
+}
+
+/// Every value of the list header `name`, joined by commas as one: a
+/// second `Transfer-Encoding` or `x-amz-trailer` is read, not passed over
+/// while it is forwarded.
+fn header_list(headers: &http::HeaderMap, name: &str) -> String {
+    headers
+        .get_all(name)
+        .iter()
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn header_value(headers: &http::HeaderMap, name: &str) -> String {
@@ -1697,7 +1710,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
-    let chunked_te = header_value(&parts.headers, "transfer-encoding")
+    let chunked_te = header_list(&parts.headers, "transfer-encoding")
         .to_ascii_lowercase()
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
@@ -1748,7 +1761,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             Ok(raw) => {
                 // the document itself, not its transfer framing
                 // (kept now: a request sonde answers itself has it too)
-                let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
+                // (an unsigned aws-chunked one too: the store reads the
+                // document inside it, so no-delete and the record must)
+                let hash = match (streaming_sig || unsigned_chunks).then(|| chunked::decode(&raw)) {
                     Some(Ok(d)) => {
                         record.rare_mut().request_body =
                             Some(String::from_utf8_lossy(&d.payload).into_owned());
@@ -1982,17 +1997,26 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     let read = whole(early.take(), body.take(), 1 << 20, idle)
                         .await
                         .and_then(|raw| {
-                            // unsigned aws-chunked: the payload it said it had
-                            if unsigned_chunks && declared.is_some() {
-                                let d = chunked::decode(&raw).map_err(BodyError::framing)?;
-                                BodyError::length(declared, d.payload.len() as u64)?;
-                            }
-                            Ok(raw)
+                            // unsigned aws-chunked: the payload it said it
+                            // had, which is the document (sent as it came)
+                            let doc = match unsigned_chunks.then(|| chunked::decode(&raw)) {
+                                Some(Ok(d)) => {
+                                    BodyError::length(declared, d.payload.len() as u64)?;
+                                    Some(d.payload)
+                                }
+                                Some(Err(e)) if declared.is_some() => {
+                                    return Err(BodyError::framing(e));
+                                }
+                                _ => None,
+                            };
+                            Ok((raw, doc))
                         });
                     match read {
-                        Ok(raw) => {
-                            record.rare_mut().request_body =
-                                Some(String::from_utf8_lossy(&raw).into_owned());
+                        Ok((raw, doc)) => {
+                            record.rare_mut().request_body = Some(
+                                String::from_utf8_lossy(doc.as_deref().unwrap_or(&raw))
+                                    .into_owned(),
+                            );
                             (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
@@ -2317,6 +2341,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
             if record.rare().injected.is_some() {
                 builder = builder.header("x-sonde-fault", name.as_str());
+            }
+            // the keys the program was shown, as any listing's record says
+            if reqlog::is_listing(&record.kind) {
+                let mut keys = reqlog::KeyCounter::default();
+                keys.feed(&sent);
+                record
+                    .lists_mut()
+                    .response_headers
+                    .push(Header::new(reqlog::KEYS_HEADER, keys.keys.to_string()));
             }
             record.response_bytes = Some(sent.len() as u64).into();
             record.first_byte_ms = Some(record.latency_ms).into();
@@ -2699,7 +2732,7 @@ fn named_checksums(
     trailers: Vec<(String, String)>,
 ) -> Result<Vec<(String, String)>, BodyError> {
     let mut out = Vec::new();
-    for name in header_value(headers, "x-amz-trailer")
+    for name in header_list(headers, "x-amz-trailer")
         .split(',')
         .map(|t| t.trim().to_ascii_lowercase())
         .filter(|t| chunked::checksum_len(t).is_some())
@@ -3022,7 +3055,7 @@ impl Streamed {
         let decoded = header_value(headers, "x-amz-decoded-content-length")
             .parse()
             .ok()?;
-        let trailers = header_value(headers, "x-amz-trailer")
+        let trailers = header_list(headers, "x-amz-trailer")
             .split(',')
             .map(|t| t.trim().to_ascii_lowercase())
             .filter(|t| !t.is_empty())
@@ -3299,6 +3332,9 @@ mod tests {
         assert!(sent("/data/tmp/a", "tmp/a"));
         assert_eq!(url_path("http://h/b/k?q=1"), Some("/b/k"));
         assert_eq!(url_path(""), None);
+        assert_eq!(url_path("http://h?x=/b/k"), None);
+        assert_eq!(url_path("http://h#/b"), None);
+        assert_eq!(url_path("http://h/b/k#f/g"), Some("/b/k"));
     }
     #[test]
     fn an_injected_error_is_escaped_as_a_refusal_is() {

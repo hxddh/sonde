@@ -1768,7 +1768,22 @@ fn import_file(path: &str) -> Result<String, String> {
     if let Ok((own, _)) = own_run(path) {
         return Ok(own.to_string_lossy().into_owned());
     }
-    import_file_in(&sonde().paths().runs(), Path::new(path))
+    let dir = sonde().paths().runs();
+    match opened_in_place(&dir, Path::new(path)) {
+        Some(p) => Ok(p),
+        None => import_file_in(&dir, Path::new(path)),
+    }
+}
+
+/// The run at `from` as it is, when it is one this sonde recorded with
+/// `-o` and still the file it wrote ([`origin_in`] `dir`): listed with
+/// the folder's runs already, it opens there as it does from the list,
+/// not as an import's copy of itself (from elsewhere, and listed twice).
+fn opened_in_place(dir: &Path, from: &Path) -> Option<String> {
+    (origin_in(dir, from) == Origin::Recorded)
+        .then(|| from.canonicalize().ok())
+        .flatten()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Recorded runs and the live recording, as TSX calls them.
@@ -3898,6 +3913,31 @@ mod tests {
         let (elsewhere, _, _) = run_and_trial(other.path(), "python job.py", None);
         let e = own_run_in(dir.path(), &elsewhere).unwrap_err();
         assert!(e.contains("is not one of sonde's runs"), "{e}");
+    }
+
+    /// A run this sonde recorded with `-o`, opened from where it is (a
+    /// drop, `sonde show --app`), opens there as the list opens it: not as
+    /// an import's copy, from elsewhere and listed twice. Once another file
+    /// is at its path, that file is imported as any other.
+    #[test]
+    fn a_run_recorded_with_o_opens_where_it_is() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("runs");
+        let (recorded, _, _) = run_and_trial(&dir, "python job.py", None);
+        let text = std::fs::read_to_string(&recorded).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let o = out.path().join("agent.sonde");
+        std::fs::write(&o, &text).unwrap();
+        // a copy no sonde wrote there is imported
+        assert_eq!(opened_in_place(&dir, &o), None);
+        let digest = sonde_analysis::index::digest_of(&o).unwrap();
+        sonde_analysis::index::note_recorded(&dir, &o, digest);
+        let opened = opened_in_place(&dir, &o).unwrap();
+        assert_eq!(Path::new(&opened), o.canonicalize().unwrap());
+        assert_eq!(origin_in(&dir, Path::new(&opened)), Origin::Recorded);
+        // another file put at its path is from elsewhere: copied, as before
+        std::fs::write(&o, text.replacen("python job.py", "python other.py", 1)).unwrap();
+        assert_eq!(opened_in_place(&dir, &o), None);
     }
 
     /// A run's command is started on the run's word alone only when sonde

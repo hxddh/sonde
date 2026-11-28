@@ -525,18 +525,17 @@ impl<'a> Depends<'a> {
     const SCAN: usize = 1024;
 
     fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
-        r.kind.starts_with("ListObjects").then(|| {
+        // (of objects or of their versions: each pages on as the other)
+        (r.kind.starts_with("ListObjects") || r.kind == "ListObjectVersions").then(|| {
             let prefix = crate::episode::query(r, "prefix").unwrap_or("");
             (r.bucket.as_deref().unwrap_or(""), prefix)
         })
     }
 
-    /// Whether a listing is a page after the first: it carries where the
-    /// page before ended (V2's token or start-after, ListObjects' marker).
+    /// Whether a listing is a page after the first
+    /// ([`crate::episode::later_page`]).
     fn next_page(r: &Record) -> bool {
-        ["continuation-token", "marker", "start-after"]
-            .iter()
-            .any(|q| crate::episode::query(r, q).is_some_and(|v| !v.is_empty()))
+        crate::episode::later_page(r)
     }
 
     /// The upload a part is of: its id.
@@ -2226,8 +2225,7 @@ fn object_for<'r>(kind: &str, r: &'r Record) -> Option<(&'r str, &'r str)> {
         "obs.listed"
             if r.kind.starts_with("ListObjects")
                 && !r.is_error()
-                && crate::episode::query(r, "continuation-token").is_none()
-                && crate::episode::query(r, "marker").is_none_or(str::is_empty) =>
+                && !crate::episode::later_page(r) =>
         {
             Some((
                 b.unwrap_or(""),
@@ -4090,6 +4088,30 @@ mod injected {
                 .collect();
             assert_eq!(chains(&rs)[0].levels, (0..12).collect::<Vec<u32>>());
         }
+        // ListObjectVersions' pages too, by their key-marker
+        let rs: Vec<Record> = (1..=12u64)
+            .map(|i| {
+                let mut q = vec![("prefix", "in/"), ("versions", "")];
+                if i > 1 {
+                    q.push(("key-marker", "in/k"));
+                }
+                at(i, "ListObjectVersions", "GET", None, &q)
+            })
+            .collect();
+        assert_eq!(chains(&rs)[0].levels, (0..12).collect::<Vec<u32>>());
+        // an empty marker is no page before: twelve first pages, at once
+        let rs: Vec<Record> = (1..=12u64)
+            .map(|i| {
+                at(
+                    i,
+                    "ListObjects",
+                    "GET",
+                    None,
+                    &[("prefix", "in/"), ("marker", "")],
+                )
+            })
+            .collect();
+        assert_eq!(chains(&rs)[0].levels, vec![0; 12]);
         // twenty parts of one upload sent one at a time: at once after it
         // began, then it completes
         let mut parts = vec![at(
