@@ -666,7 +666,7 @@ test("a program's newest run past its baseline says so in the sidebar", async ()
   expect(app.shows("id:run-1 >> id:run-past")).toBe(false);
 }, 120000);
 
-test("a run written with -o is listed and opened, and never offered Rename, Delete or Set as baseline", async () => {
+test("a run written with -o is listed and opened, never offered Rename or Delete, and can be its program's baseline", async () => {
   const app = await demo();
   await app.clear("id:run-command");
   await app.type("id:run-command", elsewhereCommand("python agent_elsewhere.py"));
@@ -688,11 +688,12 @@ test("a run written with -o is listed and opened, and never offered Rename, Dele
   expect(more).toContain("Copy file path");
   expect(more).not.toContain("Rename…");
   expect(more).not.toContain("Delete…");
-  // History's baseline stays, and says why it cannot be pressed
+  // it can be its program's baseline, as `sonde check --set-baseline` makes it (34.2)
   await app.press("id:run-pane-mode-runs");
   await app.waitFor("id:history-baseline", { timeout: 10000 });
-  expect(app.enabled("id:history-baseline")).toBe(false);
-  expect(app.shows("label:/^Set as baseline, Written outside sonde's runs folder \\(-o\\)/")).toBe(true);
+  expect(app.enabled("id:history-baseline")).toBe(true);
+  await app.press("id:history-baseline");
+  await app.waitFor("label:Clear baseline", { timeout: 10000 });
   // a run of the runs folder still has all three
   await app.rightClick("id:run-0");
   const own = app.menu()!.map((m) => m.label);
