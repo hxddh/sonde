@@ -2660,7 +2660,7 @@ dependencies = [
  "sha2 0.11.2",
  "sonde-fmt",
  "sonde-proxy",
- "syn 2.0.119",
+ "syn 3.0.10",
  "tempfile",
  "tokio",
  "toml 1.2.3+spec-1.1.0",

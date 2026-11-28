@@ -34,7 +34,7 @@ hex.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true
 # Rust's parser, for the Rust fixes sonde prints (tests/fix_code.rs)
-syn = { version = "2", default-features = false, features = ["full", "parsing"] }
+syn = { version = "3", default-features = false, features = ["full", "parsing"] }
 # the small S3 of the proxy's tests (tests/common, by #[path]), which the replay
 # tests run against
 hyper = { version = "1", features = ["server", "http1"] }
