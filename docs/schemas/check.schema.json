@@ -537,7 +537,7 @@
             "warnings",
             "findings"
           ],
-          "description": "`findings`: how many of the run's findings `[check.findings]` does not know, or knows with a smaller count (limit 0)."
+          "description": "`findings`: how many of the run's findings `[check.findings]` does not know, or knows with a smaller count (limit 0). `p95` is no longer written (its budget, `max-p95`, went in 22.0): kept for readers of older outputs."
         },
         "value": {
           "type": "number"

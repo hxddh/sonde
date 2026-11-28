@@ -1,10 +1,12 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (pinned at its tag `v0.7.0`, commit `3f8ecd8`, see
+sonde was written against Native Shell as it is (pinned at its tag `v0.7.2`, commit `0c29b5e`, see
 `Cargo.toml`), without changing it. These are the gaps it met, each with what sonde does instead. Those Native Shell
 has since fixed, and what sonde took from 0.5.0 and 0.7.0: [history](../history/findings-resolved.md).
 Rechecked at `v0.7.0`: 10 is fixed, 7 and 24 eased; 22 and 26 still met (the Linux tour without `FocusRest`, a
 headless Escape); 12 and 19 need macOS (CI's pictures), 15 the tour without its workaround: not rechecked.
+`v0.7.1` and `v0.7.2` (canvases redrawn by what changed on Linux and macOS, a list's hidden rows, Windows' HiDPI
+wheel in a multiline input) touch none of these; the tour on every platform is their check.
 
 ## Open
 

@@ -552,6 +552,29 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             color
         )
     );
+    // the next step: what did not survive, tried again once changed
+    let again: Vec<String> = trials
+        .iter()
+        .filter(|t| matches!(t.standing, Standing::Broke | Standing::Degraded))
+        .map(|t| {
+            let name = match t.times {
+                Some(n) => format!("{}:{n}", t.scenario),
+                None => t.scenario.clone(),
+            };
+            format!("--fault {}", sonde_analysis::program::shell_join(&[name]))
+        })
+        .collect();
+    if !again.is_empty() {
+        let store = sonde_analysis::run::read_header(&file)
+            .and_then(|h| super::record::store_args(&h))
+            .map(|a| format!("{a} "))
+            .unwrap_or_default();
+        eprintln!(
+            "after a change: sonde run {store}{} -- {}",
+            again.join(" "),
+            sonde_analysis::program::shell_join(&a.command)
+        );
+    }
     Ok(if broke > 0 { 1 } else { 0 })
 }
 

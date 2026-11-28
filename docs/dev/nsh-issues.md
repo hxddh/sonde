@@ -1,6 +1,6 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, last checked at `v0.7.0` (`3f8ecd8`): those below still stand (the GTK focus one seen
+Drafts for `longbridge/nsh`, last checked at `v0.7.0` (`3f8ecd8`; sonde is at `v0.7.2`, whose changes touch none of them): those below still stand (the GTK focus one seen
 again in the Linux tour; the macOS backdrop one waits on CI's macOS pictures), and the last four are new. sonde works
 around them in its own code (FINDINGS 18, 19, 22, 23) and does not patch Native Shell.
 

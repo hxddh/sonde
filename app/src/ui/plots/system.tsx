@@ -303,7 +303,7 @@ export function ValueAxis(props: { peak: number; say: (v: number) => string; /**
  * (`STRIP`) needs more of its height for the same words. */
 export const HEADROOM = { plot: 1.25, strip: 1.45 } as const;
 
-/** A budget drawn on its chart: sonde.toml's limit (`max-p95`, `max-errors`,
+/** A budget drawn on its chart: sonde.toml's limit (`max-errors`,
  * `max-waiting`) as a dashed line in the warning's tone, its words over it at
  * the far edge ("budget 50 ms"). Nothing where the run's program has no
  * budget for it. The chart's domain must reach it (`budgetTop`). */

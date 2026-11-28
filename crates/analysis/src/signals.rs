@@ -374,8 +374,62 @@ fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
     out
 }
 
+/// The call a request was an attempt of, as the SDK said it (its
+/// `amz-sdk-invocation-id`, the same for each attempt of one call), and
+/// which attempt (`amz-sdk-request: attempt=2; max=3`).
+pub(crate) fn attempt_of(r: &Record) -> Option<(&str, u32)> {
+    let header = |n: &str| {
+        r.request_headers()
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case(n))
+            .map(|h| h.value.trim())
+    };
+    let call = header("amz-sdk-invocation-id").filter(|v| !v.is_empty())?;
+    let n = header("amz-sdk-request")?
+        .split(';')
+        .find_map(|p| p.trim().strip_prefix("attempt="))?
+        .trim()
+        .parse()
+        .ok()?;
+    Some((call, n))
+}
+
 /// [`retry_links`] among the requests of one name (`group`, by index).
+/// Attempts the SDK numbered ([`attempt_of`]) are linked by that: a retry
+/// is the next attempt of the same call, and two calls are never one's
+/// retry (a program polling with its SDK is not read as backing off). The
+/// rest are linked by their times.
 fn link_retries(records: &[Record], group: &mut [usize], out: &mut Vec<(usize, usize)>) {
+    if !group
+        .iter()
+        .any(|&i| crate::episode::retryable(&records[i]))
+    {
+        return;
+    }
+    let (said, rest): (Vec<usize>, Vec<usize>) = group
+        .iter()
+        .partition(|&&i| attempt_of(&records[i]).is_some());
+    if !said.is_empty() {
+        let by: std::collections::HashMap<(&str, u32), usize> = said
+            .iter()
+            .filter_map(|&i| attempt_of(&records[i]).map(|a| (a, i)))
+            .collect();
+        for &i in &said {
+            if let Some((call, n)) = attempt_of(&records[i])
+                && crate::episode::retryable(&records[i])
+                && let Some(&next) = by.get(&(call, n + 1))
+            {
+                out.push((i, next));
+            }
+        }
+        let mut rest = rest;
+        return link_by_time(records, &mut rest, out);
+    }
+    link_by_time(records, group, out)
+}
+
+/// [`link_retries`] by the requests' times, for attempts no SDK numbered.
+fn link_by_time(records: &[Record], group: &mut [usize], out: &mut Vec<(usize, usize)>) {
     if !group
         .iter()
         .any(|&i| crate::episode::retryable(&records[i]))
@@ -1399,6 +1453,49 @@ mod tests {
             ]),
             1
         );
+    }
+
+    /// Where the SDK numbered its attempts, a retry is the next attempt of
+    /// the same call, whatever the times say: a second call soon after a
+    /// failure is not its retry, and a retry long after (an SDK's backoff
+    /// past the window) is. Requests it did not number are read by time.
+    #[test]
+    fn an_sdks_numbered_attempts_are_read_as_it_numbered_them() {
+        let attempt = |id, at, status, call: &str, n: u32| {
+            let mut r = get(id, at, "k", status);
+            let h = &mut r.lists_mut().request_headers;
+            h.push(Header::new("amz-sdk-invocation-id", call));
+            h.push(Header::new(
+                "amz-sdk-request",
+                format!("attempt={n}; max=3"),
+            ));
+            r
+        };
+        // two calls, the second right after the first failed: no retry
+        assert_eq!(
+            retries(&[attempt(1, 0, 503, "a", 1), attempt(2, 100, 200, "b", 1)]),
+            0
+        );
+        // one call's second attempt, past the window: its retry
+        assert_eq!(
+            retries(&[attempt(1, 0, 503, "a", 1), attempt(2, 90_000, 200, "a", 2)]),
+            1
+        );
+        // three attempts of one call at a steady pace: two retries, no poll
+        let three = [
+            attempt(1, 0, 503, "a", 1),
+            attempt(2, 1_000, 503, "a", 2),
+            attempt(3, 2_000, 200, "a", 3),
+        ];
+        assert_eq!(retries(&three), 2);
+        let gave = gave_up(&three);
+        assert!(gave.iter().all(|g| !g));
+        // a call whose last attempt failed is given up on, once
+        let lost = [attempt(1, 0, 503, "a", 1), attempt(2, 1_000, 503, "a", 2)];
+        assert_eq!(gave_up(&lost), vec![false, true]);
+        // requests no SDK numbered, beside them, read by their times
+        assert_eq!(retries(&[get(1, 0, "k", 503), get(2, 100, "k", 200)]), 1);
+        assert_eq!(attempt_of(&get(1, 0, "k", 200)), None);
     }
 
     #[test]

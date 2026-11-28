@@ -57,6 +57,9 @@
         "byKind"
       ]
     },
+    "signals": {
+      "$ref": "#/$defs/signals"
+    },
     "cost": {
       "$ref": "#/$defs/cost"
     },
@@ -93,7 +96,7 @@
         "string",
         "null"
       ],
-      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), as it was recorded (its store, policy and TLS), to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
+      "description": "The command that records the program again, in the folder it ran in (`run.cwd`), as it was recorded (its store, policy and TLS), with `--fault S` for each scenario of its last trial it did not survive, to see a fix work: then `since.findings[].state` says fixed, less, more, new or open. Null for a run that is no program's (an import, a replay)."
     },
     "trials": {
       "type": "array",
@@ -402,6 +405,9 @@
         "p95Ms": {
           "type": "number"
         },
+        "p99Ms": {
+          "type": "number"
+        },
         "maxMs": {
           "type": "number"
         },
@@ -632,7 +638,8 @@
           "type": "integer"
         },
         "errors": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Failed requests (4xx and 5xx but misses, and transport errors), each attempt counted: one retried until it succeeded is one. What `check`'s `max-errors` counts, the requests failed after their retries, is `signals.errors.gaveUp`."
         },
         "misses": {
           "type": "integer"
@@ -1824,6 +1831,315 @@
       "required": [
         "sdk",
         "code"
+      ]
+    },
+    "signals": {
+      "type": "object",
+      "description": "What the app's charts read of the run, as figures (their lines over time are the app's and the shared page's).",
+      "properties": {
+        "timed": {
+          "type": "boolean",
+          "description": "Whether the requests' times are known (an imported log's are to the second): without them the times below are 0 or absent."
+        },
+        "errors": {
+          "type": "object",
+          "description": "Failed requests by kind (a lookup that found nothing is none), the requests sent again, and those the program gave up on.",
+          "properties": {
+            "client": {
+              "type": "integer",
+              "description": "4xx, but a throttle."
+            },
+            "server": {
+              "type": "integer",
+              "description": "5xx, but a throttle."
+            },
+            "throttled": {
+              "type": "integer",
+              "description": "The store asked the program to slow down (503 SlowDown, 429)."
+            },
+            "transport": {
+              "type": "integer",
+              "description": "No answer, or one cut short."
+            },
+            "injected": {
+              "type": "integer",
+              "description": "A fault scenario's doing, whatever it looked like."
+            },
+            "retries": {
+              "type": "integer",
+              "description": "Times a request was sent again after a failure: by the SDK's attempt header (`amz-sdk-request`) where it sent one, else by the same request again."
+            },
+            "gaveUp": {
+              "type": "integer",
+              "description": "Failures no retry followed: what `check`'s `max-errors` counts."
+            }
+          },
+          "required": [
+            "client",
+            "server",
+            "throttled",
+            "transport",
+            "injected",
+            "retries",
+            "gaveUp"
+          ]
+        },
+        "inFlight": {
+          "type": "object",
+          "properties": {
+            "peak": {
+              "type": "integer",
+              "description": "The most requests at once (`waiting.peakInFlight`)."
+            },
+            "peakAtMs": {
+              "type": "number",
+              "description": "When, from the run's start."
+            }
+          },
+          "required": [
+            "peak",
+            "peakAtMs"
+          ]
+        },
+        "firstByte": {
+          "description": "The wait for an answer's first byte against the rest; null when no request's first byte was timed.",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "share": {
+                  "type": "number",
+                  "description": "Of the timed requests' time, the part before the first byte (0 to 1)."
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "byKind": {
+                  "type": "array",
+                  "description": "Each kind of request, most requests first: medians.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer"
+                      },
+                      "firstByteMs": {
+                        "type": "number"
+                      },
+                      "restMs": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "count",
+                      "firstByteMs",
+                      "restMs"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "share",
+                "count",
+                "byKind"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sizes": {
+          "type": "object",
+          "description": "Bodies sent and received by size, and how fast transfers moved.",
+          "properties": {
+            "request": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "leBytes": {
+                    "type": "integer",
+                    "description": "Bodies of up to this many bytes, and more than the bucket before (each is twice the last; 0 is the empty body)."
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "bytes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "leBytes",
+                  "count",
+                  "bytes"
+                ]
+              }
+            },
+            "response": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "leBytes": {
+                    "type": "integer",
+                    "description": "Bodies of up to this many bytes, and more than the bucket before (each is twice the last; 0 is the empty body)."
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "bytes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "leBytes",
+                  "count",
+                  "bytes"
+                ]
+              }
+            },
+            "throughput": {
+              "type": "array",
+              "description": "Transfers of 64 KiB and more, by kind of request and size bucket: the median.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "bucket": {
+                    "type": "integer",
+                    "description": "The size bucket, by its upper bound in bytes."
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "mibPerSec": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bucket",
+                  "count",
+                  "mibPerSec"
+                ]
+              }
+            },
+            "mibPerSec": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "All timed transfers: the median."
+            }
+          },
+          "required": [
+            "request",
+            "response",
+            "throughput",
+            "mibPerSec"
+          ]
+        },
+        "statuses": {
+          "type": "array",
+          "description": "Every answer the run got, most frequent first, and when.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Null: no answer."
+              },
+              "code": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "S3's error code, where the answer's body gave one."
+              },
+              "count": {
+                "type": "integer"
+              },
+              "injected": {
+                "type": "integer",
+                "description": "Of them, a fault scenario's."
+              },
+              "firstMs": {
+                "type": "number"
+              },
+              "lastMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "status",
+              "code",
+              "count",
+              "injected",
+              "firstMs",
+              "lastMs"
+            ]
+          }
+        },
+        "prefixes": {
+          "type": "array",
+          "description": "Each prefix's busiest second against what S3 serves a prefix (5,500 reads and 3,500 writes a second).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "prefix": {
+                "type": "string"
+              },
+              "folders": {
+                "type": "integer"
+              },
+              "requests": {
+                "type": "integer"
+              },
+              "peakReads": {
+                "type": "integer"
+              },
+              "peakWrites": {
+                "type": "integer"
+              },
+              "readShare": {
+                "type": "number",
+                "description": "Of S3's limit (1 is the limit)."
+              },
+              "writeShare": {
+                "type": "number",
+                "description": "Of S3's limit (1 is the limit)."
+              }
+            },
+            "required": [
+              "prefix",
+              "folders",
+              "requests",
+              "peakReads",
+              "peakWrites",
+              "readShare",
+              "writeShare"
+            ]
+          }
+        }
+      },
+      "required": [
+        "timed",
+        "errors",
+        "inFlight",
+        "firstByte",
+        "sizes",
+        "statuses",
+        "prefixes"
       ]
     }
   }

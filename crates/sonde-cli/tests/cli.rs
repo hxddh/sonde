@@ -2203,7 +2203,8 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         "{}",
         stdout(&c)
     );
-    // a program is what its command runs: `check --init` writes no name
+    // `check --init` names the program its file is for, as what its command
+    // runs: a run with another argument is still that program's
     let cfg = t.path().join("sonde.toml");
     let init = sonde(
         t.path(),
@@ -2216,7 +2217,16 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         ],
     );
     assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
-    assert!(!std::fs::read_to_string(&cfg).unwrap().contains("[program]"));
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    let (name, runs) = (
+        text.lines().find(|l| l.starts_with("name = ")).unwrap(),
+        text.lines().find(|l| l.starts_with("runs = ")).unwrap(),
+    );
+    assert_eq!(
+        name.trim_start_matches("name = "),
+        runs.trim_start_matches("runs = "),
+        "{text}"
+    );
 }
 
 #[test]
@@ -4382,4 +4392,136 @@ fn show_reads_a_callers_line_only_from_source_inside_the_folder_the_run_ran_in()
     let run = crafted("disk.sonde", disk, &whole("outside.py"));
     let all = outputs(&run);
     assert!(!all.contains("SECRET-"), "{all}");
+}
+
+/// `check --init` writes the program it was made for (`[program]`), so
+/// `check` holds that program's runs and not whichever program ran last in
+/// the folder; and a run that failed or sent nothing is never a reason to
+/// tighten `[check.findings]`. Before 34.2 another program's run, recorded
+/// after, was checked against the file and its findings read as fixed.
+#[test]
+fn check_init_holds_its_own_program_and_a_failed_run_tightens_nothing() {
+    let t = tempfile::tempdir().unwrap();
+    let a = t.path().join("a");
+    std::fs::create_dir_all(&a).unwrap();
+    let r = sonde_in(
+        t.path(),
+        &a,
+        &[&["run", "--demo", "--"][..], &one_request(&a)].concat(),
+    );
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let init = sonde_in(t.path(), &a, &["check", "--init"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let text = std::fs::read_to_string(a.join("sonde.toml")).unwrap();
+    assert!(
+        text.contains("[program]\nname = \"get\"\nruns = \"get\""),
+        "{text}"
+    );
+    // another program, later, in the same folder
+    let other = sonde_in(t.path(), &a, &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(other.status.code(), Some(0), "{}", stderr(&other));
+    let ck = sonde_in(t.path(), &a, &["check"]);
+    assert_eq!(ck.status.code(), Some(0), "{}{}", stdout(&ck), stderr(&ck));
+    assert!(
+        stderr(&ck).contains("program \"get\" ([program] name"),
+        "{}",
+        stderr(&ck)
+    );
+    // the program itself failing: held to its exit, nothing to tighten
+    std::fs::write(a.join("get.sh"), "exit 5\n").unwrap();
+    let r = sonde_in(t.path(), &a, &["run", "--demo", "--", "sh", "get.sh"]);
+    assert_eq!(r.status.code(), Some(5));
+    let ck = sonde_in(t.path(), &a, &["check"]);
+    assert_ne!(ck.status.code(), Some(0));
+    let all = format!("{}{}", stdout(&ck), stderr(&ck));
+    assert!(!all.contains("tighten"), "{all}");
+}
+
+/// A finding that grew past what `[check.findings]` knows is said in CI on
+/// the line of code that sent it, as that, and with what to do.
+#[test]
+fn a_grown_finding_is_annotated_on_its_line_with_what_to_do() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    // the tour's first run: the job before its fix, with its findings
+    let first = tour_runs(t.path())[1].clone();
+    let cfg = t.path().join("sonde.toml");
+    let init = sonde(
+        t.path(),
+        &["check", &first, "--init", "--config", cfg.to_str().unwrap()],
+    );
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    // every known finding said to be one fewer than the run has
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    let mut findings = false;
+    let lowered: Vec<String> = text
+        .lines()
+        .map(|l| {
+            if l == "[check.findings]" {
+                findings = true;
+            }
+            match l.rsplit_once(" = ") {
+                Some((k, n)) if findings && k.starts_with('"') => {
+                    format!("{k} = {}", n.parse::<usize>().unwrap().saturating_sub(1))
+                }
+                _ => l.to_string(),
+            }
+        })
+        .collect();
+    std::fs::write(&cfg, lowered.join("\n")).unwrap();
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            &first,
+            "--config",
+            cfg.to_str().unwrap(),
+            "-f",
+            "github",
+        ],
+    );
+    assert_eq!(c.status.code(), Some(1), "{}", stdout(&c));
+    let line = stdout(&c)
+        .lines()
+        .find(|l| l.contains("title=sonde: a known finding grew::"))
+        .map(String::from)
+        .unwrap_or_else(|| panic!("{}", stdout(&c)));
+    assert!(line.starts_with("::error file="), "{line}");
+    assert!(line.contains(",line="), "{line}");
+    assert!(line.contains("grew ") && line.contains("Fix it"), "{line}");
+}
+
+/// `show` of a run in a folder sonde keeps nothing in (a file someone sent)
+/// only reads it: no index, no cache, no program history is left beside
+/// it.
+#[test]
+fn show_of_a_file_from_elsewhere_leaves_nothing_beside_it() {
+    let t = tempfile::tempdir().unwrap();
+    demo_run(t.path());
+    let first = tour_runs(t.path())[1].clone();
+    // a copy elsewhere, shown: nothing is written beside it
+    let sent = t.path().join("sent");
+    std::fs::create_dir_all(&sent).unwrap();
+    let from = t
+        .path()
+        .join("data")
+        .join("runs")
+        .join(format!("{first}.sonde"));
+    std::fs::copy(&from, sent.join("theirs.sonde")).unwrap();
+    for args in [&["-f", "json"][..], &[]] {
+        let s = sonde(
+            t.path(),
+            &[
+                &["show", sent.join("theirs.sonde").to_str().unwrap()][..],
+                args,
+            ]
+            .concat(),
+        );
+        assert_eq!(s.status.code(), Some(0), "{}", stderr(&s));
+    }
+    let beside: Vec<String> = std::fs::read_dir(&sent)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(beside, vec!["theirs.sonde".to_string()]);
 }

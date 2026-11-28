@@ -187,12 +187,33 @@ fn init_project(
     // whole figures a person reads and edits
     let waiting = sonde_analysis::program::timing_limit(run.waiting_ms, tolerance / 100.0).ceil();
     let (known, wrong) = sonde_analysis::program::known_of(findings);
-    let mut text = vec![
+    let mut text: Vec<String> = vec![
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
             "# Made from a run of {}; edit freely.",
             output::count(run.requests, "request")
         ),
+    ];
+    // the program this file is for: `check` holds its runs, not whichever
+    // ran last in the folder ([program] name, else the folder's newest)
+    if let (Some(name), Some(runs)) = (
+        sonde_analysis::program::key_of(header),
+        sonde_analysis::program::program_key(header.command.as_deref()),
+    ) {
+        text.extend([
+            "[program]".to_string(),
+            format!(
+                "name = {}",
+                serde_json::to_string(&name).unwrap_or_default()
+            ),
+            format!(
+                "runs = {}",
+                serde_json::to_string(&runs).unwrap_or_default()
+            ),
+            String::new(),
+        ]);
+    }
+    text.extend([
         "[check]".into(),
         format!("max-requests = {max_requests}"),
         // time moves from one identical run to the next: a limit made from
@@ -208,7 +229,7 @@ fn init_project(
         String::new(),
         "# The run's findings, each with its count: a run with another, or more of one, fails.".into(),
         "[check.findings]".into(),
-    ];
+    ]);
     // (an identity is written as a TOML string: JSON's escapes are TOML's)
     text.extend(
         known
@@ -728,6 +749,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         base.as_ref().map(|b| (&b.0, &[][..], &b.1, &b.2[..])),
         &budget,
     );
+    // a run that failed or sent nothing has its findings gone for that
+    // reason: no tightening is made of it
+    if failed.is_some() || c.empty {
+        c.loose.clear();
+    }
     // a known finding gone reads as its program kept it
     if let Some(kept) = program.as_ref().and_then(|p| {
         sonde_analysis::fixloop::read(&sonde_analysis::fixloop::folder_of(&file)).remove(p)
@@ -931,11 +957,31 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(w)
             );
         }
+        // each on the line of code that sent it, when the run names one, and
+        // with what to do: fix it, or keep it on purpose
         for g in &c.findings {
-            println!(
-                "::error title=sonde: not in sonde.toml's findings::{}",
-                gh_escape(&gated_line(g))
+            let title = match g.known {
+                Some(_) => "sonde: a known finding grew",
+                None => "sonde: a finding sonde.toml does not know",
+            };
+            let text = format!(
+                "{}. Fix it (`sonde show` has the change and the line), or, kept on purpose, give it its count in [check.findings] or `expect` it",
+                gated_line(g)
             );
+            let place = run
+                .2
+                .iter()
+                .find(|o| sonde_analysis::profile::finding_identity(o) == g.identity)
+                .and_then(|o| o.callers.first())
+                .and_then(|c| code_place(&c.place));
+            match place {
+                Some((file, line)) => println!(
+                    "::error file={},line={line},title={title}::{}",
+                    gh_property(&repo_path(header.cwd.as_deref(), &file)),
+                    gh_escape(&text)
+                ),
+                None => println!("::error title={title}::{}", gh_escape(&text)),
+            }
         }
         if let Some(t) = sonde_analysis::program::loose_line(&c.loose) {
             println!("::notice title=sonde check::{}", gh_escape(&t));

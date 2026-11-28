@@ -16,7 +16,7 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: cargo
-    directory: "/"
+    directories: ["/", "/tools/fix-check/rust"]
     schedule: { interval: monthly }
     open-pull-requests-limit: 20
     ignore:
@@ -33,15 +33,16 @@ updates:
         update-types: [minor, patch]
   # what the tests run: the SDKs of the smoke programs, the stores, the CI tools
   - package-ecosystem: npm
-    directory: "/tools/sdk-smoke/node"
+    # (the fix-check folders pin the same SDKs, moved with them)
+    directories: ["/tools/sdk-smoke/node", "/tools/fix-check/node"]
     schedule: { interval: monthly }
     groups: { sdk: { patterns: ["*"] } }
   - package-ecosystem: gomod
-    directories: ["/tools/sdk-smoke/go", "/tools/gen-woodpecker"]
+    directories: ["/tools/sdk-smoke/go", "/tools/fix-check/go", "/tools/gen-woodpecker"]
     schedule: { interval: monthly }
     groups: { go: { patterns: ["*"] } }
   - package-ecosystem: maven
-    directory: "/tools/sdk-smoke/java"
+    directories: ["/tools/sdk-smoke/java", "/tools/fix-check/java"]
     schedule: { interval: monthly }
     groups: { sdk: { patterns: ["*"] } }
   - package-ecosystem: docker-compose
