@@ -74,6 +74,12 @@ impl Decoder {
     }
 
     fn take(&mut self, input: &[u8], mut out: Option<&mut Vec<u8>>) -> Result<(), String> {
+        const AFTER: &str = "aws-chunked: bytes after its last chunk";
+        // the body has ended: anything past it is no part of it, and is
+        // neither kept nor sent on (a body longer than its framing says)
+        if self.state == State::Done && !input.is_empty() {
+            return Err(AFTER.into());
+        }
         let mut buf = std::mem::take(&mut self.held);
         buf.extend_from_slice(input);
         let mut at = 0;
@@ -81,6 +87,10 @@ impl Decoder {
         buf.drain(..at);
         self.held = buf;
         read?;
+        if self.state == State::Done && !self.held.is_empty() {
+            self.held = Vec::new();
+            return Err(AFTER.into());
+        }
         // (a line of LINE_MAX may be held with its CR, its LF to come)
         if self.held.len() > LINE_MAX + 1 && matches!(self.state, State::Head | State::Trailers) {
             return Err("aws-chunked: a line without CRLF".into());
@@ -406,5 +416,26 @@ mod tests {
             "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
         ));
         assert!(!is_signed_streaming("STREAMING-UNSIGNED-PAYLOAD-TRAILER"));
+    }
+
+    /// A body is over at its last chunk's blank line: bytes after it are
+    /// an error, at once (never held however many come), whole or in
+    /// pieces; the last chunk with no blank line after it still ends one.
+    #[test]
+    fn bytes_after_the_last_chunk_are_an_error_and_never_held() {
+        let body = b"3;chunk-signature=x\r\nabc\r\n0;chunk-signature=y\r\n\r\nmore";
+        assert!(decode(body).is_err());
+        let mut d = Decoder::default();
+        let mut out = Vec::new();
+        d.feed(&body[..body.len() - 4], &mut out).unwrap();
+        assert!(d.finish().is_ok());
+        assert!(d.feed(&vec![b'x'; 1 << 20], &mut out).is_err());
+        assert!(d.held.is_empty());
+        for piece in [1, 5, body.len()] {
+            let mut m = Decoder::default();
+            let failed = body.chunks(piece).any(|p| m.measure(p).is_err());
+            assert!(failed && m.held.is_empty(), "pieces of {piece}");
+        }
+        assert!(decode(b"3\r\nabc\r\n0\r\n").is_ok());
     }
 }

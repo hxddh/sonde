@@ -90,22 +90,33 @@ pub fn query_value_is_redacted(name: &str, value: &str) -> bool {
 /// signature and most of the key id. Unknown schemes are masked whole.
 /// Redacting what it made changes nothing: each part keeps its own mask.
 pub fn redact_authorization(value: &str) -> String {
-    let Some((scheme, rest)) = value.split_once(' ') else {
+    // (the scheme ends at any white space: a tab is a separator too)
+    let Some((scheme, rest)) = value
+        .split_once(|c: char| c.is_ascii_whitespace())
+        .map(|(s, r)| (s, r.trim_start_matches(|c: char| c.is_ascii_whitespace())))
+    else {
         return MASK.to_string();
     };
     if scheme.starts_with("AWS4-") {
+        // parameters are parted by commas, or by white space alone (as the
+        // proxy reads them): each word is looked at, so no signature is
+        // kept for following another parameter without a comma
         let parts: Vec<String> = rest
             .split(',')
             .map(|p| {
-                let p = p.trim();
-                if let Some(cred) = p.strip_prefix("Credential=") {
-                    let (id, scope) = cred.split_once('/').unwrap_or((cred, ""));
-                    format!("Credential={}/{}", mask_key_id(id), scope)
-                } else if p.starts_with("Signature=") {
-                    format!("Signature={MASK}")
-                } else {
-                    p.to_string()
-                }
+                p.split_ascii_whitespace()
+                    .map(|w| {
+                        if let Some(cred) = w.strip_prefix("Credential=") {
+                            let (id, scope) = cred.split_once('/').unwrap_or((cred, ""));
+                            format!("Credential={}/{}", mask_key_id(id), scope)
+                        } else if w.starts_with("Signature=") {
+                            format!("Signature={MASK}")
+                        } else {
+                            w.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
             })
             .collect();
         format!("{scheme} {}", parts.join(", "))
@@ -239,14 +250,16 @@ fn redact_parameters(text: &str) -> String {
     out
 }
 
+/// Each element `tag` in `text`, its content given to `f`: as written, with
+/// a namespace's prefix (`<sts:SessionToken>`) or attributes
+/// (`<SessionToken xmlns="…">`), and its end tag of the same name.
 fn replace_element(text: &str, tag: &str, f: impl Fn(&str) -> String) -> String {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(start) = rest.find(&open) {
-        let after = &rest[start + open.len()..];
-        out.push_str(&rest[..start + open.len()]);
+    while let Some((start, name, open_len)) = open_tag(rest, tag) {
+        let after = &rest[start + open_len..];
+        out.push_str(&rest[..start + open_len]);
+        let close = format!("</{name}>");
         let Some(end) = after.find(&close) else {
             // cut open: nothing after it is known not to be the secret
             // (what is there already is a mask, perhaps itself cut)
@@ -266,6 +279,44 @@ fn replace_element(text: &str, tag: &str, f: impl Fn(&str) -> String) -> String 
     }
     out.push_str(rest);
     out
+}
+
+/// The first start tag of element `tag` in `text` that holds content (not
+/// `<tag/>`): where it starts, its name as written (with any prefix), and
+/// how long it is. A tag cut before its `>` is none: what follows it is
+/// not yet the element's.
+fn open_tag<'a>(text: &'a str, tag: &str) -> Option<(usize, &'a str, usize)> {
+    let b = text.as_bytes();
+    let mut from = 0;
+    while let Some(i) = text[from..].find('<').map(|i| from + i) {
+        from = i + 1;
+        let n = b[i + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':'))
+            .count();
+        let name = &text[i + 1..i + 1 + n];
+        let local = match name.rsplit_once(':') {
+            Some((prefix, local)) if !prefix.is_empty() && !prefix.contains(':') => local,
+            Some(_) => continue,
+            None => name,
+        };
+        if local != tag {
+            continue;
+        }
+        let after = i + 1 + n;
+        match b.get(after) {
+            Some(b'>') => return Some((i, name, n + 2)),
+            Some(c) if c.is_ascii_whitespace() => {
+                let close = text[after..].find('>')? + after;
+                if b[close - 1] == b'/' {
+                    continue;
+                }
+                return Some((i, name, close + 1 - i));
+            }
+            _ => continue,
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -568,5 +619,74 @@ mod tests {
     fn an_element_cut_open_keeps_only_a_mask() {
         assert_eq!(redact_text("<Token>«redac"), "<Token>«redac");
         assert_eq!(redact_text("<Token>«secret"), format!("<Token>{MASK}"));
+    }
+
+    /// What the proxy admits as SigV4 (parameters parted by white space
+    /// alone, a tab after the scheme) keeps no signature, and redacting
+    /// it again changes nothing; the usual form reads as before.
+    #[test]
+    fn an_authorization_parted_by_spaces_or_tabs_keeps_no_signature() {
+        let sig = "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41";
+        for value in [
+            format!(
+                "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request SignedHeaders=host Signature={sig}"
+            ),
+            format!(
+                "AWS4-HMAC-SHA256\tCredential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request,SignedHeaders=host,Signature={sig}"
+            ),
+            format!(
+                "AWS4-HMAC-SHA256  Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host,\tSignature={sig}"
+            ),
+        ] {
+            let r = redact_header("Authorization", &value);
+            assert!(
+                !r.contains(sig) && !r.contains("AKIAIOSFODNN7EXAMPLE"),
+                "{r}"
+            );
+            assert_eq!(redact_header("Authorization", &r), r);
+            assert!(!header_is_redacted("authorization", &value));
+            assert!(header_is_redacted("authorization", &r));
+        }
+        // the form SDKs send is written as it was
+        let r = redact_header("Authorization", AUTH);
+        assert_eq!(
+            r,
+            format!(
+                "AWS4-HMAC-SHA256 Credential=AKIA…LE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature={MASK}"
+            )
+        );
+    }
+
+    /// A session's secrets are masked in an element with a namespace's
+    /// prefix or attributes too; an element of another name, or one that
+    /// holds nothing, is left as it is.
+    #[test]
+    fn secrets_in_prefixed_or_attributed_elements_are_masked() {
+        let body = "<sts:AssumeRoleResponse xmlns:sts=\"https://sts.amazonaws.com/doc/2011-06-15/\"><sts:Credentials><sts:SessionToken>FQoGsecret</sts:SessionToken><SecretAccessKey xml:space=\"preserve\">wJalrXUtnFEMI</SecretAccessKey><sts:AccessKeyId>ASIAIOSFODNN7EXAMPLE</sts:AccessKeyId></sts:Credentials></sts:AssumeRoleResponse>";
+        let r = redact_text(body);
+        for secret in ["FQoGsecret", "wJalrXUtnFEMI", "ASIAIOSFODNN7EXAMPLE"] {
+            assert!(!r.contains(secret), "{r}");
+        }
+        assert!(
+            r.contains(&format!("<sts:SessionToken>{MASK}</sts:SessionToken>")),
+            "{r}"
+        );
+        assert!(
+            r.contains("<sts:AccessKeyId>ASIA…LE</sts:AccessKeyId>"),
+            "{r}"
+        );
+        assert_eq!(redact_text(&r), r);
+        for benign in [
+            "<TokenCount>3</TokenCount><SessionTokens>2</SessionTokens>",
+            "<SessionToken/><Key>a<Token</Key>",
+            "a < Token > b",
+        ] {
+            assert_eq!(redact_text(benign), benign);
+        }
+        // an element cut open after its attributes is masked to the end
+        assert_eq!(
+            redact_text("<SessionToken a=\"b\">FQoG"),
+            format!("<SessionToken a=\"b\">{MASK}")
+        );
     }
 }

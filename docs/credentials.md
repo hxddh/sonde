@@ -25,10 +25,10 @@ or log too):
 
 | What | Done |
 |---|---|
-| `Authorization` | signature replaced; key id shortened (`AKIA…LE`); scope and signed headers kept |
+| `Authorization` | signature replaced, its parameters parted by commas or white space; key id shortened (`AKIA…LE`); scope and signed headers kept |
 | `x-amz-security-token`, `x-amz-s3session-token` (S3 Express), SSE-C key headers, `Cookie`, `Proxy-Authorization` | replaced |
 | Presigned URLs | `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-S3session-Token`, SigV2 `Signature` replaced; `X-Amz-Credential`, `AWSAccessKeyId` shortened; the same in any text, any case |
-| Error and request bodies | `<SignatureProvided>`, `<StringToSign>`, `<CanonicalRequest>` (signed headers' values) and their `…Bytes`, `<Signature>`, tokens (`<SecurityToken>`, `<SessionToken>`, `<Token>`), `<SecretAccessKey>` replaced; `<AWSAccessKeyId>`, `<AccessKeyId>` shortened; an element cut at the body's limit replaced to the end |
+| Error and request bodies | `<SignatureProvided>`, `<StringToSign>`, `<CanonicalRequest>` (signed headers' values) and their `…Bytes`, `<Signature>`, tokens (`<SecurityToken>`, `<SessionToken>`, `<Token>`), `<SecretAccessKey>` replaced; `<AWSAccessKeyId>`, `<AccessKeyId>` shortened, each with a namespace prefix or attributes too; an element cut at the body's limit replaced to the end |
 
 "Copy as curl" never carries a signature: it prints the request with curl's `--aws-sigv4` option. What a copied
 command may hold of a run: [security](security.md#copied-commands).

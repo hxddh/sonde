@@ -2,6 +2,39 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [34.1.2] - 2026-11-28
+
+### Fixed
+
+- **A run recorded with `-o` opens in the app where it is**: `sonde show --app`, a drop or the system's Open copied
+  it in as an import, which was from elsewhere (Run again asked first) and listed twice. A file another run or person
+  put at that path is still imported as one from elsewhere.
+- **Redaction reads what the proxy accepts**: an `Authorization` whose SigV4 parameters are parted by spaces alone,
+  or whose scheme is followed by a tab, kept its signature; so did a session token in `<sts:SessionToken>` or in an
+  element with attributes.
+- **An aws-chunked body ends at its last chunk**: bytes after it were held in memory however many came (and, unsigned,
+  sent to the store); they are now refused as `InvalidRequest`. A control document sent as unsigned aws-chunked
+  (`DeleteObjects`) is read as the document it holds: `no-delete` no longer refuses a run's own batch, and the record
+  keeps the document, not its framing. A second `Transfer-Encoding` or `x-amz-trailer` line is read too.
+- **The runs folder's index keeps a replay's reliances when it is compacted**, and is compacted only when most of it
+  is stale: with twenty runs or so it was written again on every change.
+- **A scenario named as hex reads (`dead503`) is its run's name** in what a run leaves: read as an id, its trial
+  broke.
+- **A listing's later pages are told one way everywhere**: an empty `?marker=` is a first page, `start-after` a later
+  one, and ListObjectVersions' pages are not taken as sendable at once.
+- A listing a trial hid a write from says how many keys it listed, as every listing does; a record's URL with no path
+  has none; a `docker run` option that takes a value (`--pids-limit 100`) is no longer taken for the image.
+
+### 中文
+
+- 修复：以 `-o` 录制的运行在桌面应用中原地打开：此前 `sonde show --app`、拖放或系统「打开」会把它复制为导入文件，被当作外来运行（「再次运行」需先确认），且在列表中出现两次。若该路径上已换成别的文件，仍按外来文件导入。
+- 修复：脱敏与代理接受的格式一致：SigV4 参数仅以空格分隔、或认证方案后跟制表符的 `Authorization` 曾保留签名；`<sts:SessionToken>` 或带属性的元素中的会话令牌也曾漏掉。
+- 修复：aws-chunked 请求体在最后一个分块处结束：其后的字节曾被无限制地留在内存中（未签名时还会发给存储），现在以 `InvalidRequest` 拒绝。以未签名 aws-chunked 发送的控制文档（如 `DeleteObjects`）按其中的文档读取：`no-delete` 不再拒绝运行删除自己创建的对象，记录中保存的是文档本身而不是分块格式。第二行 `Transfer-Encoding` 或 `x-amz-trailer` 也会被读取。
+- 修复：运行目录索引压缩时保留回放的依赖结论，且只在大部分内容过期时才压缩：此前约二十个运行后，每次变更都会重写整个索引。
+- 修复：名字形如十六进制的场景（如 `dead503`）在「运行留下的对象」中按运行名识别：此前被当作 ID，导致试验判为失败。
+- 修复：各处对列表后续分页的判断统一：空的 `?marker=` 视为第一页，`start-after` 视为后续页，ListObjectVersions 的分页不再被当作可以并发发送。
+- 修复：被试验隐藏写入的列表请求也记录列出的键数；没有路径的记录 URL 不再被误读出路径；`docker run` 中带参数的选项（如 `--pids-limit 100`）不再被当作镜像名。
+
 ## [34.1.1] - 2026-11-27
 
 ### Fixed

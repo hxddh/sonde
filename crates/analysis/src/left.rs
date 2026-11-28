@@ -178,7 +178,8 @@ pub fn left_where<'a>(
 /// first where two start at one place: `clean` is not read as the `lean`
 /// in it. Never inside what changes from run to run ([`crate::profile::id_spans`]:
 /// a UUID, a date, an id): a scenario `b` is not the `b` of a UUID one run
-/// writes, which would no longer read as a UUID.
+/// writes, which would no longer read as a UUID. A name that is itself all
+/// of such a word (`dead503`) is the name.
 pub fn trial_names(key: &str, names: &[&str]) -> String {
     let words: Vec<Vec<&str>> = names
         .iter()
@@ -209,7 +210,12 @@ pub fn trial_names(key: &str, names: &[&str]) -> String {
     };
     let bytes = key.as_bytes();
     let ids = crate::profile::id_spans(key);
-    let in_id = |at: usize, n: usize| ids.iter().any(|r| at < r.end && r.start < at + n);
+    // (an id the name covers whole is the name: a scenario `dead503` reads
+    // as hex, and is its run's place, not an id the run made)
+    let in_id = |at: usize, n: usize| {
+        ids.iter()
+            .any(|r| at < r.end && r.start < at + n && !(at <= r.start && r.end <= at + n))
+    };
     let mut out = String::with_capacity(key.len());
     let (mut i, mut from) = (0, 0);
     while i < bytes.len() {
@@ -502,6 +508,27 @@ mod tests {
         let names = ["lost-answer", "clean"];
         assert_eq!(trial_names("outLostAnswer.log", &names), "out{trial}.log");
         assert_eq!(trial_names("runlost_answer/x", &names), "run{trial}/x");
+    }
+
+    /// A scenario named as hex reads (`dead503`, `cafe42`) is its run's
+    /// place where the key holds it whole: read as an id, its run left none
+    /// of what the clean run left, and broke. Inside a longer id it is not.
+    #[test]
+    fn a_name_that_reads_as_an_id_is_the_runs_where_it_is_the_whole_word() {
+        for name in ["dead503", "cafe42", "abc123def456ghi789jk"] {
+            let names = [name, "clean"];
+            assert_eq!(
+                trial_names(&format!("out-{name}/x"), &names),
+                "out-{trial}/x"
+            );
+            assert_eq!(
+                trial_names(&format!("out/{name}99/x"), &names),
+                format!("out/{name}99/x")
+            );
+            let clean = left(&[put(1, "out-clean/part-0.parquet")], &names);
+            let tried = left(&[put(1, &format!("out-{name}/part-0.parquet"))], &names);
+            assert_eq!(tried.against(&clean), None, "{name}");
+        }
     }
 
     #[test]
