@@ -1,8 +1,8 @@
 module github.com/hxddh/sonde/tools/gen-woodpecker
 
-go 1.25.0
+go 1.25.8
 
-require github.com/zilliztech/woodpecker v0.1.48-0.20261106091408-3a8ce697ce16
+require github.com/zilliztech/woodpecker v0.1.49
 
 require (
 	github.com/cockroachdb/errors v1.9.1 // indirect
