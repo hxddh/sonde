@@ -1,9 +1,9 @@
 # What CI's jobs install with pip (Dependabot keeps it current): the SDK and
 # the readers the smoke run records, the Iceberg writer of the integration
 # scenarios, and the linters of the action's scripts and workflows.
-boto3==1.44.3
-polars==2.1.0
-duckdb==2.0.0
+boto3==1.44.13
+polars==2.2.0
+duckdb==2.0.1
 pyiceberg[sql-sqlite,pyarrow]==0.12.0
 shellcheck-py==0.11.0.1
 actionlint-py==1.7.12.25

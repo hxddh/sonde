@@ -307,7 +307,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a run: its program over its runs. */
-export function HistoryPane(props: { path: string; /** written outside the runs folder (`-o`): never the baseline, which is one of sonde's runs */ elsewhere?: boolean; onOpen?: (path: string) => void; /** "Run trials again": the trial's plan */ onTrials?: () => void }) {
+export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Run trials again": the trial's plan */ onTrials?: () => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -401,8 +401,8 @@ export function HistoryPane(props: { path: string; /** written outside the runs 
                 }
               />
               {/* one button, its words the action: set, or (already the baseline) clear */}
-              {/* a run written elsewhere (`-o`) cannot be one: the button stays, and says why */}
-              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : props.elsewhere ? t("history.elsewhere") : undefined} disabled={props.elsewhere && !isBase()} onPress={toggle} testID="history-baseline" />
+              {/* a run written elsewhere (`-o`) and listed here can be one too, as `check --set-baseline` makes it */}
+              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />
             </PageHeader>
             <If when={x().check}>
               <Verdicts h={x()} />

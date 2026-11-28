@@ -1716,6 +1716,27 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
     assert_eq!(t["standing"], "broke", "{t:#}");
     assert_eq!((&t["stale"], &t["missed"]), (&2.into(), &2.into()), "{t:#}");
     assert_eq!(t["finding"]["where"]["kind"], "ListObjectsV2", "{t:#}");
+    // the next step is said: the fault tried again once the program changed
+    assert!(
+        o.stderr.contains("after a change: sonde run") && o.stderr.contains("--fault stale-list"),
+        "{}",
+        o.stderr
+    );
+    // and the run's `verify` tries it again too
+    let v = b
+        .run(
+            None,
+            &[
+                "show",
+                b.path("lists.sonde").to_str().unwrap(),
+                "-f",
+                "json",
+            ],
+        )
+        .await;
+    let doc: serde_json::Value = serde_json::from_str(&v.stdout).unwrap();
+    let verify = doc["verify"].as_str().unwrap_or_default();
+    assert!(verify.contains("--fault stale-list --"), "{verify}");
     // its run says which keys were left out
     let shown = b
         .run(

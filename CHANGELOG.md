@@ -2,6 +2,55 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [34.2.0] - 2026-11-28
+
+What the app's charts read of a run is in `show -f json`, retries are counted as the SDK numbered them, and each
+loop ends with its next step: a CI failure on its line, a trial's faults in `verify`. No command or flag is new;
+nothing stable is removed or redefined.
+
+### Added
+
+- **`show -f json` has `signals`**: failures by kind (throttled, client, server, transport, injected), retries, the
+  requests given up on (`errors.gaveUp`, what `check`'s `max-errors` counts; `summary.errors` counts every failed
+  attempt), the most in flight and when, the wait for the first byte against the rest by kind, body sizes and MiB/s,
+  every status and when, and each prefix's busiest second against S3's limit. `waiting.byKind[]` has `p99Ms`.
+- **A trial says its next step**: `run --trial` ends with `after a change: sonde run --fault S -- …` for what did
+  not survive, and `show`'s `verify` carries the same `--fault`. A program's first `run` with a plan ends with what
+  to do next.
+
+### Changed
+
+- **Retries are counted as the SDK numbered them** (`amz-sdk-invocation-id`, `amz-sdk-request: attempt=N`): a
+  retry after a long backoff is one, a second call soon after a failure is not. Requests no SDK numbered are read by
+  their times, as before.
+- **`check --init` writes the program its file is for** (`[program]`), so `check` holds that program's runs and not
+  whichever program last ran in the folder. A run that failed or sent nothing is never told to tighten
+  `[check.findings]`.
+- **In CI, a finding that grew or is new is annotated on the line that sent it**, titled as what it is, with the fix
+  or the count to keep it on purpose.
+- **The app can make a run written with `-o` its program's baseline**, as `check --set-baseline` always could: the
+  words that refused it ("Written outside sonde's runs folder (-o): only a run in it can be the baseline") are gone.
+- With no endpoint and no AWS credentials, the error also offers `sonde run --demo`.
+- Native Shell 0.7.2 (smoother charts on Linux and macOS, Windows' HiDPI input), current crates, and the SDKs the
+  smoke programs and fix checks are held to (boto3 1.44.13, Go S3 1.116.2, JavaScript 3.1179.0, Java 2.59.11).
+
+### Fixed
+
+- **`show` of a run in a folder sonde keeps nothing in leaves nothing beside it**: a file someone sent, or a test's
+  fixtures, got an `.index.jsonl` with counts and the program's history.
+
+### 中文
+
+- 新增：`show -f json` 增加 `signals`：按类别的失败数（限流、客户端、服务端、传输、注入）、重试次数、最终放弃的请求（`errors.gaveUp`，即 `check` 的 `max-errors` 所统计的；`summary.errors` 统计每一次失败的尝试）、峰值并发及出现时间、各类请求的首字节等待与其余耗时、请求体大小分布与 MiB/s、每个状态码及其出现时间、各前缀最忙一秒相对 S3 限额的比例。`waiting.byKind[]` 增加 `p99Ms`。
+- 新增：试验会说明下一步：`run --trial` 结尾给出 `after a change: sonde run --fault S -- …`，重新试验未能挺过的故障；`show` 的 `verify` 也带上相同的 `--fault`。程序首次 `run` 若有修改计划，结尾会说明下一步怎么做。
+- 变更：重试次数按 SDK 自己的编号统计（`amz-sdk-invocation-id`、`amz-sdk-request: attempt=N`）：退避很久之后的重试仍算重试，失败后紧接着的另一次调用不算。SDK 未编号的请求仍按时间判断。
+- 变更：`check --init` 会写入该文件所对应的程序（`[program]`），`check` 因此只判这个程序的运行，而不是目录里最后跑的那个。程序失败或没有发出请求的运行，不再提示收紧 `[check.findings]`。
+- 变更：CI 中变多或新出现的发现会标注在发出请求的那行代码上，标题说明是哪种情况，并给出修复方式，或在有意保留时如何登记数量。
+- 变更：桌面应用可以把用 `-o` 写出的运行设为程序的基线，与 `check --set-baseline` 一致；原先拒绝的提示语已移除。
+- 变更：没有配置端点也没有 AWS 凭证时，报错会同时建议 `sonde run --demo`。
+- 变更：升级到 Native Shell 0.7.2（Linux 和 macOS 上图表更流畅，修复 Windows 高分屏输入），更新各依赖 crate，以及冒烟测试和修复代码检查所用的 SDK 版本（boto3 1.44.13、Go S3 1.116.2、JavaScript 3.1179.0、Java 2.59.11）。
+- 修复：对 sonde 不维护索引的目录中的运行执行 `show`，不再在文件旁边留下任何东西：此前别人发来的文件或测试夹具旁会多出带统计和程序历史的 `.index.jsonl`。
+
 ## [34.1.2] - 2026-11-28
 
 ### Fixed

@@ -720,6 +720,14 @@ pub(super) fn print_summary_of(
         }
     }
     say(paint(&format!("run: {}", path.display()), "2", color).to_string());
+    // a program's first run with a plan: the step that closes the loop
+    if says == Says::Changes && !stdout && !a.diagnoses.is_empty() {
+        say(paint(
+            "next: make the change above, then run the same command again: sonde says what it fixed and what it saved",
+            "2",
+            color,
+        ));
+    }
 }
 
 /// What sonde refused of a run's requests, each reason a line: said by a run

@@ -235,6 +235,13 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         Some(f) => super::runs::resolve(s, f),
         None => which_run(s, project_name().as_deref())?.0,
     };
+    // a run in a folder sonde keeps no index in (a file sent, fixtures) is
+    // only read: no cache or history is left beside it
+    let in_runs =
+        file.parent().and_then(|d| d.canonicalize().ok()) == s.paths().runs().canonicalize().ok();
+    if !in_runs {
+        sonde_analysis::index::leave_alone(&file);
+    }
     // the run to compare with, read and let go first
     let other = match &a.since {
         Some(o) => Some(super::fixloop::Other::read(s, &super::runs::resolve(s, o))?),
@@ -345,6 +352,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "byKind": prof.groups,
                 }),
             )?;
+            field(&mut w, "signals", signals_json(&analysis.signals))?;
             field(&mut w, "cost", json!(prof.cost))?;
             field(&mut w, "month", json!(analysis.month))?;
             field(&mut w, "time", json!(analysis.time))?;
@@ -363,7 +371,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .collect();
                 field(&mut w, "findings", json!(findings))?;
             }
-            w.field("verify", &verify_command(s, &file, &run.header))?;
+            w.field(
+                "verify",
+                &verify_command(s, &file, &run.header, &faults_to_retry(&trials)),
+            )?;
             let moved = a.all || a.since.is_some();
             field(&mut w, "since", since_json(since.as_ref(), moved))?;
             field(&mut w, "trials", json!(trials))?;
@@ -524,6 +535,35 @@ pub fn summary_on_stderr(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
 /// a kind's latencies added up.
 const LEFT_OUT: [&str; 6] = ["phrases", "impact", "level", "saving", "kinds", "sumMs"];
 
+/// What the app's charts read of a run, as figures (its lines over time are
+/// the app's and the shared page's): failures by kind and the requests sent
+/// again, the most in flight and when, the wait for a first byte against the
+/// rest, body sizes and how fast they moved, every status and when, and each
+/// prefix's busiest second against S3's limit.
+fn signals_json(s: &sonde_analysis::signals::Signals) -> serde_json::Value {
+    let e = &s.errors;
+    serde_json::json!({
+        "timed": s.timed,
+        "errors": {
+            "client": e.counts.client,
+            "server": e.counts.server,
+            "throttled": e.counts.throttled,
+            "transport": e.counts.transport,
+            "injected": e.counts.injected,
+            "retries": e.retries_total,
+            "gaveUp": e.gave_up,
+        },
+        "inFlight": { "peak": s.in_flight.peak, "peakAtMs": s.in_flight.peak_at_ms },
+        // (each kind's as `byKind`: `kinds` is a key `show` leaves out)
+        "firstByte": s.first_byte.as_ref().map(|f| serde_json::json!({
+            "share": f.share, "count": f.count, "byKind": f.kinds,
+        })),
+        "sizes": s.sizes,
+        "statuses": s.statuses,
+        "prefixes": s.prefixes,
+    })
+}
+
 /// `v` without [`LEFT_OUT`], at any depth.
 fn lean(v: &mut serde_json::Value) {
     match v {
@@ -681,10 +721,28 @@ fn since_json(
 /// recorded with), and a run written with `-o` written beside it
 /// again under the next name (`footer1.sonde`, then `footer2.sonde`). None
 /// for a run that is no program's (an import, a replay).
+/// The scenarios of the run's last trial it did not survive, as `--fault`
+/// names them (`slowdown:3` for one asked to press harder): what `verify`
+/// tries again, so a fix of what broke is seen to hold.
+fn faults_to_retry(trials: &[sonde_analysis::trial::Trial]) -> Vec<String> {
+    trials
+        .iter()
+        .filter(|t| {
+            use sonde_analysis::trial::Standing;
+            matches!(t.standing, Standing::Broke | Standing::Degraded)
+        })
+        .map(|t| match t.times {
+            Some(n) => format!("{}:{n}", t.scenario),
+            None => t.scenario.clone(),
+        })
+        .collect()
+}
+
 fn verify_command(
     s: &Sonde,
     path: &Path,
     header: &sonde_analysis::run::RunHeader,
+    faults: &[String],
 ) -> Option<String> {
     let command = header.command.as_deref()?;
     // the tour's runs: the tour again
@@ -712,6 +770,13 @@ fn verify_command(
         args.push(format!(
             "-o {}",
             sonde_analysis::program::shell_join(&[out.to_string_lossy().into_owned()])
+        ));
+    }
+    // what its trial did not survive, tried again with the run
+    for f in faults {
+        args.push(format!(
+            "--fault {}",
+            sonde_analysis::program::shell_join(std::slice::from_ref(f))
         ));
     }
     args.push(format!("-- {command}"));

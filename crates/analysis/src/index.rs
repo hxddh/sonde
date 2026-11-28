@@ -388,6 +388,33 @@ pub fn set(run: &Path, change: Change) {
     let _ = update(&dir, |_| (vec![(name, change)], ()));
 }
 
+/// Folders this process only reads runs in ([`leave_alone`]).
+static LEFT_ALONE: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Has this process write nothing into the folder of `run` while it has no
+/// index: a command that only reads a run (`show` of a file someone sent,
+/// a test's fixtures) leaves no cache or history beside it. A folder sonde
+/// records into has its index from the first run on, and is kept as ever.
+pub fn leave_alone(run: &Path) {
+    let Some((dir, _)) = place(run) else {
+        return;
+    };
+    if !dir.join(FILE).exists()
+        && let Ok(dir) = dir.canonicalize()
+    {
+        LEFT_ALONE.lock().insert(dir);
+    }
+}
+
+/// Whether [`update`] leaves `dir` as it is.
+fn left_alone(dir: &Path) -> bool {
+    let set = LEFT_ALONE.lock();
+    !set.is_empty()
+        && !dir.join(FILE).exists()
+        && dir.canonicalize().is_ok_and(|d| set.contains(&d))
+}
+
 /// Changes what the index of `dir` holds, from what it holds now: `f` is
 /// given the index as it is under the folder's lock (the app and the CLI
 /// may write at once), and says the changes to append. Nothing is written
@@ -401,6 +428,10 @@ pub fn update<T>(
             std::io::ErrorKind::NotFound,
             format!("{} is no folder", dir.display()),
         ));
+    }
+    if left_alone(dir) {
+        // what would change is worked out, and nothing is written
+        return Ok(f(&of(dir)).1);
     }
     let _held = lock(dir);
     let file = dir.join(FILE);

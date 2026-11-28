@@ -536,7 +536,7 @@ export function RunPane(props: { path: string; others: () => RunInfo[]; tick: ()
   );
   const body = (v: () => RunView) => {
     if (pane() === "time") return <TimePane view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.runs.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.runs.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} range={linkRange()} onFailures={(ms) => batch(() => (failedIn.set(ms), pane.set("operations")))} stretch={stretch()} onStretch={(z) => batch(() => (stretch.set(z), failedIn.set(null)))} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} elsewhere={!!info()?.elsewhere} onOpen={open} onTrials={() => tryingFaults.set(true)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTrials={() => tryingFaults.set(true)} />;
     // a program that ended having sent nothing: how to point it at sonde
     if (!live() && v().operationsTotal === 0 && lastRun()?.path === props.path) return <NoRequests />;
     // Output: the program's output (its terminal, while it runs) beside the operations, each lighting up the other

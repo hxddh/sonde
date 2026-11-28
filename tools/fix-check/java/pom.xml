@@ -9,7 +9,7 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <awssdk.version>2.59.1</awssdk.version>
+    <awssdk.version>2.59.11</awssdk.version>
   </properties>
   <dependencies>
     <dependency>

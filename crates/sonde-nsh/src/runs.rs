@@ -1763,6 +1763,24 @@ async fn try_under(
     Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
 }
 
+/// How the folder `dir`'s index names the run at `path` as a baseline: a
+/// run of the folder by its file name ([`own_run_in`]), one written
+/// elsewhere (`-o`) that the folder lists by its whole path; any other
+/// file is none.
+fn baseline_name(dir: &Path, path: &str) -> Result<String, String> {
+    match own_run_in(dir, path) {
+        Ok(name) => Ok(name),
+        Err(e) => {
+            let at = Path::new(path).canonicalize().map_err(|_| e.clone())?;
+            sonde_analysis::index::elsewhere(dir)
+                .into_iter()
+                .find(|p| p.canonicalize().ok().as_ref() == Some(&at))
+                .map(|p| p.to_string_lossy().into_owned())
+                .ok_or(e)
+        }
+    }
+}
+
 /// [`Runs::import_path`]'s work, on the thread it is called on.
 fn import_file(path: &str) -> Result<String, String> {
     if let Ok((own, _)) = own_run(path) {
@@ -2632,13 +2650,15 @@ impl Runs {
             .map_err(err_msg)?
     }
 
-    /// Makes a run its program's baseline (`on`), or no longer.
+    /// Makes a run its program's baseline (`on`), or no longer: one of the
+    /// folder's by its name, one written elsewhere (`-o`) and listed with
+    /// them by its whole path, as `sonde check --set-baseline` keeps it.
     pub fn set_baseline(path: String, on: bool) -> Result<bool, String> {
-        let (_, name) = own_run(&path)?;
+        let dir = sonde().paths().runs();
+        let name = baseline_name(&dir, &path)?;
         let key = header_of(Path::new(&path))
             .and_then(|h| sonde_analysis::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
-        let dir = sonde().paths().runs();
         sonde_analysis::index::update(&dir, |ix| {
             let now = ix.folder.baselines.get(&key);
             let change = if on {
@@ -3913,6 +3933,30 @@ mod tests {
         let (elsewhere, _, _) = run_and_trial(other.path(), "python job.py", None);
         let e = own_run_in(dir.path(), &elsewhere).unwrap_err();
         assert!(e.contains("is not one of sonde's runs"), "{e}");
+    }
+
+    /// A run written elsewhere (`-o`) and listed with the folder's can be
+    /// its program's baseline, by its whole path (as `check --set-baseline`
+    /// keeps it); a file the folder does not list cannot.
+    #[test]
+    fn a_listed_run_written_elsewhere_can_be_the_baseline() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("runs");
+        let (recorded, trial, _) = run_and_trial(&dir, "python job.py", None);
+        assert_eq!(
+            baseline_name(&dir, &recorded).unwrap(),
+            "20260101-000000-job.sonde"
+        );
+        assert!(baseline_name(&dir, &trial).is_err());
+        let out = tempfile::tempdir().unwrap();
+        let o = out.path().join("agent.sonde");
+        std::fs::copy(&recorded, &o).unwrap();
+        assert!(baseline_name(&dir, &o.to_string_lossy()).is_err());
+        sonde_analysis::index::note_elsewhere(&dir, &o);
+        let name = baseline_name(&dir, &o.to_string_lossy()).unwrap();
+        assert_eq!(Path::new(&name), o.canonicalize().unwrap());
+        // what the history reads back: the folder joined with it is it
+        assert_eq!(dir.join(&name), o.canonicalize().unwrap());
     }
 
     /// A run this sonde recorded with `-o`, opened from where it is (a

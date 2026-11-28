@@ -189,7 +189,7 @@ pub async fn endpoint_to_record(s: &Sonde, given: Option<&str>) -> anyhow::Resul
             Ok(AWS_DEFAULT.into())
         }
         Err(why) => Err(usage(format!(
-            "no endpoint configured, and the AWS default chain: {why}. Add an endpoint with `sonde endpoints add ID URL` (kept in {}), or name one for this run with `--url URL --path-style`",
+            "no endpoint configured, and the AWS default chain: {why}. Add an endpoint with `sonde endpoints add ID URL` (kept in {}), or name one for this run with `--url URL --path-style`; or try sonde with no account on its built-in store: `sonde run --demo`",
             s.paths().config_file().display()
         ))),
     }
